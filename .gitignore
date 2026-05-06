@@ -1,0 +1,14 @@
+/.cursor/
+/datasets/
+/.venv
+/bak
+/latents_cache/
+/wandb/
+/output
+/wd14_tagger_model/
+__pycache__/
+*.pyc
+*.pth
+*.npz
+
+/*.txt
