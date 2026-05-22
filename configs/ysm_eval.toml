@@ -1,0 +1,13 @@
+resolutions = [1024]
+
+enable_ar_bucket = true
+min_ar = 0.5
+max_ar = 2.0
+num_ar_buckets = 9
+
+caption_prefix = '@YSM, '
+subsample_ratio = 0.5
+
+[[directory]]
+path = '/media/yuchuxi/WD1/BiliBili/YSM/afd_eval'
+mask_path = '/media/yuchuxi/WD1/BiliBili/YSM/afd_mask'

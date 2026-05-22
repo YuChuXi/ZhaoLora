@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-读取数据集目录中的图片，在白底 RGB 上重新绘制 alpha（原图若有 alpha 先合成到白底后丢弃）。
+读取数据集目录或单个图片文件，在白底 RGB 上重新绘制 alpha（原图若有 alpha 先合成到白底后丢弃）。
 支持画笔与矩形框选填充；保存为带 alpha 的 PNG 到输出目录。
 
 依赖: Pillow, numpy（与 guo582_label_tk 一致）
@@ -12,7 +12,7 @@ import argparse
 import threading
 import tkinter as tk
 from pathlib import Path
-from tkinter import ttk, messagebox
+from tkinter import ttk
 
 import numpy as np
 from PIL import Image, ImageTk
@@ -114,11 +114,21 @@ def fill_rect(alpha: np.ndarray, x0: int, y0: int, x1: int, y1: int, value: int)
 
 
 class AlphaPaintApp:
-    def __init__(self, src_dir: Path, out_dir: Path, recursive: bool) -> None:
+    def __init__(
+        self,
+        src_dir: Path,
+        out_dir: Path,
+        recursive: bool,
+        files_override: list[Path] | None = None,
+    ) -> None:
         self.src_dir = src_dir.resolve()
         self.out_dir = out_dir.resolve()
         self.out_dir.mkdir(parents=True, exist_ok=True)
-        self.files = list_images(self.src_dir, recursive)
+        if files_override is not None:
+            raw_files = [p.expanduser().resolve() for p in files_override]
+        else:
+            raw_files = list_images(self.src_dir, recursive)
+        self.files = self._prioritize_unlabeled(raw_files)
         self.index = 0
 
         self.rgb: Image.Image | None = None
@@ -157,7 +167,7 @@ class AlphaPaintApp:
         ttk.Button(top, text="上一张 (←)", command=self.prev_image).pack(side=tk.LEFT, padx=2)
         ttk.Button(top, text="下一张 (→)", command=self.next_image).pack(side=tk.LEFT, padx=2)
         ttk.Button(top, text="跳过 (X)", command=self.skip_image).pack(side=tk.LEFT, padx=8)
-        ttk.Button(top, text="保存 (S)", command=self.save_current).pack(side=tk.LEFT, padx=8)
+        ttk.Button(top, text="保存并下一张 (Ctrl+S)", command=self.save_and_next).pack(side=tk.LEFT, padx=8)
         ttk.Button(top, text="清空 alpha", command=self.reset_alpha_transparent).pack(side=tk.LEFT, padx=8)
         ttk.Button(top, text="填满 alpha", command=self.reset_alpha_opaque).pack(side=tk.LEFT, padx=2)
 
@@ -176,6 +186,11 @@ class AlphaPaintApp:
 
         self.status_var = tk.StringVar(master=self.root, value="")
         ttk.Label(self.root, textvariable=self.status_var).pack(side=tk.TOP, anchor=tk.W, padx=8)
+        ttk.Label(
+            self.root,
+            text="快捷键: Ctrl+S 保存并下一张  |  S 仅保存  |  Ctrl+N / X 跳过  |  ← → 翻页  |  画布滚轮调节笔刷半径",
+            foreground="#888888",
+        ).pack(side=tk.TOP, anchor=tk.W, padx=8, pady=(0, 4))
 
         self.canvas = tk.Canvas(self.root, bg="#333333", highlightthickness=0)
         self.canvas.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
@@ -184,21 +199,68 @@ class AlphaPaintApp:
         self.canvas.bind("<ButtonPress-1>", self.on_press)
         self.canvas.bind("<B1-Motion>", self.on_motion)
         self.canvas.bind("<ButtonRelease-1>", self.on_release)
-        self.root.bind("<Left>", lambda _e: self.prev_image())
-        self.root.bind("<Right>", lambda _e: self.next_image())
-        self.root.bind("<x>", lambda _e: self.skip_image())
-        self.root.bind("<X>", lambda _e: self.skip_image())
-        self.root.bind("<s>", lambda _e: self.save_current())
+        self.canvas.bind("<MouseWheel>", self.on_brush_wheel)
+        self.canvas.bind("<Button-4>", self.on_brush_wheel)
+        self.canvas.bind("<Button-5>", self.on_brush_wheel)
+        self._setup_keyboard_shortcuts()
 
         if not self.files:
-            messagebox.showerror("错误", f"目录中未找到图片: {self.src_dir}")
+            print(f"错误: 未找到图片: {self.src_dir}")
             self.root.after(100, self.root.destroy)
             return
 
         self.load_index(0)
 
+    def _setup_keyboard_shortcuts(self) -> None:
+        self.root.bind_all("<Control-s>", self._on_hotkey_save_and_next, add=True)
+        self.root.bind_all("<Control-S>", self._on_hotkey_save_and_next, add=True)
+        self.root.bind_all("<Control-n>", self._on_hotkey_skip, add=True)
+        self.root.bind_all("<Control-N>", self._on_hotkey_skip, add=True)
+        self.root.bind_all("<Left>", self._on_hotkey_prev, add=True)
+        self.root.bind_all("<Right>", self._on_hotkey_next, add=True)
+        self.root.bind_all("<x>", self._on_hotkey_skip, add=True)
+        self.root.bind_all("<X>", self._on_hotkey_skip, add=True)
+        self.root.bind_all("<s>", self._on_hotkey_save_only, add=True)
+        self.root.bind_all("<S>", self._on_hotkey_save_only, add=True)
+
+    def _on_hotkey_save_and_next(self, _event=None) -> str:
+        self.save_and_next()
+        return "break"
+
+    def _on_hotkey_save_only(self, _event=None) -> str:
+        self.save_current()
+        return "break"
+
+    def _on_hotkey_skip(self, _event=None) -> str:
+        self.skip_image()
+        return "break"
+
+    def _on_hotkey_prev(self, _event=None) -> str:
+        self.prev_image()
+        return "break"
+
+    def _on_hotkey_next(self, _event=None) -> str:
+        self.next_image()
+        return "break"
+
     def paint_value(self) -> int:
         return 255 if self.paint_var.get() == "opaque" else 0
+
+    def on_brush_wheel(self, event: tk.Event) -> str:
+        """画布滚轮：上滚增大笔刷半径，下滚减小（与滑块范围 2–120 一致）。"""
+        if event.num == 4:
+            delta = 1
+        elif event.num == 5:
+            delta = -1
+        elif event.delta > 0:
+            delta = 1
+        else:
+            delta = -1
+        cur = int(self.brush_r_var.get())
+        step = max(2, cur // 12)
+        new_r = max(2, min(120, cur + delta * step))
+        self.brush_r_var.set(new_r)
+        return "break"
 
     def rel_out_path(self, path: Path) -> Path:
         if path.resolve().is_relative_to(self.src_dir):
@@ -206,6 +268,19 @@ class AlphaPaintApp:
         else:
             rel = Path(path.name)
         return rel.with_suffix(".png")
+
+    def _prioritize_unlabeled(self, files: list[Path]) -> list[Path]:
+        """无对应输出 PNG 的条目排在前面，同组内保持原扫描顺序。"""
+        indexed = list(enumerate(files))
+
+        def sort_key(item: tuple[int, Path]) -> tuple[int, int]:
+            i, p = item
+            dest = self.out_dir / self.rel_out_path(p)
+            has_output = 1 if dest.is_file() else 0
+            return (has_output, i)
+
+        indexed.sort(key=sort_key)
+        return [p for _, p in indexed]
 
     def load_index(self, idx: int) -> None:
         if not self.files:
@@ -236,18 +311,25 @@ class AlphaPaintApp:
 
     def prev_image(self) -> None:
         if self.index > 0:
-            self.save_current(silent=True)
+            self.save_current()
             self.load_index(self.index - 1)
 
     def next_image(self) -> None:
         if self.index + 1 < len(self.files):
-            self.save_current(silent=True)
+            self.save_current()
             self.load_index(self.index + 1)
 
     def skip_image(self) -> None:
         """跳过当前图片：不保存，直接进入下一张，并丢弃未保存修改。"""
         if self.index + 1 < len(self.files):
             self._is_modified = False
+            self.load_index(self.index + 1)
+
+    def save_and_next(self) -> None:
+        if self.rgb is None or self.alpha is None or self.current_path is None:
+            return
+        self.save_current()
+        if self.index + 1 < len(self.files):
             self.load_index(self.index + 1)
 
     def reset_alpha_opaque(self) -> None:
@@ -363,63 +445,55 @@ class AlphaPaintApp:
         self._rect_start = None
         self.request_redraw()
 
-    def save_current(self, silent: bool = False) -> None:
+    def save_current(self) -> None:
         if self.rgb is None or self.alpha is None or self.current_path is None:
             return
         rel = self.rel_out_path(self.current_path)
         dest = self.out_dir / rel
-        
-        # 拷贝当前状态，防止翻页后被主线程修改
         alpha_copy = self.alpha.copy()
         rgb_ref = self.rgb
-        
         self._is_modified = False
-        if not silent:
-            self.status_var.set(f"正在后台保存: {dest}...")
-            
         threading.Thread(
             target=self._bg_save,
-            args=(dest, rgb_ref, alpha_copy, silent),
-            daemon=True
+            args=(dest, rgb_ref, alpha_copy),
+            daemon=True,
         ).start()
 
-    def _bg_save(self, dest: Path, rgb_img: Image.Image, alpha_array: np.ndarray, silent: bool) -> None:
+    def _bg_save(self, dest: Path, rgb_img: Image.Image, alpha_array: np.ndarray) -> None:
         try:
             dest.parent.mkdir(parents=True, exist_ok=True)
-            # 强制深拷贝 RGB，防止主线程销毁或复用导致 size mismatch
             rgb_copy = rgb_img.copy()
             r, g, b = rgb_copy.split()
             a_img = Image.fromarray(alpha_array)
             out = Image.merge("RGBA", (r, g, b, a_img))
-            
-            # 先保存到临时文件，再原子替换，防止读取到写了一半的残缺图片
-            tmp_dest = dest.with_suffix('.png.tmp')
+            tmp_dest = dest.with_suffix(".png.tmp")
             out.save(tmp_dest, format="PNG", compress_level=9)
             tmp_dest.replace(dest)
-            
-            if not silent:
-                self.root.after(0, lambda: self.status_var.set(f"已保存: {dest}"))
         except Exception as e:
-            print(f"后台保存失败 {dest}: {e}")
-            if not silent:
-                self.root.after(0, lambda: self.status_var.set(f"保存失败: {dest}"))
+            print(f"保存失败 {dest}: {e}")
 
 
 def main() -> None:
     ap = argparse.ArgumentParser(description="对白底 RGB 重新绘制 alpha，输出 PNG")
-    ap.add_argument("input_dir", type=Path, help="输入数据集目录")
+    ap.add_argument("input_path", type=Path, help="输入数据集目录，或单个图片文件")
     ap.add_argument("output_dir", type=Path, help="输出目录（保留相对路径，扩展名 .png）")
     ap.add_argument(
         "-r",
         "--recursive",
         action="store_true",
-        help="递归扫描子目录中的图片",
+        help="递归扫描子目录中的图片（仅当输入为目录时有效）",
     )
     args = ap.parse_args()
-    src = args.input_dir.expanduser().resolve()
-    if not src.is_dir():
-        raise SystemExit(f"输入目录不存在: {src}")
-    app = AlphaPaintApp(src, args.output_dir.expanduser().resolve(), args.recursive)
+    src = args.input_path.expanduser().resolve()
+    out = args.output_dir.expanduser().resolve()
+    if src.is_file():
+        if src.suffix.lower() not in IMAGE_EXTS:
+            raise SystemExit(f"不支持的图片扩展名（支持 {', '.join(sorted(IMAGE_EXTS))}）: {src}")
+        app = AlphaPaintApp(src.parent, out, recursive=False, files_override=[src])
+    elif src.is_dir():
+        app = AlphaPaintApp(src, out, args.recursive)
+    else:
+        raise SystemExit(f"输入路径不存在: {src}")
     app.root.mainloop()
 
 

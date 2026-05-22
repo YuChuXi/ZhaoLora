@@ -22,7 +22,7 @@ from pathlib import Path
 
 
 def split_tags_line(s: str) -> list[str]:
-    return [x.strip() for x in s.replace("\n", ",").split(",") if x.strip()]
+    return [x.strip() for x in s.replace("\n", ",").replace("|||",",").split(",") if x.strip()]
 
 
 def normalize_tag(tag: str, *, lower: bool, underscores: bool) -> str:

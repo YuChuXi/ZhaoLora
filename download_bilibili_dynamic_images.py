@@ -72,6 +72,12 @@ def parse_args() -> argparse.Namespace:
         default=3,
         help="接口返回空页或临时失败时的最大重试次数，默认 3",
     )
+    parser.add_argument(
+        "--download-forwarded",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="是否下载转发动态中的图片，默认下载；使用 --no-download-forwarded 跳过",
+    )
     return parser.parse_args()
 
 
@@ -211,10 +217,10 @@ def extract_draw_records(item: dict[str, Any], scope: str) -> list[dict[str, Any
     return records
 
 
-def extract_records(item: dict[str, Any]) -> list[dict[str, Any]]:
+def extract_records(item: dict[str, Any], *, include_forwarded: bool = True) -> list[dict[str, Any]]:
     records = extract_draw_records(item, "self")
     dynamic = find_module(item, "module_dynamic")
-    if not dynamic:
+    if not dynamic or not include_forwarded:
         return records
 
     forward = dynamic.get("dyn_forward")
@@ -308,7 +314,7 @@ def main() -> int:
         all_items.extend(items)
         page_records = []
         for item in items:
-            page_records.extend(extract_records(item))
+            page_records.extend(extract_records(item, include_forwarded=args.download_forwarded))
         all_records.extend(page_records)
         print(
             f"第 {page} 页: 动态 {len(items)} 条, 提取图片记录 {len(page_records)} 条, "
@@ -390,6 +396,7 @@ def main() -> int:
     metadata_path.write_text(json.dumps(all_records, ensure_ascii=False, indent=2), encoding="utf-8")
     summary = {
         "host_mid": args.host_mid,
+        "download_forwarded": args.download_forwarded,
         "total_dynamics": len(all_items),
         "total_image_records": len(all_records),
         "unique_images": len(url_to_dest),
