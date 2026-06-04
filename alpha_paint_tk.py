@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 读取数据集目录或单个图片文件，在白底 RGB 上重新绘制 alpha（原图若有 alpha 先合成到白底后丢弃）。
-支持画笔与矩形框选填充；保存为带 alpha 的 PNG 到输出目录。
+支持画笔与矩形框选填充；保存 PNG 到输出目录（半透明 RGBA 或黑白 alpha 灰度图）。
 
 依赖: Pillow, numpy（与 guo582_label_tk 一致）
 """
@@ -19,6 +19,9 @@ from PIL import Image, ImageTk
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif"}
+SAVE_FORMAT_RGBA = "rgba"
+SAVE_FORMAT_ALPHA_BW = "alpha_bw"
+SAVE_FORMAT_CHOICES = (SAVE_FORMAT_RGBA, SAVE_FORMAT_ALPHA_BW)
 
 
 def list_images(root: Path, recursive: bool) -> list[Path]:
@@ -49,17 +52,36 @@ def load_rgb_white_flatten(path: Path) -> Image.Image:
     return bg
 
 
+def alpha_array_from_image(im: Image.Image) -> np.ndarray:
+    """从已保存 PNG 提取 alpha：RGBA 取 A 通道，灰度图整图即 alpha。"""
+    if im.mode in ("L", "LA"):
+        return np.array(im.getchannel("L"), dtype=np.uint8, copy=True)
+    rgba = im.convert("RGBA")
+    return np.array(rgba.getchannel("A"), dtype=np.uint8, copy=True)
+
+
 def load_saved_alpha(path: Path, size: tuple[int, int]) -> np.ndarray | None:
     if not path.is_file():
         return None
     try:
-        saved = Image.open(path).convert("RGBA")
+        saved = Image.open(path)
         if saved.size != size:
             return None
-        return np.array(saved.getchannel("A"), dtype=np.uint8, copy=True)
+        return alpha_array_from_image(saved)
     except Exception as e:
         print(f"读取已保存 alpha 失败 {path}: {e}")
         return None
+
+
+def build_save_image(
+    rgb_img: Image.Image, alpha_array: np.ndarray, save_format: str
+) -> Image.Image:
+    if save_format == SAVE_FORMAT_ALPHA_BW:
+        return Image.fromarray(alpha_array, mode="L")
+    rgb_copy = rgb_img.copy()
+    r, g, b = rgb_copy.split()
+    a_img = Image.fromarray(alpha_array)
+    return Image.merge("RGBA", (r, g, b, a_img))
 
 
 def build_checkerboard(width: int, height: int, checker: int = 12) -> Image.Image:
@@ -119,8 +141,12 @@ class AlphaPaintApp:
         src_dir: Path,
         out_dir: Path,
         recursive: bool,
+        save_format: str = SAVE_FORMAT_RGBA,
         files_override: list[Path] | None = None,
     ) -> None:
+        if save_format not in SAVE_FORMAT_CHOICES:
+            raise ValueError(f"save_format 须为 {SAVE_FORMAT_CHOICES}，收到: {save_format}")
+        self.save_format = save_format
         self.src_dir = src_dir.resolve()
         self.out_dir = out_dir.resolve()
         self.out_dir.mkdir(parents=True, exist_ok=True)
@@ -128,7 +154,7 @@ class AlphaPaintApp:
             raw_files = [p.expanduser().resolve() for p in files_override]
         else:
             raw_files = list_images(self.src_dir, recursive)
-        self.files = self._prioritize_unlabeled(raw_files)
+        self.files = self._prioritize_unmasked(raw_files)
         self.index = 0
 
         self.rgb: Image.Image | None = None
@@ -269,15 +295,22 @@ class AlphaPaintApp:
             rel = Path(path.name)
         return rel.with_suffix(".png")
 
-    def _prioritize_unlabeled(self, files: list[Path]) -> list[Path]:
-        """无对应输出 PNG 的条目排在前面，同组内保持原扫描顺序。"""
+    def mask_out_path(self, path: Path) -> Path:
+        return self.out_dir / self.rel_out_path(path)
+
+    def has_mask(self, path: Path) -> bool:
+        return self.mask_out_path(path).is_file()
+
+    def count_pending_masks(self) -> int:
+        return sum(1 for p in self.files if not self.has_mask(p))
+
+    def _prioritize_unmasked(self, files: list[Path]) -> list[Path]:
+        """输出目录尚无对应 mask PNG 的排在前面，同组内保持原扫描顺序。"""
         indexed = list(enumerate(files))
 
         def sort_key(item: tuple[int, Path]) -> tuple[int, int]:
             i, p = item
-            dest = self.out_dir / self.rel_out_path(p)
-            has_output = 1 if dest.is_file() else 0
-            return (has_output, i)
+            return (1 if self.has_mask(p) else 0, i)
 
         indexed.sort(key=sort_key)
         return [p for _, p in indexed]
@@ -289,7 +322,8 @@ class AlphaPaintApp:
         self.index = idx
         path = self.files[idx]
         rel = self.rel_out_path(path)
-        saved_path = self.out_dir / rel
+        saved_path = self.mask_out_path(path)
+        pending = self.count_pending_masks()
         self.current_path = path
         self.rgb = load_rgb_white_flatten(path)
         iw, ih = self.rgb.size
@@ -303,8 +337,10 @@ class AlphaPaintApp:
         self._cached_view_size = None
         self._cached_rgb_view = None
         self._cached_checker = None
+        fmt_hint = "RGBA半透明" if self.save_format == SAVE_FORMAT_RGBA else "灰度alpha(白=不透明)"
+        mask_tag = "已有mask" if self.has_mask(path) else "待画mask"
         self.status_var.set(
-            f"[{idx + 1}/{len(self.files)}] {path.name}  |  {iw}x{ih}  |  {load_hint}  |  输出: {saved_path}"
+            f"[{idx + 1}/{len(self.files)}] 待处理 {pending}  |  {mask_tag}  |  {path.name}  |  {iw}x{ih}  |  {load_hint}  |  保存:{fmt_hint}  |  {saved_path}"
         )
         self._is_modified = False
         self.request_redraw()
@@ -448,24 +484,22 @@ class AlphaPaintApp:
     def save_current(self) -> None:
         if self.rgb is None or self.alpha is None or self.current_path is None:
             return
-        rel = self.rel_out_path(self.current_path)
-        dest = self.out_dir / rel
+        dest = self.mask_out_path(self.current_path)
         alpha_copy = self.alpha.copy()
         rgb_ref = self.rgb
         self._is_modified = False
         threading.Thread(
             target=self._bg_save,
-            args=(dest, rgb_ref, alpha_copy),
+            args=(dest, rgb_ref, alpha_copy, self.save_format),
             daemon=True,
         ).start()
 
-    def _bg_save(self, dest: Path, rgb_img: Image.Image, alpha_array: np.ndarray) -> None:
+    def _bg_save(
+        self, dest: Path, rgb_img: Image.Image, alpha_array: np.ndarray, save_format: str
+    ) -> None:
         try:
             dest.parent.mkdir(parents=True, exist_ok=True)
-            rgb_copy = rgb_img.copy()
-            r, g, b = rgb_copy.split()
-            a_img = Image.fromarray(alpha_array)
-            out = Image.merge("RGBA", (r, g, b, a_img))
+            out = build_save_image(rgb_img, alpha_array, save_format)
             tmp_dest = dest.with_suffix(".png.tmp")
             out.save(tmp_dest, format="PNG", compress_level=9)
             tmp_dest.replace(dest)
@@ -483,15 +517,23 @@ def main() -> None:
         action="store_true",
         help="递归扫描子目录中的图片（仅当输入为目录时有效）",
     )
+    ap.add_argument(
+        "--save-format",
+        choices=SAVE_FORMAT_CHOICES,
+        default=SAVE_FORMAT_RGBA,
+        help="rgba: 半透明 RGBA PNG；alpha_bw: 黑白灰度 alpha（白=255 不透明，黑=0 透明）",
+    )
     args = ap.parse_args()
     src = args.input_path.expanduser().resolve()
     out = args.output_dir.expanduser().resolve()
     if src.is_file():
         if src.suffix.lower() not in IMAGE_EXTS:
             raise SystemExit(f"不支持的图片扩展名（支持 {', '.join(sorted(IMAGE_EXTS))}）: {src}")
-        app = AlphaPaintApp(src.parent, out, recursive=False, files_override=[src])
+        app = AlphaPaintApp(
+            src.parent, out, recursive=False, save_format=args.save_format, files_override=[src]
+        )
     elif src.is_dir():
-        app = AlphaPaintApp(src, out, args.recursive)
+        app = AlphaPaintApp(src, out, args.recursive, save_format=args.save_format)
     else:
         raise SystemExit(f"输入路径不存在: {src}")
     app.root.mainloop()

@@ -1,0 +1,12 @@
+resolutions = [512, 1024, 1536]
+
+enable_ar_bucket = true
+min_ar = 0.25
+max_ar = 4.0
+num_ar_buckets = 9
+
+caption_prefix = '@cha wen jian, '
+
+[[directory]]
+path = '/home/yuchuxi/Projects/Experiments/Dataset/ZhaoLora/datasets/chawenjian_washed'
+mask_path = '/home/yuchuxi/Projects/Experiments/Dataset/ZhaoLora/datasets/chawenjian_washed_mask'

@@ -1,12 +1,20 @@
 resolutions = [512, 1024, 1536]
 
 enable_ar_bucket = true
-min_ar = 0.5
-max_ar = 2.0
-num_ar_buckets = 9
+min_ar = 0.25
+max_ar = 4.0
+num_ar_buckets = 12
 
-caption_prefix = '@YSM, '
+caption_prefix = ''
 
 [[directory]]
-path = '/media/yuchuxi/WD1/BiliBili/YSM/afd_train'
-mask_path = '/media/yuchuxi/WD1/BiliBili/YSM/afd_mask'
+path = '/media/yuchuxi/WD1/BiliBili/YSM/datasets/afd_train'
+mask_path = '/media/yuchuxi/WD1/BiliBili/YSM/datasets/afd_mask'
+
+[[directory]]
+path = '/media/yuchuxi/WD1/BiliBili/YSM/datasets/select_cpd_train'
+mask_path = '/media/yuchuxi/WD1/BiliBili/YSM/datasets/select_cpd_mask'
+
+[[directory]]
+path = '/media/yuchuxi/WD1/BiliBili/YSM/datasets/discord_train'
+mask_path = '/media/yuchuxi/WD1/BiliBili/YSM/datasets/discord_mask'

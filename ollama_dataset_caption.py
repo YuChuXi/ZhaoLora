@@ -1,113 +1,56 @@
 #!/usr/bin/env python3
 """
-连接本地 Ollama，对数据集目录内所有图片调用多模态模型生成结构化艺术解析描述。
-不向 API 传 format/约束解码，仅靠提示词约定 JSON；默认开启 think，终端流式打印「思考」与正文；jsonl 仅保存解析后的 caption，不写入思考文本。
-
-依赖: 标准库；可选 Pillow（大图缩放、PNG/WebP 等带 alpha 时在黑色背景上压平后编码；未安装则原样发送）
-
-示例:
-  python ollama_dataset_caption.py datasets/foo --model gemma4:26b
-  python ollama_dataset_caption.py datasets/foo -r --host http://127.0.0.1:11434
-
-同名 .txt 参考: 若图片旁存在与 stem 相同的 .txt（如 foo.png 与 foo.txt），默认将其内容作为「标签参考」注入提示词；用 --no-tag-ref 关闭。
+对 afd/** 图片执行两步标注:
+1. 用 SmilingWolf/wd-swinv2-tagger-v3 和 fancyfeast/joytag 在 0.1 阈值下生成参考标签，写入 jsonl。
+2. 用本地 Ollama gemma4:26b 结合图片和参考标签生成最终 caption，写到图片旁的同名 .txt。
 """
 
 from __future__ import annotations
 
 import argparse
 import base64
+import csv
 import io
 import json
-import re
 import sys
-import urllib.error
+import time
 import urllib.request
+from collections import deque
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif"}
-
-VISION_PROMPT = f"""你的任务是使用结构化的自然语言尽可能完整的编码画面内容, 要求可以根据你的描述重建完整图像
-需要详细描述画面中的所有的可见信息. 
-输出格式参考:
-```json
-{{
-    "整体": "",
-    "画风": "",
-    "角色": [""],
-    "物品": [""],
-    "环境": "",
-    "主观感受": "",
-    "补充":""
-}}
-```
-
-不要中英混用.
-文字信息记录到对应的对象或补充中.
-如果tag中包含人物名称, 应该在角色中提及.
-不应在画面描述中出现 "根据标签" 等字样, 你的任务是编码画面内容而不是回答用户.
-水印被alpha遮蔽了, 可能表现为黑块, 忽略即可, 不应在画面描述中提及.
-物品中只不应出现附属于角色本身的物品, 附属于角色本身的物品应该在角色中提及.
-构图/布局等信息记录到整体中.
-"""
+WD14_REPO = "SmilingWolf/wd-swinv2-tagger-v3"
+JOYTAG_REPO = "fancyfeast/joytag"
+DEFAULT_THRESHOLD = 0.1
 
 
-def _escape_for_quoted_tags(tags: str) -> str:
-    return tags.replace("\\", "\\\\").replace('"', '\\"')
-
-
-def read_sidecar_tag_reference(image_path: Path) -> str | None:
-    """同目录下 `{stem}.txt` 存在且非空则返回全文（去首尾空白），否则 None。"""
-    txt_path = image_path.with_suffix(".txt")
-    if not txt_path.is_file():
-        return None
-    text = txt_path.read_text(encoding="utf-8", errors="replace").strip()
-    return text or None
-
-
-def build_vision_prompt(tag_reference: str | None) -> str:
-    """与 Untitled-1 一致：先任务与 JSON 模板，空行后为「该图已有的标签参考」+矛盾说明。"""
-    if tag_reference is None:
-        return VISION_PROMPT
-    esc = _escape_for_quoted_tags(tag_reference)
-    tail = (
-        f'该图已有的标签参考: "{esc}"\n'
-        "若标签与画面明显矛盾, 以画面为准。\n"
-    )
-    return VISION_PROMPT.rstrip() + "\n\n" + tail
+@dataclass(frozen=True)
+class ScoredTag:
+    name: str
+    score: float
+    source: str
+    category: str = "general"
 
 
 def list_images(root: Path, recursive: bool) -> list[Path]:
-    if recursive:
-        found: set[Path] = set()
-        for ext in IMAGE_EXTS:
-            found.update(root.rglob(f"*{ext}"))
-            found.update(root.rglob(f"*{ext.upper()}"))
-        return sorted(p.resolve() for p in found if p.is_file())
-    return sorted(
-        p.resolve()
-        for p in root.iterdir()
-        if p.is_file() and p.suffix.lower() in IMAGE_EXTS
-    )
+    paths = root.rglob("*") if recursive else root.iterdir()
+    return sorted(p.resolve() for p in paths if p.is_file() and p.suffix.lower() in IMAGE_EXTS)
 
 
-def _flatten_alpha_on_black(im: Any) -> Any:
-    """将 RGBA/LA/带透明的 P 等合成到纯黑 RGB 背景；其余转为 RGB。"""
+def flatten_alpha(im: Any, background: tuple[int, int, int]) -> Any:
     from PIL import Image  # type: ignore
 
-    if im.mode in ("RGBA", "RGBa", "LA"):
-        rgba = im.convert("RGBA")
-        bg = Image.new("RGB", rgba.size, (0, 0, 0))
-        bg.paste(rgba, mask=rgba.split()[3])
-        return bg
-    if im.mode == "P":
-        if im.info.get("transparency") is not None or "transparency" in im.info:
-            rgba = im.convert("RGBA")
-            bg = Image.new("RGB", rgba.size, (0, 0, 0))
-            bg.paste(rgba, mask=rgba.split()[3])
-            return bg
+    has_alpha = im.mode in ("RGBA", "RGBa", "LA") or (
+        im.mode == "P" and (im.info.get("transparency") is not None or "transparency" in im.info)
+    )
+    if not has_alpha:
         return im.convert("RGB")
-    return im.convert("RGB")
+    rgba = im.convert("RGBA")
+    bg = Image.new("RGB", rgba.size, background)
+    bg.paste(rgba, mask=rgba.split()[3])
+    return bg
 
 
 def image_to_b64(path: Path, max_edge: int | None) -> str:
@@ -122,8 +65,7 @@ def image_to_b64(path: Path, max_edge: int | None) -> str:
     except ImportError:
         return base64.b64encode(data).decode("ascii")
 
-    im = Image.open(io.BytesIO(data))
-    im = _flatten_alpha_on_black(im)
+    im = flatten_alpha(Image.open(io.BytesIO(data)), (0, 0, 0))
     if resize:
         w, h = im.size
         m = max(w, h)
@@ -135,29 +77,149 @@ def image_to_b64(path: Path, max_edge: int | None) -> str:
     im.save(buf, format="JPEG", quality=92)
     return base64.b64encode(buf.getvalue()).decode("ascii")
 
+def open_rgb_image(path: Path, *, alpha_on_white: bool) -> Any:
+    from PIL import Image, ImageOps  # type: ignore
 
-def parse_model_json(text: str) -> dict[str, Any]:
-    """解析模型输出：整段为 md 围栏、或前后有说明文字 + 围栏、或裸 JSON；必要时从大括号截取。"""
-    s = text.strip()
-    if s.startswith("```"):
-        lines = s.split("\n")
-        if lines and lines[0].strip().startswith("```"):
-            lines = lines[1:]
-        while lines and lines[-1].strip() in ("```", ""):
-            lines.pop()
-        s = "\n".join(lines).strip()
-    else:
-        m = re.search(r"```(?:json|JSON)?\s*\r?\n?(.*?)```", s, re.DOTALL)
-        if m:
-            s = m.group(1).strip()
-    try:
-        return json.loads(s)
-    except json.JSONDecodeError:
-        i = s.find("{")
-        j = s.rfind("}")
-        if i != -1 and j > i:
-            return json.loads(s[i : j + 1])
-        raise
+    im = Image.open(path)
+    im = ImageOps.exif_transpose(im)
+    return flatten_alpha(im, (255, 255, 255) if alpha_on_white else (0, 0, 0))
+
+
+def normalize_tag_name(name: str) -> str:
+    return name.strip().replace("_", " ")
+
+
+def pad_square_white(image: Any) -> Any:
+    from PIL import Image  # type: ignore
+
+    width, height = image.size
+    size = max(width, height)
+    padded = Image.new("RGB", (size, size), (255, 255, 255))
+    padded.paste(image, ((size - width) // 2, (size - height) // 2))
+    return padded
+
+
+class RepeatedOutputError(RuntimeError):
+    pass
+
+
+class LoopDetector:
+    def __init__(self, size: int = 100) -> None:
+        self.buf: deque[str] = deque(maxlen=size)
+        self.size = size
+
+    def feed(self, char: str) -> bool:
+        self.buf.extend(char)
+        if len(self.buf) < self.size:
+            return False
+        
+        s = "".join(self.buf)
+        return any(s[k:] == s[:-k] for k in range(1, self.size // 2 + 1))
+
+
+class WD14Tagger:
+    def __init__(self, repo_id: str = WD14_REPO) -> None:
+        import huggingface_hub  # type: ignore
+        import onnxruntime as ort  # type: ignore
+
+        model_dir = Path(
+            huggingface_hub.snapshot_download(
+                repo_id,
+                allow_patterns=["model.onnx", "selected_tags.csv"],
+            )
+        )
+        providers = ["CPUExecutionProvider"]
+        if "CUDAExecutionProvider" in ort.get_available_providers():
+            providers.insert(0, "CUDAExecutionProvider")
+        self.session = ort.InferenceSession(str(model_dir / "model.onnx"), providers=providers)
+        self.input_name = self.session.get_inputs()[0].name
+        input_shape = self.session.get_inputs()[0].shape
+        self.image_size = int(input_shape[1]) if isinstance(input_shape[1], int) else 448
+        self.tags = self._load_tags(model_dir / "selected_tags.csv")
+
+    @staticmethod
+    def _load_tags(csv_path: Path) -> list[tuple[str, str]]:
+        category_names = {"0": "general", "4": "character", "9": "rating"}
+        tags: list[tuple[str, str]] = []
+        with csv_path.open("r", encoding="utf-8", newline="") as f:
+            for row in csv.DictReader(f):
+                category = category_names.get(row["category"], row["category"])
+                tags.append((normalize_tag_name(row["name"]), category))
+        return tags
+
+    def predict(self, image_path: Path, threshold: float) -> list[ScoredTag]:
+        import numpy as np  # type: ignore
+        from PIL import Image  # type: ignore
+
+        image = pad_square_white(open_rgb_image(image_path, alpha_on_white=True))
+        if image.size != (self.image_size, self.image_size):
+            image = image.resize((self.image_size, self.image_size), Image.Resampling.BICUBIC)
+        array = np.asarray(image, dtype=np.float32)[:, :, ::-1]
+        batch = np.expand_dims(array, axis=0)
+        scores = self.session.run(None, {self.input_name: batch})[0][0]
+
+        result: list[ScoredTag] = []
+        for (name, category), score in zip(self.tags, scores, strict=False):
+            score_f = float(score)
+            if category in {"general", "character"} and score_f >= threshold:
+                result.append(ScoredTag(name=name, score=score_f, source="wd14", category=category))
+        return result
+
+
+class JoyTagger:
+    def __init__(self, repo_id: str = JOYTAG_REPO) -> None:
+        import huggingface_hub  # type: ignore
+        import torch  # type: ignore
+
+        model_dir = Path(huggingface_hub.snapshot_download(repo_id))
+        code_dir = Path(
+            huggingface_hub.snapshot_download(
+                repo_id,
+                repo_type="space",
+                allow_patterns=["Models.py"],
+            )
+        )
+        sys.path.insert(0, str(code_dir))
+        from Models import VisionModel  # type: ignore
+
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.model = VisionModel.load_model(str(model_dir)).to(self.device)
+        self.model.eval()
+        self.image_size = int(self.model.image_size)
+        self.tags = [
+            normalize_tag_name(line)
+            for line in (model_dir / "top_tags.txt").read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+
+    @staticmethod
+    def prepare_image(image: Any, target_size: int) -> Any:
+        import torchvision.transforms.functional as tvf  # type: ignore
+        from PIL import Image  # type: ignore
+
+        padded = pad_square_white(image)
+        if padded.size != (target_size, target_size):
+            padded = padded.resize((target_size, target_size), Image.Resampling.BICUBIC)
+        image_tensor = tvf.pil_to_tensor(padded) / 255.0
+        return tvf.normalize(
+            image_tensor,
+            mean=[0.48145466, 0.4578275, 0.40821073],
+            std=[0.26862954, 0.26130258, 0.27577711],
+        )
+
+    def predict(self, image_path: Path, threshold: float) -> list[ScoredTag]:
+        import torch  # type: ignore
+
+        image = open_rgb_image(image_path, alpha_on_white=True)
+        image_tensor = self.prepare_image(image, self.image_size).unsqueeze(0).to(self.device)
+        with torch.no_grad():
+            preds = self.model({"image": image_tensor})
+            scores = preds["tags"].sigmoid().detach().cpu()[0]
+        return [
+            ScoredTag(name=tag, score=float(score), source="joytag")
+            for tag, score in zip(self.tags, scores, strict=False)
+            if float(score) >= threshold
+        ]
 
 
 def chat_ollama_vision_stream(
@@ -167,11 +229,11 @@ def chat_ollama_vision_stream(
     prompt: str,
     *,
     num_ctx: int | None,
+    num_predict: int | None,
     timeout_sec: int,
     think: bool | str | None,
 ) -> str:
-    """返回 message.content 全文；思考过程仅流式打印到终端，不返回、不落盘。think 为 None 时不传 think 字段。
-    不传入 temperature 等采样参数，沿用 Ollama/模型默认。"""
+    """返回 message.content 全文；思考过程只在终端显示。think 为 None 时不传 think 字段。"""
     url = host.rstrip("/") + "/api/chat"
     body: dict[str, Any] = {
         "model": model,
@@ -184,8 +246,13 @@ def chat_ollama_vision_stream(
         ],
         "stream": True,
     }
+    options: dict[str, int] = {}
     if num_ctx is not None:
-        body["options"] = {"num_ctx": num_ctx}
+        options["num_ctx"] = num_ctx
+    if num_predict is not None and num_predict > 0:
+        options["num_predict"] = num_predict
+    if options:
+        body["options"] = options
     if think is not None:
         body["think"] = think
     req = urllib.request.Request(
@@ -195,9 +262,14 @@ def chat_ollama_vision_stream(
         headers={"Content-Type": "application/json"},
     )
     parts: list[str] = []
+    loop_detector = LoopDetector()
     in_thinking = False
-    with urllib.request.urlopen(req, timeout=timeout_sec) as resp:
+    start_time = time.monotonic()
+    socket_timeout = timeout_sec if timeout_sec > 0 else None
+    with urllib.request.urlopen(req, timeout=socket_timeout) as resp:
         for raw in resp:
+            if timeout_sec > 0 and time.monotonic() - start_time > timeout_sec:
+                raise TimeoutError(f"单张生成超过 {timeout_sec} 秒")
             line = raw.decode("utf-8", errors="replace").strip()
             if not line:
                 continue
@@ -213,11 +285,15 @@ def chat_ollama_vision_stream(
                 sys.stdout.flush()
             if c_chunk:
                 if in_thinking:
-                    sys.stdout.write("\n── 结构化输出（JSON） ──\n")
+                    sys.stdout.write("\n── 最终输出 ──\n")
                     in_thinking = False
                 parts.append(c_chunk)
                 sys.stdout.write(c_chunk)
                 sys.stdout.flush()
+                if loop_detector.feed(c_chunk):
+                    sys.stdout.write("\n")
+                    sys.stdout.flush()
+                    raise RepeatedOutputError("检测到最近 100 字内输出循环")
             if obj.get("error"):
                 raise RuntimeError(str(obj["error"]))
             if obj.get("done"):
@@ -227,80 +303,199 @@ def chat_ollama_vision_stream(
     return "".join(parts)
 
 
-def load_done_paths(jsonl_path: Path) -> set[str]:
+def merge_tags(tags: list[ScoredTag]) -> list[dict[str, Any]]:
+    merged: dict[str, dict[str, Any]] = {}
+    for item in tags:
+        tag = merged.setdefault(
+            item.name,
+            {"name": item.name, "score": item.score, "scores": {}, "categories": set()},
+        )
+        tag["score"] = max(float(tag["score"]), item.score)
+        tag["scores"][item.source] = max(float(tag["scores"].get(item.source, 0.0)), item.score)
+        tag["categories"].add(item.category)
+    return sorted(
+        [
+            {
+                "name": tag["name"],
+                "score": round(float(tag["score"]), 6),
+                "scores": {k: round(float(v), 6) for k, v in sorted(tag["scores"].items())},
+                "categories": sorted(tag["categories"]),
+            }
+            for tag in merged.values()
+        ],
+        key=lambda x: (-float(x["score"]), str(x["name"])),
+    )
+
+
+def load_reference_map(jsonl_path: Path) -> dict[str, dict[str, Any]]:
     if not jsonl_path.is_file():
-        return set()
-    done: set[str] = set()
+        return {}
+    records: dict[str, dict[str, Any]] = {}
     for line in jsonl_path.read_text(encoding="utf-8").splitlines():
         line = line.strip()
         if not line:
             continue
         rec = json.loads(line)
-        p = rec.get("path")
-        if isinstance(p, str):
-            done.add(p)
-    return done
+        path = rec.get("path")
+        if isinstance(path, str):
+            records[path] = rec
+    return records
 
 
-def main(argv: list[str] | None = None) -> None:
-    ap = argparse.ArgumentParser(description="Ollama 数据集图片结构化描述（提示词约定 JSON，无 format 约束）")
-    ap.add_argument("dataset_dir", type=Path, help="数据集根目录")
-    ap.add_argument("--model", default="gemma4:26b", help="Ollama 模型名（须支持 vision）")
-    ap.add_argument("--host", default="http://127.0.0.1:11434", help="Ollama 服务地址")
-    ap.add_argument(
-        "-o",
-        "--out",
-        type=Path,
-        default=None,
-        help="输出 jsonl（默认:数据集目录下 ollama_captions.jsonl）",
-    )
-    ap.add_argument("-r", "--recursive", action="store_true", help="递归子目录")
-    ap.add_argument("--max-edge", type=int, default=0, help="最长边超过则缩放再编码（0 关闭）")
-    ap.add_argument("--num-ctx", type=int, default=None, help="可选：仅设置 context 长度 num_ctx（不改采样默认值）")
-    ap.add_argument("--timeout", type=int, default=900, help="单张请求超时秒数")
-    ap.add_argument("--resume", action="store_true", help="跳过 out jsonl 里已有 path 的图片")
-    ap.add_argument(
-        "--continue-on-error",
-        action="store_true",
-        help="单张失败时打印错误并继续下一张（默认：首张致命错误则退出）",
-    )
-    ap.add_argument(
-        "--no-think",
-        action="store_true",
-        help="关闭推理轨迹（请求体 think=false；不支持思考的模型可忽略）",
-    )
-    ap.add_argument(
-        "--think-level",
-        choices=("low", "medium", "high"),
-        default=None,
-        help="GPT-OSS 等：思考深度；指定时覆盖默认的 think=true",
-    )
-    ap.add_argument(
-        "--no-tag-ref",
-        action="store_true",
-        help="不读取同目录同名 .txt，不在提示词中注入标签参考",
-    )
-    args = ap.parse_args(argv)
+def write_reference_record(jsonl_path: Path, record: dict[str, Any]) -> None:
+    jsonl_path.parent.mkdir(parents=True, exist_ok=True)
+    with jsonl_path.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(record, ensure_ascii=False) + "\n")
 
-    root = args.dataset_dir.expanduser().resolve()
-    if not root.is_dir():
-        print(f"目录不存在: {root}", file=sys.stderr)
-        sys.exit(1)
 
-    out_path = args.out
-    if out_path is None:
-        out_path = root / "ollama_captions.jsonl"
-    else:
-        out_path = out_path.expanduser().resolve()
+def build_reference_record(
+    root: Path,
+    image_path: Path,
+    wd14: WD14Tagger,
+    joytag: JoyTagger,
+    threshold: float,
+) -> dict[str, Any]:
+    rel = image_path.relative_to(root) if image_path.is_relative_to(root) else image_path.name
+    tags = merge_tags(wd14.predict(image_path, threshold) + joytag.predict(image_path, threshold))
+    return {
+        "path": str(image_path),
+        "rel_path": str(rel).replace("\\", "/"),
+        "threshold": threshold,
+        "models": {"wd14": WD14_REPO, "joytag": JOYTAG_REPO},
+        "tags": tags,
+    }
 
-    files = list_images(root, args.recursive)
-    if not files:
-        print("未找到图片", file=sys.stderr)
-        sys.exit(1)
 
-    done = load_done_paths(out_path) if args.resume else set()
+def compact_reference_for_prompt(record: dict[str, Any], limit: int) -> str:
+    tags = record.get("tags", [])
+    if not isinstance(tags, list):
+        tags = []
+    names = [
+        tag["name"]
+        for tag in tags[: max(0, limit)]
+        if isinstance(tag, dict) and isinstance(tag.get("name"), str)
+    ]
+    character_names = [
+        tag["name"]
+        for tag in tags
+        if isinstance(tag, dict)
+        and isinstance(tag.get("name"), str)
+        and "character" in tag.get("categories", [])
+    ]
+    if not names:
+        return "No reference tags above the threshold."
+    parts = ["All tag candidates: " + ", ".join(names)]
+    if character_names:
+        parts.insert(0, "Character tag candidates: " + ", ".join(character_names))
+    return "\n".join(parts)
+
+
+def build_caption_prompt(reference_record: dict[str, Any], tag_limit: int) -> str:
+    reference = compact_reference_for_prompt(reference_record, tag_limit)
+    return f"""You are captioning images for a Danbooru-style dataset. Training captions must be long and exhaustive, not short summaries.
+
+Use the reference tag list below as the main tag candidate list. It is merged from WD14/JoyTag and sorted by confidence.
+Before writing JSON, silently audit the candidates against the image:
+- Do not blindly copy the reference list.
+- The "tags" field is the primary output. It must be a long, dense Danbooru/ComfyUI-style tag list. Brevity is wrong: under-tagging hurts training.
+- Length targets (after audit, keep only verified tags): usually at least 35 tags; 50-90+ tags for busy full-body or card/UI images; 20-35 tags only for tight single-part crops. If your tag list feels short, re-scan hair, face, eyes, skin, every clothing layer, accessories, hands, legs, feet, background, lighting, framing, and composition before finishing.
+- Work through this checklist and add every verified item: subject count; character; rating-safe traits; hair (length, style, color, bangs, accessories); face (expression, mouth, blush, tears); eyes (color, shape, pupils, direction); body (pose, limbs, hands, legs, feet, skin); clothing (each garment, color, state open/closed, layers); accessories; held items; background type and objects; shot type; camera angle; crop; composition; borders/UI if present.
+- Keep every candidate tag that is visibly present or strongly plausible from the image, including small clothing, expression, pose, accessory, body-part, background, camera angle, crop, and composition tags.
+- Remove candidate tags that are contradicted by the image, mutually exclusive with a more accurate visible tag, or only come from model noise.
+- Add obvious missing Danbooru tags for count, subject type, face, eyes, hair, clothing, accessories, pose, hands, legs, background, view angle, framing, and image composition.
+- Prioritize non-foreground content: background type and elements, props, scenery, borders, frames, UI overlays, and anything outside the main subject silhouette.
+- Prioritize character body language: full-body or partial pose, limb position, hand/arm/leg/feet gestures, head tilt, gaze direction, action verbs (sitting, running, reaching, etc.), and interaction with objects or other characters.
+- Prioritize composition and framing: shot type (close-up, bust, cowboy shot, full body, etc.), camera angle (from above, from below, dutch angle), subject placement (centered, off-center), crop boundaries, depth of field, and negative space.
+- If most of the frame is large blocky or pixel-like shapes with no clear face or full character, treat it as a likely body-part close-up (for example hand, foot, torso, thigh) and tag the visible part, crop, and angle accordingly; say so in "details" when helpful.
+- If you cannot confidently identify what the image depicts (subject, scene, or crop intent), do not guess; record that uncertainty instead of inventing tags.
+- Prefer expressing visual facts as tags when a Danbooru-style tag exists. Do not compress multiple visible facts into one vague tag; split them.
+- Merge tags with overlapping semantics into a single precise compound tag. For example, instead of "single sock", "white socks", "white over-knee socks" as three separate tags, use "single white over-knee sock" as one tag. Combine count/quantity, color, type, and position into one compound tag rather than listing them separately.
+- Tags support natural-language qualifiers such as "left", "right", "only", "single", "mismatched", and "asymmetrical" to precisely describe asymmetric clothing or body parts (e.g., "left white glove", "right bare leg", "single white over-knee sock on left leg", "mismatched legwear").
+- "details" must add substantial natural-language coverage tags cannot carry: spatial layout, relative positions, what each limb is doing, how the subject sits in the frame, background depth, lighting mood, and material/surface notes.
+- Put confirmed character tags first, then important subject tags, then the remaining verified detail tags.
+- Ignore watermarks, artist signatures, copyright notices, website URLs, social media handles, and any other overlaid text or logo that is not part of the scene content. Do not tag or describe these artifacts; treat them as non-content noise.
+
+Reference tags:
+{reference}
+
+Output valid JSON only. Do not output Markdown, explanations, bullets, or confidence scores.
+
+Required JSON format:
+{{
+  "tags": "long dense danbooru tag list, typically dozens of comma-separated tags, lowercase, spaces instead of underscores",
+  "details": "Several complete English sentences (usually 3-6) covering background, pose, limb action, composition, framing, objects, materials, lighting, and spatial relationships that tags do not fully capture.",
+  "texts": "Readable visible text only, written with quotation marks, for example: Hand-written Japanese text \"う…んち\" floats vertically on the right."
+}}
+
+JSON field rules:
+"tags": long, dense, final Danbooru tags in English only—aim for high tag count, not a minimal set. Use Danbooru-style English or romanized tags only; do not output Chinese, Japanese, or filename text in this field. Include verified tags across hair, face, eyes, skin, every clothing piece and color, accessories, pose, each visible limb, hands, legs, feet, gaze, action, background, props, lighting, shot type, angle, crop, and composition; do not move taggable facts into "details". If any character tag candidate is correct and can be expressed as an English/romanized Danbooru tag, put the confirmed character tag or tags at the very beginning. Do not use player IDs or visible text as character tags. Never output a one-line tag soup under ~25 tags when the image clearly shows a character and scene.
+"details": write multiple full English sentences (minimum 3 when the image is not ambiguous; often 4-6). Describe background and non-subject areas, exact pose and what each arm/leg/hand/foot is doing, head angle and gaze, framing and where the subject sits in the canvas, notable objects and materials, lighting, and body-part close-up context when applicable. Only use an empty string when almost nothing is identifiable.
+"texts": readable text in the image only. Use an empty string if there is no readable text.
+
+Ignore black alpha-mask, watermark, artist signature, copyright notice, or any other overlaid non-content artifacts.
+"""
+
+
+def clean_caption_text(text: str) -> str:
+    raw = text.strip()
+    if raw.startswith("```"):
+        raw = "\n".join(line for line in raw.splitlines()[1:] if line.strip() != "```").strip()
+    start, end = raw.find("{"), raw.rfind("}")
+    if start == -1 or end <= start:
+        raise ValueError(f"模型输出不是 JSON: {raw[:300]!r}")
+    obj = json.loads(raw[start : end + 1])
+    if not isinstance(obj, dict):
+        raise ValueError("模型输出 JSON 顶层必须是对象")
+
+    tags = str(obj.get("tags") or "").strip()
+    details = str(obj.get("details") or "").strip()
+    texts = str(obj.get("texts") or "").strip()
+    return f"{tags}\n{details}\n{texts}".rstrip() + "\n"
+
+
+def generate_reference_jsonl(
+    root: Path,
+    files: list[Path],
+    jsonl_path: Path,
+    threshold: float,
+    overwrite: bool,
+    continue_on_error: bool,
+) -> dict[str, dict[str, Any]]:
+    if overwrite and jsonl_path.exists():
+        jsonl_path.unlink()
+    records = load_reference_map(jsonl_path)
+    print(f"加载 WD14: {WD14_REPO}", flush=True)
+    wd14 = WD14Tagger()
+    print(f"加载 JoyTag: {JOYTAG_REPO}", flush=True)
+    joytag = JoyTagger()
+
+    for index, image_path in enumerate(files, start=1):
+        key = str(image_path)
+        rel = image_path.relative_to(root) if image_path.is_relative_to(root) else image_path.name
+        if key in records:
+            print(f"[tags {index}/{len(files)}] 跳过: {rel}", flush=True)
+            continue
+        print(f"[tags {index}/{len(files)}] {rel}", flush=True)
+        try:
+            record = build_reference_record(root, image_path, wd14, joytag, threshold)
+        except Exception as exc:
+            print(f"参考标签失败: {rel}: {exc}", file=sys.stderr)
+            if continue_on_error:
+                continue
+            raise
+        write_reference_record(jsonl_path, record)
+        records[key] = record
+        print(f"  → {len(record['tags'])} tags", flush=True)
+    return records
+
+
+def generate_caption_txt(
+    root: Path,
+    files: list[Path],
+    references: dict[str, dict[str, Any]],
+    args: argparse.Namespace,
+) -> None:
     max_edge = args.max_edge if args.max_edge > 0 else None
-
     if args.think_level:
         think_param: bool | str | None = args.think_level
     elif args.no_think:
@@ -308,25 +503,23 @@ def main(argv: list[str] | None = None) -> None:
     else:
         think_param = True
 
-    print(f"模型: {args.model}  |  图片数: {len(files)}  |  输出: {out_path}", flush=True)
-    print(f"思考 think: {think_param}", flush=True)
-    print("---", flush=True)
-
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    me = max_edge
-
-    for i, path in enumerate(files, start=1):
-        key = str(path)
-        if key in done:
-            print(f"[{i}/{len(files)}] 跳过(已存在): {path.name}", flush=True)
+    print(f"模型: {args.model}  |  思考 think: {think_param}", flush=True)
+    for index, image_path in enumerate(files, start=1):
+        rel = image_path.relative_to(root) if image_path.is_relative_to(root) else image_path.name
+        txt_path = image_path.with_suffix(".txt")
+        if txt_path.exists() and not args.overwrite_txt:
+            print(f"[caption {index}/{len(files)}] 跳过(已存在): {rel}", flush=True)
             continue
-        rel = path.relative_to(root) if path.is_relative_to(root) else path.name
-        print(f"\n[{i}/{len(files)}] {rel}", flush=True)
-        tag_ref = None if args.no_tag_ref else read_sidecar_tag_reference(path)
-        if tag_ref:
-            print(f"  (已注入标签参考: {path.with_suffix('.txt').name})", flush=True)
-        prompt = build_vision_prompt(tag_ref)
-        b64 = image_to_b64(path, me)
+        reference = references.get(str(image_path))
+        if reference is None:
+            message = f"缺少参考标签: {rel}"
+            if args.continue_on_error:
+                print(message, file=sys.stderr)
+                continue
+            raise RuntimeError(message)
+        print(f"\n[caption {index}/{len(files)}] {rel}", flush=True)
+        prompt = build_caption_prompt(reference, args.prompt_tag_limit)
+        b64 = image_to_b64(image_path, max_edge)
         try:
             raw = chat_ollama_vision_stream(
                 args.host,
@@ -334,40 +527,74 @@ def main(argv: list[str] | None = None) -> None:
                 b64,
                 prompt,
                 num_ctx=args.num_ctx,
+                num_predict=args.num_predict,
                 timeout_sec=args.timeout,
                 think=think_param,
             )
-        except urllib.error.HTTPError as e:
-            err_body = e.read().decode("utf-8", errors="replace")
-            print(f"HTTP {e.code}: {err_body}", file=sys.stderr)
+            caption_text = clean_caption_text(raw)
+        except Exception as exc:
+            print(f"处理失败: {rel}: {exc}", file=sys.stderr)
             if args.continue_on_error:
                 continue
-            sys.exit(e.code)
-        except urllib.error.URLError as e:
-            print(f"连接失败: {e.reason}", file=sys.stderr)
-            sys.exit(1)
-        except RuntimeError as e:
-            print(f"Ollama: {e}", file=sys.stderr)
-            if args.continue_on_error:
-                continue
-            sys.exit(1)
+            raise
+        txt_path.write_text(caption_text, encoding="utf-8")
+        print(f"  → 已写入 {txt_path.name}", flush=True)
 
-        try:
-            parsed = parse_model_json(raw)
-        except json.JSONDecodeError as e:
-            print(f"JSON 解析失败: {e}\n原始输出前 500 字:\n{raw[:500]!r}", file=sys.stderr)
-            if args.continue_on_error:
-                continue
-            sys.exit(1)
-        record: dict[str, Any] = {
-            "path": key,
-            "rel_path": str(rel).replace("\\", "/"),
-            "model": args.model,
-            "caption": parsed,
-        }
-        with out_path.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(record, ensure_ascii=False) + "\n")
-        print(f"  → 已写入 jsonl", flush=True)
+
+def main(argv: list[str] | None = None) -> None:
+    ap = argparse.ArgumentParser(description="用 WD14/JoyTag + Ollama 为 afd 图片生成同名 txt 标注")
+    ap.add_argument("dataset_dir", nargs="?", type=Path, default=Path("afd"), help="数据集根目录，默认 afd")
+    ap.add_argument("--model", default="gemma4:26b", help="Ollama 视觉模型名")
+    ap.add_argument("--host", default="http://127.0.0.1:11434", help="Ollama 服务地址")
+    ap.add_argument("--tag-jsonl", type=Path, default=None, help="参考标签 jsonl，默认数据集目录 wd14_joytag_tags.jsonl")
+    ap.add_argument("--steps", choices=("all", "tags", "captions"), default="all", help="执行步骤")
+    ap.add_argument("--threshold", type=float, default=DEFAULT_THRESHOLD, help="WD14/JoyTag 标签阈值")
+    ap.add_argument("--recursive", dest="recursive", action="store_true", default=True, help="递归扫描，默认开启")
+    ap.add_argument("--no-recursive", dest="recursive", action="store_false", help="只扫描根目录")
+    ap.add_argument("--max-edge", type=int, default=0, help="Ollama 输入最长边缩放，0 为不缩放")
+    ap.add_argument("--num-ctx", type=int, default=None, help="Ollama num_ctx")
+    ap.add_argument("--num-predict", type=int, default=8192, help="Ollama 最大生成 token 数，0 为不限制")
+    ap.add_argument("--timeout", type=int, default=60, help="单张 Ollama 请求超时秒数")
+    ap.add_argument("--prompt-tag-limit", type=int, default=300, help="传给 Ollama 的参考标签数量上限")
+    ap.add_argument("--overwrite-tags", action="store_true", help="重新生成参考标签 jsonl")
+    ap.add_argument("--overwrite-txt", action="store_true", help="覆盖图片旁已存在的同名 txt")
+    ap.add_argument("--continue-on-error", action="store_true", help="单张失败时继续下一张")
+    ap.add_argument("--no-think", action="store_true", help="请求体 think=false")
+    ap.add_argument("--think-level", choices=("low", "medium", "high"), default=None, help="指定思考深度")
+    args = ap.parse_args(argv)
+
+    root = args.dataset_dir.expanduser().resolve()
+    if not root.is_dir():
+        print(f"目录不存在: {root}", file=sys.stderr)
+        sys.exit(1)
+
+    tag_jsonl = args.tag_jsonl
+    if tag_jsonl is None:
+        tag_jsonl = root / "wd14_joytag_tags.jsonl"
+    else:
+        tag_jsonl = tag_jsonl.expanduser().resolve()
+
+    files = list_images(root, args.recursive)
+    if not files:
+        print("未找到图片", file=sys.stderr)
+        sys.exit(1)
+
+    print(f"图片数: {len(files)}  |  参考标签: {tag_jsonl}", flush=True)
+    print("---", flush=True)
+
+    references = load_reference_map(tag_jsonl)
+    if args.steps in {"all", "tags"}:
+        references = generate_reference_jsonl(
+            root,
+            files,
+            tag_jsonl,
+            args.threshold,
+            args.overwrite_tags,
+            args.continue_on_error,
+        )
+    if args.steps in {"all", "captions"}:
+        references = load_reference_map(tag_jsonl)
+        generate_caption_txt(root, files, references, args)
 
 
 if __name__ == "__main__":
