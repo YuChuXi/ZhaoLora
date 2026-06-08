@@ -20,6 +20,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import numpy as np  # type: ignore
+from PIL import Image, ImageOps  # type: ignore
+
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif"}
 WD14_REPO = "SmilingWolf/wd-swinv2-tagger-v3"
 JOYTAG_REPO = "fancyfeast/joytag"
@@ -40,8 +43,6 @@ def list_images(root: Path, recursive: bool) -> list[Path]:
 
 
 def flatten_alpha(im: Any, background: tuple[int, int, int]) -> Any:
-    from PIL import Image  # type: ignore
-
     has_alpha = im.mode in ("RGBA", "RGBa", "LA") or (
         im.mode == "P" and (im.info.get("transparency") is not None or "transparency" in im.info)
     )
@@ -60,10 +61,6 @@ def image_to_b64(path: Path, max_edge: int | None) -> str:
     maybe_alpha = suf in (".png", ".webp", ".gif", ".bmp")
     if not resize and not maybe_alpha:
         return base64.b64encode(data).decode("ascii")
-    try:
-        from PIL import Image  # type: ignore
-    except ImportError:
-        return base64.b64encode(data).decode("ascii")
 
     im = flatten_alpha(Image.open(io.BytesIO(data)), (0, 0, 0))
     if resize:
@@ -77,12 +74,48 @@ def image_to_b64(path: Path, max_edge: int | None) -> str:
     im.save(buf, format="JPEG", quality=92)
     return base64.b64encode(buf.getvalue()).decode("ascii")
 
-def open_rgb_image(path: Path, *, alpha_on_white: bool) -> Any:
-    from PIL import Image, ImageOps  # type: ignore
 
+def find_mask_for_image(image_path: Path, mask_dir: Path) -> Path | None:
+    """在 mask_dir 中寻找与 image_path 同主文件名的 mask 文件。"""
+    stem = image_path.stem
+    for ext in IMAGE_EXTS:
+        candidate = mask_dir / f"{stem}{ext}"
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def image_to_b64_with_mask(path: Path, max_edge: int | None, mask_path: Path) -> str:
+    """将图片编码为 base64 PNG，先乘上 mask（遮罩区域变黑）。mask 必须与图片同尺寸。"""
+    im = open_rgb_image(path, alpha_on_white=False, mask_path=mask_path)
+
+    if max_edge is not None and max_edge > 0:
+        w, h = im.size
+        m = max(w, h)
+        if m > max_edge:
+            s = max_edge / m
+            nw, nh = max(1, int(w * s)), max(1, int(h * s))
+            im = im.resize((nw, nh), Image.Resampling.LANCZOS)
+
+    buf = io.BytesIO()
+    im.save(buf, format="PNG")
+    return base64.b64encode(buf.getvalue()).decode("ascii")
+
+
+def open_rgb_image(path: Path, *, alpha_on_white: bool, mask_path: Path | None = None) -> Any:
     im = Image.open(path)
     im = ImageOps.exif_transpose(im)
-    return flatten_alpha(im, (255, 255, 255) if alpha_on_white else (0, 0, 0))
+    im = flatten_alpha(im, (255, 255, 255) if alpha_on_white else (0, 0, 0))
+    if mask_path is not None:
+        mask_im = Image.open(mask_path).convert("L")
+        if mask_im.size != im.size:
+            raise ValueError(f"mask 尺寸 {mask_im.size} 与图片尺寸 {im.size} 不匹配: {mask_path}")
+        mask_array = np.asarray(mask_im, dtype=np.float32) / 255.0
+        im_array = np.asarray(im, dtype=np.float32)
+        for c in range(3):
+            im_array[:, :, c] *= mask_array
+        im = Image.fromarray(np.clip(im_array, 0, 255).astype(np.uint8))
+    return im
 
 
 def normalize_tag_name(name: str) -> str:
@@ -90,8 +123,6 @@ def normalize_tag_name(name: str) -> str:
 
 
 def pad_square_white(image: Any) -> Any:
-    from PIL import Image  # type: ignore
-
     width, height = image.size
     size = max(width, height)
     padded = Image.new("RGB", (size, size), (255, 255, 255))
@@ -147,11 +178,8 @@ class WD14Tagger:
                 tags.append((normalize_tag_name(row["name"]), category))
         return tags
 
-    def predict(self, image_path: Path, threshold: float) -> list[ScoredTag]:
-        import numpy as np  # type: ignore
-        from PIL import Image  # type: ignore
-
-        image = pad_square_white(open_rgb_image(image_path, alpha_on_white=True))
+    def predict(self, image_path: Path, threshold: float, mask_path: Path | None = None) -> list[ScoredTag]:
+        image = pad_square_white(open_rgb_image(image_path, alpha_on_white=True, mask_path=mask_path))
         if image.size != (self.image_size, self.image_size):
             image = image.resize((self.image_size, self.image_size), Image.Resampling.BICUBIC)
         array = np.asarray(image, dtype=np.float32)[:, :, ::-1]
@@ -195,7 +223,6 @@ class JoyTagger:
     @staticmethod
     def prepare_image(image: Any, target_size: int) -> Any:
         import torchvision.transforms.functional as tvf  # type: ignore
-        from PIL import Image  # type: ignore
 
         padded = pad_square_white(image)
         if padded.size != (target_size, target_size):
@@ -207,10 +234,10 @@ class JoyTagger:
             std=[0.26862954, 0.26130258, 0.27577711],
         )
 
-    def predict(self, image_path: Path, threshold: float) -> list[ScoredTag]:
+    def predict(self, image_path: Path, threshold: float, mask_path: Path | None = None) -> list[ScoredTag]:
         import torch  # type: ignore
 
-        image = open_rgb_image(image_path, alpha_on_white=True)
+        image = open_rgb_image(image_path, alpha_on_white=True, mask_path=mask_path)
         image_tensor = self.prepare_image(image, self.image_size).unsqueeze(0).to(self.device)
         with torch.no_grad():
             preds = self.model({"image": image_tensor})
@@ -354,9 +381,10 @@ def build_reference_record(
     wd14: WD14Tagger,
     joytag: JoyTagger,
     threshold: float,
+    mask_path: Path | None = None,
 ) -> dict[str, Any]:
     rel = image_path.relative_to(root) if image_path.is_relative_to(root) else image_path.name
-    tags = merge_tags(wd14.predict(image_path, threshold) + joytag.predict(image_path, threshold))
+    tags = merge_tags(wd14.predict(image_path, threshold, mask_path=mask_path) + joytag.predict(image_path, threshold, mask_path=mask_path))
     return {
         "path": str(image_path),
         "rel_path": str(rel).replace("\\", "/"),
@@ -423,20 +451,21 @@ Output valid JSON only. Do not output Markdown, explanations, bullets, or confid
 Required JSON format:
 {{
   "tags": "long dense danbooru tag list, typically dozens of comma-separated tags, lowercase, spaces instead of underscores",
-  "details": "Several complete English sentences (usually 3-6) covering background, pose, limb action, composition, framing, objects, materials, lighting, and spatial relationships that tags do not fully capture.",
+  "details": ["Character stands in a grassy field", "Background shows mountains and cloudy sky", "Warm sunset lighting from the left"],
   "texts": "Readable visible text only, written with quotation marks, for example: Hand-written Japanese text \"う…んち\" floats vertically on the right."
 }}
 
 JSON field rules:
 "tags": long, dense, final Danbooru tags in English only—aim for high tag count, not a minimal set. Use Danbooru-style English or romanized tags only; do not output Chinese, Japanese, or filename text in this field. Include verified tags across hair, face, eyes, skin, every clothing piece and color, accessories, pose, each visible limb, hands, legs, feet, gaze, action, background, props, lighting, shot type, angle, crop, and composition; do not move taggable facts into "details". If any character tag candidate is correct and can be expressed as an English/romanized Danbooru tag, put the confirmed character tag or tags at the very beginning. Do not use player IDs or visible text as character tags. Never output a one-line tag soup under ~25 tags when the image clearly shows a character and scene.
-"details": write multiple full English sentences (minimum 3 when the image is not ambiguous; often 4-6). Describe background and non-subject areas, exact pose and what each arm/leg/hand/foot is doing, head angle and gaze, framing and where the subject sits in the canvas, notable objects and materials, lighting, and body-part close-up context when applicable. Only use an empty string when almost nothing is identifiable.
+"details": an array of complete English sentences (minimum 3 when the image is not ambiguous; often 4-6). Each element is one self-contained sentence. Do NOT end sentences with periods, and do NOT use commas inside any sentence — each string must contain only words separated by spaces, no punctuation. Describe background and non-subject areas, exact pose and what each arm/leg/hand/foot is doing, head angle and gaze, framing and where the subject sits in the canvas, notable objects and materials, lighting, and body-part close-up context when applicable. Use an empty array [] only when almost nothing is identifiable.
 "texts": readable text in the image only. Use an empty string if there is no readable text.
 
 Ignore black alpha-mask, watermark, artist signature, copyright notice, or any other overlaid non-content artifacts.
 """
 
 
-def clean_caption_text(text: str) -> str:
+def clean_caption_text(text: str) -> tuple[str, list[str], str]:
+    """返回 (tags_str, details_list, texts_str)。details 列表中每个句子不含逗号或句号，否则抛出 ValueError。"""
     raw = text.strip()
     if raw.startswith("```"):
         raw = "\n".join(line for line in raw.splitlines()[1:] if line.strip() != "```").strip()
@@ -448,9 +477,36 @@ def clean_caption_text(text: str) -> str:
         raise ValueError("模型输出 JSON 顶层必须是对象")
 
     tags = str(obj.get("tags") or "").strip()
-    details = str(obj.get("details") or "").strip()
     texts = str(obj.get("texts") or "").strip()
-    return f"{tags}\n{details}\n{texts}".rstrip() + "\n"
+
+    raw_details = obj.get("details")
+    if raw_details is None:
+        details_list: list[str] = []
+    elif isinstance(raw_details, list):
+        details_list = [str(item).strip() for item in raw_details if str(item).strip()]
+    else:
+        raise ValueError(f"details 字段类型错误，期望 list，实际: {type(raw_details).__name__}")
+
+    # 验证: 每个句子内部不得包含逗号或句号
+    for i, sentence in enumerate(details_list):
+        if "," in sentence or "." in sentence:
+            raise ValueError(f"details[{i}] 包含逗号或句号: {sentence!r}")
+
+    return tags, details_list, texts
+
+
+def format_caption_txt(tags: str, details_list: list[str], texts: str) -> str:
+    """将标注结果格式化为 .txt 文件内容。details 用 ', ' 连接。"""
+    details_line = ", ".join(details_list) if details_list else ""
+    parts = [tags, details_line, texts]
+    return "\n".join(parts).rstrip() + "\n"
+
+
+def write_caption_jsonl(jsonl_path: Path, record: dict[str, Any]) -> None:
+    """追加一条标注记录到 jsonl 文件。"""
+    jsonl_path.parent.mkdir(parents=True, exist_ok=True)
+    with jsonl_path.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(record, ensure_ascii=False) + "\n")
 
 
 def generate_reference_jsonl(
@@ -460,6 +516,7 @@ def generate_reference_jsonl(
     threshold: float,
     overwrite: bool,
     continue_on_error: bool,
+    mask_dir: Path | None = None,
 ) -> dict[str, dict[str, Any]]:
     if overwrite and jsonl_path.exists():
         jsonl_path.unlink()
@@ -476,8 +533,13 @@ def generate_reference_jsonl(
             print(f"[tags {index}/{len(files)}] 跳过: {rel}", flush=True)
             continue
         print(f"[tags {index}/{len(files)}] {rel}", flush=True)
+        mask_path: Path | None = None
+        if mask_dir:
+            mask_path = find_mask_for_image(image_path, mask_dir)
+            if mask_path is None:
+                raise FileNotFoundError(f"未找到 mask: {image_path.stem}.* 在 {mask_dir}")
         try:
-            record = build_reference_record(root, image_path, wd14, joytag, threshold)
+            record = build_reference_record(root, image_path, wd14, joytag, threshold, mask_path=mask_path)
         except Exception as exc:
             print(f"参考标签失败: {rel}: {exc}", file=sys.stderr)
             if continue_on_error:
@@ -503,23 +565,55 @@ def generate_caption_txt(
     else:
         think_param = True
 
-    print(f"模型: {args.model}  |  思考 think: {think_param}", flush=True)
-    for index, image_path in enumerate(files, start=1):
+    mask_dir = args.mask_dir.expanduser().resolve() if args.mask_dir else None
+    if mask_dir and not mask_dir.is_dir():
+        print(f"mask 目录不存在: {mask_dir}", file=sys.stderr)
+        sys.exit(1)
+
+    jsonl_path = root / "captions.jsonl"
+    max_retries = 3
+    total = len(files)
+    retry_count: dict[str, int] = {}
+    queue: deque[Path] = deque(files)
+    processed = 0
+    skipped = 0
+
+    if args.overwrite_txt and jsonl_path.exists():
+        jsonl_path.unlink()
+
+    print(f"模型: {args.model}  |  思考 think: {think_param}  |  最大重试: {max_retries}", flush=True)
+
+    while queue:
+        image_path = queue.popleft()
+        key = str(image_path)
         rel = image_path.relative_to(root) if image_path.is_relative_to(root) else image_path.name
         txt_path = image_path.with_suffix(".txt")
+
         if txt_path.exists() and not args.overwrite_txt:
-            print(f"[caption {index}/{len(files)}] 跳过(已存在): {rel}", flush=True)
+            print(f"[caption {processed + skipped + 1}/{total}] 跳过(已存在): {rel}", flush=True)
+            skipped += 1
             continue
-        reference = references.get(str(image_path))
+
+        reference = references.get(key)
         if reference is None:
             message = f"缺少参考标签: {rel}"
             if args.continue_on_error:
                 print(message, file=sys.stderr)
+                skipped += 1
                 continue
             raise RuntimeError(message)
-        print(f"\n[caption {index}/{len(files)}] {rel}", flush=True)
+
+        retries = retry_count.get(key, 0)
+        suffix = f" (重试 {retries}/{max_retries})" if retries > 0 else ""
+        print(f"\n[caption {processed + skipped + 1}/{total}] {rel}{suffix}", flush=True)
         prompt = build_caption_prompt(reference, args.prompt_tag_limit)
-        b64 = image_to_b64(image_path, max_edge)
+        if mask_dir:
+            mask_path = find_mask_for_image(image_path, mask_dir)
+            if mask_path is None:
+                raise FileNotFoundError(f"未找到 mask: {image_path.stem}.* 在 {mask_dir}")
+            b64 = image_to_b64_with_mask(image_path, max_edge, mask_path)
+        else:
+            b64 = image_to_b64(image_path, max_edge)
         try:
             raw = chat_ollama_vision_stream(
                 args.host,
@@ -531,14 +625,38 @@ def generate_caption_txt(
                 timeout_sec=args.timeout,
                 think=think_param,
             )
-            caption_text = clean_caption_text(raw)
+            tags, details_list, texts = clean_caption_text(raw)
         except Exception as exc:
             print(f"处理失败: {rel}: {exc}", file=sys.stderr)
-            if args.continue_on_error:
+            if retries < max_retries:
+                retry_count[key] = retries + 1
+                queue.append(image_path)
+                print(f"  → 重新放入队列末尾 (第 {retries + 1} 次重试)", flush=True)
                 continue
-            raise
+            else:
+                print(f"  → 已达最大重试次数 ({max_retries})，跳过", flush=True)
+                if args.continue_on_error:
+                    skipped += 1
+                    continue
+                raise
+
+        caption_text = format_caption_txt(tags, details_list, texts)
         txt_path.write_text(caption_text, encoding="utf-8")
+
+        # 保存 JSONL 记录
+        jsonl_record: dict[str, Any] = {
+            "path": key,
+            "rel_path": str(rel).replace("\\", "/"),
+            "tags": tags,
+            "details": details_list,
+            "texts": texts,
+        }
+        write_caption_jsonl(jsonl_path, jsonl_record)
+
         print(f"  → 已写入 {txt_path.name}", flush=True)
+        processed += 1
+
+    print(f"\n完成: 处理 {processed} 张, 跳过 {skipped} 张, 总计 {total} 张", flush=True)
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -561,6 +679,7 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--continue-on-error", action="store_true", help="单张失败时继续下一张")
     ap.add_argument("--no-think", action="store_true", help="请求体 think=false")
     ap.add_argument("--think-level", choices=("low", "medium", "high"), default=None, help="指定思考深度")
+    ap.add_argument("--mask-dir", type=Path, default=None, help="mask 文件夹，图片发送 Ollama 前乘上同名 mask（遮罩区域变黑）")
     args = ap.parse_args(argv)
 
     root = args.dataset_dir.expanduser().resolve()
@@ -584,6 +703,10 @@ def main(argv: list[str] | None = None) -> None:
 
     references = load_reference_map(tag_jsonl)
     if args.steps in {"all", "tags"}:
+        mask_dir = args.mask_dir.expanduser().resolve() if args.mask_dir else None
+        if mask_dir and not mask_dir.is_dir():
+            print(f"mask 目录不存在: {mask_dir}", file=sys.stderr)
+            sys.exit(1)
         references = generate_reference_jsonl(
             root,
             files,
@@ -591,6 +714,7 @@ def main(argv: list[str] | None = None) -> None:
             args.threshold,
             args.overwrite_tags,
             args.continue_on_error,
+            mask_dir=mask_dir,
         )
     if args.steps in {"all", "captions"}:
         references = load_reference_map(tag_jsonl)
