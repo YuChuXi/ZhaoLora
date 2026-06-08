@@ -135,17 +135,28 @@ class RepeatedOutputError(RuntimeError):
 
 
 class LoopDetector:
-    def __init__(self, size: int = 100) -> None:
-        self.buf: deque[str] = deque(maxlen=size)
+    def __init__(self, size: int=200, min_repeats: int = 4):
         self.size = size
+        self.min_repeats = min_repeats
+        self.buf = ""
+        self.period_len = None
 
-    def feed(self, char: str) -> bool:
-        self.buf.extend(char)
-        if len(self.buf) < self.size:
-            return False
-        
-        s = "".join(self.buf)
-        return any(s[k:] == s[:-k] for k in range(1, self.size // 2 + 1))
+    def feed(self, string: str) -> bool:
+        self.buf = (self.buf + string)[-self.size:]
+        self.period_len = None
+        if len(self.buf) < self.size: return False
+        s = self.buf
+        pi = [0] * len(s)
+        for i in range(1, len(s)):
+            j = pi[i - 1]
+            while j and s[i] != s[j]:
+                j = pi[j - 1]
+            pi[i] = j + (s[i] == s[j])
+        p = len(s) - pi[-1]
+        if p < len(s) and p * self.min_repeats <= len(s):
+            self.period_len = p
+            return True
+        return False
 
 
 class WD14Tagger:
@@ -310,6 +321,10 @@ def chat_ollama_vision_stream(
                     in_thinking = True
                 sys.stdout.write(t_chunk)
                 sys.stdout.flush()
+                if loop_detector.feed(t_chunk):
+                    sys.stdout.write("\n")
+                    sys.stdout.flush()
+                    raise RepeatedOutputError("检测到最近 100 字内输出循环")
             if c_chunk:
                 if in_thinking:
                     sys.stdout.write("\n── 最终输出 ──\n")
@@ -394,21 +409,33 @@ def build_reference_record(
     }
 
 
-def compact_reference_for_prompt(record: dict[str, Any], limit: int) -> str:
+def compact_reference_for_prompt(
+    record: dict[str, Any],
+    limit: int,
+    *,
+    character_only: bool = False,
+) -> str:
     tags = record.get("tags", [])
     if not isinstance(tags, list):
         tags = []
-    names = [
-        tag["name"]
-        for tag in tags[: max(0, limit)]
-        if isinstance(tag, dict) and isinstance(tag.get("name"), str)
-    ]
     character_names = [
         tag["name"]
         for tag in tags
         if isinstance(tag, dict)
         and isinstance(tag.get("name"), str)
         and "character" in tag.get("categories", [])
+    ]
+    if character_only:
+        if not character_names:
+            return "No character tag candidates above the threshold."
+        if limit > 0:
+            character_names = character_names[:limit]
+        return "Character tag candidates: " + ", ".join(character_names)
+
+    names = [
+        tag["name"]
+        for tag in tags[: max(0, limit)]
+        if isinstance(tag, dict) and isinstance(tag.get("name"), str)
     ]
     if not names:
         return "No reference tags above the threshold."
@@ -418,15 +445,19 @@ def compact_reference_for_prompt(record: dict[str, Any], limit: int) -> str:
     return "\n".join(parts)
 
 
-def build_caption_prompt(reference_record: dict[str, Any], tag_limit: int) -> str:
-    reference = compact_reference_for_prompt(reference_record, tag_limit)
+def build_caption_prompt(
+    reference_record: dict[str, Any],
+    tag_limit: int,
+    *,
+    character_only: bool = False,
+) -> str:
+    reference = compact_reference_for_prompt(reference_record, tag_limit, character_only=character_only)
     return f"""You are captioning images for a Danbooru-style dataset. Training captions must be long and exhaustive, not short summaries.
 
 Use the reference tag list below as the main tag candidate list. It is merged from WD14/JoyTag and sorted by confidence.
 Before writing JSON, silently audit the candidates against the image:
 - Do not blindly copy the reference list.
 - The "tags" field is the primary output. It must be a long, dense Danbooru/ComfyUI-style tag list. Brevity is wrong: under-tagging hurts training.
-- Length targets (after audit, keep only verified tags): usually at least 35 tags; 50-90+ tags for busy full-body or card/UI images; 20-35 tags only for tight single-part crops. If your tag list feels short, re-scan hair, face, eyes, skin, every clothing layer, accessories, hands, legs, feet, background, lighting, framing, and composition before finishing.
 - Work through this checklist and add every verified item: subject count; character; rating-safe traits; hair (length, style, color, bangs, accessories); face (expression, mouth, blush, tears); eyes (color, shape, pupils, direction); body (pose, limbs, hands, legs, feet, skin); clothing (each garment, color, state open/closed, layers); accessories; held items; background type and objects; shot type; camera angle; crop; composition; borders/UI if present.
 - Keep every candidate tag that is visibly present or strongly plausible from the image, including small clothing, expression, pose, accessory, body-part, background, camera angle, crop, and composition tags.
 - Remove candidate tags that are contradicted by the image, mutually exclusive with a more accurate visible tag, or only come from model noise.
@@ -434,12 +465,10 @@ Before writing JSON, silently audit the candidates against the image:
 - Prioritize non-foreground content: background type and elements, props, scenery, borders, frames, UI overlays, and anything outside the main subject silhouette.
 - Prioritize character body language: full-body or partial pose, limb position, hand/arm/leg/feet gestures, head tilt, gaze direction, action verbs (sitting, running, reaching, etc.), and interaction with objects or other characters.
 - Prioritize composition and framing: shot type (close-up, bust, cowboy shot, full body, etc.), camera angle (from above, from below, dutch angle), subject placement (centered, off-center), crop boundaries, depth of field, and negative space.
-- If most of the frame is large blocky or pixel-like shapes with no clear face or full character, treat it as a likely body-part close-up (for example hand, foot, torso, thigh) and tag the visible part, crop, and angle accordingly; say so in "details" when helpful.
-- If you cannot confidently identify what the image depicts (subject, scene, or crop intent), do not guess; record that uncertainty instead of inventing tags.
 - Prefer expressing visual facts as tags when a Danbooru-style tag exists. Do not compress multiple visible facts into one vague tag; split them.
 - Merge tags with overlapping semantics into a single precise compound tag. For example, instead of "single sock", "white socks", "white over-knee socks" as three separate tags, use "single white over-knee sock" as one tag. Combine count/quantity, color, type, and position into one compound tag rather than listing them separately.
 - Tags support natural-language qualifiers such as "left", "right", "only", "single", "mismatched", and "asymmetrical" to precisely describe asymmetric clothing or body parts (e.g., "left white glove", "right bare leg", "single white over-knee sock on left leg", "mismatched legwear").
-- "details" must add substantial natural-language coverage tags cannot carry: spatial layout, relative positions, what each limb is doing, how the subject sits in the frame, background depth, lighting mood, and material/surface notes.
+- CRITICAL — "details" MUST explicitly cover these categories for every image: background — setting type, objects, scenery, depth; action — pose, motion, what the character is doing, interaction with objects; clothing — every garment layer, color, state open/closed, fit; limbs — exact position and posture of arms, legs, hands, feet, head, gaze direction; occlusion — what overlaps what, which body parts or objects are in front of others, any partially hidden elements; etc.
 - Put confirmed character tags first, then important subject tags, then the remaining verified detail tags.
 - Ignore watermarks, artist signatures, copyright notices, website URLs, social media handles, and any other overlaid text or logo that is not part of the scene content. Do not tag or describe these artifacts; treat them as non-content noise.
 
@@ -450,14 +479,25 @@ Output valid JSON only. Do not output Markdown, explanations, bullets, or confid
 
 Required JSON format:
 {{
-  "tags": "long dense danbooru tag list, typically dozens of comma-separated tags, lowercase, spaces instead of underscores",
-  "details": ["Character stands in a grassy field", "Background shows mountains and cloudy sky", "Warm sunset lighting from the left"],
-  "texts": "Readable visible text only, written with quotation marks, for example: Hand-written Japanese text \"う…んち\" floats vertically on the right."
+  "tags": "xxxxx, xxxxx, xxxxx, xxxxx, xxxxx, xxxxx, xxxxx, xxxxx, xxxxx, xxxxx, xxxxx, xxxxx, xxxxx, xxxxx, xxxxx, xxxxx, xxxxx, xxxxx, xxxxx, xxxxx, xxxxx, xxxxx, xxxxx, xxxxx, xxxxx, xxxxx, xxxxx, xxxxx, xxxxx, xxxxx, xxxxx, xxxxx, xxxxx, xxxxx, xxxxx, xxxxx, xxxxx, xxxxx, xxxxx, xxxxx, xxxxx, xxxxx, xxxxx, xxxxx, xxxxx, xxxxx, xxxxx, xxxxx, xxxxx, xxxxx, xxxxx, xxxxx, xxxxx, xxxxx, xxxxx, xxxxx, ",
+  "details": [
+    "xxxxx xxxxx xxxxxxxxx xxxxxxx xxxx xxx xxxxxxx xxx xx",
+    "xxxxx xxxxx xxxxxxxxx xxxxxxx xxxx xxx xxxxxxx xxx xx",
+    "xxxxx xxxxx xxxxxxxxx xxxxxxx xxxx xxx xxxxxxx xxx xx",
+    "xxxxx xxxxx xxxxxxxxx xxxxxxx xxxx xxx xxxxxxx xxx xx",
+    "xxxxx xxxxx xxxxxxxxx xxxxxxx xxxx xxx xxxxxxx xxx xx",
+    "xxxxx xxxxx xxxxxxxxx xxxxxxx xxxx xxx xxxxxxx xxx xx",
+    "xxxxx xxxxx xxxxxxxxx xxxxxxx xxxx xxx xxxxxxx xxx xx",
+    "xxxxx xxxxx xxxxxxxxx xxxxxxx xxxx xxx xxxxxxx xxx xx",
+    "xxxxx xxxxx xxxxxxxxx xxxxxxx xxxx xxx xxxxxxx xxx xx",
+    "xxxxx xxxxx xxxxxxxxx xxxxxxx xxxx xxx xxxxxxx xxx xx",
+  ]
+  "texts": "xxxxxx \"xxxx\""
 }}
 
 JSON field rules:
 "tags": long, dense, final Danbooru tags in English only—aim for high tag count, not a minimal set. Use Danbooru-style English or romanized tags only; do not output Chinese, Japanese, or filename text in this field. Include verified tags across hair, face, eyes, skin, every clothing piece and color, accessories, pose, each visible limb, hands, legs, feet, gaze, action, background, props, lighting, shot type, angle, crop, and composition; do not move taggable facts into "details". If any character tag candidate is correct and can be expressed as an English/romanized Danbooru tag, put the confirmed character tag or tags at the very beginning. Do not use player IDs or visible text as character tags. Never output a one-line tag soup under ~25 tags when the image clearly shows a character and scene.
-"details": an array of complete English sentences (minimum 3 when the image is not ambiguous; often 4-6). Each element is one self-contained sentence. Do NOT end sentences with periods, and do NOT use commas inside any sentence — each string must contain only words separated by spaces, no punctuation. Describe background and non-subject areas, exact pose and what each arm/leg/hand/foot is doing, head angle and gaze, framing and where the subject sits in the canvas, notable objects and materials, lighting, and body-part close-up context when applicable. Use an empty array [] only when almost nothing is identifiable.
+"details": an array of complete English sentences. Each element is one self-contained sentence. Do NOT end sentences with periods, and do NOT use commas inside any sentence — each string must contain only words separated by spaces, no punctuation. The following categories MUST all be clearly covered across the sentences: (1) background — setting, scenery, depth; (2) action — pose, motion, interaction; (3) clothing — every garment layer, color, state; (4) limbs — exact arm/leg/hand/foot/head position and posture; (5) occlusion — what overlaps what, front-to-back relationships. Use an empty array [] only when almost nothing is identifiable.
 "texts": readable text in the image only. Use an empty string if there is no readable text.
 
 Ignore black alpha-mask, watermark, artist signature, copyright notice, or any other overlaid non-content artifacts.
@@ -606,7 +646,11 @@ def generate_caption_txt(
         retries = retry_count.get(key, 0)
         suffix = f" (重试 {retries}/{max_retries})" if retries > 0 else ""
         print(f"\n[caption {processed + skipped + 1}/{total}] {rel}{suffix}", flush=True)
-        prompt = build_caption_prompt(reference, args.prompt_tag_limit)
+        prompt = build_caption_prompt(
+            reference,
+            args.prompt_tag_limit,
+            character_only=args.character_tags_only,
+        )
         if mask_dir:
             mask_path = find_mask_for_image(image_path, mask_dir)
             if mask_path is None:
@@ -673,7 +717,12 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--num-ctx", type=int, default=None, help="Ollama num_ctx")
     ap.add_argument("--num-predict", type=int, default=8192, help="Ollama 最大生成 token 数，0 为不限制")
     ap.add_argument("--timeout", type=int, default=60, help="单张 Ollama 请求超时秒数")
-    ap.add_argument("--prompt-tag-limit", type=int, default=300, help="传给 Ollama 的参考标签数量上限")
+    ap.add_argument("--prompt-tag-limit", type=int, default=0, help="传给 Ollama 的参考标签数量上限")
+    ap.add_argument(
+        "--character-tags-only",
+        action="store_true",
+        help="只把 WD14 角色标签传给 Ollama，不提供通用标签候选",
+    )
     ap.add_argument("--overwrite-tags", action="store_true", help="重新生成参考标签 jsonl")
     ap.add_argument("--overwrite-txt", action="store_true", help="覆盖图片旁已存在的同名 txt")
     ap.add_argument("--continue-on-error", action="store_true", help="单张失败时继续下一张")

@@ -5,8 +5,20 @@ min_ar = 0.25
 max_ar = 4.0
 num_ar_buckets = 9
 
-caption_prefix = '@cha wen jian, '
+caption_prefix = 'masterpiece, best quality, score_7, @cha wen jian, '
+shuffle_tags = true
+cache_shuffle_num = 10
+cache_shuffle_delimiter = ", "
 
 [[directory]]
-path = '/home/yuchuxi/Projects/Experiments/Dataset/ZhaoLora/datasets/chawenjian_washed'
-mask_path = '/home/yuchuxi/Projects/Experiments/Dataset/ZhaoLora/datasets/chawenjian_washed_mask'
+path = '/home/yuchuxi/Projects/Experiments/Dataset/ZhaoLora/datasets/chawenjian'
+mask_path = '/home/yuchuxi/Projects/Experiments/Dataset/ZhaoLora/datasets/chawenjian_mask'
+
+[[directory]]
+path = '/home/yuchuxi/Projects/Experiments/Dataset/ZhaoLora/datasets/chawenjian_head'
+num_repeats = 2
+
+[[directory]]
+path = '/home/yuchuxi/Projects/Experiments/Dataset/ZhaoLora/datasets/chawenjian_foot'
+
+
