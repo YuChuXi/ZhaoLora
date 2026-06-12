@@ -1,0 +1,24 @@
+resolutions = [512, 1024, 1536]
+
+enable_ar_bucket = true
+min_ar = 0.25
+max_ar = 4.0
+num_ar_buckets = 9
+
+caption_prefix = '@guo582, '
+shuffle_tags = true
+cache_shuffle_num = 4
+cache_shuffle_delimiter = ", "
+
+[[directory]]
+path = '/home/yuchuxi/Projects/Experiments/Dataset/ZhaoLora/datasets/guo582'
+mask_path = '/home/yuchuxi/Projects/Experiments/Dataset/ZhaoLora/datasets/guo582_mask'
+
+[[directory]]
+path = '/home/yuchuxi/Projects/Experiments/Dataset/ZhaoLora/datasets/guo582_head'
+num_repeats = 2
+
+[[directory]]
+path = '/home/yuchuxi/Projects/Experiments/Dataset/ZhaoLora/datasets/guo582_foot'
+
+

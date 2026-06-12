@@ -452,6 +452,7 @@ def build_caption_prompt(
     character_only: bool = False,
 ) -> str:
     reference = compact_reference_for_prompt(reference_record, tag_limit, character_only=character_only)
+    print(f"reference: {reference}", flush=True)
     return f"""You are captioning images for a Danbooru-style dataset. Training captions must be long and exhaustive, not short summaries.
 
 Use the reference tag list below as the main tag candidate list. It is merged from WD14/JoyTag and sorted by confidence.
@@ -490,8 +491,8 @@ Required JSON format:
     "xxxxx xxxxx xxxxxxxxx xxxxxxx xxxx xxx xxxxxxx xxx xx",
     "xxxxx xxxxx xxxxxxxxx xxxxxxx xxxx xxx xxxxxxx xxx xx",
     "xxxxx xxxxx xxxxxxxxx xxxxxxx xxxx xxx xxxxxxx xxx xx",
-    "xxxxx xxxxx xxxxxxxxx xxxxxxx xxxx xxx xxxxxxx xxx xx",
-  ]
+    "xxxxx xxxxx xxxxxxxxx xxxxxxx xxxx xxx xxxxxxx xxx xx"
+  ],
   "texts": "xxxxxx \"xxxx\""
 }}
 
