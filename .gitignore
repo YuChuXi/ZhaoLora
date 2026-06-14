@@ -14,3 +14,5 @@ __pycache__/
 /*.txt
 Untitled*.ini
 *.bak
+.cursorindexingignore
+.specstory/**

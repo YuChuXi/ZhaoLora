@@ -108,6 +108,24 @@ class Tags:
         return Tags.join_caption(merged)
 
     @staticmethod
+    def merge_for_disk_by_confidence(base: List[str], wd_scored: List[Tuple[str, float]]) -> str:
+        """原 txt ∪ WD14 → 去重，按 WD14 置信度从高到低写出；原 txt 独有 tag 排在末尾。"""
+        score_by_key: dict[str, float] = {}
+        canonical_by_key: dict[str, str] = {}
+        for tag, score in wd_scored:
+            key = Tags.equivalence_key(tag)
+            if key not in score_by_key or score > score_by_key[key]:
+                score_by_key[key] = score
+                canonical_by_key[key] = Tags._canonical_spacing(tag)
+        for raw in base:
+            key = Tags.equivalence_key(raw)
+            if key not in canonical_by_key:
+                canonical_by_key[key] = Tags._canonical_spacing(raw)
+                score_by_key[key] = -1.0
+        ordered = sorted(score_by_key.keys(), key=lambda k: score_by_key[k], reverse=True)
+        return Tags.join_caption([canonical_by_key[k] for k in ordered])
+
+    @staticmethod
     def merge_ui_preview(selected: List[str], extra_caption: str) -> str:
         """勾选 tag + 额外文本框 → 去重、拼接（不排序，保勾选顺序）。"""
         extra = Tags.split_caption(extra_caption)
@@ -246,12 +264,11 @@ def _get_wd14():
     df = pd.read_csv(WD14_CSV_PATH)
     _WD14_LABELS = df["name"].tolist()
     providers = ["CUDAExecutionProvider", "CPUExecutionProvider"] if torch.cuda.is_available() else ["CPUExecutionProvider"]
-    providers = ["CPUExecutionProvider"] # FIXME: 暂时禁用 CUDA 推理，因为 CUDA 推理会导致内存占用过高
     _WD14_SESSION = ort.InferenceSession(str(WD14_ONNX_PATH), providers=providers)
     return _WD14_SESSION, _WD14_LABELS
 
 
-def run_wd14_on_image(img: Image.Image) -> List[str]:
+def run_wd14_on_image_scored(img: Image.Image) -> List[Tuple[str, float]]:
     try:
         session, labels = _get_wd14()
     except Exception as e:
@@ -276,14 +293,19 @@ def run_wd14_on_image(img: Image.Image) -> List[str]:
     input_data = arr[np.newaxis, ...]
     input_name = session.get_inputs()[0].name
     probs = session.run(None, {input_name: input_data})[0][0]
-    tags = []
+    scored: List[Tuple[str, float]] = []
     for i, p in enumerate(probs):
         if i < len(labels) and p >= WD14_THRESHOLD:
             name = labels[i]
             if name in ["general", "sensitive", "questionable", "explicit"]:
                 continue
-            tags.append(name.replace("_", " ").strip())
-    return tags
+            scored.append((name.replace("_", " ").strip(), float(p)))
+    scored.sort(key=lambda x: x[1], reverse=True)
+    return scored
+
+
+def run_wd14_on_image(img: Image.Image) -> List[str]:
+    return [tag for tag, _ in run_wd14_on_image_scored(img)]
 
 
 def build_capture_candidates() -> List[dict]:
@@ -1322,8 +1344,8 @@ def run_batch_no_gui(cfg: AppConfig, *, force: bool = False) -> None:
         print(f"[{i + 1}/{len(files)}] 处理: {p.name} -> {out_img_path.name}")
         img = Image.open(p).convert("RGBA")
         base = [] if cfg.disable_orig_tags else Tags.split_caption(load_text(p.with_suffix(".txt")))
-        wd = run_wd14_on_image(img)
-        caption = Tags.merge_for_disk(base, wd)
+        wd_scored = run_wd14_on_image_scored(img)
+        caption = Tags.merge_for_disk_by_confidence(base, wd_scored)
         
         img.save(out_img_path, format="PNG")
         out_txt_path.write_text(caption, encoding="utf-8")
