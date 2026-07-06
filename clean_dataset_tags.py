@@ -23,7 +23,7 @@ from pathlib import Path
 
 
 def split_tags_line(s: str) -> list[str]:
-    return [x.strip() for x in s.replace("\n", ",").split(",") if x.strip()]
+    return [x.strip() for x in s.replace("\n", ",").replace("|||", ",").split(",") if x.strip()]
 
 
 def join_tags_line(tags: list[str]) -> str:
@@ -107,21 +107,49 @@ def promote_keys_ordered(promote_tags: tuple[str, ...]) -> list[str]:
     return out
 
 
-def apply_promote_tags(kept: list[str], promote_order_keys: list[str]) -> list[str]:
-    """将 promote_order_keys 中在 kept 里出现过的 tag 整段移到 kept 最前，其余保持原相对顺序。"""
+def apply_promote_tags(kept: list[str], promote_order_keys: list[str]) -> tuple[list[str], int]:
+    """将 promote_order_keys 中在 kept 里出现过的 tag 整段移到 kept 最前，其余保持原相对顺序。
+    先精确匹配，未命中时回退为子串匹配（按原文顺序取首个包含该 key 的 tag）。
+    返回 (新列表, 被提升的 tag 数量)。"""
     if not promote_order_keys:
-        return kept
+        return kept, 0
 
     promote_set = frozenset(promote_order_keys)
-    first_text: dict[str, str] = {}
+
+    # --- 精确匹配 ---
+    first_text: dict[str, str] = {}  # promote_key → tag 原文
     for t in kept:
         k = tag_key(t)
         if k in promote_set and k not in first_text:
             first_text[k] = t
 
-    promoted = [first_text[k] for k in promote_order_keys if k in first_text]
-    remaining = [t for t in kept if tag_key(t) not in promote_set]
-    return promoted + remaining
+    # 已被消费的 tag_key（精确匹配命中的）
+    consumed_tag_keys: set[str] = {tag_key(v) for v in first_text.values()}
+
+    # --- 子串匹配（回退）---
+    substr_matched: dict[str, str] = {}  # promote_key → tag 原文
+    for pk in promote_order_keys:
+        if pk in first_text:
+            continue  # 已精确命中，跳过
+        for t in kept:
+            k = tag_key(t)
+            if k in consumed_tag_keys:
+                continue
+            if pk in k:  # 子串匹配
+                substr_matched[pk] = t
+                consumed_tag_keys.add(k)
+                break
+
+    # 按 promote_order_keys 顺序组装提升块
+    promoted: list[str] = []
+    for pk in promote_order_keys:
+        if pk in first_text:
+            promoted.append(first_text[pk])
+        elif pk in substr_matched:
+            promoted.append(substr_matched[pk])
+
+    remaining = [t for t in kept if tag_key(t) not in consumed_tag_keys]
+    return promoted + remaining, len(promoted)
 
 
 def clean_caption(
@@ -131,6 +159,7 @@ def clean_caption(
     user_drop_contains: tuple[str, ...] = (),
     promote_tags: tuple[str, ...] = (),
     prepend_tags: tuple[str, ...] = (),
+    use_promote_separator: bool = False,
 ) -> str:
     s = html.unescape(raw.strip())
     tags = [normalize_tag_underscores(t) for t in split_tags_line(s)]
@@ -142,13 +171,17 @@ def clean_caption(
     ]
 
     promote_keys = promote_keys_ordered(promote_tags)
-    kept = apply_promote_tags(kept, promote_keys)
+    kept, n_promoted = apply_promote_tags(kept, promote_keys)
 
     prep = [normalize_tag_underscores(t) for t in prepend_tags if t.strip()]
     if prep:
         prep_keys = {tag_key(t) for t in prep}
         kept = [t for t in kept if tag_key(t) not in prep_keys]
         kept = prep + kept
+        n_promoted += len(prep)
+
+    if use_promote_separator:
+        return join_tags_line(kept[:n_promoted]) + " ||| " + join_tags_line(kept[n_promoted:])
 
     return join_tags_line(kept)
 
@@ -208,7 +241,7 @@ def main() -> None:
         action="append",
         default=[],
         metavar="TAG",
-        help="将已存在的 tag 按顺序移到正文最前（可多次；逗号分隔）。文中没有的不会添加；重复只保留一条",
+        help="将已存在的 tag 按顺序移到正文最前（可多次；逗号分隔）。先精确匹配，未命中则子串匹配。文中没有的不会添加；重复只保留一条",
     )
     p.add_argument(
         "--prepend",
@@ -216,6 +249,12 @@ def main() -> None:
         default=[],
         metavar="TAG",
         help="按顺序插在整条 caption 最前（在 --promote 之后执行，因此更靠左）。正文里同名 tag 会先去掉以免重复",
+    )
+    p.add_argument(
+        "--promote-separator",
+        action="store_true",
+        dest="promote_separator",
+        help="输出时用 '|||' 分隔 --promote / --prepend 新增的 tag 与其余 tag",
     )
     args = p.parse_args()
     root: Path = args.data_dir.resolve()
@@ -265,6 +304,7 @@ def main() -> None:
             user_drop_contains=user_drop_contains,
             promote_tags=promote_tags,
             prepend_tags=prepend_tags,
+            use_promote_separator=args.promote_separator,
         )
         if new == raw.strip():
             unchanged += 1

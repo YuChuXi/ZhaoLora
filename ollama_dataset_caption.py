@@ -493,20 +493,22 @@ Required JSON format:
     "xxxxx xxxxx xxxxxxxxx xxxxxxx xxxx xxx xxxxxxx xxx xx",
     "xxxxx xxxxx xxxxxxxxx xxxxxxx xxxx xxx xxxxxxx xxx xx"
   ],
-  "texts": "xxxxxx \"xxxx\""
+  "texts": "xxxxxx \"xxxx\"",
+  "caption": "xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx, xxxxx xxxxx xxxxx,
 }}
 
 JSON field rules:
 "tags": long, dense, final Danbooru tags in English only—aim for high tag count, not a minimal set. Use Danbooru-style English or romanized tags only; do not output Chinese, Japanese, or filename text in this field. Include verified tags across hair, face, eyes, skin, every clothing piece and color, accessories, pose, each visible limb, hands, legs, feet, gaze, action, background, props, lighting, shot type, angle, crop, and composition; do not move taggable facts into "details". If any character tag candidate is correct and can be expressed as an English/romanized Danbooru tag, put the confirmed character tag or tags at the very beginning. Do not use player IDs or visible text as character tags. Never output a one-line tag soup under ~25 tags when the image clearly shows a character and scene.
 "details": an array of complete English sentences. Each element is one self-contained sentence. Do NOT end sentences with periods, and do NOT use commas inside any sentence — each string must contain only words separated by spaces, no punctuation. The following categories MUST all be clearly covered across the sentences: (1) background — setting, scenery, depth; (2) action — pose, motion, interaction; (3) clothing — every garment layer, color, state; (4) limbs — exact arm/leg/hand/foot/head position and posture; (5) occlusion — what overlaps what, front-to-back relationships. Use an empty array [] only when almost nothing is identifiable.
 "texts": readable text in the image only. Use an empty string if there is no readable text.
+"caption": a single English comma-separated paragraph made only from the final "tags" and "details". Include every comma-separated item from "tags" exactly as a caption segment, and include every sentence from "details" as one short comma-separated phrase without changing its meaning. Do not add facts that are absent from "tags" and "details", do not contradict them, and do not drop any tag item or detail sentence. Your only job is to combine those tag segments and detail phrases, then sort all segments by visual importance: confirmed character identity first, then main subject count and type, pose/action, face/expression, clothing, limbs, props, background/composition, occlusion, and finally minor visual details. Do not include bullets, periods, newlines, confidence scores, watermarks, signatures, URLs, or ignored visible text.
 
 Ignore black alpha-mask, watermark, artist signature, copyright notice, or any other overlaid non-content artifacts.
 """
 
 
-def clean_caption_text(text: str) -> tuple[str, list[str], str]:
-    """返回 (tags_str, details_list, texts_str)。details 列表中每个句子不含逗号或句号，否则抛出 ValueError。"""
+def clean_caption_text(text: str) -> tuple[str, list[str], str, str]:
+    """返回 (tags_str, details_list, texts_str, caption_str)。details 列表中每个句子不含逗号或句号，否则抛出 ValueError。"""
     raw = text.strip()
     if raw.startswith("```"):
         raw = "\n".join(line for line in raw.splitlines()[1:] if line.strip() != "```").strip()
@@ -519,6 +521,9 @@ def clean_caption_text(text: str) -> tuple[str, list[str], str]:
 
     tags = str(obj.get("tags") or "").strip()
     texts = str(obj.get("texts") or "").strip()
+    caption = str(obj.get("caption") or "").strip()
+    if not caption:
+        raise ValueError("caption 字段不能为空")
 
     raw_details = obj.get("details")
     if raw_details is None:
@@ -533,7 +538,7 @@ def clean_caption_text(text: str) -> tuple[str, list[str], str]:
         if "," in sentence or "." in sentence:
             raise ValueError(f"details[{i}] 包含逗号或句号: {sentence!r}")
 
-    return tags, details_list, texts
+    return tags, details_list, texts, caption
 
 
 def format_caption_txt(tags: str, details_list: list[str], texts: str) -> str:
@@ -670,7 +675,7 @@ def generate_caption_txt(
                 timeout_sec=args.timeout,
                 think=think_param,
             )
-            tags, details_list, texts = clean_caption_text(raw)
+            tags, details_list, texts, caption = clean_caption_text(raw)
         except Exception as exc:
             print(f"处理失败: {rel}: {exc}", file=sys.stderr)
             if retries < max_retries:
@@ -695,6 +700,7 @@ def generate_caption_txt(
             "tags": tags,
             "details": details_list,
             "texts": texts,
+            "caption": caption,
         }
         write_caption_jsonl(jsonl_path, jsonl_record)
 

@@ -2,18 +2,19 @@
 """全屏浏览图片，左右键判断 tag 是否适用。
 
 用法:
-  python review_jpeg_artifacts_gui.py [目录] [--tag TAG] [--auto-ext .jpg,.jpeg]
+  python review_jpeg_artifacts_gui.py [目录] [--tag TAG] [--auto-ext .jpg,.jpeg] [--tag-position head|random]
 
 左键 = 有该特征（加 tag 并跳到下一张）
 右键 = 无该特征（删 tag 并跳到下一张）
 Q/Esc 退出（自动保存进度）   Space 跳过   Backspace 回退
-右下角显示标记状态；指定后缀的文件自动标；进度保存到 <目录>/.review_<tag>.json
+右下角显示标记状态；指定后缀的文件自动标；递归处理子目录；进度保存到 <目录>/.review_<tag>.json
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import random
 import sys
 from pathlib import Path
 from tkinter import BOTH, Canvas, Event, Tk
@@ -26,50 +27,95 @@ IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif"}
 # ---------- tag 操作 ----------
 
 def has_tag(tags_str: str, tag: str) -> bool:
-    for p in tags_str.split(","):
+    for p in tags_str.replace("|||", ",").split(","):
         if p.strip().lower() == tag.lower():
             return True
     return False
 
 
-def add_tag(tags_str: str, tag: str) -> str:
-    parts = [p.strip() for p in tags_str.split(",") if p.strip()]
-    filtered = [p for p in parts if p.lower() != tag.lower()]
-    if filtered:
-        return tag + ", " + ", ".join(filtered)
-    return tag
+def add_tag(tags_str: str, tag: str, position: str = "head") -> str:
+    """添加 tag。若有 ||| 分隔符则追加到 ||| 前（promoted 区段末尾）；否则按 position 放置。"""
+    sections = tags_str.split("|||", 1)
+    promoted_str = sections[0].strip()
+    has_sep = len(sections) > 1
+    remaining_str = sections[1].strip() if has_sep else ""
+
+    promoted_parts = [p.strip() for p in promoted_str.split(",") if p.strip()]
+    remaining_parts = [p.strip() for p in remaining_str.split(",") if p.strip()]
+
+    # 去重：先移除已存在的同名 tag
+    promoted_parts = [p for p in promoted_parts if p.lower() != tag.lower()]
+    remaining_parts = [p for p in remaining_parts if p.lower() != tag.lower()]
+
+    if has_sep:
+        # 有 ||| 时：追加到 promoted 区段末尾（||| 前的最后一个 tag）
+        promoted_parts.append(tag)
+    elif position == "head":
+        promoted_parts.insert(0, tag)
+    elif position == "random":
+        insert_index = random.randint(0, len(promoted_parts))
+        promoted_parts.insert(insert_index, tag)
+    else:
+        promoted_parts.append(tag)
+
+    if remaining_parts:
+        return ", ".join(promoted_parts) + " ||| " + ", ".join(remaining_parts)
+    return ", ".join(promoted_parts)
 
 
 def remove_tag(tags_str: str, tag: str) -> str:
-    parts = [p.strip() for p in tags_str.split(",") if p.strip()]
-    filtered = [p for p in parts if p.lower() != tag.lower()]
-    return ", ".join(filtered)
+    sections = tags_str.split("|||", 1)
+    promoted_str = sections[0].strip()
+    has_sep = len(sections) > 1
+    remaining_str = sections[1].strip() if has_sep else ""
+
+    promoted_parts = [p.strip() for p in promoted_str.split(",") if p.strip() and p.strip().lower() != tag.lower()]
+    remaining_parts = [p.strip() for p in remaining_str.split(",") if p.strip() and p.strip().lower() != tag.lower()]
+
+    if remaining_parts:
+        return ", ".join(promoted_parts) + " ||| " + ", ".join(remaining_parts)
+    return ", ".join(promoted_parts)
 
 
 # ---------- txt 读写 ----------
 
+def normalize_tags(tags_str: str) -> str:
+    sections = tags_str.replace("\n", ",").split("|||", 1)
+    promoted_parts = [p.strip() for p in sections[0].split(",") if p.strip()]
+    if len(sections) > 1:
+        remaining_parts = [p.strip() for p in sections[1].split(",") if p.strip()]
+        if remaining_parts:
+            return ", ".join(promoted_parts) + " ||| " + ", ".join(remaining_parts)
+    return ", ".join(promoted_parts)
+
+
 def read_tags(txt_path: Path) -> str:
     if not txt_path.is_file():
         return ""
-    lines = txt_path.read_text(encoding="utf-8").splitlines()
-    return lines[0] if len(lines) >= 1 else ""
+    return normalize_tags(txt_path.read_text(encoding="utf-8"))
 
 
 def write_tags(txt_path: Path, new_tags: str) -> None:
-    lines = txt_path.read_text(encoding="utf-8").splitlines() if txt_path.is_file() else []
-    while len(lines) < 1:
-        lines.append("")
-    lines[0] = new_tags
-    txt_path.write_text("\n".join(lines), encoding="utf-8", newline="\n")
+    txt_path.write_text(normalize_tags(new_tags), encoding="utf-8", newline="\n")
 
 
 # ---------- 主逻辑 ----------
 
 class App:
-    def __init__(self, root: Tk, input_dir: Path, tag: str, auto_ext: set[str], fullscreen: bool = True, fit_mode: bool = False) -> None:
+    def __init__(
+        self,
+        root: Tk,
+        input_dir: Path,
+        tag: str,
+        auto_ext: set[str],
+        tag_position: str,
+        fullscreen: bool = True,
+        fit_mode: bool = False,
+    ) -> None:
         self.root = root
         self.tag = tag
         self.auto_ext = auto_ext
+        self.tag_position = tag_position
         self.fullscreen = fullscreen
         self.fit_mode = fit_mode  # False=填满屏幕, True=适应屏幕
         self.root.title(f"Review: {tag}")
@@ -97,12 +143,11 @@ class App:
         safe_tag = tag.replace(" ", "_").replace("/", "_")
         self.progress_file = self.input_dir / f".review_{safe_tag}.json"
 
-        # 收集 (图片, txt) 对
+        # 递归收集 (图片, txt) 对
         self.pairs: list[tuple[Path, Path]] = []
-        for p in sorted(self.input_dir.iterdir()):
+        for p in sorted(self.input_dir.rglob("*"), key=lambda path: path.relative_to(self.input_dir).as_posix()):
             if p.is_file() and p.suffix.lower() in IMAGE_EXTS:
                 self.pairs.append((p, p.with_suffix(".txt")))
-        self.pairs.sort(key=lambda x: x[0].name)
 
         # 恢复进度
         saved = self._load_progress()
@@ -179,7 +224,7 @@ class App:
         tagged = has_tag(tags, self.tag)
         auto = False
         if is_auto and not tagged:
-            write_tags(txt_path, add_tag(tags, self.tag))
+            write_tags(txt_path, add_tag(tags, self.tag, self.tag_position))
             tagged = True
             auto = True
 
@@ -240,7 +285,8 @@ class App:
     def _act(self, is_artifact: bool) -> None:
         _, txt_path = self.pairs[self.idx]
         tags = read_tags(txt_path)
-        write_tags(txt_path, add_tag(tags, self.tag) if is_artifact else remove_tag(tags, self.tag))
+        new_tags = add_tag(tags, self.tag, self.tag_position) if is_artifact else remove_tag(tags, self.tag)
+        write_tags(txt_path, new_tags)
         self.idx += 1
         self._save_progress()
         self._show()
@@ -280,6 +326,10 @@ def main() -> None:
         help="自动标记的文件后缀，逗号分隔（默认: .jpg,.jpeg）",
     )
     parser.add_argument(
+        "--tag-position", choices=("head", "random"), default="head",
+        help="添加 tag 的位置：head=放在头部，random=随机插入（默认: head）",
+    )
+    parser.add_argument(
         "--no-fullscreen", action="store_true",
         help="窗口模式（非全屏），可自由调整大小",
     )
@@ -304,11 +354,20 @@ def main() -> None:
 
     print(f"目录:   {input_dir}")
     print(f"Tag:    {args.tag}")
+    print(f"位置:   {args.tag_position}")
     print(f"自动标: {auto_ext or '(无)'}")
     print(f"模式:   {'窗口' if args.no_fullscreen else '全屏'}")
 
     root = Tk()
-    App(root, input_dir, args.tag, auto_ext, fullscreen=not args.no_fullscreen, fit_mode=args.fit)
+    App(
+        root,
+        input_dir,
+        args.tag,
+        auto_ext,
+        args.tag_position,
+        fullscreen=not args.no_fullscreen,
+        fit_mode=args.fit,
+    )
     root.mainloop()
 
 

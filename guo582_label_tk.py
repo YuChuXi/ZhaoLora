@@ -47,7 +47,7 @@ except Exception:
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp"}
-SIDE_BUCKETS = [512, 768, 1000, 1024, 1152, 1280, 1440, 1536, 1792, 2048]
+SIDE_BUCKETS = [512, 768, 1024, 1152, 1280, 1440, 1536, 1792, 2048]
 ZOOM_BUCKETS = [1.0, 1.5, 1024/768, 2.0, 2.5, 3.0, 4.0]
 WD14_THRESHOLD = 0.1
 MAX_OUTPUT_PIXELS = 1536 * 1536
@@ -264,6 +264,7 @@ def _get_wd14():
     df = pd.read_csv(WD14_CSV_PATH)
     _WD14_LABELS = df["name"].tolist()
     providers = ["CUDAExecutionProvider", "CPUExecutionProvider"] if torch.cuda.is_available() else ["CPUExecutionProvider"]
+    providers = ["CPUExecutionProvider"]
     _WD14_SESSION = ort.InferenceSession(str(WD14_ONNX_PATH), providers=providers)
     return _WD14_SESSION, _WD14_LABELS
 
@@ -1355,8 +1356,8 @@ def run_batch_no_gui(cfg: AppConfig, *, force: bool = False) -> None:
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--src_dir", default="datasets/zhao")
-    parser.add_argument("--out_dir", default="datasets/zhao_washed")
+    parser.add_argument("--src_dir", required=True, help="输入图片目录")
+    parser.add_argument("--out_dir", default=None, help="输出目录（默认同 --src_dir 原位输出）")
     parser.add_argument("--disable_orig_tags", action="store_true", help="禁用读取原数据集txt标签，仅使用WD14与手动标签")
     parser.add_argument(
         "--batch_no_gui",
@@ -1388,9 +1389,10 @@ def main():
         ),
     )
     args = parser.parse_args()
+    out_dir = Path(args.out_dir) if args.out_dir else Path(args.src_dir)
     cfg = AppConfig(
         Path(args.src_dir),
-        Path(args.out_dir),
+        out_dir,
         disable_orig_tags=args.disable_orig_tags,
         default_crop=args.default_crop,
         default_no_crop_resize=args.default_no_crop_resize,

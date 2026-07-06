@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import argparse
+import math
 import threading
 import tkinter as tk
 from pathlib import Path
@@ -16,6 +17,10 @@ from tkinter import ttk
 
 import numpy as np
 from PIL import Image, ImageTk
+
+# CLIPSeg 依赖（--clipseg-face 时必需）
+from transformers import CLIPSegProcessor, CLIPSegForImageSegmentation
+import torch
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif"}
@@ -84,11 +89,12 @@ def build_save_image(
     return Image.merge("RGBA", (r, g, b, a_img))
 
 
-def build_checkerboard(width: int, height: int, checker: int = 12) -> Image.Image:
+def build_checkerboard(width: int, height: int, checker: int = 12, darken: float = 1.0) -> Image.Image:
     yy, xx = np.mgrid[0:height, 0:width]
     c = ((xx // checker) + (yy // checker)) % 2
-    out = np.where(c == 0, 204, 153).astype(np.uint8)
-    out = np.repeat(out[..., None], 3, axis=2)
+    out = np.where(c == 0, 204, 153).astype(np.float32)
+    out *= max(0.0, min(1.0, darken))
+    out = np.repeat(out[..., None].astype(np.uint8), 3, axis=2)
     return Image.fromarray(out)
 
 
@@ -98,6 +104,79 @@ def compose_preview(rgb_view: Image.Image, alpha_view: Image.Image, checkerboard
     rgba_view.putalpha(alpha_view)
     base = checkerboard.convert("RGBA")
     return Image.alpha_composite(base, rgba_view).convert("RGB")
+
+
+# ---------------------------------------------------------------------------
+# CLIPSeg 脸部/眼睛检测（可选，需要 pip install transformers torch）
+# ---------------------------------------------------------------------------
+
+_CLIPSEG_PROCESSOR = None
+_CLIPSEG_MODEL = None
+
+CLIPSEG_MODEL_ID = "CIDAS/clipseg-rd64-refined"
+CLIPSEG_FACE_PROMPTS = ["face", "eyes", "anime face"]
+
+
+def _get_clipseg():
+    """懒加载 CLIPSeg 模型，全局复用。"""
+    global _CLIPSEG_PROCESSOR, _CLIPSEG_MODEL
+    if _CLIPSEG_PROCESSOR is not None:
+        return _CLIPSEG_PROCESSOR, _CLIPSEG_MODEL
+    _CLIPSEG_PROCESSOR = CLIPSegProcessor.from_pretrained(CLIPSEG_MODEL_ID)
+    _CLIPSEG_MODEL = CLIPSegForImageSegmentation.from_pretrained(CLIPSEG_MODEL_ID)
+    if torch.cuda.is_available():
+        _CLIPSEG_MODEL = _CLIPSEG_MODEL.to("cuda")
+    return _CLIPSEG_PROCESSOR, _CLIPSEG_MODEL
+
+
+def _run_clipseg_prompts(
+    img: Image.Image, prompts: list[str], processor, model
+) -> np.ndarray:
+    """对一组 prompt 运行 CLIPSeg，返回逐 prompt max 后的 [0,1] 概率 mask。"""
+    rgb = img.convert("RGB")
+    inputs = processor(
+        text=prompts,
+        images=[rgb] * len(prompts),
+        padding="max_length",
+        return_tensors="pt",
+    )
+    device = next(model.parameters()).device
+    inputs = {k: v.to(device) for k, v in inputs.items()}
+    with torch.no_grad():
+        outputs = model(**inputs)
+    preds = outputs.logits  # [num_prompts, h, w]
+    if preds.shape[0] > 1:
+        preds = preds.max(dim=0, keepdim=False)[0]
+    else:
+        preds = preds.squeeze(0)
+    # resize 到原图尺寸（GPU 上插值，避免 PIL/numpy 往返）
+    if preds.shape[-2:] != (img.size[1], img.size[0]):
+        preds = torch.nn.functional.interpolate(
+            preds.unsqueeze(0).unsqueeze(0),
+            size=(img.size[1], img.size[0]),
+            mode="bilinear",
+            align_corners=False,
+        ).squeeze()
+    preds = preds.cpu().numpy()
+    # sigmoid → [0,1] 概率（CLIPSeg 用 BCEWithLogitsLoss 训练，logits 为原始值）
+    preds = 1.0 / (1.0 + np.exp(-preds))
+    return preds
+
+
+def run_clipseg_face(img: Image.Image) -> np.ndarray:
+    """
+    在图像上运行 CLIPSeg 脸部/眼睛检测，兼顾真实人脸与二次元角色。
+    所有 prompt 合并为一次推理，取逐像素 max。
+
+    返回 [0, 1] 的浮点 numpy 数组（shape=(h, w)），值越高表示越可能是脸部区域。
+    """
+    processor, model = _get_clipseg()
+    return _run_clipseg_prompts(img, CLIPSEG_FACE_PROMPTS, processor, model)
+
+
+# ---------------------------------------------------------------------------
+# 绘制原语
+# ---------------------------------------------------------------------------
 
 
 def stamp_disc(alpha: np.ndarray, cx: int, cy: int, radius: int, value: int) -> None:
@@ -143,10 +222,14 @@ class AlphaPaintApp:
         recursive: bool,
         save_format: str = SAVE_FORMAT_RGBA,
         files_override: list[Path] | None = None,
+        clipseg_face: bool = False,
+        default_alpha: int = 255,
     ) -> None:
         if save_format not in SAVE_FORMAT_CHOICES:
             raise ValueError(f"save_format 须为 {SAVE_FORMAT_CHOICES}，收到: {save_format}")
         self.save_format = save_format
+        self.cfg_clipseg_face = clipseg_face
+        self.cfg_default_alpha = max(0, min(255, default_alpha))
         self.src_dir = src_dir.resolve()
         self.out_dir = out_dir.resolve()
         self.out_dir.mkdir(parents=True, exist_ok=True)
@@ -172,20 +255,26 @@ class AlphaPaintApp:
         self._cached_checker: Image.Image | None = None
 
         self._dragging = False
+        self._paint_value = 0  # 当前绘制值：左键=0 透明，右键=255 不透明
         self._last_raw: tuple[int, int] | None = None
         self._rect_start: tuple[int, int] | None = None
         self._rect_preview_id: int | None = None
         self._is_modified = False
+        self._clipseg_token = 0  # 用于取消过期 CLIPSeg 回调
+        self._clipseg_face_mask: np.ndarray | None = None  # 缓存 CLIPSeg 脸部概率图，供重置使用
+        self._brush_preview_tag = "brush_preview"  # 笔刷预览圆圈 tag
+        self._mouse_screen: tuple[int, int] = (-1, -1)  # 当前鼠标画布坐标
 
         # Python 3 Tk：必须先有根窗口，再创建 StringVar / IntVar
         self.root = tk.Tk()
         self.root.title("Alpha 绘制 (Tk)")
         self.root.geometry("1400x900")
 
-        # 默认框选模式
+        # 工具模式
         self.tool_var = tk.StringVar(master=self.root, value="rect")  # brush | rect
-        self.paint_var = tk.StringVar(master=self.root, value="transparent")  # opaque | transparent
-        self.brush_r_var = tk.IntVar(master=self.root, value=24)
+        # 笔刷半径为 sqrt(图像面积) 的比例（0.5% ~ 20%），计算后取整 >=2
+        self.brush_frac_var = tk.DoubleVar(master=self.root, value=3.0)
+        self._brush_radius_label_var = tk.StringVar(master=self.root, value="~24px")
 
         top = ttk.Frame(self.root)
         top.pack(side=tk.TOP, fill=tk.X, padx=6, pady=4)
@@ -196,35 +285,49 @@ class AlphaPaintApp:
         ttk.Button(top, text="保存并下一张 (Ctrl+S)", command=self.save_and_next).pack(side=tk.LEFT, padx=8)
         ttk.Button(top, text="清空 alpha", command=self.reset_alpha_transparent).pack(side=tk.LEFT, padx=8)
         ttk.Button(top, text="填满 alpha", command=self.reset_alpha_opaque).pack(side=tk.LEFT, padx=2)
+        if self.cfg_clipseg_face:
+            ttk.Button(
+                top, text="重置 CLIPSeg", command=self.reset_clipseg_mask,
+            ).pack(side=tk.LEFT, padx=(8, 2))
 
         ttk.Label(top, text="工具:").pack(side=tk.LEFT, padx=(16, 2))
         ttk.Radiobutton(top, text="画笔", variable=self.tool_var, value="brush").pack(side=tk.LEFT)
         ttk.Radiobutton(top, text="框选填充", variable=self.tool_var, value="rect").pack(side=tk.LEFT)
 
-        ttk.Label(top, text="绘制:").pack(side=tk.LEFT, padx=(12, 2))
-        ttk.Radiobutton(top, text="不透明(255)", variable=self.paint_var, value="opaque").pack(side=tk.LEFT)
-        ttk.Radiobutton(top, text="透明(0)", variable=self.paint_var, value="transparent").pack(side=tk.LEFT)
+        ttk.Label(top, text="  |  左键=透明  右键=不透明").pack(side=tk.LEFT, padx=(12, 2))
 
-        ttk.Label(top, text="笔刷半径:").pack(side=tk.LEFT, padx=(12, 2))
-        ttk.Scale(top, from_=2, to=120, variable=self.brush_r_var, orient=tk.HORIZONTAL, length=140).pack(
-            side=tk.LEFT
-        )
+        ttk.Label(top, text="笔刷比例 %:").pack(side=tk.LEFT, padx=(12, 2))
+        ttk.Scale(
+            top, from_=0.5, to=20.0, variable=self.brush_frac_var,
+            orient=tk.HORIZONTAL, length=140, command=self._on_brush_frac_change,
+        ).pack(side=tk.LEFT)
+        ttk.Label(top, textvariable=self._brush_radius_label_var, width=10).pack(side=tk.LEFT, padx=(4, 0))
 
         self.status_var = tk.StringVar(master=self.root, value="")
         ttk.Label(self.root, textvariable=self.status_var).pack(side=tk.TOP, anchor=tk.W, padx=8)
+        shortcut_text = (
+            "快捷键: Ctrl+S 保存并下一张  |  S 仅保存  |  Ctrl+N / X 跳过  |  ← → 翻页"
+            "  |  左键绘制透明  右键绘制不透明  |  画布滚轮调节笔刷比例"
+        )
         ttk.Label(
-            self.root,
-            text="快捷键: Ctrl+S 保存并下一张  |  S 仅保存  |  Ctrl+N / X 跳过  |  ← → 翻页  |  画布滚轮调节笔刷半径",
-            foreground="#888888",
+            self.root, text=shortcut_text, foreground="#888888",
         ).pack(side=tk.TOP, anchor=tk.W, padx=8, pady=(0, 4))
 
         self.canvas = tk.Canvas(self.root, bg="#333333", highlightthickness=0)
         self.canvas.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
 
         self.canvas.bind("<Configure>", lambda _e: self.request_redraw())
-        self.canvas.bind("<ButtonPress-1>", self.on_press)
+        # 鼠标跟踪
+        self.canvas.bind("<Motion>", self._on_canvas_motion)
+        self.canvas.bind("<Leave>", self._on_canvas_leave)
+        # 左键 → 透明
+        self.canvas.bind("<ButtonPress-1>", lambda e: self.on_press(e, 0))
         self.canvas.bind("<B1-Motion>", self.on_motion)
         self.canvas.bind("<ButtonRelease-1>", self.on_release)
+        # 右键 → 不透明
+        self.canvas.bind("<ButtonPress-3>", lambda e: self.on_press(e, 255))
+        self.canvas.bind("<B3-Motion>", self.on_motion)
+        self.canvas.bind("<ButtonRelease-3>", self.on_release)
         self.canvas.bind("<MouseWheel>", self.on_brush_wheel)
         self.canvas.bind("<Button-4>", self.on_brush_wheel)
         self.canvas.bind("<Button-5>", self.on_brush_wheel)
@@ -236,6 +339,43 @@ class AlphaPaintApp:
             return
 
         self.load_index(0)
+
+    def _on_brush_frac_change(self, *_args) -> None:
+        """笔刷比例滑块回调：更新显示的近似像素半径。"""
+        r = self.brush_radius()
+        pct = self.brush_frac_var.get()
+        self._brush_radius_label_var.set(f"{pct:.1f}% ~{r}px")
+        self._update_brush_preview()
+
+    def _on_canvas_motion(self, e: tk.Event) -> None:
+        self._mouse_screen = (e.x, e.y)
+        self._update_brush_preview()
+
+    def _on_canvas_leave(self, _e: tk.Event) -> None:
+        self._mouse_screen = (-1, -1)
+        self._clear_brush_preview()
+
+    def _update_brush_preview(self) -> None:
+        """在鼠标位置绘制笔刷半径预览圆圈（拖拽时隐藏，避免干扰）。"""
+        self.canvas.delete(self._brush_preview_tag)
+        if self._dragging:
+            return
+        if self.tool_var.get() != "brush":
+            return
+        mx, my = self._mouse_screen
+        if mx < 0 or my < 0:
+            return
+        r = int(self.brush_radius() * self.scale)
+        if r < 2:
+            return
+        self.canvas.create_oval(
+            mx - r, my - r, mx + r, my + r,
+            outline="#ff4444", width=1, dash=(4, 2),
+            tags=(self._brush_preview_tag,),
+        )
+
+    def _clear_brush_preview(self) -> None:
+        self.canvas.delete(self._brush_preview_tag)
 
     def _setup_keyboard_shortcuts(self) -> None:
         self.root.bind_all("<Control-s>", self._on_hotkey_save_and_next, add=True)
@@ -269,11 +409,16 @@ class AlphaPaintApp:
         self.next_image()
         return "break"
 
-    def paint_value(self) -> int:
-        return 255 if self.paint_var.get() == "opaque" else 0
+    def brush_radius(self) -> int:
+        """笔刷半径为 sqrt(图像面积) × 百分比 / 100，且 >=2px。"""
+        if self.rgb is None:
+            return 24
+        area_sqrt = math.sqrt(self.rgb.width * self.rgb.height)
+        frac = max(0.005, min(0.20, self.brush_frac_var.get() / 100.0))
+        return max(2, int(round(frac * area_sqrt)))
 
     def on_brush_wheel(self, event: tk.Event) -> str:
-        """画布滚轮：上滚增大笔刷半径，下滚减小（与滑块范围 2–120 一致）。"""
+        """画布滚轮：上滚增大笔刷比例，下滚减小（百分比 0.5% ~ 20%）。"""
         if event.num == 4:
             delta = 1
         elif event.num == 5:
@@ -282,10 +427,11 @@ class AlphaPaintApp:
             delta = 1
         else:
             delta = -1
-        cur = int(self.brush_r_var.get())
-        step = max(2, cur // 12)
-        new_r = max(2, min(120, cur + delta * step))
-        self.brush_r_var.set(new_r)
+        cur = self.brush_frac_var.get()
+        step = max(0.1, cur * 0.15)
+        new_val = max(0.5, min(20.0, cur + delta * step))
+        self.brush_frac_var.set(round(new_val, 1))
+        self._on_brush_frac_change()
         return "break"
 
     def rel_out_path(self, path: Path) -> Path:
@@ -332,17 +478,71 @@ class AlphaPaintApp:
             self.alpha = saved_alpha
             load_hint = "已加载已保存 alpha"
         else:
-            self.alpha = np.full((self.rgb.height, self.rgb.width), 255, dtype=np.uint8)
-            load_hint = "默认满 alpha，当前绘制=透明(0)"
+            self.alpha = np.full((ih, iw), self.cfg_default_alpha, dtype=np.uint8)
+            load_hint = f"默认 alpha={self.cfg_default_alpha}"
+            if self.cfg_clipseg_face:
+                load_hint += "，背景标注脸部中..."
+                self._start_clipseg_inference(self.rgb.copy())
         self._cached_view_size = None
         self._cached_rgb_view = None
         self._cached_checker = None
         fmt_hint = "RGBA半透明" if self.save_format == SAVE_FORMAT_RGBA else "灰度alpha(白=不透明)"
         mask_tag = "已有mask" if self.has_mask(path) else "待画mask"
+        clipseg_tag = " CLIPSeg" if self.cfg_clipseg_face else ""
         self.status_var.set(
-            f"[{idx + 1}/{len(self.files)}] 待处理 {pending}  |  {mask_tag}  |  {path.name}  |  {iw}x{ih}  |  {load_hint}  |  保存:{fmt_hint}  |  {saved_path}"
+            f"[{idx + 1}/{len(self.files)}] 待处理 {pending}  |  {mask_tag}  |  {path.name}  |  {iw}x{ih}  |  {load_hint}  |  保存:{fmt_hint}{clipseg_tag}  |  {saved_path}"
         )
         self._is_modified = False
+        self._mouse_screen = (-1, -1)
+        self.request_redraw()
+
+    # ------------------------------------------------------------------
+    # CLIPSeg 后台推理
+    # ------------------------------------------------------------------
+
+    def _start_clipseg_inference(self, img: Image.Image) -> None:
+        self._clipseg_token += 1
+        token = self._clipseg_token
+
+        def _worker():
+            try:
+                face_mask = run_clipseg_face(img)
+            except Exception as e:
+                print(f"[CLIPSeg] {e}")
+                face_mask = None
+            self.root.after(0, lambda: self._on_clipseg_done(token, face_mask))
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _on_clipseg_done(self, token: int, face_mask: np.ndarray | None) -> None:
+        if token != self._clipseg_token or self.alpha is None:
+            return
+        if face_mask is None:
+            self.status_var.set(self.status_var.get().replace("背景标注脸部中...", "CLIPSeg 不可用"))
+            return
+        # 缓存脸部概率图，供后续「重置 CLIPSeg」按钮复用
+        self._clipseg_face_mask = face_mask
+        self._apply_clipseg_mask()
+        self.status_var.set(self.status_var.get().replace("背景标注脸部中...", "CLIPSeg 脸部已标注"))
+        self.request_redraw()
+
+    def _apply_clipseg_mask(self) -> None:
+        """将缓存的 CLIPSeg 脸部概率图应用到 alpha（default_alpha ~ 255 线性插值）。"""
+        if self._clipseg_face_mask is None or self.alpha is None:
+            return
+        base = self.cfg_default_alpha
+        span = 255 - base
+        boost = (self._clipseg_face_mask * span + base).astype(np.uint8)
+        self.alpha = np.maximum(self.alpha, boost)
+
+    def reset_clipseg_mask(self) -> None:
+        """重置 alpha 为 CLIPSeg 初始状态：default_alpha ~ 255 线性插值。"""
+        if self.rgb is None:
+            return
+        self.alpha = np.full((self.rgb.height, self.rgb.width), self.cfg_default_alpha, dtype=np.uint8)
+        if self._clipseg_face_mask is not None:
+            self._apply_clipseg_mask()
+        self._is_modified = True
         self.request_redraw()
 
     def prev_image(self) -> None:
@@ -412,7 +612,7 @@ class AlphaPaintApp:
         if self._cached_view_size != (vw, vh):
             self._cached_view_size = (vw, vh)
             self._cached_rgb_view = self.rgb.resize((vw, vh), Image.Resampling.BILINEAR)
-            self._cached_checker = build_checkerboard(vw, vh)
+            self._cached_checker = build_checkerboard(vw, vh, darken=self.cfg_default_alpha / 255.0)
 
         alpha_view = Image.fromarray(self.alpha).resize((vw, vh), Image.Resampling.NEAREST)
         preview = compose_preview(self._cached_rgb_view, alpha_view, self._cached_checker)
@@ -425,15 +625,17 @@ class AlphaPaintApp:
             self.canvas.coords(self.image_id, self.offset_x, self.offset_y)
             self.canvas.itemconfig(self.image_id, image=self.tk_img)
 
-    def on_press(self, e: tk.Event) -> None:
+    def on_press(self, e: tk.Event, paint_value: int) -> None:
         if self.rgb is None or self.alpha is None:
             return
+        self._clear_brush_preview()
+        self._paint_value = paint_value
         rx, ry = self.screen_to_raw(e.x, e.y)
         tool = self.tool_var.get()
         if tool == "brush":
             self._dragging = True
             self._last_raw = (rx, ry)
-            stamp_disc(self.alpha, rx, ry, int(self.brush_r_var.get()), self.paint_value())
+            stamp_disc(self.alpha, rx, ry, self.brush_radius(), self._paint_value)
             self.request_redraw()
         else:
             self._rect_start = (rx, ry)
@@ -447,7 +649,7 @@ class AlphaPaintApp:
         if tool == "brush":
             if self._last_raw is not None:
                 lx, ly = self._last_raw
-                stroke_line(self.alpha, lx, ly, rx, ry, int(self.brush_r_var.get()), self.paint_value())
+                stroke_line(self.alpha, lx, ly, rx, ry, self.brush_radius(), self._paint_value)
             self._last_raw = (rx, ry)
             self.request_redraw()
         else:
@@ -469,7 +671,7 @@ class AlphaPaintApp:
         if tool == "rect" and self._dragging and self._rect_start is not None:
             rx, ry = self.screen_to_raw(e.x, e.y)
             x0, y0 = self._rect_start
-            fill_rect(self.alpha, x0, y0, rx, ry, self.paint_value())
+            fill_rect(self.alpha, x0, y0, rx, ry, self._paint_value)
             if self._rect_preview_id is not None:
                 self.canvas.delete(self._rect_preview_id)
                 self._rect_preview_id = None
@@ -479,6 +681,7 @@ class AlphaPaintApp:
         self._dragging = False
         self._last_raw = None
         self._rect_start = None
+        self._update_brush_preview()
         self.request_redraw()
 
     def save_current(self) -> None:
@@ -523,17 +726,40 @@ def main() -> None:
         default=SAVE_FORMAT_RGBA,
         help="rgba: 半透明 RGBA PNG；alpha_bw: 黑白灰度 alpha（白=255 不透明，黑=0 透明）",
     )
+    ap.add_argument(
+        "--default-alpha",
+        type=int,
+        default=255,
+        metavar="0-255",
+        help="默认 alpha 值（0=全透明，255=全不透明）。与 --clipseg-face 联用时，脸部区域从此值线性插值到 255",
+    )
+    ap.add_argument(
+        "--clipseg-face",
+        action="store_true",
+        help=(
+            "启用 CLIPSeg 脸部标注：自动检测脸部/眼睛位置，"
+            "将对应区域 alpha 从 --default-alpha 线性拉高到 255。需要 pip install transformers torch"
+        ),
+    )
     args = ap.parse_args()
     src = args.input_path.expanduser().resolve()
     out = args.output_dir.expanduser().resolve()
+    extra = dict(
+        clipseg_face=args.clipseg_face,
+        default_alpha=args.default_alpha,
+    )
     if src.is_file():
         if src.suffix.lower() not in IMAGE_EXTS:
             raise SystemExit(f"不支持的图片扩展名（支持 {', '.join(sorted(IMAGE_EXTS))}）: {src}")
         app = AlphaPaintApp(
-            src.parent, out, recursive=False, save_format=args.save_format, files_override=[src]
+            src.parent, out, recursive=False, save_format=args.save_format, files_override=[src],
+            **extra,
         )
     elif src.is_dir():
-        app = AlphaPaintApp(src, out, args.recursive, save_format=args.save_format)
+        app = AlphaPaintApp(
+            src, out, args.recursive, save_format=args.save_format,
+            **extra,
+        )
     else:
         raise SystemExit(f"输入路径不存在: {src}")
     app.root.mainloop()

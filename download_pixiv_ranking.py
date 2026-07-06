@@ -36,26 +36,36 @@ def shift_month(d: date, months: int) -> date:
     return date(y, m, day)
 
 
+def ranking_base_mode(mode: str) -> str:
+    if mode.endswith("_r18g"):
+        return mode[:-5]
+    if mode.endswith("_r18"):
+        return mode[:-4]
+    return mode
+
+
 def default_ranking_end(mode: str, today: date | None = None) -> date:
     today = today or date.today()
-    if mode == "monthly":
+    base = ranking_base_mode(mode)
+    if base == "monthly":
         return shift_month(today, 1)
-    if mode == "weekly":
+    if base == "weekly":
         return today - timedelta(days=today.weekday() + 7)
     return today - timedelta(days=1)
 
 
 def generate_ranking_dates(mode: str, end: date, periods: int) -> list[str]:
+    base = ranking_base_mode(mode)
     dates: list[str] = []
-    if mode == "monthly":
+    if base == "monthly":
         for i in range(periods):
             dates.append(shift_month(end, i).strftime("%Y%m%d"))
-    elif mode == "weekly":
+    elif base == "weekly":
         cur = end - timedelta(days=end.weekday())
         for _ in range(periods):
             dates.append(cur.strftime("%Y%m%d"))
             cur -= timedelta(days=7)
-    elif mode == "daily":
+    elif base == "daily":
         for i in range(periods):
             dates.append((end - timedelta(days=i)).strftime("%Y%m%d"))
     else:
@@ -135,7 +145,11 @@ def main():
     ap = argparse.ArgumentParser(description="下载 Pixiv 排行榜作品原图")
     ap.add_argument("--cookies", required=True, help="Netscape cookies.txt 路径")
     ap.add_argument("--out", default="datasets/reg", help="输出目录")
-    ap.add_argument("--mode", default="monthly", help="排行榜模式：daily/weekly/monthly/rookie")
+    ap.add_argument(
+        "--mode",
+        default="monthly",
+        help="排行榜模式：daily/weekly/monthly/rookie，或 daily_r18/weekly_r18/monthly_r18/daily_r18g 等",
+    )
     ap.add_argument("--content", default="illust", help="内容类型：illust/manga")
     ap.add_argument("--limit", type=int, default=150, help="最多下载作品数")
     ap.add_argument("--date", default="", help="单个排行榜日期 YYYYMMDD，不指定则按最近一年多个时间点抓取")

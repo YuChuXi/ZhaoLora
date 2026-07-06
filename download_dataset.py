@@ -228,7 +228,12 @@ def _should_stop_date_pagination(
 
 
 def search_options_from_args(args: argparse.Namespace) -> GelbooruSearchOptions:
-    extra: tuple[str, ...] = tuple(args.extra_tags) if args.extra_tags else ()
+    extra: list[str] = list(args.extra_tags) if args.extra_tags else []
+    if args.exclude_tag:
+        for tag in args.exclude_tag:
+            name = tag.strip().lstrip("-")
+            if name:
+                extra.append(f"-{name}")
     excl = tuple(args.exclude_rating) if args.exclude_rating else ()
     return GelbooruSearchOptions(
         rating=args.rating,
@@ -243,7 +248,7 @@ def search_options_from_args(args: argparse.Namespace) -> GelbooruSearchOptions:
         id_max=args.id_max,
         sort=args.sort,
         uploaded_by=args.uploaded_by,
-        extra_tag_chunks=extra,
+        extra_tag_chunks=tuple(extra),
         created_after=args.created_after,
         created_before=args.created_before,
     )
@@ -412,6 +417,7 @@ async def download_dataset(
     search_opts: GelbooruSearchOptions | None = None,
     max_concurrent: int = DEFAULT_MAX_CONCURRENT,
     *,
+    limit: int | None = None,
     show_progress: bool = True,
     max_retries: int = DEFAULT_DOWNLOAD_RETRIES,
     retry_base_delay: float = DEFAULT_RETRY_BASE_DELAY,
@@ -446,13 +452,15 @@ async def download_dataset(
         posts = _normalize_posts(raw)
         if not posts:
             break
-        if date_paginate:
-            all_posts.extend(filter_posts_client_constraints(posts, opts))
-            if _should_stop_date_pagination(posts, opts):
-                print("列表分页提前结束: 后续页在 id–日期单调假设下不可能再命中日期条件。")
-                break
-        else:
-            all_posts.extend(filter_posts_client_constraints(posts, opts))
+        filtered = filter_posts_client_constraints(posts, opts)
+        all_posts.extend(filtered)
+        if limit is not None and len(all_posts) >= limit:
+            all_posts = all_posts[:limit]
+            print(f"已达下载上限 {limit}，停止列表分页。")
+            break
+        if date_paginate and _should_stop_date_pagination(posts, opts):
+            print("列表分页提前结束: 后续页在 id–日期单调假设下不可能再命中日期条件。")
+            break
         page += 1
 
     if date_paginate:
@@ -579,12 +587,21 @@ def _build_arg_parser() -> argparse.ArgumentParser:
 示例:
   %(prog)s ./out --tags "1girl" --rating safe --min-score 10
   %(prog)s ./out --tags "character_name" --min-width 1024 --min-height 1024 --sort score:desc
-  %(prog)s ./out --tags "1boy" --id-min 8000000 --extra-tags "-ai-generated"
+  %(prog)s ./out --tags "1boy" --id-min 8000000 --exclude-tag ai-generated
   %(prog)s ./out --tags "architecture" --exclude-rating explicit
+  %(prog)s ./out --tags "1girl" --rating safe -n 50
 """,
     )
     p.add_argument("output_dir", type=str, help="保存图片与 .txt 标签的目录。")
     p.add_argument("--tags", type=str, default="", help="基础 tags（角色/作品等），可与下方筛选组合。")
+    p.add_argument(
+        "-n",
+        "--limit",
+        type=int,
+        default=None,
+        metavar="N",
+        help="最多下载 N 张图（默认不限制，拉取全部匹配结果）。",
+    )
     p.add_argument("--reg", action="store_true", help="下载正则化数据集。")
     p.add_argument("--reg_tags", type=str, default="", help="正则化集的基础 tags，默认空。")
     p.add_argument("--num_reg", type=int, default=150, help="正则化集目标张数。")
@@ -672,11 +689,18 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         help="上传者 user:NAME（可写 bob 或完整 user:bob）。",
     )
     g.add_argument(
+        "--exclude-tag",
+        action="append",
+        default=None,
+        metavar="TAG",
+        help="可多次。排除 tag，写入 -TAG。例：--exclude-tag chibi",
+    )
+    g.add_argument(
         "--extra-tags",
         action="append",
         default=None,
         metavar="FRAG",
-        help="附加到查询串的一段（可多次）。如 --extra-tags \"pool:2\" --extra-tags \"-tagme\"",
+        help="附加到查询串的一段（可多次）。含前导负号请用 --extra-tags=-chibi 或 --exclude-tag chibi。",
     )
 
     d = p.add_argument_group("客户端上传日期筛选（按 created_at）")
@@ -728,12 +752,15 @@ async def main():
     else:
         if not args.tags.strip() and not _has_any_server_side_criteria(opts) and not _has_any_client_date_criteria(opts):
             parser.error("请使用 --tags 和/或筛选参数，或使用 --reg。")
+        if args.limit is not None and args.limit < 1:
+            parser.error("--limit 须为正整数。")
         await download_dataset(
             args.tags,
             args.output_dir,
             gelbooru_api,
             search_opts=opts,
             max_concurrent=args.workers,
+            limit=args.limit,
             **dl_kw,
         )
 

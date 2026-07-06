@@ -5,6 +5,8 @@
 
 默认同时删除与图片同 stem 的 .txt 旁路文件（与 prepare_metadata 数据集布局一致）。
 
+可通过 --delete-only-subdir 限制“只删指定子目录里的图片”，其余目录仅参与比对、不执行删除。
+
 比较阶段默认单进程（--compare-workers=1），由所链接的 BLAS（OpenBLAS/MKL 等）按 OMP_NUM_THREADS 等环境变量多线程执行矩阵运算。
 """
 
@@ -227,6 +229,16 @@ def _parse_args() -> argparse.Namespace:
         default=None,
         help="将重复文件移动到该目录（保持相对 data-dir 的路径）；不指定则直接删除",
     )
+    p.add_argument(
+        "--delete-only-subdir",
+        type=Path,
+        action="append",
+        default=[],
+        help=(
+            "仅允许删除这些子目录下的重复图（相对 --data-dir，可重复传入）。"
+            "未落在这些目录下的图片只参与比对，不会被删。"
+        ),
+    )
     return p.parse_args()
 
 
@@ -252,11 +264,40 @@ def _move_keep_rel(src: Path, data_root: Path, trash_root: Path) -> Path:
     return dst
 
 
+def _resolve_subdir_arg(root: Path, subdir: Path) -> Path:
+    if subdir.is_absolute():
+        resolved = subdir.resolve()
+    else:
+        resolved = (root / subdir).resolve()
+    try:
+        resolved.relative_to(root)
+    except ValueError as e:
+        raise ValueError(f"子目录不在 data-dir 下: {subdir}") from e
+    return resolved
+
+
+def _is_under_any(path: Path, roots: list[Path]) -> bool:
+    rp = path.resolve()
+    for root in roots:
+        try:
+            rp.relative_to(root)
+            return True
+        except ValueError:
+            pass
+    return False
+
+
 def main() -> None:
     args = _parse_args()
     root = args.data_dir.resolve()
     if not root.is_dir():
         print(f"错误: 目录不存在 {root}", file=sys.stderr)
+        sys.exit(1)
+
+    try:
+        delete_only_dirs = [_resolve_subdir_arg(root, p) for p in args.delete_only_subdir]
+    except ValueError as e:
+        print(f"错误: {e}", file=sys.stderr)
         sys.exit(1)
 
     paths = _collect_image_paths(root, recursive=not args.no_recursive)
@@ -332,6 +373,8 @@ def main() -> None:
 
     to_delete: list[Path] = []
     sidecar_txt: list[Path] = []
+    duplicate_groups: list[dict[str, object]] = []
+    protected_duplicates = 0
 
     for _root_idx, idxs in groups.items():
         if len(idxs) == 1:
@@ -341,10 +384,22 @@ def main() -> None:
         amin = min(areas)
         similar = (amin > 0) and ((amax / float(amin)) <= float(args.similar_res_ratio))
 
+        deletable_idxs = (
+            [k for k in idxs if _is_under_any(records[k].path, delete_only_dirs)]
+            if delete_only_dirs
+            else list(idxs)
+        )
+        if not deletable_idxs:
+            protected_duplicates += 1
+            continue
+
+        non_deletable_idxs = [k for k in idxs if k not in deletable_idxs]
+        keep_candidates = non_deletable_idxs if non_deletable_idxs else idxs
+
         if similar:
             # 分辨率差异不大：优先保留 blockiness 更低（更少 JPEG 网格残留）的那张
             best = min(
-                idxs,
+                keep_candidates,
                 key=lambda k: (
                     records[k].blockiness,
                     -(records[k].width * records[k].height),
@@ -354,30 +409,53 @@ def main() -> None:
         else:
             # 分辨率差异大：优先保留更大分辨率
             best = min(
-                idxs,
+                keep_candidates,
                 key=lambda k: (-(records[k].width * records[k].height), str(records[k].path)),
             )
-        for k in idxs:
+        removed_paths: list[Path] = []
+        removed_sidecars: list[Path] = []
+        for k in deletable_idxs:
             if k == best:
                 continue
             p = records[k].path
             to_delete.append(p)
+            removed_paths.append(p)
             if not args.no_sidecar_txt:
                 cap = p.with_suffix(".txt")
                 if cap.is_file():
                     sidecar_txt.append(cap)
+                    removed_sidecars.append(cap)
+
+        if not removed_paths:
+            protected_duplicates += 1
+            continue
+
+        duplicate_groups.append(
+            {
+                "keep": records[best].path,
+                "members": sorted((records[k].path for k in idxs), key=lambda x: str(x)),
+                "remove": sorted(removed_paths, key=lambda x: str(x)),
+                "remove_sidecars": sorted(removed_sidecars, key=lambda x: str(x)),
+            }
+        )
 
     to_delete.sort(key=lambda x: str(x))
     sidecar_txt = sorted({p.resolve() for p in sidecar_txt}, key=lambda x: str(x))
+    duplicate_groups.sort(key=lambda g: str(g["keep"]))
 
     verb = "移动" if args.trash_dir is not None else "删除"
     print(
-        f"发现 {len(groups)} 个连通组，其中 {sum(1 for v in groups.values() if len(v) > 1)} 组含重复；将{verb} {len(to_delete)} 张图",
+        f"发现 {len(groups)} 个连通组，其中 {sum(1 for v in groups.values() if len(v) > 1)} 组含重复；实际将处理 {len(duplicate_groups)} 组，{verb} {len(to_delete)} 张图",
         end="",
     )
     if not args.no_sidecar_txt:
         print(f"，及 {len(sidecar_txt)} 个旁路 .txt", end="")
     print()
+    if delete_only_dirs:
+        rels = [str(p.relative_to(root)) for p in delete_only_dirs]
+        print(f"仅删除这些子目录下的图片: {', '.join(rels)}")
+        if protected_duplicates:
+            print(f"有 {protected_duplicates} 个重复组因不在允许删除的子目录内而跳过")
 
     if args.trash_dir is not None:
         trash_root = args.trash_dir.resolve()
@@ -385,18 +463,26 @@ def main() -> None:
     else:
         trash_root = None
 
-    for p in to_delete:
-        if trash_root is None:
-            print(f"  DEL {p}")
-        else:
-            rel = p.resolve().relative_to(root)
-            print(f"  MOV {p} -> {trash_root / rel}")
-    for p in sidecar_txt:
-        if trash_root is None:
-            print(f"  DEL {p}")
-        else:
-            rel = p.resolve().relative_to(root)
-            print(f"  MOV {p} -> {trash_root / rel}")
+    for idx, group in enumerate(duplicate_groups, start=1):
+        keep = group["keep"]
+        members = group["members"]
+        removed = group["remove"]
+        removed_sidecars = group["remove_sidecars"]
+
+        print(f"[组 {idx}] 共 {len(members)} 张")
+        print(f"  KEEP {keep}")
+        for p in removed:
+            if trash_root is None:
+                print(f"  DEL  {p}")
+            else:
+                rel = p.resolve().relative_to(root)
+                print(f"  MOV  {p} -> {trash_root / rel}")
+        for p in removed_sidecars:
+            if trash_root is None:
+                print(f"  DEL  {p}")
+            else:
+                rel = p.resolve().relative_to(root)
+                print(f"  MOV  {p} -> {trash_root / rel}")
 
     if args.dry_run:
         print(f"[dry-run] 未{verb}任何文件")
