@@ -498,10 +498,16 @@
     for (var i = 0; i < _images.length; i++) if (_images[i].done) done++;
     document.getElementById('crop-progress').textContent =
       (_index + 1) + '/' + _images.length + ' (已裁 ' + done + ')';
-    document.getElementById('crop-filename').textContent = img ? img.path : '-';
-    document.getElementById('info-text').textContent = img
-      ? (img.path + ' | 原图 ' + _origW + 'x' + _origH + ' | 选区 ' + _crops.length)
-      : '无图片';
+    if (!img) {
+      document.getElementById('crop-filename').textContent = '-';
+      document.getElementById('info-text').textContent = '无图片';
+      return;
+    }
+    var status = img.done ? '已裁剪' : '未裁剪';
+    document.getElementById('crop-filename').textContent = img.path + ' · ' + status;
+    document.getElementById('info-text').textContent =
+      '[' + status + '] ' + img.path + ' | 原图 ' + _origW + 'x' + _origH + ' | 选区 ' + _crops.length +
+      (_autoParts.length ? ' | 自动部位: ' + _autoParts.join(', ') : '');
   }
 
   // ---- hit test（原图像素坐标）----
