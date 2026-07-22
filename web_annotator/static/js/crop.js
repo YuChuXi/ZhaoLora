@@ -25,6 +25,7 @@
   var _defaultCrop = null;
   var _datasetRoot = '';
   var _autoParts = []; // 已添加的部位名，后续每张图自动生成选区
+  var _deniedParts = []; // 永久删除的部位，刷新后也不再自动纳入
   var _noCrop = false;
   var _dragMode = null;
   var _dragStart = null;
@@ -217,13 +218,23 @@
     return 'crop_auto_parts:' + (_datasetRoot || 'default');
   }
 
+  function partsDenyKey() {
+    return 'crop_auto_parts_deny:' + (_datasetRoot || 'default');
+  }
+
   function loadParts(serverParts) {
     var saved = null;
+    var denied = null;
     try { saved = JSON.parse(localStorage.getItem(partsStorageKey()) || 'null'); } catch (e) { saved = null; }
+    try { denied = JSON.parse(localStorage.getItem(partsDenyKey()) || 'null'); } catch (e) { denied = null; }
+    _deniedParts = Array.isArray(denied) ? denied.filter(function (n) { return typeof n === 'string'; }) : [];
     _autoParts = [];
     var seen = {};
+    function isDenied(name) {
+      return _deniedParts.indexOf(name) >= 0;
+    }
     function pushName(name) {
-      if (!name || seen[name]) return;
+      if (!name || seen[name] || isDenied(name)) return;
       seen[name] = true;
       _autoParts.push(name);
     }
@@ -233,7 +244,7 @@
         else if (saved[i] && saved[i].name && saved[i].enabled !== false) pushName(saved[i].name);
       }
     }
-    // 服务器已有部位目录也自动纳入
+    // 服务器已有部位目录也自动纳入（永久删除过的除外）
     if (Array.isArray(serverParts)) {
       for (var k = 0; k < serverParts.length; k++) pushName(serverParts[k]);
     }
@@ -243,17 +254,39 @@
     localStorage.setItem(partsStorageKey(), JSON.stringify(_autoParts));
   }
 
+  function saveDeniedParts() {
+    localStorage.setItem(partsDenyKey(), JSON.stringify(_deniedParts));
+  }
+
   function registerAutoPart(name) {
     if (!name) return;
+    _deniedParts = _deniedParts.filter(function (n) { return n !== name; });
+    saveDeniedParts();
     if (_autoParts.indexOf(name) >= 0) return;
     _autoParts.push(name);
     saveParts();
   }
 
-  function unregisterAutoPart(name) {
+  function unregisterAutoPart(name, permanent) {
     if (!name) return;
     _autoParts = _autoParts.filter(function (n) { return n !== name; });
     saveParts();
+    if (permanent && _deniedParts.indexOf(name) < 0) {
+      _deniedParts.push(name);
+      saveDeniedParts();
+    }
+  }
+
+  function removeCropPermanently(idx) {
+    if (idx < 0 || idx >= _crops.length) return;
+    var name = (_crops[idx].name || '').trim();
+    removeCropAt(idx);
+    if (name) {
+      for (var i = _crops.length - 1; i >= 0; i--) {
+        if (_crops[i].name === name) removeCropAt(i);
+      }
+      unregisterAutoPart(name, true);
+    }
   }
 
   function ensurePartCrop(name) {
@@ -468,11 +501,14 @@
           renderList();
         });
         body.appendChild(input);
+        var nameHint = (box.name || '').trim();
+        var actions = document.createElement('div');
+        actions.className = 'crop-item-actions';
         var del = document.createElement('button');
         del.type = 'button';
         del.className = 'btn-del';
         del.textContent = '删除';
-        del.title = 'Delete';
+        del.title = 'D / Delete：仅删当前图选区';
         del.addEventListener('click', function (e) {
           e.stopPropagation();
           removeCropAt(idx);
@@ -480,8 +516,23 @@
           renderList();
           updateNav();
         });
+        var delPerm = document.createElement('button');
+        delPerm.type = 'button';
+        delPerm.className = 'btn-del btn-del-perm';
+        delPerm.textContent = '永久';
+        delPerm.title = '永久删除部位：当前图去掉，后续也不再自动带上';
+        delPerm.addEventListener('click', function (e) {
+          e.stopPropagation();
+          removeCropPermanently(idx);
+          redraw();
+          renderList();
+          updateNav();
+          toast(nameHint ? ('已永久删除部位: ' + nameHint) : '已永久删除选区');
+        });
+        actions.appendChild(del);
+        actions.appendChild(delPerm);
         el.appendChild(body);
-        el.appendChild(del);
+        el.appendChild(actions);
         el.addEventListener('click', function () {
           _selected = idx;
           renderList();

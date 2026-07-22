@@ -41,12 +41,16 @@
     background: #0a1a30; color: var(--text); border: 1px solid var(--border);
     border-radius: 4px; font-size: 12px;
   }
+  .crop-item-actions {
+    flex-shrink: 0; display: flex; flex-direction: column; gap: 4px;
+  }
   .crop-item .btn-del {
-    flex-shrink: 0; padding: 2px 8px; font-size: 11px;
+    padding: 2px 8px; font-size: 11px;
     border: 1px solid var(--border); background: transparent;
     color: var(--text-dim); border-radius: 4px; cursor: pointer;
   }
   .crop-item .btn-del:hover { color: #fff; border-color: var(--accent); background: var(--accent); }
+  .crop-item .btn-del-perm:hover { border-color: #c44; background: #c44; }
   .part-add-row {
     display: flex; gap: 6px; padding: 0 8px 8px;
   }
@@ -108,6 +112,7 @@
       <div style="font-size:11px;color:var(--text-dim);line-height:1.4;">
         添加部位 → 默认尺寸选区，后续自动生成<br>
         输出：xxx/&lt;部位&gt;/同名.png<br>
+        删除=仅当前图 · 永久=注销自动部位<br>
         Ctrl+S / S 保存并下一张 · 空格 / Ctrl+N 跳过<br>
         ←/→ 翻页 · A 新建 · D / Delete 删除 · C 清空
       </div>
