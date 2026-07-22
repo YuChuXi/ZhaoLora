@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Tag 统计</title>
+<link rel="stylesheet" href="/static/css/annotator.css">
+<style>
+  body { margin: 0; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+  .tags-main { flex: 1; display: flex; min-height: 0; }
+  .tags-side {
+    width: 240px; flex-shrink: 0; background: var(--surface);
+    border-right: 1px solid var(--border);
+    display: flex; flex-direction: column; overflow: hidden;
+  }
+  .tags-side h3 {
+    font-size: 13px; padding: 12px 14px 6px; color: var(--text-dim); font-weight: 600;
+  }
+  .dir-list { flex: 1; overflow-y: auto; padding: 4px 10px 12px; }
+  .dir-item {
+    display: flex; align-items: center; gap: 8px;
+    padding: 6px 8px; border-radius: 6px; font-size: 13px; cursor: pointer;
+  }
+  .dir-item:hover { background: rgba(255,255,255,0.04); }
+  .dir-item .meta { color: var(--text-dim); font-size: 11px; margin-left: auto; }
+  .tags-side .side-actions {
+    padding: 10px 12px; border-top: 1px solid var(--border);
+    display: flex; flex-direction: column; gap: 8px;
+  }
+  .tags-content {
+    flex: 1; display: flex; flex-direction: column; min-width: 0; overflow: hidden;
+  }
+  .tags-toolbar2 {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    padding: 8px 14px; border-bottom: 1px solid var(--border); background: var(--surface);
+    font-size: 12px; color: var(--text-dim);
+  }
+  .tags-toolbar2 label { display: flex; align-items: center; gap: 4px; cursor: pointer; user-select: none; }
+  .tags-scroll { flex: 1; overflow: auto; padding: 8px 12px 20px; }
+  .tag-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .tag-table th {
+    position: sticky; top: 0; background: var(--bg); z-index: 2;
+    text-align: left; padding: 8px 10px; color: var(--text-dim); font-weight: 600;
+    border-bottom: 1px solid var(--border);
+  }
+  .tag-table td { padding: 6px 10px; border-bottom: 1px solid rgba(42,42,74,0.6); vertical-align: middle; }
+  .tag-table tr:hover td { background: rgba(15,52,96,0.35); }
+  .tag-table tr.selected td { background: rgba(233,69,96,0.18); }
+  .tag-table .col-check { width: 36px; }
+  .tag-table .col-pct { width: 88px; color: #5eb8ff; font-variant-numeric: tabular-nums; }
+  .tag-table .col-count { width: 64px; color: var(--text-dim); font-variant-numeric: tabular-nums; }
+  .tag-table .col-en { width: 42%; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  .tag-table .col-zh { color: #e8d5b7; }
+  .tag-table .zh-miss { color: var(--text-dim); opacity: 0.55; }
+  .export-box {
+    padding: 8px 14px; border-top: 1px solid var(--border); background: var(--surface);
+    display: flex; gap: 8px; align-items: flex-start;
+  }
+  .export-box textarea {
+    flex: 1; min-height: 52px; max-height: 120px; resize: vertical;
+    background: #0a1a30; color: var(--text); border: 1px solid var(--border);
+    border-radius: 6px; padding: 6px 8px; font-size: 12px; font-family: ui-monospace, monospace;
+  }
+  .empty-hint { padding: 40px; text-align: center; color: var(--text-dim); }
+</style>
+</head>
+<body>
+<div class="toolbar">
+  <div class="toolbar-brand">
+    <a class="nav-home" href="/">主页</a>
+    <span class="title">Tag 统计</span>
+  </div>
+  <span class="stat" id="stat-summary">-</span>
+  <span class="sep"></span>
+  <button class="btn green" id="btn-refresh">统计</button>
+  <button class="btn" id="btn-select-all-tags">全选 tag</button>
+  <button class="btn" id="btn-clear-tags">清空选择</button>
+  <button class="btn" id="btn-copy">复制选中</button>
+  <button class="btn" id="btn-export-en">导出英文</button>
+  <button class="btn" id="btn-export-zh">导出中文</button>
+</div>
+
+<div class="tags-main">
+  <aside class="tags-side">
+    <h3>子目录（默认全选）</h3>
+    <div class="dir-list" id="dir-list"></div>
+    <div class="side-actions">
+      <button class="btn" id="btn-dirs-all" type="button">全选目录</button>
+      <button class="btn" id="btn-dirs-none" type="button">全不选</button>
+      <div style="font-size:11px;color:var(--text-dim);line-height:1.45;">
+        按出现百分比降序<br>
+        勾选 tag 后复制 / 导出为逗号分隔列表
+      </div>
+    </div>
+  </aside>
+  <div class="tags-content">
+    <div class="tags-toolbar2">
+      <label><input type="checkbox" id="opt-lower" checked> 小写合并</label>
+      <label><input type="checkbox" id="opt-underscores" checked> 下划线→空格</label>
+      <label><input type="checkbox" id="opt-per-sample" checked> 按样本去重</label>
+      <label>最少次数 <input type="number" id="opt-min" value="1" min="1" style="width:52px;background:#0a1a30;color:var(--text);border:1px solid var(--border);border-radius:4px;padding:2px 4px;"></label>
+      <span id="sel-count">已选 0</span>
+    </div>
+    <div class="tags-scroll">
+      <table class="tag-table" id="tag-table">
+        <thead>
+          <tr>
+            <th class="col-check"><input type="checkbox" id="chk-head" title="全选当前列表"></th>
+            <th class="col-pct">占比</th>
+            <th class="col-count">次数</th>
+            <th class="col-en">英文</th>
+            <th class="col-zh">中文</th>
+          </tr>
+        </thead>
+        <tbody id="tag-body">
+          <tr><td colspan="5" class="empty-hint">加载中...</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="export-box">
+      <textarea id="export-text" readonly placeholder="选中的 tag 会显示在这里（逗号分隔）"></textarea>
+      <button class="btn green" id="btn-copy-box" type="button">复制框内</button>
+    </div>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+<script src="/static/js/tags.js"></script>
+</body>
+</html>

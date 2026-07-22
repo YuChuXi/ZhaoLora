@@ -16,14 +16,17 @@
 </head>
 <body>
 <div class="toolbar">
-  <span class="title">🎨 Alpha 绘制</span>
+  <div class="toolbar-brand">
+    <a class="nav-home" href="/">主页</a>
+    <span class="title">Alpha 绘制</span>
+  </div>
   <span class="stat" id="paint-progress">0/0</span>
   <span class="stat" id="paint-filename">-</span>
   <span class="sep"></span>
   <button class="btn" id="btn-prev">← 上一张</button>
   <button class="btn" id="btn-next">下一张 →</button>
   <button class="btn" id="btn-skip">跳过</button>
-  <button class="btn green" id="btn-save">💾 保存</button>
+  <button class="btn green" id="btn-save">保存</button>
   <span class="sep"></span>
   <button class="btn" id="btn-clear">清空透明</button>
   <button class="btn" id="btn-fill">填满不透明</button>
@@ -45,6 +48,7 @@
       <option value="alpha_bw">灰度 alpha</option>
       <option value="rgba">RGBA</option>
     </select>
+  </label>
 </div>
 <div class="paint-canvas-wrap" id="canvas-wrap">
   <canvas id="paint-canvas"></canvas>

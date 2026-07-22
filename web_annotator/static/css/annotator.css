@@ -42,11 +42,51 @@ body {
   border-bottom: 1px solid var(--border);
   flex-wrap: wrap;
 }
+.toolbar-brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-right: auto;
+  min-width: 0;
+}
+.toolbar .nav-home {
+  flex-shrink: 0;
+  color: var(--text-dim);
+  text-decoration: none;
+  font-size: 13px;
+  line-height: 1;
+  padding: 2px 0;
+  border: none;
+  background: transparent;
+  transition: color var(--transition);
+}
+.toolbar .nav-home:hover { color: var(--text); }
+.toolbar .nav-home::before {
+  content: "← ";
+  letter-spacing: -0.05em;
+}
 .toolbar .title {
   font-size: 16px;
   font-weight: 600;
-  margin-right: auto;
   color: var(--accent);
+  white-space: nowrap;
+}
+.toolbar-nav {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.toolbar-nav a {
+  color: var(--text-dim);
+  text-decoration: none;
+  font-size: 13px;
+  padding: 5px 10px;
+  border-radius: 6px;
+  transition: color var(--transition), background var(--transition);
+}
+.toolbar-nav a:hover {
+  color: var(--text);
+  background: rgba(255,255,255,0.05);
 }
 .toolbar .stat {
   font-size: 13px;

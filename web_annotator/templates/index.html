@@ -9,10 +9,14 @@
 <body>
 
 <div class="toolbar">
-  <span class="title">🗑️ 图片筛选</span>
-  <a class="btn" href="/crop" style="text-decoration:none;">✂️ 裁剪</a>
-  <a class="btn" href="/paint" style="text-decoration:none;">🎨 绘制</a>
-  <span class="sep"></span>
+  <div class="toolbar-brand">
+    <span class="title">图片筛选</span>
+    <nav class="toolbar-nav">
+      <a href="/crop">裁剪</a>
+      <a href="/paint">绘制</a>
+      <a href="/tags">Tag 统计</a>
+    </nav>
+  </div>
   <span class="stat">总计: <b id="stat-total">0</b></span>
   <span class="stat">已选: <b id="stat-selected">0</b></span>
   <span class="stat">回收站: <b id="stat-trashed">0</b></span>
@@ -21,8 +25,8 @@
   <button class="btn" id="btn-deselect-all" title="Ctrl+Shift+A">取消全选</button>
   <button class="btn" id="btn-invert" title="Ctrl+I">反选</button>
   <span class="sep"></span>
-  <button class="btn danger" id="btn-apply" title="Delete">🗑️ 删除选中</button>
-  <button class="btn green" id="btn-restore" title="Ctrl+Z">↩️ 恢复</button>
+  <button class="btn danger" id="btn-apply" title="Delete">删除选中</button>
+  <button class="btn green" id="btn-restore" title="Ctrl+Z">恢复</button>
   <span class="sep"></span>
   <label style="font-size:12px;color:var(--text-dim);cursor:pointer;user-select:none;display:flex;align-items:center;gap:4px;">
     <input type="checkbox" id="chk-show-trash"> 显示回收站
