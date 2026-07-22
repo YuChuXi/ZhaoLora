@@ -266,16 +266,8 @@
 
   function removeCropAt(idx) {
     if (idx < 0 || idx >= _crops.length) return;
-    var name = _crops[idx].name || '';
     _crops.splice(idx, 1);
-    // 同名选区都没了，才从自动部位里去掉
-    if (name) {
-      var still = false;
-      for (var i = 0; i < _crops.length; i++) {
-        if (_crops[i].name === name) { still = true; break; }
-      }
-      if (!still) unregisterAutoPart(name);
-    }
+    // 只删当前图选区，不注销自动部位（下一张仍会带上）
     if (_crops.length === 0) _selected = -1;
     else _selected = Math.min(idx, _crops.length - 1);
   }
