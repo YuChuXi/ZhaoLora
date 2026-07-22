@@ -1,0 +1,210 @@
+/* ================================================================
+   annotator.css —— 图片标注工具样式
+
+   设计: 暗色主题, CSS columns 瀑布流, 响应式
+   ================================================================ */
+
+:root {
+  --bg: #1a1a2e;
+  --surface: #16213e;
+  --card-bg: #0f3460;
+  --text: #e0e0e0;
+  --text-dim: #888;
+  --accent: #e94560;
+  --accent-hover: #ff6b81;
+  --green: #4ade80;
+  --green-dim: #1a3a2a;
+  --border: #2a2a4a;
+  --radius: 8px;
+  --transition: 0.15s ease;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  min-height: 100vh;
+  overflow-x: hidden;
+}
+
+/* ---- toolbar ---- */
+.toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+.toolbar .title {
+  font-size: 16px;
+  font-weight: 600;
+  margin-right: auto;
+  color: var(--accent);
+}
+.toolbar .stat {
+  font-size: 13px;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+.toolbar .stat b { color: var(--text); }
+.toolbar .sep {
+  width: 1px; height: 20px;
+  background: var(--border);
+  margin: 0 4px;
+}
+
+/* ---- buttons ---- */
+.btn {
+  padding: 6px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--card-bg);
+  color: var(--text);
+  cursor: pointer;
+  font-size: 13px;
+  white-space: nowrap;
+  transition: background var(--transition), border var(--transition);
+}
+.btn:hover {
+  background: #1a4a80;
+  border-color: #4a6a9a;
+}
+.btn.danger {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+  font-weight: 600;
+}
+.btn.danger:hover { background: var(--accent-hover); }
+.btn.green {
+  background: var(--green-dim);
+  border-color: #2a5a3a;
+}
+.btn.green:hover { background: #2a5a3a; }
+.btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* ---- masonry grid ---- */
+.masonry {
+  padding: 8px;
+  position: relative;
+}
+ }
+ }
+ }
+ }
+
+/* ---- card ---- */
+.card {
+  break-inside: avoid;
+  margin-bottom: 8px;
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: var(--card-bg);
+  border: 2px solid transparent;
+  cursor: pointer;
+  transition: border var(--transition), box-shadow var(--transition);
+  position: relative;
+}
+.card:hover {
+  border-color: #4a6a9a;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.3);
+}
+.card.selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent), 0 4px 20px rgba(233,69,96,0.3);
+}
+.card.selected img {
+  filter: brightness(0.5);
+}
+.card.trashed {
+  opacity: 0.4;
+  border-color: #444;
+}
+.card.trashed.selected {
+  border-color: var(--accent);
+  opacity: 0.7;
+}
+.card img {
+  width: 100%;
+  height: auto;
+  display: block;
+  background: #111;
+}
+.card .info {
+  padding: 6px 8px;
+  font-size: 11px;
+  color: var(--text-dim);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 4px;
+  line-height: 1.3;
+}
+.card .info .name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* selected check overlay */
+.card .overlay {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #fff;
+  font-size: 15px;
+  font-weight: bold;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transform: scale(0.6);
+  transition: opacity var(--transition), transform var(--transition);
+  pointer-events: none;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+}
+.card.selected .overlay {
+  opacity: 1;
+  transform: scale(1);
+}
+
+/* ---- toast ---- */
+.toast {
+  position: fixed;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 10px 20px;
+  border-radius: var(--radius);
+  font-size: 13px;
+  z-index: 200;
+  opacity: 0;
+  transition: opacity 0.3s;
+  pointer-events: none;
+}
+.toast.show { opacity: 1; }
+
+/* ---- hint ---- */
+.hint {
+  position: fixed;
+  bottom: 8px;
+  right: 12px;
+  font-size: 11px;
+  color: #555;
+  pointer-events: none;
+}

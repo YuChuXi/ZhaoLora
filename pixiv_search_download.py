@@ -77,8 +77,9 @@ def make_session(cookie_jar: requests.cookies.RequestsCookieJar) -> requests.Ses
 @dataclass(frozen=True)
 class Illust:
     illust_id: int
-    ai_type: int | None
-    page_count: int | None
+    title: str
+    page_count: int
+    thumb_url: str
 
 
 def pixiv_ajax_get(session: requests.Session, url: str) -> dict:
@@ -94,10 +95,9 @@ def pixiv_ajax_get(session: requests.Session, url: str) -> dict:
     return data
 
 
-def search_artworks(session: requests.Session, query: str, page: int, s_mode: str, order: str) -> list[Illust]:
+def search_artworks(session: requests.Session, query: str, page: int, s_mode: str, order: str, ai_type: int | None = None) -> list[Illust]:
     # Pixiv Web Ajax endpoint for searching artworks by keyword/tag.
-    # Example:
-    # https://www.pixiv.net/ajax/search/artworks/%E4%BA%91%E8%B7%AF%E7%BF%BC?word=%E4%BA%91%E8%B7%AF%E7%BF%BC&order=date_d&mode=all&p=1&s_mode=s_tag&type=all&lang=zh
+    # ai_type: 1=AI only, 2=exclude AI, None=all (let Pixiv server filter)
     q_path = quote(query, safe="")
     q_param = quote(query, safe="")
     url = (
@@ -105,6 +105,8 @@ def search_artworks(session: requests.Session, query: str, page: int, s_mode: st
         f"?word={q_param}&order={quote(order, safe='')}&mode=all&p={page}"
         f"&s_mode={quote(s_mode, safe='')}&type=all&lang=zh"
     )
+    if ai_type is not None:
+        url += f"&aiType={ai_type}"
     data = pixiv_ajax_get(session, url)
     body = data.get("body") or {}
     illust_manga = body.get("illustManga") or {}
@@ -114,9 +116,12 @@ def search_artworks(session: requests.Session, query: str, page: int, s_mode: st
         illust_id = it.get("id")
         if not illust_id:
             continue
-        ai_type = it.get("aiType")
-        page_count = it.get("pageCount")
-        out.append(Illust(int(illust_id), ai_type if ai_type is None else int(ai_type), page_count if page_count is None else int(page_count)))
+        out.append(Illust(
+            illust_id=int(illust_id),
+            title=str(it.get("title") or ""),
+            page_count=int(it.get("pageCount") or 1),
+            thumb_url=str(it.get("url") or ""),
+        ))
     return out
 
 
@@ -135,14 +140,14 @@ def safe_filename(s: str) -> str:
     return s2[:180] if len(s2) > 180 else s2
 
 
-def download_file(session: requests.Session, url: str, referer: str, dst: Path, sleep_s: float):
+def download_file(session: requests.Session, url: str, referer: str, dst: Path, sleep_s: float) -> bool:
     if dst.exists() and dst.stat().st_size > 0:
-        return
+        return True
     headers = {"Referer": referer}
     r = session.get(url, headers=headers, stream=True, timeout=60)
     if r.status_code != 200:
-        print(f"下载失败：{r.status_code} {url}喵~", file=sys.stderr)
-        return
+        print(f"  ✗ HTTP {r.status_code} {url}", file=sys.stderr)
+        return False
     tmp = dst.with_suffix(dst.suffix + ".part")
     with open(tmp, "wb") as f:
         for chunk in r.iter_content(chunk_size=1024 * 256):
@@ -152,6 +157,7 @@ def download_file(session: requests.Session, url: str, referer: str, dst: Path, 
     os.replace(tmp, dst)
     if sleep_s > 0:
         time.sleep(sleep_s)
+    return True
 
 
 def main():
@@ -161,9 +167,11 @@ def main():
     ap.add_argument("--out", default="pixiv_search_out", help="输出目录喵~")
     ap.add_argument("--s-mode", default="tag_tc", choices=["tag", "tag_tc", "s_tag", "s_tag_full", "s_tc", "s_tc_full", "all"], help="搜索模式（一般用 tag_tc）喵~")
     ap.add_argument("--order", default="date_d", choices=["date_d", "date", "popular_d", "popular_male_d", "popular_female_d"], help="排序喵~")
-    ap.add_argument("--non-ai", action="store_true", default=True, help="只下载非AI（aiType==0）喵~")
-    ap.add_argument("--allow-ai", action="store_true", help="允许下载AI作品（会覆盖 --non-ai）喵~")
-    ap.add_argument("--max-pages", type=int, default=0, help="最多抓取页数，0 表示不限喵~")
+    ap.add_argument("--hide-ai", action="store_true", help="隐藏AI作品喵~")
+    ap.add_argument("--start-page", type=int, default=1, help="起始搜索页码喵~")
+    ap.add_argument("--max-pages", type=int, default=0, help="搜索页数，0 表示不限喵~")
+    ap.add_argument("--per-illust", type=int, default=0, help="每个作品最多下载页数，0 表示不限喵~")
+    ap.add_argument("--pages", default="", help="指定下载的页码（逗号分隔，如 0,1,3），默认全部喵~")
     ap.add_argument("--sleep", type=float, default=0.2, help="每张图下载后暂停秒数，避免太快喵~")
     args = ap.parse_args()
 
@@ -174,18 +182,26 @@ def main():
     out_dir = Path(args.out)
     ensure_dir(out_dir)
 
-    non_ai_only = args.non_ai and (not args.allow_ai)
+    ai_type_param = 1 if args.hide_ai else None
+    ai_label = "隐藏AI" if args.hide_ai else "全部"
+
+    print(f"开始搜索「{args.query}」({ai_label})，每页60件，输出到 {out_dir}")
+    sys.stdout.flush()
 
     seen: set[int] = set()
-    page = 1
+    page = args.start_page
     total_downloaded = 0
-    total_skipped_ai = 0
     total_items = 0
+    end_page = args.start_page + args.max_pages - 1 if args.max_pages > 0 else 0
 
     while True:
-        if args.max_pages and page > args.max_pages:
+        if end_page and page > end_page:
             break
-        items = search_artworks(session, args.query, page, args.s_mode, args.order)
+        print(f"正在获取第 {page} 页...", end=" ")
+        sys.stdout.flush()
+        items = search_artworks(session, args.query, page, args.s_mode, args.order, ai_type_param)
+        print(f"{len(items)} 件")
+        sys.stdout.flush()
         if not items:
             break
         total_items += len(items)
@@ -195,25 +211,31 @@ def main():
                 continue
             seen.add(it.illust_id)
 
-            if non_ai_only and it.ai_type is not None and int(it.ai_type) != 0:
-                total_skipped_ai += 1
+            title = safe_filename(it.title)
+            page_count = it.page_count
+            if args.per_illust > 0:
+                page_count = min(page_count, args.per_illust)
+
+            # 确定要下载的页码
+            if args.pages:
+                wanted = [int(x.strip()) for x in args.pages.split(",") if x.strip()]
+                wanted = [p for p in wanted if p < page_count]
+            else:
+                wanted = list(range(page_count))
+
+            # 已有足够文件则跳过，避免重复调用元数据API
+            if sum(1 for _ in out_dir.glob(f"{it.illust_id}_*")) >= len(wanted):
+                total_downloaded += len(wanted)
                 continue
 
             meta = get_illust_meta(session, it.illust_id)
-            ai_type = meta.get("aiType")
-            if non_ai_only and ai_type is not None and int(ai_type) != 0:
-                total_skipped_ai += 1
-                continue
-
-            title = safe_filename(str(meta.get("title") or ""))
-            page_count = int(meta.get("pageCount") or 1)
             urls = meta.get("urls") or {}
             original = urls.get("original")
             if not original:
                 continue
 
             referer = f"https://www.pixiv.net/artworks/{it.illust_id}"
-            for p in range(page_count):
+            for p in wanted:
                 url = original
                 if page_count > 1:
                     url = re.sub(r"_p0(\.[a-zA-Z0-9]+)$", rf"_p{p}\1", url)
@@ -224,17 +246,21 @@ def main():
                 if page_count > 1:
                     name += f"_p{p}"
                 dst = out_dir / f"{name}{ext}"
-                download_file(session, url, referer, dst, args.sleep)
+                if dst.exists() and dst.stat().st_size > 0:
+                    print(f"  [{total_downloaded + 1}] {name}{ext} (跳过)")
+                elif download_file(session, url, referer, dst, args.sleep):
+                    print(f"  [{total_downloaded + 1}] {name}{ext} ✓")
                 total_downloaded += 1
+                sys.stdout.flush()
 
         print(
-            f"页 {page} 完成：累计作品 {len(seen)}，下载图片 {total_downloaded}，跳过AI {total_skipped_ai}喵~"
+            f"── 页 {page} 完成：作品 {len(seen)}，图片 {total_downloaded} ──"
         )
         page += 1
         time.sleep(0.3)
 
     print(
-        f"完成：抓取作品 {len(seen)}（含重复去重），搜索项 {total_items}，下载图片 {total_downloaded}，跳过AI {total_skipped_ai}喵~"
+        f"完成：抓取作品 {len(seen)}（含重复去重），搜索项 {total_items}，下载图片 {total_downloaded}喵~"
     )
 
 

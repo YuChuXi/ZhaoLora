@@ -341,7 +341,15 @@ async def _process_one_post(
         image_path = os.path.join(output_dir, image_filename)
         tags_path = os.path.join(output_dir, tags_filename)
 
-        if not overwrite and os.path.exists(image_path) and os.path.exists(tags_path):
+        # 忽略后缀检查是否已有同名图片（任意扩展名）
+        def _find_existing_image(dir_path: str, base_id: str) -> str | None:
+            for ext in (".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"):
+                candidate = os.path.join(dir_path, f"{base_id}{ext}")
+                if os.path.exists(candidate):
+                    return candidate
+            return None
+
+        if not overwrite and _find_existing_image(output_dir, str(image_id)) and os.path.exists(tags_path):
             _write_gelbooru_meta_json(output_dir, post)
             return
 

@@ -6,8 +6,9 @@
 
 左键 = 有该特征（加 tag 并跳到下一张）
 右键 = 无该特征（删 tag 并跳到下一张）
-Q/Esc 退出（自动保存进度）   Space 跳过   Backspace 回退
+Q/Esc 退出（自动保存进度）   Space 跳过   Backspace 回退   F 切换填充/适应   M 开关放大镜
 右下角显示标记状态；指定后缀的文件自动标；递归处理子目录；进度保存到 <目录>/.review_<tag>.json
+鼠标移动时显示跟随光标的圆形放大镜（3x），方便检查 JPEG 伪影等细节
 """
 
 from __future__ import annotations
@@ -19,7 +20,7 @@ import sys
 from pathlib import Path
 from tkinter import BOTH, Canvas, Event, Tk
 
-from PIL import Image, ImageTk
+from PIL import Image, ImageDraw, ImageTk
 
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif"}
 
@@ -159,6 +160,22 @@ class App:
         self.canvas = Canvas(root, bg="black", highlightthickness=0)
         self.canvas.pack(fill=BOTH, expand=True)
 
+        # ---------- 放大镜 ----------
+        self.magnifier_on = True          # 是否启用放大镜
+        self.mag_size = 180               # 放大镜显示尺寸 (px)
+        self.mag_zoom = 3                 # 放大倍率
+        self.mag_region = self.mag_size // self.mag_zoom  # 原始图中采样的区域大小
+        self._mouse_x = -1
+        self._mouse_y = -1
+        self._img_offset_x = 0
+        self._img_offset_y = 0
+        self._img_scale = 1.0
+        self._mag_photo = None
+
+        self.canvas.bind("<Motion>", self._on_mouse_move)
+        self.canvas.bind("<Leave>", self._on_mouse_leave)
+
+        # ---------- 键盘 / 鼠标 ----------
         self.root.bind("<Button-1>", lambda e: self._act(True))
         self.root.bind("<Button-3>", lambda e: self._act(False))
         self.root.bind("<Key>", self._on_key)
@@ -247,16 +264,21 @@ class App:
             scale = min(self.w / im.width, self.h / im.height)
         else:
             scale = max(self.w / im.width, self.h / im.height)
-        im = im.resize(
+        im_scaled = im.resize(
             (int(im.width * scale), int(im.height * scale)),
             Image.LANCZOS,
         )
-        if im.mode == "RGBA":
-            bg = Image.new("RGB", im.size, (0, 0, 0))
-            bg.paste(im, mask=im.split()[3])
-            im = bg
+        if im_scaled.mode == "RGBA":
+            bg = Image.new("RGB", im_scaled.size, (0, 0, 0))
+            bg.paste(im_scaled, mask=im_scaled.split()[3])
+            im_scaled = bg
 
-        self._photo = ImageTk.PhotoImage(im)
+        # 记录缩放和偏移，供放大镜使用
+        self._img_scale = scale
+        self._img_offset_x = self.w // 2 - im_scaled.width // 2
+        self._img_offset_y = self.h // 2 - im_scaled.height // 2
+
+        self._photo = ImageTk.PhotoImage(im_scaled)
         self.canvas.delete("all")
         self.canvas.create_image(
             self.w // 2, self.h // 2, image=self._photo, anchor="center",
@@ -279,6 +301,98 @@ class App:
     def _redraw(self) -> None:
         """窗口大小变化时重绘（不重新读取图片和 tag）。"""
         self._render()
+        # 重绘后鼠标可能还在原位置，尝试刷新放大镜
+        if self._mouse_x >= 0:
+            self._draw_magnifier()
+
+    # ---------- 放大镜 ----------
+
+    def _on_mouse_move(self, event: Event) -> None:
+        self._mouse_x = event.x
+        self._mouse_y = event.y
+        if self.magnifier_on:
+            self._draw_magnifier()
+
+    def _on_mouse_leave(self, _event: Event) -> None:
+        self._mouse_x = -1
+        self._mouse_y = -1
+        self.canvas.delete("magnifier")
+
+    def _draw_magnifier(self) -> None:
+        """在鼠标位置附近绘制圆形放大镜。"""
+        self.canvas.delete("magnifier")
+        if not hasattr(self, "_current_pil") or self._mouse_x < 0:
+            return
+
+        mx, my = self._mouse_x, self._mouse_y
+        scale = self._img_scale
+        ox, oy = self._img_offset_x, self._img_offset_y
+        im = self._current_pil
+
+        # 画布坐标 → 原始图坐标
+        orig_x = (mx - ox) / scale
+        orig_y = (my - oy) / scale
+
+        if orig_x < 0 or orig_y < 0 or orig_x >= im.width or orig_y >= im.height:
+            return
+
+        # 截取原始图中以光标为中心的区域
+        half_r = self.mag_region // 2
+        x1 = max(0, int(orig_x - half_r))
+        y1 = max(0, int(orig_y - half_r))
+        x2 = min(im.width, x1 + self.mag_region)
+        y2 = min(im.height, y1 + self.mag_region)
+        x1 = max(0, x2 - self.mag_region)
+        y1 = max(0, y2 - self.mag_region)
+
+        if x2 <= x1 or y2 <= y1:
+            return
+
+        region = im.crop((x1, y1, x2, y2))
+        # 边界补齐
+        if region.size != (self.mag_region, self.mag_region):
+            padded = Image.new("RGB", (self.mag_region, self.mag_region), (0, 0, 0))
+            padded.paste(region, (0, 0))
+            region = padded
+
+        # 放大（NEAREST 保留像素颗粒感，方便检查压缩伪影）
+        region = region.resize((self.mag_size, self.mag_size), Image.NEAREST)
+        region = region.convert("RGBA")
+
+        # 圆形遮罩
+        mask = Image.new("L", (self.mag_size, self.mag_size), 0)
+        mask_draw = ImageDraw.Draw(mask)
+        m = 3
+        mask_draw.ellipse((m, m, self.mag_size - m, self.mag_size - m), fill=255)
+        region.putalpha(mask)
+
+        # 圆形边框 + 十字准星
+        draw = ImageDraw.Draw(region)
+        draw.ellipse((m, m, self.mag_size - m, self.mag_size - m), outline="white", width=2)
+        cx = self.mag_size // 2
+        cy = self.mag_size // 2
+        gap = 8
+        L = 14
+        draw.line((cx - L, cy, cx - gap, cy), fill="red", width=2)
+        draw.line((cx + gap, cy, cx + L, cy), fill="red", width=2)
+        draw.line((cx, cy - L, cx, cy - gap), fill="red", width=2)
+        draw.line((cx, cy + gap, cx, cy + L), fill="red", width=2)
+
+        self._mag_photo = ImageTk.PhotoImage(region)
+
+        # 放大镜位置：默认在光标右下方，超出屏幕则翻转到另一侧
+        mag_x = mx + 30
+        mag_y = my + 30
+        if mag_x + self.mag_size > self.w:
+            mag_x = mx - self.mag_size - 30
+        if mag_y + self.mag_size > self.h:
+            mag_y = my - self.mag_size - 30
+        mag_x = max(0, min(mag_x, self.w - self.mag_size))
+        mag_y = max(0, min(mag_y, self.h - self.mag_size))
+
+        self.canvas.create_image(
+            mag_x, mag_y, image=self._mag_photo, anchor="nw", tags="magnifier",
+        )
 
     # ---------- 操作 ----------
 
@@ -307,6 +421,12 @@ class App:
             self.fit_mode = not self.fit_mode
             if hasattr(self, "_current_pil"):
                 self._redraw()
+        elif k == "m":
+            self.magnifier_on = not self.magnifier_on
+            if not self.magnifier_on:
+                self.canvas.delete("magnifier")
+            elif self._mouse_x >= 0:
+                self._draw_magnifier()
 
 
 def main() -> None:

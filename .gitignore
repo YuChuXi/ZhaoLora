@@ -16,3 +16,4 @@ Untitled*.ini
 *.bak
 .cursorindexingignore
 .specstory/**
+/.vscode/

@@ -3,11 +3,11 @@ from __future__ import annotations
 
 import argparse
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 import cv2
 import numpy as np
-from PIL import Image
 
 
 REPO_ROOT = Path(__file__).resolve().parent
@@ -21,6 +21,30 @@ from upcunet_v3 import RealWaifuUpScaler  # noqa: E402
 
 
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".bmp", ".webp", ".tif", ".tiff"}
+REMOVE_TAGS = {"jpeg artifacts"}
+
+
+@dataclass
+class Task:
+    img_src: Path
+    img_dst: Path
+    mask_src: Path | None = None
+    mask_dst: Path | None = None
+    txt_src: Path | None = None
+    txt_dst: Path | None = None
+
+    @property
+    def all_dst(self) -> list[Path]:
+        return [p for p in (self.img_dst, self.mask_dst, self.txt_dst) if p is not None]
+
+    @property
+    def companion_labels(self) -> list[str]:
+        parts = []
+        if self.mask_src:
+            parts.append("mask")
+        if self.txt_src:
+            parts.append("txt")
+        return parts
 
 
 def parse_args() -> argparse.Namespace:
@@ -77,52 +101,113 @@ def parse_args() -> argparse.Namespace:
         default="_cugan_nearest",
         help='Suffix appended before file extension (default: "_cugan_nearest")',
     )
+    parser.add_argument(
+        "--mask-input-dir",
+        type=Path,
+        default=None,
+        help="Mask input directory. Masks are matched by stem name with images.",
+    )
+    parser.add_argument(
+        "--mask-output-dir",
+        type=Path,
+        default=None,
+        help="Mask output directory. Upscaled masks are saved here (nearest-neighbor 2x).",
+    )
     return parser.parse_args()
 
 
 def iter_images(input_dir: Path, recursive: bool) -> list[Path]:
     pattern = "**/*" if recursive else "*"
-    files = [p for p in input_dir.glob(pattern) if p.is_file() and p.suffix.lower() in IMAGE_EXTS]
-    return sorted(files)
+    return sorted(
+        p for p in input_dir.glob(pattern) if p.is_file() and p.suffix.lower() in IMAGE_EXTS
+    )
 
 
-def build_output_path(
+def build_output_path(src_path: Path, input_dir: Path, output_dir: Path, suffix: str, ext: str = ".png") -> Path:
+    rel_path = src_path.relative_to(input_dir)
+    return output_dir / rel_path.parent / f"{src_path.stem}{suffix}{ext}"
+
+
+def find_companion_image(directory: Path, stem: str) -> Path | None:
+    for ext in IMAGE_EXTS:
+        candidate = directory / f"{stem}{ext}"
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def clean_caption(text: str) -> str:
+    parts = text.split("|||")
+    cleaned = []
+    for part in parts:
+        tags = [t.strip() for t in part.split(",")]
+        tags = [t for t in tags if t.lower() not in REMOVE_TAGS]
+        cleaned.append(", ".join(tags))
+    return " ||| ".join(cleaned)
+
+
+def resolve_task(
     src_path: Path,
     input_dir: Path,
     output_dir: Path,
     suffix: str,
-) -> Path:
-    rel_path = src_path.relative_to(input_dir)
-    return output_dir / rel_path.parent / f"{src_path.stem}{suffix}.png"
+    mask_input_dir: Path | None,
+    mask_output_dir: Path | None,
+) -> Task:
+    img_dst = build_output_path(src_path, input_dir, output_dir, suffix)
+
+    mask_src = find_companion_image(mask_input_dir, src_path.stem) if mask_input_dir else None
+    mask_dst = (
+        build_output_path(src_path, input_dir, mask_output_dir, suffix)
+        if mask_src and mask_output_dir
+        else None
+    )
+
+    txt_src = src_path.with_suffix(".txt")
+    if not txt_src.is_file():
+        txt_src = None
+    txt_dst = (
+        build_output_path(src_path, input_dir, output_dir, suffix, ext=".txt")
+        if txt_src
+        else None
+    )
+
+    return Task(
+        img_src=src_path, img_dst=img_dst,
+        mask_src=mask_src, mask_dst=mask_dst,
+        txt_src=txt_src, txt_dst=txt_dst,
+    )
 
 
-def process_one(
-    src_path: Path,
-    dst_path: Path,
-    upscaler: RealWaifuUpScaler,
-    tile_mode: int,
-    cache_mode: int,
-    alpha: float,
-) -> None:
-    image_bgr = cv2.imread(str(src_path), cv2.IMREAD_COLOR)
+def process_one(task: Task, upscaler: RealWaifuUpScaler, tile_mode: int, cache_mode: int, alpha: float) -> None:
+    image_bgr = cv2.imread(str(task.img_src), cv2.IMREAD_COLOR)
     if image_bgr is None:
-        raise RuntimeError(f"Failed to read image: {src_path}")
+        raise RuntimeError(f"Failed to read image: {task.img_src}")
 
     orig_h, orig_w = image_bgr.shape[:2]
     image_rgb = image_bgr[:, :, ::-1].copy()
 
     result_rgb = upscaler(image_rgb, tile_mode=tile_mode, cache_mode=cache_mode, alpha=alpha)
     result_rgb_u8 = (result_rgb.clip(0, 255)).astype("uint8")
-
-    # restored = Image.fromarray(result_rgb_u8).resize(
-    #     (orig_w, orig_h), Image.Resampling.NEAREST
-    # )
     restored_bgr = cv2.cvtColor(np.asarray(result_rgb_u8), cv2.COLOR_RGB2BGR)
 
-    dst_path.parent.mkdir(parents=True, exist_ok=True)
-    ok = cv2.imwrite(str(dst_path), restored_bgr)
-    if not ok:
-        raise RuntimeError(f"Failed to write image: {dst_path}")
+    task.img_dst.parent.mkdir(parents=True, exist_ok=True)
+    if not cv2.imwrite(str(task.img_dst), restored_bgr):
+        raise RuntimeError(f"Failed to write image: {task.img_dst}")
+
+    if task.mask_src and task.mask_dst:
+        mask = cv2.imread(str(task.mask_src), cv2.IMREAD_GRAYSCALE)
+        if mask is None:
+            raise RuntimeError(f"Failed to read mask: {task.mask_src}")
+        mask_up = cv2.resize(mask, (orig_w * 2, orig_h * 2), interpolation=cv2.INTER_NEAREST)
+        task.mask_dst.parent.mkdir(parents=True, exist_ok=True)
+        if not cv2.imwrite(str(task.mask_dst), mask_up):
+            raise RuntimeError(f"Failed to write mask: {task.mask_dst}")
+
+    if task.txt_src and task.txt_dst:
+        cleaned = clean_caption(task.txt_src.read_text(encoding="utf-8"))
+        task.txt_dst.parent.mkdir(parents=True, exist_ok=True)
+        task.txt_dst.write_text(cleaned, encoding="utf-8")
 
 
 def main() -> int:
@@ -130,6 +215,8 @@ def main() -> int:
 
     input_dir = args.input_dir.resolve()
     output_dir = args.output_dir.resolve()
+    mask_input_dir = args.mask_input_dir.resolve() if args.mask_input_dir else None
+    mask_output_dir = args.mask_output_dir.resolve() if args.mask_output_dir else None
 
     if not input_dir.is_dir():
         print(f"Input directory does not exist: {input_dir}", file=sys.stderr)
@@ -140,6 +227,12 @@ def main() -> int:
     if args.device == "cpu" and args.half:
         print("--half is not supported with cpu; please remove --half.", file=sys.stderr)
         return 1
+    if (mask_input_dir is None) != (mask_output_dir is None):
+        print("--mask-input-dir and --mask-output-dir must be specified together.", file=sys.stderr)
+        return 1
+    if mask_input_dir is not None and not mask_input_dir.is_dir():
+        print(f"Mask input directory does not exist: {mask_input_dir}", file=sys.stderr)
+        return 1
 
     image_paths = iter_images(input_dir, args.recursive)
     if not image_paths:
@@ -148,37 +241,39 @@ def main() -> int:
 
     print(f"Loading model from: {WEIGHT_PATH}")
     print(f"Device: {args.device}, half: {args.half}")
+    if mask_input_dir:
+        print(f"Mask input: {mask_input_dir}")
+        print(f"Mask output: {mask_output_dir}")
     upscaler = RealWaifuUpScaler(2, str(WEIGHT_PATH), args.half, args.device)
 
     processed = 0
     skipped = 0
     failed = 0
+    mask_missing = 0
 
     for index, src_path in enumerate(image_paths, start=1):
-        dst_path = build_output_path(src_path, input_dir, output_dir, args.suffix)
-        if dst_path.exists() and not args.overwrite:
+        task = resolve_task(src_path, input_dir, output_dir, args.suffix, mask_input_dir, mask_output_dir)
+
+        if task.mask_src is None and mask_input_dir is not None:
+            mask_missing += 1
+            print(f"[{index}/{len(image_paths)}] warn no mask for {src_path.name}", file=sys.stderr)
+
+        if not args.overwrite and all(p.exists() for p in task.all_dst):
             skipped += 1
             print(f"[{index}/{len(image_paths)}] skip {src_path}")
             continue
 
         try:
-            process_one(
-                src_path=src_path,
-                dst_path=dst_path,
-                upscaler=upscaler,
-                tile_mode=args.tile_mode,
-                cache_mode=args.cache_mode,
-                alpha=args.alpha,
-            )
+            process_one(task, upscaler, args.tile_mode, args.cache_mode, args.alpha)
             processed += 1
-            print(f"[{index}/{len(image_paths)}] done {src_path} -> {dst_path}")
+            labels = task.companion_labels
+            extra = f" +{'+'.join(labels)}" if labels else ""
+            print(f"[{index}/{len(image_paths)}] done {src_path} -> {task.img_dst}{extra}")
         except Exception as exc:
             failed += 1
             print(f"[{index}/{len(image_paths)}] fail {src_path}: {exc}", file=sys.stderr)
 
-    print(
-        f"Finished. processed={processed}, skipped={skipped}, failed={failed}, total={len(image_paths)}"
-    )
+    print(f"Finished. processed={processed}, skipped={skipped}, failed={failed}, mask_missing={mask_missing}, total={len(image_paths)}")
     return 0 if failed == 0 else 2
 
 

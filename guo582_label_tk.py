@@ -264,7 +264,6 @@ def _get_wd14():
     df = pd.read_csv(WD14_CSV_PATH)
     _WD14_LABELS = df["name"].tolist()
     providers = ["CUDAExecutionProvider", "CPUExecutionProvider"] if torch.cuda.is_available() else ["CPUExecutionProvider"]
-    providers = ["CPUExecutionProvider"]
     _WD14_SESSION = ort.InferenceSession(str(WD14_ONNX_PATH), providers=providers)
     return _WD14_SESSION, _WD14_LABELS
 

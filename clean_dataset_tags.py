@@ -32,12 +32,7 @@ def join_tags_line(tags: list[str]) -> str:
 
 DROP_EXACT = frozenset(
     {
-        "highres",
-        "absurdres",
-        "arknights: endfield",
-        "arknights",
-        "original",
-        "virtual youtuber"
+
     }
 )
 
