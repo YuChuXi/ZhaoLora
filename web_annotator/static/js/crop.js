@@ -24,7 +24,7 @@
   var _selected = -1;
   var _defaultCrop = null;
   var _datasetRoot = '';
-  var _parts = []; // [{name, enabled}]
+  var _autoParts = []; // 已添加的部位名，后续每张图自动生成选区
   var _noCrop = false;
   var _dragMode = null;
   var _dragStart = null;
@@ -214,100 +214,46 @@
   }
 
   function partsStorageKey() {
-    return 'crop_parts:' + (_datasetRoot || 'default');
+    return 'crop_auto_parts:' + (_datasetRoot || 'default');
   }
 
   function loadParts(serverParts) {
     var saved = null;
     try { saved = JSON.parse(localStorage.getItem(partsStorageKey()) || 'null'); } catch (e) { saved = null; }
-    var map = {};
-    if (Array.isArray(saved)) {
-      for (var i = 0; i < saved.length; i++) {
-        if (saved[i] && saved[i].name) map[saved[i].name] = !!saved[i].enabled;
-      }
-    }
-    _parts = [];
+    _autoParts = [];
     var seen = {};
-    function pushPart(name, enabledDefault) {
+    function pushName(name) {
       if (!name || seen[name]) return;
       seen[name] = true;
-      _parts.push({
-        name: name,
-        enabled: Object.prototype.hasOwnProperty.call(map, name) ? map[name] : !!enabledDefault,
-      });
+      _autoParts.push(name);
     }
-    // 已保存的优先（含启用状态）
     if (Array.isArray(saved)) {
-      for (var j = 0; j < saved.length; j++) {
-        if (saved[j] && saved[j].name) pushPart(saved[j].name, false);
+      for (var i = 0; i < saved.length; i++) {
+        if (typeof saved[i] === 'string') pushName(saved[i]);
+        else if (saved[i] && saved[i].name && saved[i].enabled !== false) pushName(saved[i].name);
       }
     }
-    // 服务器已有部位目录：仅登记，默认不启用（需手动勾选）
+    // 服务器已有部位目录也自动纳入
     if (Array.isArray(serverParts)) {
-      for (var k = 0; k < serverParts.length; k++) pushPart(serverParts[k], false);
+      for (var k = 0; k < serverParts.length; k++) pushName(serverParts[k]);
     }
   }
 
   function saveParts() {
-    localStorage.setItem(partsStorageKey(), JSON.stringify(_parts));
+    localStorage.setItem(partsStorageKey(), JSON.stringify(_autoParts));
   }
 
-  function renderParts() {
-    var list = document.getElementById('part-list');
-    if (!list) return;
-    list.innerHTML = '';
-    if (!_parts.length) {
-      list.innerHTML = '<div style="font-size:11px;color:var(--text-dim);padding:4px 0;">暂无部位，先添加如 head</div>';
-      return;
-    }
-    for (var i = 0; i < _parts.length; i++) {
-      (function (idx) {
-        var p = _parts[idx];
-        var el = document.createElement('div');
-        el.className = 'part-item';
-        var cb = document.createElement('input');
-        cb.type = 'checkbox';
-        cb.checked = !!p.enabled;
-        cb.title = '启用后每张图自动生成该部位选区';
-        cb.addEventListener('change', function () {
-          _parts[idx].enabled = cb.checked;
-          saveParts();
-          if (cb.checked) ensurePartCrop(p.name);
-          else removePartCrops(p.name);
-          redraw();
-          renderList();
-          updateNav();
-        });
-        var lab = document.createElement('label');
-        lab.textContent = p.name + (p.enabled ? '（已启用）' : '（未启用）');
-        lab.addEventListener('click', function () { cb.click(); });
-        var del = document.createElement('button');
-        del.type = 'button';
-        del.className = 'btn-mini';
-        del.textContent = '删除';
-        del.addEventListener('click', function () {
-          removePartCrops(p.name);
-          _parts.splice(idx, 1);
-          saveParts();
-          renderParts();
-          redraw();
-          renderList();
-          updateNav();
-        });
-        el.appendChild(cb);
-        el.appendChild(lab);
-        el.appendChild(del);
-        list.appendChild(el);
-      })(i);
-    }
+  function registerAutoPart(name) {
+    if (!name) return;
+    if (_autoParts.indexOf(name) >= 0) return;
+    _autoParts.push(name);
+    saveParts();
   }
 
-  function enabledPartNames() {
-    var out = [];
-    for (var i = 0; i < _parts.length; i++) {
-      if (_parts[i].enabled) out.push(_parts[i].name);
-    }
-    return out;
+  function unregisterAutoPart(name) {
+    if (!name) return;
+    _autoParts = _autoParts.filter(function (n) { return n !== name; });
+    saveParts();
   }
 
   function ensurePartCrop(name) {
@@ -318,9 +264,20 @@
     _selected = _crops.length - 1;
   }
 
-  function removePartCrops(name) {
-    _crops = _crops.filter(function (c) { return c.name !== name; });
-    if (_selected >= _crops.length) _selected = _crops.length - 1;
+  function removeCropAt(idx) {
+    if (idx < 0 || idx >= _crops.length) return;
+    var name = _crops[idx].name || '';
+    _crops.splice(idx, 1);
+    // 同名选区都没了，才从自动部位里去掉
+    if (name) {
+      var still = false;
+      for (var i = 0; i < _crops.length; i++) {
+        if (_crops[i].name === name) { still = true; break; }
+      }
+      if (!still) unregisterAutoPart(name);
+    }
+    if (_crops.length === 0) _selected = -1;
+    else _selected = Math.min(idx, _crops.length - 1);
   }
 
   function addPart() {
@@ -330,34 +287,24 @@
       toast('部位名不合法（字母数字下划线/短横线）');
       return;
     }
-    for (var i = 0; i < _parts.length; i++) {
-      if (_parts[i].name === name) {
-        toast('部位已存在');
-        return;
-      }
-    }
-    // 添加并自动启用，后续图片也会带上
-    _parts.push({ name: name, enabled: true });
-    saveParts();
+    registerAutoPart(name);
     input.value = '';
-    renderParts();
     if (!_noCrop && _origW) {
       ensurePartCrop(name);
       redraw();
       renderList();
       updateNav();
     }
-    toast('已添加并启用: ' + name);
+    toast('已添加: ' + name + '（后续自动带上）');
   }
 
   function initDefaultCrop() {
     _crops = [];
     _selected = -1;
     if (!_origW || !_origH) return;
-    var names = enabledPartNames();
-    if (names.length) {
-      for (var i = 0; i < names.length; i++) {
-        _crops.push(makeDefaultSizedCrop(names[i], i));
+    if (_autoParts.length) {
+      for (var i = 0; i < _autoParts.length; i++) {
+        _crops.push(makeDefaultSizedCrop(_autoParts[i], i));
       }
       _selected = 0;
       return;
@@ -489,8 +436,12 @@
     var list = document.getElementById('crop-list');
     list.innerHTML = '';
     if (_noCrop) {
-      list.innerHTML = '<div class="crop-item">整图即部位 · 原尺寸 ' + _origW + 'x' + _origH +
-        '<div class="meta">写入 xxx/&lt;部位名&gt;/同名.png</div></div>';
+      list.innerHTML = '<div class="crop-item"><div class="body">整图即部位 · 原尺寸 ' + _origW + 'x' + _origH +
+        '<div class="meta">写入 xxx/&lt;部位名&gt;/同名.png</div></div></div>';
+      return;
+    }
+    if (!_crops.length) {
+      list.innerHTML = '<div style="font-size:11px;color:var(--text-dim);padding:4px 0;">暂无选区，上方添加部位或按 A 新建</div>';
       return;
     }
     for (var i = 0; i < _crops.length; i++) {
@@ -498,20 +449,47 @@
         var box = _crops[idx];
         var el = document.createElement('div');
         el.className = 'crop-item' + (idx === _selected ? ' active' : '');
-        el.innerHTML =
-          '<div><b>#' + (idx + 1) + '</b></div>' +
+        var body = document.createElement('div');
+        body.className = 'body';
+        body.innerHTML =
+          '<div><b>#' + (idx + 1) + (box.name ? ' · ' + box.name : '') + '</b></div>' +
           '<div class="meta">' + (box.x2 - box.x1) + 'x' + (box.y2 - box.y1) +
           ' → ' + box.target_w + 'x' + box.target_h + ' @' + Number(box.zoom).toFixed(1) + 'x</div>';
         var input = document.createElement('input');
         input.type = 'text';
-        input.placeholder = '部位名 → 目录，如 head';
+        input.placeholder = '部位名，如 head';
         input.value = box.name || '';
         input.addEventListener('click', function (e) { e.stopPropagation(); });
-        input.addEventListener('input', function () {
-          _crops[idx].name = input.value.trim();
+        input.addEventListener('change', function () {
+          var oldName = _crops[idx].name || '';
+          var newName = input.value.trim();
+          _crops[idx].name = newName;
+          if (oldName && oldName !== newName) {
+            var still = false;
+            for (var j = 0; j < _crops.length; j++) {
+              if (_crops[j].name === oldName) { still = true; break; }
+            }
+            if (!still) unregisterAutoPart(oldName);
+          }
+          if (newName) registerAutoPart(newName);
           redraw();
+          renderList();
         });
-        el.appendChild(input);
+        body.appendChild(input);
+        var del = document.createElement('button');
+        del.type = 'button';
+        del.className = 'btn-del';
+        del.textContent = '删除';
+        del.title = 'Delete';
+        del.addEventListener('click', function (e) {
+          e.stopPropagation();
+          removeCropAt(idx);
+          redraw();
+          renderList();
+          updateNav();
+        });
+        el.appendChild(body);
+        el.appendChild(del);
         el.addEventListener('click', function () {
           _selected = idx;
           renderList();
@@ -848,12 +826,7 @@
 
   function delSelected() {
     if (_noCrop || _selected < 0 || _selected >= _crops.length) return;
-    _crops.splice(_selected, 1);
-    if (_crops.length === 0) {
-      _selected = -1;
-    } else {
-      _selected = Math.min(_selected, _crops.length - 1);
-    }
+    removeCropAt(_selected);
     redraw();
     renderList();
     updateNav();
@@ -889,13 +862,13 @@
     _defaultCrop = cfg.default_crop || null;
     _datasetRoot = cfg.root || '';
     loadParts(cfg.parts || []);
-    renderParts();
     var hint = document.getElementById('layout-hint');
     if (hint) {
       var dc = _defaultCrop
         ? (_defaultCrop.target_w + 'x' + _defaultCrop.target_h + '@' + Number(_defaultCrop.zoom).toFixed(1) + 'x')
         : '自动匹配';
-      hint.textContent = '根: ' + (_datasetRoot || '-') + ' | 默认尺寸: ' + dc;
+      hint.textContent = '根: ' + (_datasetRoot || '-') + ' | 默认尺寸: ' + dc +
+        (_autoParts.length ? ' | 自动部位: ' + _autoParts.join(', ') : '');
     }
 
     var matchCfg = await (await api('/api/crop/candidates')).json();
@@ -915,7 +888,6 @@
       saveAndNext();
     });
     document.getElementById('btn-add-crop').addEventListener('click', addCrop);
-    document.getElementById('btn-del-crop').addEventListener('click', delSelected);
     document.getElementById('btn-clear-crops').addEventListener('click', clearCrops);
     document.getElementById('chk-no-crop').addEventListener('change', onToggleNoCrop);
     document.getElementById('btn-add-part').addEventListener('click', addPart);
@@ -936,22 +908,49 @@
     });
 
     document.addEventListener('keydown', function (e) {
-      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
-      if ((e.ctrlKey || e.metaKey) && (e.key === 's' || e.key === 'S')) {
+      var inField = e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT';
+      var key = e.key;
+      var code = e.code;
+
+      // Ctrl+S / Ctrl+N：输入框内也生效
+      if ((e.ctrlKey || e.metaKey) && (key === 's' || key === 'S' || code === 'KeyS')) {
         e.preventDefault();
+        if (inField) e.target.blur();
         saveAndNext();
-      } else if ((e.ctrlKey || e.metaKey) && (e.key === 'n' || e.key === 'N')) {
+        return;
+      }
+      if ((e.ctrlKey || e.metaKey) && (key === 'n' || key === 'N' || code === 'KeyN')) {
         e.preventDefault();
+        if (inField) e.target.blur();
         if (_index < _images.length - 1) loadIndex(_index + 1);
-      } else if (e.key === 'Delete' || e.key === 'Backspace') {
+        else toast('已是最后一张');
+        return;
+      }
+      if (inField) return;
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+
+      if (key === 'Delete' || key === 'Backspace' || key === 'd' || key === 'D' || code === 'KeyD') {
         e.preventDefault();
         delSelected();
-      } else if (e.key === 'ArrowLeft') {
+      } else if (key === 's' || key === 'S' || code === 'KeyS') {
         e.preventDefault();
-        if (_index > 0) loadIndex(_index - 1);
-      } else if (e.key === 'ArrowRight') {
+        saveAndNext();
+      } else if (key === ' ' || code === 'Space') {
         e.preventDefault();
         if (_index < _images.length - 1) loadIndex(_index + 1);
+        else toast('已是最后一张');
+      } else if (key === 'ArrowLeft') {
+        e.preventDefault();
+        if (_index > 0) loadIndex(_index - 1);
+      } else if (key === 'ArrowRight') {
+        e.preventDefault();
+        if (_index < _images.length - 1) loadIndex(_index + 1);
+      } else if (key === 'a' || key === 'A' || code === 'KeyA') {
+        e.preventDefault();
+        addCrop();
+      } else if (key === 'c' || key === 'C' || code === 'KeyC') {
+        e.preventDefault();
+        clearCrops();
       }
     });
 
