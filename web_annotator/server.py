@@ -1,16 +1,18 @@
 #!/usr/bin/env python3
 """
-网页图片标注工具 —— 瀑布流浏览，选择删除不需要的图片。
+网页图片标注工具 —— 瀑布流浏览 / Alpha 绘制 / 子图裁剪。
+
+目录约定（--data-dir = datasets/xxx）:
+  datasets/xxx/
+    main/     # 源图
+    mask/     # alpha mask
+    head/     # 部位裁剪（选区命名为 head 时写入；整图即部位时同）
+    foot/     # 其它部位同理
+    crops/    # 未命名选区兜底
 
 用法:
-  python web_annotator/server.py --data-dir datasets/qianhu/main
-  python web_annotator/server.py --data-dir datasets/tentacle_clothes/danbooru --port 8080
-
-架构:
-  routes/       - FastAPI 路由（images, annotations）
-  services/     - 业务逻辑（scanner, thumbnailer, state_manager）
-  templates/    - HTML 模板
-  static/       - CSS / JS 静态资源
+  python web_annotator/server.py --data-dir datasets/guo582
+  python web_annotator/server.py --data-dir datasets/guo582 --port 8080
 """
 
 from __future__ import annotations
@@ -27,14 +29,13 @@ import uvicorn
 from services.scanner import scan_images
 from services.thumbnailer import Thumbnailer
 from services.state_manager import StateManager
+from services.dataset_layout import resolve_dataset_layout
 from routes.images import router as images_router
 from routes.annotations import router as annotations_router
 from routes.alpha_paint import router as paint_router
+from routes.crop import router as crop_router
 
-# ---------------------------------------------------------------------------
-# FastAPI app —— 服务实例通过 app.state 注入，避免 __main__ vs 模块名问题
-# ---------------------------------------------------------------------------
-app = FastAPI(title="Image Annotator", version="2.0.0")
+app = FastAPI(title="Image Annotator", version="2.2.0")
 
 static_dir = Path(__file__).parent / "static"
 if static_dir.is_dir():
@@ -43,11 +44,11 @@ if static_dir.is_dir():
 app.include_router(images_router)
 app.include_router(annotations_router)
 app.include_router(paint_router)
+app.include_router(crop_router)
 
 
 @app.get("/")
 def index():
-    """主页面。"""
     template = Path(__file__).parent / "templates" / "index.html"
     if template.exists():
         return HTMLResponse(template.read_text(encoding="utf-8"))
@@ -56,48 +57,85 @@ def index():
 
 @app.get("/paint")
 def paint_page():
-    """Alpha 绘制页面。"""
     template = Path(__file__).parent / "templates" / "paint.html"
     if template.exists():
         return HTMLResponse(template.read_text(encoding="utf-8"))
     return HTMLResponse("<h1>paint.html not found</h1>", status_code=404)
 
 
-# ---------------------------------------------------------------------------
-# 入口
-# ---------------------------------------------------------------------------
+@app.get("/crop")
+def crop_page():
+    template = Path(__file__).parent / "templates" / "crop.html"
+    if template.exists():
+        return HTMLResponse(template.read_text(encoding="utf-8"))
+    return HTMLResponse("<h1>crop.html not found</h1>", status_code=404)
+
+
 def main() -> int:
-    parser = argparse.ArgumentParser(description="网页图片标注工具 - 瀑布流删除")
-    parser.add_argument("--data-dir", type=str, required=True, help="图片数据集目录")
-    parser.add_argument("--host", type=str, default="127.0.0.1", help="监听地址")
+    parser = argparse.ArgumentParser(description="网页图片标注工具")
+    parser.add_argument(
+        "--data-dir",
+        type=str,
+        required=True,
+        help="数据集根目录 datasets/xxx（图像在 xxx/main，mask/部位为同级目录）",
+    )
+    parser.add_argument("--host", type=str, default="0.0.0.0", help="监听地址")
     parser.add_argument("--port", type=int, default=8765, help="监听端口")
-    parser.add_argument("--thumbnail-size", type=int, default=400, help="缩略图长边像素")
+    parser.add_argument("--thumbnail-size", type=int, default=2560, help="缩略图长边像素")
     parser.add_argument("--skip-thumbnails", action="store_true", help="跳过缩略图预生成")
-    parser.add_argument("--mask-dir", type=str, default="", help="Alpha mask 输出目录（默认 data-dir/mask）")
+    parser.add_argument(
+        "--mask-dir",
+        type=str,
+        default="",
+        help="Alpha mask 目录（默认 data-dir/mask）",
+    )
+    parser.add_argument(
+        "--default-crop",
+        type=str,
+        default="",
+        metavar="WxH@Z",
+        help="打开每张图时的默认裁切匹配，如 1152x1152@1.0",
+    )
     args = parser.parse_args()
 
-    data_dir = Path(args.data_dir).resolve()
-    if not data_dir.is_dir():
-        print(f"错误: 目录不存在: {data_dir}")
+    try:
+        layout = resolve_dataset_layout(Path(args.data_dir))
+    except (FileNotFoundError, ValueError) as e:
+        print(f"错误: {e}")
         return 1
 
-    # 通过 app.state 注入服务
-    app.state.data_dir = data_dir
-    app.state.thumbnailer = Thumbnailer(data_dir, size=args.thumbnail_size)
-    app.state.state_manager = StateManager(data_dir)
-    # mask 输出目录（默认 data_dir/mask）
-    mask_dir = Path(args.mask_dir) if args.mask_dir else (data_dir / "mask")
+    # data_dir = main（图片所在目录）；layout.root = 数据集根
+    app.state.layout = layout
+    app.state.dataset_root = layout.root
+    app.state.data_dir = layout.main_dir
+    app.state.thumbnailer = Thumbnailer(layout.main_dir, size=args.thumbnail_size)
+    app.state.state_manager = StateManager(layout.main_dir)
+
+    mask_dir = Path(args.mask_dir).resolve() if args.mask_dir else layout.mask_dir
     mask_dir.mkdir(parents=True, exist_ok=True)
     app.state.mask_dir = mask_dir
 
-    # 缩略图目录直接挂载为静态文件（不走 FastAPI 路由，性能等同 nginx）
+    app.state.crop_default_tw = None
+    app.state.crop_default_th = None
+    app.state.crop_default_zoom = None
+    if args.default_crop:
+        import re
+
+        s = args.default_crop.strip().lower().rstrip("x")
+        m = re.match(r"^(\d+)\s*x\s*(\d+)\s*@\s*([\d.]+)\s*x?$", s)
+        if not m:
+            print(f"错误: 无效 --default-crop 格式: {args.default_crop}")
+            return 1
+        app.state.crop_default_tw = int(m.group(1))
+        app.state.crop_default_th = int(m.group(2))
+        app.state.crop_default_zoom = float(m.group(3))
+
     thumb_dir = app.state.thumbnailer.thumb_dir
     app.mount("/thumb", StaticFiles(directory=str(thumb_dir)), name="thumbs")
 
-    images = scan_images(data_dir)
+    images = scan_images(layout.main_dir)
     state = app.state.state_manager.get()
 
-    # ---- 批量预生成缩略图 ----
     if not args.skip_thumbnails:
         missing = [img for img in images if not app.state.thumbnailer.exists(img["path"])]
         if missing:
@@ -109,14 +147,16 @@ def main() -> int:
         else:
             print("缩略图缓存完整，跳过预生成")
 
-    print(f"数据目录 : {data_dir}")
+    part_names = [p.name for p in layout.list_part_dirs()]
+    print(f"数据集根 : {layout.root}")
+    print(f"源图目录 : {layout.main_dir}")
+    print(f"Mask目录 : {mask_dir}")
+    print(f"部位目录 : {', '.join(part_names) if part_names else '(无)'}")
     print(f"图片总数 : {len(images)}")
     print(f"已选待删 : {len(state.get('selected', {}))}")
     print(f"回收站内 : {len(state.get('trashed', {}))}")
     print(f"服务地址 : http://{args.host}:{args.port}")
-
-    uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
-    return 0
+    print(f"裁剪页面 : http://{args.host}:{args.port}/crop")
 
     uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
     return 0

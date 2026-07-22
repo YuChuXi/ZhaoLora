@@ -1,0 +1,966 @@
+/**
+ * crop.js —— 多区域吸附裁剪（行为对齐 guo582_label_tk.py，无打标）
+ */
+(function () {
+  'use strict';
+
+  var SIDE_MIN = 512;
+  var SIDE_MAX = 1536 * 2;
+  var SIDE_STEP = 128;
+  var ZOOM_BUCKETS = [1.0, 1.5, 2.0, 2.5, 3.0, 4.0];
+  var MAX_OUTPUT_PIXELS = 1536 * 1536;
+  var NEAR_RADIUS = 2;
+  var HANDLE_TOL = 10;
+
+  var _images = [];
+  var _index = 0;
+  var _origW = 0;
+  var _origH = 0;
+  var _img = null;
+  var _scale = 1;
+  var _offsetX = 0;
+  var _offsetY = 0;
+  var _crops = []; // {x1,y1,x2,y2,target_w,target_h,zoom,name}
+  var _selected = -1;
+  var _defaultCrop = null;
+  var _datasetRoot = '';
+  var _parts = []; // [{name, enabled}]
+  var _noCrop = false;
+  var _dragMode = null;
+  var _dragStart = null;
+  var _dragBase = null;
+  var _dragIdx = -1;
+  var _toastTimer = null;
+
+  var canvas = document.getElementById('crop-canvas');
+  var ctx = canvas.getContext('2d');
+  var wrap = document.getElementById('canvas-wrap');
+
+  function toast(msg) {
+    var el = document.getElementById('toast');
+    if (!el) return;
+    el.textContent = msg;
+    el.classList.add('show');
+    clearTimeout(_toastTimer);
+    _toastTimer = setTimeout(function () { el.classList.remove('show'); }, 2200);
+  }
+
+  function errshow(msg) {
+    document.getElementById('info-text').textContent = '⚠ ' + msg;
+  }
+  window.addEventListener('error', function (e) { errshow(e.message); });
+  window.addEventListener('unhandledrejection', function (e) {
+    errshow(String(e.reason && e.reason.message ? e.reason.message : e.reason));
+  });
+
+  async function api(path, opts) {
+    opts = opts || {};
+    var res = await fetch(path, {
+      headers: opts.headers || {},
+      method: opts.method || 'GET',
+      body: opts.body || undefined,
+    });
+    if (!res.ok) {
+      var msg = await res.text();
+      throw new Error(res.status + ': ' + msg);
+    }
+    return res;
+  }
+
+  // ---- 吸附：按 zoom 反推 target，不建 SIDE×SIDE×ZOOM 全表 ----
+  function snapSide(x) {
+    var t = Math.round((x - SIDE_MIN) / SIDE_STEP);
+    return Math.max(SIDE_MIN, Math.min(SIDE_MAX, SIDE_MIN + t * SIDE_STEP));
+  }
+
+  function maxSideFitting(maxCrop, z) {
+    if (maxCrop < 1 || z <= 0) return null;
+    var s = Math.min(SIDE_MAX, Math.floor(maxCrop / z));
+    s = SIDE_MIN + Math.floor((s - SIDE_MIN) / SIDE_STEP) * SIDE_STEP;
+    while (s >= SIDE_MIN) {
+      if (Math.round(s * z) <= maxCrop) return s;
+      s -= SIDE_STEP;
+    }
+    return null;
+  }
+
+  function sideNeighbors(ideal, maxS) {
+    if (maxS < SIDE_MIN) return [];
+    var upper = SIDE_MIN + Math.floor((Math.min(SIDE_MAX, maxS) - SIDE_MIN) / SIDE_STEP) * SIDE_STEP;
+    if (upper < SIDE_MIN) return [];
+    var base = Math.max(SIDE_MIN, Math.min(upper, snapSide(ideal)));
+    var set = {};
+    set[SIDE_MIN] = 1; set[upper] = 1; set[base] = 1;
+    for (var d = -NEAR_RADIUS; d <= NEAR_RADIUS; d++) {
+      if (d === 0) continue;
+      var s = base + d * SIDE_STEP;
+      if (s >= SIDE_MIN && s <= upper) set[s] = 1;
+    }
+    return Object.keys(set).map(Number).sort(function (a, b) { return a - b; });
+  }
+
+  function fitPixelLimit(tw, th) {
+    if (tw * th <= MAX_OUTPUT_PIXELS) return [tw, th];
+    var scale = Math.sqrt(MAX_OUTPUT_PIXELS / (tw * th));
+    var tw2 = snapSide(tw * scale);
+    var th2 = snapSide(th * scale);
+    while (tw2 >= SIDE_MIN && th2 >= SIDE_MIN && tw2 * th2 > MAX_OUTPUT_PIXELS) {
+      if (tw2 >= th2) tw2 -= SIDE_STEP;
+      else th2 -= SIDE_STEP;
+    }
+    if (tw2 < SIDE_MIN || th2 < SIDE_MIN || tw2 * th2 > MAX_OUTPUT_PIXELS) return null;
+    return [tw2, th2];
+  }
+
+  function chooseBest(maxW, maxH, desiredW, desiredH, weightW, weightH) {
+    weightW = weightW == null ? 1 : weightW;
+    weightH = weightH == null ? 1 : weightH;
+    var bestByCrop = {};
+    for (var zi = 0; zi < ZOOM_BUCKETS.length; zi++) {
+      var z = ZOOM_BUCKETS[zi];
+      var maxTw = maxSideFitting(maxW, z);
+      var maxTh = maxSideFitting(maxH, z);
+      if (maxTw == null || maxTh == null) continue;
+      var tws = sideNeighbors(desiredW / z, maxTw);
+      var ths = sideNeighbors(desiredH / z, maxTh);
+      for (var i = 0; i < tws.length; i++) {
+        for (var j = 0; j < ths.length; j++) {
+          var fitted = fitPixelLimit(tws[i], ths[j]);
+          if (!fitted) continue;
+          var tw = fitted[0], th = fitted[1];
+          if (tw > maxTw || th > maxTh) continue;
+          var cw = Math.round(tw * z);
+          var ch = Math.round(th * z);
+          if (cw < 1 || ch < 1 || cw > maxW || ch > maxH) continue;
+          var score0 = weightW * Math.abs(cw - desiredW) + weightH * Math.abs(ch - desiredH);
+          var score1 = -(tw * th);
+          var score2 = -z;
+          var cropKey = cw + 'x' + ch;
+          var prev = bestByCrop[cropKey];
+          if (!prev || score0 < prev.s0 || (score0 === prev.s0 && (score1 < prev.s1 || (score1 === prev.s1 && score2 < prev.s2)))) {
+            bestByCrop[cropKey] = {
+              s0: score0, s1: score1, s2: score2,
+              cand: { crop_w: cw, crop_h: ch, target_w: tw, target_h: th, zoom: z },
+            };
+          }
+        }
+      }
+    }
+    var best = null, bs0 = 0, bs1 = 0, bs2 = 0;
+    for (var k in bestByCrop) {
+      var e = bestByCrop[k];
+      if (!best || e.s0 < bs0 || (e.s0 === bs0 && (e.s1 < bs1 || (e.s1 === bs1 && e.s2 < bs2)))) {
+        best = e.cand; bs0 = e.s0; bs1 = e.s1; bs2 = e.s2;
+      }
+    }
+    return best;
+  }
+
+  function findByTargetZoom(maxW, maxH, tw, th, zoom) {
+    if (tw < SIDE_MIN || th < SIDE_MIN || tw > SIDE_MAX || th > SIDE_MAX) return null;
+    if ((tw - SIDE_MIN) % SIDE_STEP !== 0 || (th - SIDE_MIN) % SIDE_STEP !== 0) return null;
+    var okZ = false;
+    for (var i = 0; i < ZOOM_BUCKETS.length; i++) {
+      if (Math.abs(ZOOM_BUCKETS[i] - zoom) < 1e-4) { okZ = true; break; }
+    }
+    if (!okZ) return null;
+    if (tw * th > MAX_OUTPUT_PIXELS) return null;
+    var cw = Math.round(tw * zoom), ch = Math.round(th * zoom);
+    if (cw > maxW || ch > maxH) return null;
+    return { crop_w: cw, crop_h: ch, target_w: tw, target_h: th, zoom: zoom };
+  }
+
+  function applyMatchConfig(cfg) {
+    if (!cfg) return;
+    if (cfg.side_min != null) SIDE_MIN = cfg.side_min;
+    if (cfg.side_max != null) SIDE_MAX = cfg.side_max;
+    if (cfg.side_step != null) SIDE_STEP = cfg.side_step;
+    if (cfg.zooms && cfg.zooms.length) ZOOM_BUCKETS = cfg.zooms;
+    if (cfg.max_output_pixels != null) MAX_OUTPUT_PIXELS = cfg.max_output_pixels;
+  }
+
+  function makeCrop(x1, y1, x2, y2, cand, name) {
+    return {
+      x1: x1, y1: y1, x2: x2, y2: y2,
+      target_w: cand ? cand.target_w : Math.min(x2 - x1, 1536),
+      target_h: cand ? cand.target_h : Math.min(y2 - y1, 1536),
+      zoom: cand ? cand.zoom : 1.0,
+      name: name || '',
+    };
+  }
+
+  function resolveDefaultCand() {
+    if (!_origW || !_origH) return null;
+    if (_defaultCrop) {
+      var fixed = findByTargetZoom(
+        _origW, _origH,
+        _defaultCrop.target_w, _defaultCrop.target_h, _defaultCrop.zoom
+      );
+      if (fixed) return fixed;
+    }
+    return chooseBest(_origW, _origH, _origW, _origH);
+  }
+
+  function makeDefaultSizedCrop(name, index) {
+    var init = resolveDefaultCand();
+    if (!init) return makeCrop(0, 0, _origW, _origH, null, name || '');
+    var cw = init.crop_w, ch = init.crop_h;
+    var shift = (index || 0) * 40;
+    var x1 = Math.floor((_origW - cw) / 2) + shift;
+    var y1 = Math.floor((_origH - ch) / 2) + shift;
+    x1 = Math.max(0, Math.min(_origW - cw, x1));
+    y1 = Math.max(0, Math.min(_origH - ch, y1));
+    return makeCrop(x1, y1, x1 + cw, y1 + ch, init, name || '');
+  }
+
+  function partsStorageKey() {
+    return 'crop_parts:' + (_datasetRoot || 'default');
+  }
+
+  function loadParts(serverParts) {
+    var saved = null;
+    try { saved = JSON.parse(localStorage.getItem(partsStorageKey()) || 'null'); } catch (e) { saved = null; }
+    var map = {};
+    if (Array.isArray(saved)) {
+      for (var i = 0; i < saved.length; i++) {
+        if (saved[i] && saved[i].name) map[saved[i].name] = !!saved[i].enabled;
+      }
+    }
+    _parts = [];
+    var seen = {};
+    function pushPart(name, enabledDefault) {
+      if (!name || seen[name]) return;
+      seen[name] = true;
+      _parts.push({
+        name: name,
+        enabled: Object.prototype.hasOwnProperty.call(map, name) ? map[name] : !!enabledDefault,
+      });
+    }
+    // 已保存的优先（含启用状态）
+    if (Array.isArray(saved)) {
+      for (var j = 0; j < saved.length; j++) {
+        if (saved[j] && saved[j].name) pushPart(saved[j].name, false);
+      }
+    }
+    // 服务器已有部位目录：仅登记，默认不启用（需手动勾选）
+    if (Array.isArray(serverParts)) {
+      for (var k = 0; k < serverParts.length; k++) pushPart(serverParts[k], false);
+    }
+  }
+
+  function saveParts() {
+    localStorage.setItem(partsStorageKey(), JSON.stringify(_parts));
+  }
+
+  function renderParts() {
+    var list = document.getElementById('part-list');
+    if (!list) return;
+    list.innerHTML = '';
+    if (!_parts.length) {
+      list.innerHTML = '<div style="font-size:11px;color:var(--text-dim);padding:4px 0;">暂无部位，先添加如 head</div>';
+      return;
+    }
+    for (var i = 0; i < _parts.length; i++) {
+      (function (idx) {
+        var p = _parts[idx];
+        var el = document.createElement('div');
+        el.className = 'part-item';
+        var cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.checked = !!p.enabled;
+        cb.title = '启用后每张图自动生成该部位选区';
+        cb.addEventListener('change', function () {
+          _parts[idx].enabled = cb.checked;
+          saveParts();
+          if (cb.checked) ensurePartCrop(p.name);
+          else removePartCrops(p.name);
+          redraw();
+          renderList();
+          updateNav();
+        });
+        var lab = document.createElement('label');
+        lab.textContent = p.name + (p.enabled ? '（已启用）' : '（未启用）');
+        lab.addEventListener('click', function () { cb.click(); });
+        var del = document.createElement('button');
+        del.type = 'button';
+        del.className = 'btn-mini';
+        del.textContent = '删除';
+        del.addEventListener('click', function () {
+          removePartCrops(p.name);
+          _parts.splice(idx, 1);
+          saveParts();
+          renderParts();
+          redraw();
+          renderList();
+          updateNav();
+        });
+        el.appendChild(cb);
+        el.appendChild(lab);
+        el.appendChild(del);
+        list.appendChild(el);
+      })(i);
+    }
+  }
+
+  function enabledPartNames() {
+    var out = [];
+    for (var i = 0; i < _parts.length; i++) {
+      if (_parts[i].enabled) out.push(_parts[i].name);
+    }
+    return out;
+  }
+
+  function ensurePartCrop(name) {
+    for (var i = 0; i < _crops.length; i++) {
+      if (_crops[i].name === name) return;
+    }
+    _crops.push(makeDefaultSizedCrop(name, _crops.length));
+    _selected = _crops.length - 1;
+  }
+
+  function removePartCrops(name) {
+    _crops = _crops.filter(function (c) { return c.name !== name; });
+    if (_selected >= _crops.length) _selected = _crops.length - 1;
+  }
+
+  function addPart() {
+    var input = document.getElementById('part-add-input');
+    var name = (input.value || '').trim();
+    if (!/^\w[\w\-]{0,63}$/.test(name)) {
+      toast('部位名不合法（字母数字下划线/短横线）');
+      return;
+    }
+    for (var i = 0; i < _parts.length; i++) {
+      if (_parts[i].name === name) {
+        toast('部位已存在');
+        return;
+      }
+    }
+    // 添加并自动启用，后续图片也会带上
+    _parts.push({ name: name, enabled: true });
+    saveParts();
+    input.value = '';
+    renderParts();
+    if (!_noCrop && _origW) {
+      ensurePartCrop(name);
+      redraw();
+      renderList();
+      updateNav();
+    }
+    toast('已添加并启用: ' + name);
+  }
+
+  function initDefaultCrop() {
+    _crops = [];
+    _selected = -1;
+    if (!_origW || !_origH) return;
+    var names = enabledPartNames();
+    if (names.length) {
+      for (var i = 0; i < names.length; i++) {
+        _crops.push(makeDefaultSizedCrop(names[i], i));
+      }
+      _selected = 0;
+      return;
+    }
+    _crops.push(makeDefaultSizedCrop('', 0));
+    _selected = 0;
+  }
+
+  // ---- 坐标变换（画布缓冲=原图像素；CSS 缩小显示）----
+  function cssToRaw(sx, sy) {
+    var rect = canvas.getBoundingClientRect();
+    var rx = Math.round(sx / Math.max(1e-6, rect.width) * _origW);
+    var ry = Math.round(sy / Math.max(1e-6, rect.height) * _origH);
+    rx = Math.max(0, Math.min(_origW - 1, rx));
+    ry = Math.max(0, Math.min(_origH - 1, ry));
+    return { x: rx, y: ry };
+  }
+
+  function uiPx(n) {
+    // CSS 像素 → 缓冲像素，保证缩小后线宽/手柄仍可见
+    return Math.max(1, n / Math.max(1e-6, _scale));
+  }
+
+  function fitCanvas() {
+    var cw = Math.max(1, wrap.clientWidth);
+    var ch = Math.max(1, wrap.clientHeight);
+    if (!_origW || !_origH) {
+      canvas.width = cw;
+      canvas.height = ch;
+      return;
+    }
+    _scale = Math.min(cw / _origW, ch / _origH);
+    var vw = Math.max(1, Math.floor(_origW * _scale));
+    var vh = Math.max(1, Math.floor(_origH * _scale));
+    _offsetX = 0;
+    _offsetY = 0;
+    if (canvas.width !== _origW || canvas.height !== _origH) {
+      canvas.width = _origW;
+      canvas.height = _origH;
+    }
+    canvas.style.width = vw + 'px';
+    canvas.style.height = vh + 'px';
+    canvas.style.position = 'absolute';
+    canvas.style.left = Math.floor((cw - vw) / 2) + 'px';
+    canvas.style.top = Math.floor((ch - vh) / 2) + 'px';
+    canvas.style.imageRendering = 'auto';
+  }
+
+  function drawChecker(vw, vh) {
+    var gs = 16;
+    for (var y = 0; y < vh; y += gs) {
+      for (var x = 0; x < vw; x += gs) {
+        var light = ((x / gs + y / gs) % 2) === 0;
+        ctx.fillStyle = light ? '#cccccc' : '#eeeeee';
+        ctx.fillRect(x, y, Math.min(gs, vw - x), Math.min(gs, vh - y));
+      }
+    }
+  }
+
+  function redraw() {
+    var cw = canvas.width, ch = canvas.height;
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, cw, ch);
+    ctx.fillStyle = '#222';
+    ctx.fillRect(0, 0, cw, ch);
+    if (!_img || !_origW) return;
+
+    drawChecker(_origW, _origH);
+    ctx.drawImage(_img, 0, 0);
+
+    if (_noCrop) {
+      updateLive(null);
+      return;
+    }
+
+    var lw = uiPx(2.5);
+    var lwInactive = uiPx(1.5);
+    var hs = uiPx(5);
+    var fontPx = uiPx(12);
+    var labelH = uiPx(30);
+    var labelGap = uiPx(32);
+
+    for (var i = 0; i < _crops.length; i++) {
+      var box = _crops[i];
+      var x1 = box.x1, y1 = box.y1, x2 = box.x2, y2 = box.y2;
+      var active = i === _selected;
+      ctx.strokeStyle = active ? '#00ffff' : '#00cc66';
+      ctx.lineWidth = active ? lw : lwInactive;
+      ctx.strokeRect(x1, y1, x2 - x1, y2 - y1);
+
+      var corners = [
+        [x1, y1], [x2, y1], [x1, y2], [x2, y2],
+      ];
+      ctx.fillStyle = active ? '#00ffff' : '#00cc66';
+      for (var c = 0; c < corners.length; c++) {
+        ctx.fillRect(corners[c][0] - hs, corners[c][1] - hs, hs * 2, hs * 2);
+      }
+
+      var label = (i + 1) + (box.name ? ' ' + box.name : '');
+      var info = (box.x2 - box.x1) + 'x' + (box.y2 - box.y1) +
+        ' → ' + box.target_w + 'x' + box.target_h + '@' + Number(box.zoom).toFixed(1) + 'x';
+      ctx.font = fontPx + 'px sans-serif';
+      ctx.fillStyle = active ? '#003333' : '#003320';
+      var tw = Math.max(ctx.measureText(label).width, ctx.measureText(info).width) + uiPx(8);
+      var ly = Math.max(0, y1 - labelGap);
+      ctx.fillRect(x1, ly, tw, labelH);
+      ctx.fillStyle = active ? '#00ffff' : '#a0ffc0';
+      ctx.fillText(label, x1 + uiPx(4), ly + fontPx);
+      ctx.fillText(info, x1 + uiPx(4), ly + fontPx * 2 + uiPx(2));
+    }
+    updateLive(_selected >= 0 ? _crops[_selected] : null);
+  }
+
+  function updateLive(box) {
+    var live = document.getElementById('live-match');
+    if (_noCrop) {
+      live.textContent = ' | 整图即部位 · 原尺寸 ' + _origW + 'x' + _origH;
+      return;
+    }
+    if (!box) {
+      live.textContent = '';
+      return;
+    }
+    live.textContent = ' | 选中: 裁剪区 ' + (box.x2 - box.x1) + 'x' + (box.y2 - box.y1) +
+      ' → ' + box.target_w + 'x' + box.target_h + ' @ ' + Number(box.zoom).toFixed(1) + 'x';
+  }
+
+  function renderList() {
+    var list = document.getElementById('crop-list');
+    list.innerHTML = '';
+    if (_noCrop) {
+      list.innerHTML = '<div class="crop-item">整图即部位 · 原尺寸 ' + _origW + 'x' + _origH +
+        '<div class="meta">写入 xxx/&lt;部位名&gt;/同名.png</div></div>';
+      return;
+    }
+    for (var i = 0; i < _crops.length; i++) {
+      (function (idx) {
+        var box = _crops[idx];
+        var el = document.createElement('div');
+        el.className = 'crop-item' + (idx === _selected ? ' active' : '');
+        el.innerHTML =
+          '<div><b>#' + (idx + 1) + '</b></div>' +
+          '<div class="meta">' + (box.x2 - box.x1) + 'x' + (box.y2 - box.y1) +
+          ' → ' + box.target_w + 'x' + box.target_h + ' @' + Number(box.zoom).toFixed(1) + 'x</div>';
+        var input = document.createElement('input');
+        input.type = 'text';
+        input.placeholder = '部位名 → 目录，如 head';
+        input.value = box.name || '';
+        input.addEventListener('click', function (e) { e.stopPropagation(); });
+        input.addEventListener('input', function () {
+          _crops[idx].name = input.value.trim();
+          redraw();
+        });
+        el.appendChild(input);
+        el.addEventListener('click', function () {
+          _selected = idx;
+          renderList();
+          redraw();
+        });
+        list.appendChild(el);
+      })(i);
+    }
+  }
+
+  function updateNav() {
+    var img = _images[_index];
+    var done = 0;
+    for (var i = 0; i < _images.length; i++) if (_images[i].done) done++;
+    document.getElementById('crop-progress').textContent =
+      (_index + 1) + '/' + _images.length + ' (已裁 ' + done + ')';
+    document.getElementById('crop-filename').textContent = img ? img.path : '-';
+    document.getElementById('info-text').textContent = img
+      ? (img.path + ' | 原图 ' + _origW + 'x' + _origH + ' | 选区 ' + _crops.length)
+      : '无图片';
+  }
+
+  // ---- hit test（原图像素坐标）----
+  function hitTestBox(rx, ry, box) {
+    var left = Math.min(box.x1, box.x2), right = Math.max(box.x1, box.x2);
+    var top = Math.min(box.y1, box.y2), bottom = Math.max(box.y1, box.y2);
+    var tol = uiPx(Math.max(8, HANDLE_TOL));
+
+    var nearTL = Math.abs(rx - left) <= tol && Math.abs(ry - top) <= tol;
+    var nearTR = Math.abs(rx - right) <= tol && Math.abs(ry - top) <= tol;
+    var nearBL = Math.abs(rx - left) <= tol && Math.abs(ry - bottom) <= tol;
+    var nearBR = Math.abs(rx - right) <= tol && Math.abs(ry - bottom) <= tol;
+    var nearL = Math.abs(rx - left) <= tol && top <= ry && ry <= bottom;
+    var nearR = Math.abs(rx - right) <= tol && top <= ry && ry <= bottom;
+    var nearT = Math.abs(ry - top) <= tol && left <= rx && rx <= right;
+    var nearB = Math.abs(ry - bottom) <= tol && left <= rx && rx <= right;
+    var inside = left <= rx && rx <= right && top <= ry && ry <= bottom;
+
+    if (nearTL) return 'resize_tl';
+    if (nearTR) return 'resize_tr';
+    if (nearBL) return 'resize_bl';
+    if (nearBR) return 'resize_br';
+    if (nearL) return 'resize_left';
+    if (nearR) return 'resize_right';
+    if (nearT) return 'resize_top';
+    if (nearB) return 'resize_bottom';
+    if (inside) return 'move';
+    return null;
+  }
+
+  function hitTest(rx, ry) {
+    if (_selected >= 0 && _selected < _crops.length) {
+      var m = hitTestBox(rx, ry, _crops[_selected]);
+      if (m) return { idx: _selected, mode: m };
+    }
+    for (var i = _crops.length - 1; i >= 0; i--) {
+      if (i === _selected) continue;
+      var m2 = hitTestBox(rx, ry, _crops[i]);
+      if (m2) return { idx: i, mode: m2 };
+    }
+    return { idx: -1, mode: 'new' };
+  }
+
+  function setCursor(mode) {
+    var c = 'crosshair';
+    if (mode === 'move') c = 'move';
+    else if (mode === 'resize_tl' || mode === 'resize_br') c = 'nwse-resize';
+    else if (mode === 'resize_tr' || mode === 'resize_bl') c = 'nesw-resize';
+    else if (mode === 'resize_left' || mode === 'resize_right') c = 'ew-resize';
+    else if (mode === 'resize_top' || mode === 'resize_bottom') c = 'ns-resize';
+    wrap.style.cursor = c;
+  }
+
+  function clampBox(x1, y1, x2, y2) {
+    x1 = Math.max(0, Math.min(_origW - 1, x1));
+    y1 = Math.max(0, Math.min(_origH - 1, y1));
+    x2 = Math.max(x1 + 1, Math.min(_origW, x2));
+    y2 = Math.max(y1 + 1, Math.min(_origH, y2));
+    return { x1: x1, y1: y1, x2: x2, y2: y2 };
+  }
+
+  function applySnap(box, cand, mode) {
+    if (!cand) return box;
+    var sw = cand.crop_w, sh = cand.crop_h;
+    var x1 = box.x1, y1 = box.y1, x2 = box.x2, y2 = box.y2;
+    if (mode === 'move') {
+      x2 = Math.min(_origW, x1 + sw);
+      y2 = Math.min(_origH, y1 + sh);
+      x1 = x2 - sw;
+      y1 = y2 - sh;
+    } else if (mode === 'resize_left') {
+      x1 = x2 - sw; y2 = y1 + sh;
+    } else if (mode === 'resize_right') {
+      x2 = x1 + sw; y2 = y1 + sh;
+    } else if (mode === 'resize_top') {
+      y1 = y2 - sh; x2 = x1 + sw;
+    } else if (mode === 'resize_bottom') {
+      y2 = y1 + sh; x2 = x1 + sw;
+    } else if (mode === 'resize_tl') {
+      x1 = x2 - sw; y1 = y2 - sh;
+    } else if (mode === 'resize_tr') {
+      x2 = x1 + sw; y1 = y2 - sh;
+    } else if (mode === 'resize_bl') {
+      x1 = x2 - sw; y2 = y1 + sh;
+    } else if (mode === 'resize_br') {
+      x2 = x1 + sw; y2 = y1 + sh;
+    } else {
+      x2 = Math.min(_origW, x1 + sw);
+      y2 = Math.min(_origH, y1 + sh);
+    }
+    var cl = clampBox(x1, y1, x2, y2);
+    return makeCrop(cl.x1, cl.y1, cl.x2, cl.y2, cand, box.name);
+  }
+
+  function onPress(e) {
+    if (!_img || _noCrop) return;
+    var rect = canvas.getBoundingClientRect();
+    var raw = cssToRaw(e.clientX - rect.left, e.clientY - rect.top);
+    var hit = hitTest(raw.x, raw.y);
+    _dragMode = hit.mode;
+    _dragIdx = hit.idx;
+    _dragStart = raw;
+    if (hit.idx >= 0) {
+      _selected = hit.idx;
+      _dragBase = Object.assign({}, _crops[hit.idx]);
+      renderList();
+    } else {
+      _dragBase = null;
+    }
+    setCursor(_dragMode);
+  }
+
+  function onDrag(e) {
+    if (!_img || !_dragMode || _noCrop) return;
+    var rect = canvas.getBoundingClientRect();
+    var raw = cssToRaw(e.clientX - rect.left, e.clientY - rect.top);
+    var iw = _origW, ih = _origH;
+    var cand = null;
+    var newBox = null;
+    var name = '';
+
+    if (_dragMode === 'new') {
+      var sx0 = _dragStart.x, sy0 = _dragStart.y;
+      var desiredW = Math.abs(raw.x - sx0);
+      var desiredH = Math.abs(raw.y - sy0);
+      if (desiredW < 2 || desiredH < 2) return;
+      var signX = raw.x >= sx0 ? 1 : -1;
+      var signY = raw.y >= sy0 ? 1 : -1;
+      var maxW = signX > 0 ? (iw - sx0) : sx0;
+      var maxH = signY > 0 ? (ih - sy0) : sy0;
+      cand = chooseBest(maxW, maxH, desiredW, desiredH);
+      if (!cand) return;
+      var cw = cand.crop_w, ch = cand.crop_h;
+      var x1 = signX > 0 ? sx0 : sx0 - cw;
+      var y1 = signY > 0 ? sy0 : sy0 - ch;
+      var cl = clampBox(x1, y1, x1 + cw, y1 + ch);
+      newBox = makeCrop(cl.x1, cl.y1, cl.x2, cl.y2, cand, '');
+
+      if (_dragIdx < 0) {
+        // 新建临时框
+        _crops.push(newBox);
+        _dragIdx = _crops.length - 1;
+        _selected = _dragIdx;
+      } else {
+        _crops[_dragIdx] = newBox;
+      }
+      redraw();
+      renderList();
+      return;
+    }
+
+    if (_dragIdx < 0 || !_dragBase) return;
+    name = _dragBase.name || '';
+    var bx1 = _dragBase.x1, by1 = _dragBase.y1, bx2 = _dragBase.x2, by2 = _dragBase.y2;
+    var curW = Math.max(1, bx2 - bx1);
+    var curH = Math.max(1, by2 - by1);
+
+    if (_dragMode === 'move') {
+      var dx = raw.x - _dragStart.x;
+      var dy = raw.y - _dragStart.y;
+      var nx1 = bx1 + dx, ny1 = by1 + dy, nx2 = bx2 + dx, ny2 = by2 + dy;
+      if (nx1 < 0) { nx2 -= nx1; nx1 = 0; }
+      if (ny1 < 0) { ny2 -= ny1; ny1 = 0; }
+      if (nx2 > iw) { nx1 -= (nx2 - iw); nx2 = iw; }
+      if (ny2 > ih) { ny1 -= (ny2 - ih); ny2 = ih; }
+      newBox = clampBox(nx1, ny1, nx2, ny2);
+      cand = chooseBest(iw, ih, nx2 - nx1, ny2 - ny1);
+    } else if (_dragMode === 'resize_left') {
+      cand = chooseBest(Math.max(1, bx2), ih, Math.max(1, bx2 - raw.x), curH, 1, 4);
+      if (!cand) return;
+      newBox = { x1: bx2 - cand.crop_w, y1: by1, x2: bx2, y2: by1 + cand.crop_h };
+    } else if (_dragMode === 'resize_right') {
+      cand = chooseBest(Math.max(1, iw - bx1), ih, Math.max(1, raw.x - bx1), curH, 1, 4);
+      if (!cand) return;
+      newBox = { x1: bx1, y1: by1, x2: bx1 + cand.crop_w, y2: by1 + cand.crop_h };
+    } else if (_dragMode === 'resize_top') {
+      cand = chooseBest(iw, Math.max(1, by2), curW, Math.max(1, by2 - raw.y), 4, 1);
+      if (!cand) return;
+      newBox = { x1: bx1, y1: by2 - cand.crop_h, x2: bx1 + cand.crop_w, y2: by2 };
+    } else if (_dragMode === 'resize_bottom') {
+      cand = chooseBest(iw, Math.max(1, ih - by1), curW, Math.max(1, raw.y - by1), 4, 1);
+      if (!cand) return;
+      newBox = { x1: bx1, y1: by1, x2: bx1 + cand.crop_w, y2: by1 + cand.crop_h };
+    } else if (_dragMode === 'resize_tl') {
+      cand = chooseBest(Math.max(1, bx2), Math.max(1, by2), Math.max(1, bx2 - raw.x), Math.max(1, by2 - raw.y));
+      if (!cand) return;
+      newBox = { x1: bx2 - cand.crop_w, y1: by2 - cand.crop_h, x2: bx2, y2: by2 };
+    } else if (_dragMode === 'resize_tr') {
+      cand = chooseBest(Math.max(1, iw - bx1), Math.max(1, by2), Math.max(1, raw.x - bx1), Math.max(1, by2 - raw.y));
+      if (!cand) return;
+      newBox = { x1: bx1, y1: by2 - cand.crop_h, x2: bx1 + cand.crop_w, y2: by2 };
+    } else if (_dragMode === 'resize_bl') {
+      cand = chooseBest(Math.max(1, bx2), Math.max(1, ih - by1), Math.max(1, bx2 - raw.x), Math.max(1, raw.y - by1));
+      if (!cand) return;
+      newBox = { x1: bx2 - cand.crop_w, y1: by1, x2: bx2, y2: by1 + cand.crop_h };
+    } else if (_dragMode === 'resize_br') {
+      cand = chooseBest(Math.max(1, iw - bx1), Math.max(1, ih - by1), Math.max(1, raw.x - bx1), Math.max(1, raw.y - by1));
+      if (!cand) return;
+      newBox = { x1: bx1, y1: by1, x2: bx1 + cand.crop_w, y2: by1 + cand.crop_h };
+    }
+
+    if (!newBox) return;
+    var base = makeCrop(newBox.x1, newBox.y1, newBox.x2, newBox.y2, cand, name);
+    // 二次吸附（与 guo582 一致）
+    if (!cand) cand = chooseBest(base.x2 - base.x1, base.y2 - base.y1, base.x2 - base.x1, base.y2 - base.y1);
+    _crops[_dragIdx] = applySnap(base, cand, _dragMode);
+    redraw();
+    renderList();
+  }
+
+  function onRelease() {
+    _dragMode = null;
+    _dragBase = null;
+    _dragStart = null;
+  }
+
+  function onMove(e) {
+    if (_noCrop || !_img) return;
+    if (_dragMode) return;
+    var rect = canvas.getBoundingClientRect();
+    var raw = cssToRaw(e.clientX - rect.left, e.clientY - rect.top);
+    var hit = hitTest(raw.x, raw.y);
+    setCursor(hit.mode);
+  }
+
+  // ---- 加载 ----
+  async function loadImages() {
+    var res = await (await api('/api/crop/images')).json();
+    _images = res;
+    if (_images.length > 0) await loadIndex(0);
+    else document.getElementById('info-text').textContent = '没有图片';
+  }
+
+  async function loadIndex(idx) {
+    if (!_images.length) return;
+    _index = Math.max(0, Math.min(_images.length - 1, idx));
+    var imgMeta = _images[_index];
+    var blob = await (await api('/api/crop/image?path=' + encodeURIComponent(imgMeta.path))).blob();
+    var url = URL.createObjectURL(blob);
+    var im = new Image();
+    await new Promise(function (resolve, reject) {
+      im.onload = resolve;
+      im.onerror = function () { reject(new Error('图片解码失败: ' + imgMeta.path)); };
+      im.src = url;
+    });
+    URL.revokeObjectURL(url);
+    _img = im;
+    _origW = im.naturalWidth;
+    _origH = im.naturalHeight;
+    _noCrop = false;
+    document.getElementById('chk-no-crop').checked = false;
+    document.getElementById('part-name-wrap').style.display = 'none';
+    initDefaultCrop();
+    fitCanvas();
+    redraw();
+    renderList();
+    updateNav();
+  }
+
+  async function saveAndNext() {
+    if (!_images.length || !_img) return;
+    var imgMeta = _images[_index];
+    var partName = (document.getElementById('part-name').value || '').trim();
+    if (_noCrop && !partName) {
+      toast('整图即部位：请填写部位名（如 head）');
+      return;
+    }
+    var body = {
+      path: imgMeta.path,
+      no_crop_resize: _noCrop,
+      part_name: partName,
+      crops: _noCrop ? [] : _crops.map(function (c) {
+        return {
+          x1: c.x1, y1: c.y1, x2: c.x2, y2: c.y2,
+          target_w: c.target_w, target_h: c.target_h, zoom: c.zoom,
+          name: c.name || '',
+        };
+      }),
+    };
+    if (!_noCrop && body.crops.length === 0) {
+      toast('请至少保留一个选区');
+      return;
+    }
+    var res = await (await api('/api/crop/save', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })).json();
+    imgMeta.done = true;
+    toast('已保存 ' + res.count + ' 张 → ' + res.saved.map(function (s) { return s.file; }).join(', '));
+    var next = _index + 1;
+    while (next < _images.length && _images[next].done) next++;
+    if (next >= _images.length) {
+      updateNav();
+      toast('全部处理完');
+      return;
+    }
+    await loadIndex(next);
+  }
+
+  function addCrop() {
+    if (_noCrop || !_origW) return;
+    var crop = makeDefaultSizedCrop('', _crops.length);
+    if (!crop) {
+      toast('无法创建选区');
+      return;
+    }
+    _crops.push(crop);
+    _selected = _crops.length - 1;
+    redraw();
+    renderList();
+    updateNav();
+  }
+
+  function delSelected() {
+    if (_noCrop || _selected < 0 || _selected >= _crops.length) return;
+    _crops.splice(_selected, 1);
+    if (_crops.length === 0) {
+      _selected = -1;
+    } else {
+      _selected = Math.min(_selected, _crops.length - 1);
+    }
+    redraw();
+    renderList();
+    updateNav();
+  }
+
+  function clearCrops() {
+    if (_noCrop) return;
+    initDefaultCrop();
+    redraw();
+    renderList();
+    updateNav();
+  }
+
+  function onToggleNoCrop() {
+    _noCrop = document.getElementById('chk-no-crop').checked;
+    var wrapEl = document.getElementById('part-name-wrap');
+    wrapEl.style.display = _noCrop ? 'flex' : 'none';
+    if (_noCrop) {
+      wrap.style.cursor = 'default';
+      if (!document.getElementById('part-name').value && _crops[_selected] && _crops[_selected].name) {
+        document.getElementById('part-name').value = _crops[_selected].name;
+      }
+    } else if (_crops.length === 0) {
+      initDefaultCrop();
+    }
+    redraw();
+    renderList();
+    updateNav();
+  }
+
+  async function init() {
+    var cfg = await (await api('/api/crop/config')).json();
+    _defaultCrop = cfg.default_crop || null;
+    _datasetRoot = cfg.root || '';
+    loadParts(cfg.parts || []);
+    renderParts();
+    var hint = document.getElementById('layout-hint');
+    if (hint) {
+      var dc = _defaultCrop
+        ? (_defaultCrop.target_w + 'x' + _defaultCrop.target_h + '@' + Number(_defaultCrop.zoom).toFixed(1) + 'x')
+        : '自动匹配';
+      hint.textContent = '根: ' + (_datasetRoot || '-') + ' | 默认尺寸: ' + dc;
+    }
+
+    var matchCfg = await (await api('/api/crop/candidates')).json();
+    applyMatchConfig(matchCfg);
+
+    document.getElementById('btn-prev').addEventListener('click', function () {
+      if (_index > 0) loadIndex(_index - 1);
+    });
+    document.getElementById('btn-next').addEventListener('click', function () {
+      if (_index < _images.length - 1) loadIndex(_index + 1);
+    });
+    document.getElementById('btn-skip').addEventListener('click', function () {
+      if (_index < _images.length - 1) loadIndex(_index + 1);
+      else toast('已是最后一张');
+    });
+    document.getElementById('btn-save').addEventListener('click', function () {
+      saveAndNext();
+    });
+    document.getElementById('btn-add-crop').addEventListener('click', addCrop);
+    document.getElementById('btn-del-crop').addEventListener('click', delSelected);
+    document.getElementById('btn-clear-crops').addEventListener('click', clearCrops);
+    document.getElementById('chk-no-crop').addEventListener('change', onToggleNoCrop);
+    document.getElementById('btn-add-part').addEventListener('click', addPart);
+    document.getElementById('part-add-input').addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') { e.preventDefault(); addPart(); }
+    });
+
+    canvas.addEventListener('mousedown', onPress);
+    window.addEventListener('mousemove', function (e) {
+      if (_dragMode) onDrag(e);
+      else onMove(e);
+    });
+    window.addEventListener('mouseup', onRelease);
+
+    window.addEventListener('resize', function () {
+      fitCanvas();
+      redraw();
+    });
+
+    document.addEventListener('keydown', function (e) {
+      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+      if ((e.ctrlKey || e.metaKey) && (e.key === 's' || e.key === 'S')) {
+        e.preventDefault();
+        saveAndNext();
+      } else if ((e.ctrlKey || e.metaKey) && (e.key === 'n' || e.key === 'N')) {
+        e.preventDefault();
+        if (_index < _images.length - 1) loadIndex(_index + 1);
+      } else if (e.key === 'Delete' || e.key === 'Backspace') {
+        e.preventDefault();
+        delSelected();
+      } else if (e.key === 'ArrowLeft') {
+        e.preventDefault();
+        if (_index > 0) loadIndex(_index - 1);
+      } else if (e.key === 'ArrowRight') {
+        e.preventDefault();
+        if (_index < _images.length - 1) loadIndex(_index + 1);
+      }
+    });
+
+    await loadImages();
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+  } else {
+    init();
+  }
+})();

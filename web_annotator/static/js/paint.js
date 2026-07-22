@@ -7,6 +7,7 @@
   var _images = [], _index = 0;
   var _origW = 0, _origH = 0;
   var _alpha = null, _rgbImg = null, _scale = 1;
+  var _viewW = 0, _viewH = 0, _dpr = 1;
   var _brushRadius = 80, _brushPct = 3, _defaultAlpha = 255;
   var _tool = 'brush', _isDrawing = false, _paintValue = 0;
   var _rectStart = null, _mouseScreen = null, _modified = false;
@@ -48,11 +49,12 @@
   // ---- 配置 ----
   async function loadConfig() {
     var cfg = await (await api('/api/paint/config')).json();
-    _defaultAlpha = cfg.default_alpha || 255;
+    _defaultAlpha = cfg.default_alpha == null ? 255 : cfg.default_alpha;
     document.getElementById('default-alpha').value = _defaultAlpha;
   }
   async function saveConfig() {
-    _defaultAlpha = parseInt(document.getElementById('default-alpha').value) || 255;
+    var value = parseInt(document.getElementById('default-alpha').value);
+    _defaultAlpha = Number.isNaN(value) ? 255 : value;
     await api('/api/paint/config', { method: 'POST',
       body: JSON.stringify({ default_alpha: _defaultAlpha }),
       headers: { 'Content-Type': 'application/json' } });
@@ -95,7 +97,8 @@
       _origW = _rgbImg.naturalWidth; _origH = _rgbImg.naturalHeight;
       URL.revokeObjectURL(url);
       _alpha = new Uint8Array(_origW * _origH);
-      _defaultAlpha = parseInt(document.getElementById('default-alpha').value) || 255;
+      var value = parseInt(document.getElementById('default-alpha').value);
+      _defaultAlpha = Number.isNaN(value) ? 255 : value;
       _alpha.fill(_defaultAlpha);
       _modified = false;
       _calcBrush(); _updateBrushUI();
@@ -178,15 +181,25 @@
   }
   function fitCanvas() {
     var cw = wrap.clientWidth, ch = wrap.clientHeight;
+    _dpr = window.devicePixelRatio || 1;
     _scale = Math.min(cw / _origW, ch / _origH);
-    var vw = Math.max(1, Math.floor(_origW * _scale)), vh = Math.max(1, Math.floor(_origH * _scale));
-    canvas.width = vw; canvas.height = vh;
+    _viewW = Math.max(1, Math.floor(_origW * _scale));
+    _viewH = Math.max(1, Math.floor(_origH * _scale));
+    // 缓冲保持原图像素；CSS 缩小显示，交给浏览器缩放（与 <img> 同路径，避免先缩后画发糊）
+    if (canvas.width !== _origW || canvas.height !== _origH) {
+      canvas.width = _origW;
+      canvas.height = _origH;
+      invalidateScaledCache();
+    }
+    canvas.style.width = _viewW + 'px';
+    canvas.style.height = _viewH + 'px';
     canvas.style.position = 'absolute';
-    canvas.style.left = ((cw - vw) / 2) + 'px';
-    canvas.style.top = ((ch - vh) / 2) + 'px';
+    canvas.style.left = ((cw - _viewW) / 2) + 'px';
+    canvas.style.top = ((ch - _viewH) / 2) + 'px';
     canvas.style.margin = '0';
+    canvas.style.imageRendering = 'auto';
   }
-  window.addEventListener('resize', function() { if (_rgbImg) { invalidateScaledCache(); fitCanvas(); _scheduleRender(); } });
+  window.addEventListener('resize', function() { if (_rgbImg) { fitCanvas(); _scheduleRender(); } });
 
   // ---- 渲染 ----
   var _checkerCanvas = null, _alphaOrigCanvas = null;
@@ -207,37 +220,39 @@
     _compCanvas = null;
   }
 
-  function _doRender() {
-    if (!_rgbImg || !_alpha) return;
-    var vw = canvas.width, vh = canvas.height;
+  function _ensureRgbFull() {
+    if (_rgbScaledCanvas && _rgbScaledCanvas.width === _origW && _rgbScaledCanvas.height === _origH) return;
+    _rgbScaledCanvas = document.createElement('canvas');
+    _rgbScaledCanvas.width = _origW;
+    _rgbScaledCanvas.height = _origH;
+    var rctx = _rgbScaledCanvas.getContext('2d');
+    rctx.drawImage(_rgbImg, 0, 0);
+  }
 
-    // 棋盘格（缓存）
-    if (!_checkerCanvas || _checkerCanvas.width !== vw || _checkerCanvas.height !== vh || _checkerCanvas._darken !== _defaultAlpha) {
-      _checkerCanvas = document.createElement('canvas');
-      _checkerCanvas.width = vw; _checkerCanvas.height = vh;
-      _checkerCanvas._darken = _defaultAlpha;
-      var cc = _checkerCanvas.getContext('2d');
-      var dk = _defaultAlpha / 255;
-      var c0 = Math.round(204 * dk), c1 = Math.round(153 * dk);
-      for (var y = 0; y < vh; y += 12) {
-        for (var x = 0; x < vw; x += 12) {
-          var isOdd = (Math.floor(x/12) + Math.floor(y/12)) % 2 === 1;
-          cc.fillStyle = 'rgb(' + (isOdd ? c1 : c0) + ',' + (isOdd ? c1 : c0) + ',' + (isOdd ? c1 : c0) + ')';
-          cc.fillRect(x, y, 12, 12);
-        }
+  function _ensureChecker() {
+    if (_checkerCanvas && _checkerCanvas.width === _origW && _checkerCanvas.height === _origH && _checkerCanvas._darken === _defaultAlpha) return;
+    _checkerCanvas = document.createElement('canvas');
+    _checkerCanvas.width = _origW;
+    _checkerCanvas.height = _origH;
+    _checkerCanvas._darken = _defaultAlpha;
+    var cc = _checkerCanvas.getContext('2d');
+    var dk = _defaultAlpha / 255;
+    var c0 = Math.round(204 * dk), c1 = Math.round(153 * dk);
+    var cell = 12;
+    for (var y = 0; y < _origH; y += cell) {
+      for (var x = 0; x < _origW; x += cell) {
+        var isOdd = (Math.floor(x / cell) + Math.floor(y / cell)) % 2 === 1;
+        cc.fillStyle = 'rgb(' + (isOdd ? c1 : c0) + ',' + (isOdd ? c1 : c0) + ',' + (isOdd ? c1 : c0) + ')';
+        cc.fillRect(x, y, cell, cell);
       }
     }
-    ctx.drawImage(_checkerCanvas, 0, 0);
+  }
 
-    // RGB 缩放到显示大小（缓存，仅在图片或视口变化时重建）
-    if (!_rgbScaledCanvas || _rgbScaledCanvas.width !== vw || _rgbScaledCanvas.height !== vh) {
-      _rgbScaledCanvas = document.createElement('canvas');
-      _rgbScaledCanvas.width = vw; _rgbScaledCanvas.height = vh;
-      var rctx = _rgbScaledCanvas.getContext('2d');
-      rctx.drawImage(_rgbImg, 0, 0, vw, vh);
-    }
+  function _doRender() {
+    if (!_rgbImg || !_alpha) return;
+    _ensureChecker();
+    _ensureRgbFull();
 
-    // 构建 alpha 原始分辨率 canvas（仅首次，后续画笔直接画在上面）
     if (!_alphaOrigCanvas) {
       _alphaOrigCanvas = document.createElement('canvas');
       _alphaOrigCanvas.width = _origW; _alphaOrigCanvas.height = _origH;
@@ -250,17 +265,21 @@
       aoctx.putImageData(imgData, 0, 0);
     }
 
-    // 合成：RGB * AlphaMask -> 棋盘格上
-    if (!_compCanvas || _compCanvas.width !== vw || _compCanvas.height !== vh) {
+    if (!_compCanvas || _compCanvas.width !== _origW || _compCanvas.height !== _origH) {
       _compCanvas = document.createElement('canvas');
-      _compCanvas.width = vw; _compCanvas.height = vh;
+      _compCanvas.width = _origW;
+      _compCanvas.height = _origH;
     }
     var cctx = _compCanvas.getContext('2d');
     cctx.globalCompositeOperation = 'source-over';
-    cctx.clearRect(0, 0, vw, vh);
+    cctx.clearRect(0, 0, _origW, _origH);
     cctx.drawImage(_rgbScaledCanvas, 0, 0);
     cctx.globalCompositeOperation = 'destination-in';
-    cctx.drawImage(_alphaOrigCanvas, 0, 0, vw, vh);
+    cctx.drawImage(_alphaOrigCanvas, 0, 0);
+
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, _origW, _origH);
+    ctx.drawImage(_checkerCanvas, 0, 0);
     ctx.drawImage(_compCanvas, 0, 0);
   }
 
@@ -270,8 +289,9 @@
       _brushPreview.style.display = 'none'; return;
     }
     var wrapRect = wrap.getBoundingClientRect();
+    var canvasRect = canvas.getBoundingClientRect();
     var mx = _mouseScreen[0] - wrapRect.left, my = _mouseScreen[1] - wrapRect.top;
-    var r = _brushRadius * _scale;
+    var r = _brushRadius * (canvasRect.width / Math.max(1, _origW));
     if (r < 2) { _brushPreview.style.display = 'none'; return; }
     _brushPreview.style.display = 'block';
     _brushPreview.style.width = (r * 2) + 'px';
@@ -282,8 +302,10 @@
 
   function screenToOrig(sx, sy) {
     var rect = canvas.getBoundingClientRect();
-    return [Math.max(0, Math.min(_origW-1, Math.floor((sx - rect.left) / _scale))),
-            Math.max(0, Math.min(_origH-1, Math.floor((sy - rect.top) / _scale)))];
+    var x = (sx - rect.left) / Math.max(1e-6, rect.width) * _origW;
+    var y = (sy - rect.top) / Math.max(1e-6, rect.height) * _origH;
+    return [Math.max(0, Math.min(_origW - 1, Math.floor(x))),
+            Math.max(0, Math.min(_origH - 1, Math.floor(y)))];
   }
 
   function stampDisc(cx, cy, r, val) {
@@ -366,8 +388,9 @@
   // ---- 保存 ----
   async function doSave(force) {
     if (!_alpha || !_alphaOrigCanvas) return;
-    if (!force && !_modified) return;
     var img = _images[_index];
+    // 全新图片即使没有动笔，也要写出当前默认 alpha mask。
+    if (!force && !_modified && img.has_mask) return;
     var fmt = document.getElementById('save-format').value || 'alpha_bw';
     // 从 canvas 回读 alpha 数组（保存时需要）
     var aoctx = _alphaOrigCanvas.getContext('2d');
@@ -405,7 +428,8 @@
   document.getElementById('btn-clear').addEventListener('click', function() { if (_alpha && _alphaOrigCanvas) { _alpha.fill(0); _alphaOrigCanvas.getContext('2d').clearRect(0, 0, _origW, _origH); _modified = true; _scheduleRender(); } });
   document.getElementById('btn-fill').addEventListener('click', function() { if (_alpha && _alphaOrigCanvas) { _alpha.fill(255); var fc = _alphaOrigCanvas.getContext('2d'); fc.fillStyle = '#fff'; fc.fillRect(0, 0, _origW, _origH); _modified = true; _scheduleRender(); } });
   document.getElementById('btn-default').addEventListener('click', function() {
-    _defaultAlpha = parseInt(document.getElementById('default-alpha').value) || 255;
+    var value = parseInt(document.getElementById('default-alpha').value);
+    _defaultAlpha = Number.isNaN(value) ? 255 : value;
     if (_alpha && _alphaOrigCanvas) { _alpha.fill(_defaultAlpha); var dc = _alphaOrigCanvas.getContext('2d'); dc.clearRect(0, 0, _origW, _origH); dc.globalAlpha = _defaultAlpha / 255; dc.fillStyle = '#fff'; dc.fillRect(0, 0, _origW, _origH); dc.globalAlpha = 1; _modified = true; _scheduleRender(); }
     saveConfig();
   });
