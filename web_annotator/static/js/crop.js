@@ -731,8 +731,37 @@
   async function loadImages() {
     var res = await (await api('/api/crop/images')).json();
     _images = res;
-    if (_images.length > 0) await loadIndex(0);
-    else document.getElementById('info-text').textContent = '没有图片';
+    if (_images.length > 0) {
+      var start = findNextUnfinished(-1);
+      if (start < 0) {
+        await loadIndex(0);
+        toast('全部已裁剪');
+      } else {
+        await loadIndex(start);
+      }
+    } else {
+      document.getElementById('info-text').textContent = '没有图片';
+    }
+  }
+
+  function findNextUnfinished(fromIdx) {
+    for (var i = fromIdx + 1; i < _images.length; i++) {
+      if (!_images[i].done) return i;
+    }
+    return -1;
+  }
+
+  function goNextUnfinished() {
+    var next = findNextUnfinished(_index);
+    if (next < 0) {
+      toast('后面没有未裁剪的图');
+      return;
+    }
+    loadIndex(next);
+  }
+
+  function goPrev() {
+    if (_index > 0) loadIndex(_index - 1);
   }
 
   async function loadIndex(idx) {
@@ -792,9 +821,8 @@
     })).json();
     imgMeta.done = true;
     toast('已保存 ' + res.count + ' 张 → ' + res.saved.map(function (s) { return s.file; }).join(', '));
-    var next = _index + 1;
-    while (next < _images.length && _images[next].done) next++;
-    if (next >= _images.length) {
+    var next = findNextUnfinished(_index);
+    if (next < 0) {
       updateNav();
       toast('全部处理完');
       return;
@@ -866,16 +894,9 @@
     var matchCfg = await (await api('/api/crop/candidates')).json();
     applyMatchConfig(matchCfg);
 
-    document.getElementById('btn-prev').addEventListener('click', function () {
-      if (_index > 0) loadIndex(_index - 1);
-    });
-    document.getElementById('btn-next').addEventListener('click', function () {
-      if (_index < _images.length - 1) loadIndex(_index + 1);
-    });
-    document.getElementById('btn-skip').addEventListener('click', function () {
-      if (_index < _images.length - 1) loadIndex(_index + 1);
-      else toast('已是最后一张');
-    });
+    document.getElementById('btn-prev').addEventListener('click', goPrev);
+    document.getElementById('btn-next').addEventListener('click', goNextUnfinished);
+    document.getElementById('btn-skip').addEventListener('click', goNextUnfinished);
     document.getElementById('btn-save').addEventListener('click', function () {
       saveAndNext();
     });
@@ -914,8 +935,7 @@
       if ((e.ctrlKey || e.metaKey) && (key === 'n' || key === 'N' || code === 'KeyN')) {
         e.preventDefault();
         if (inField) e.target.blur();
-        if (_index < _images.length - 1) loadIndex(_index + 1);
-        else toast('已是最后一张');
+        goNextUnfinished();
         return;
       }
       if (inField) return;
@@ -929,14 +949,13 @@
         saveAndNext();
       } else if (key === ' ' || code === 'Space') {
         e.preventDefault();
-        if (_index < _images.length - 1) loadIndex(_index + 1);
-        else toast('已是最后一张');
+        goNextUnfinished();
       } else if (key === 'ArrowLeft') {
         e.preventDefault();
-        if (_index > 0) loadIndex(_index - 1);
+        goPrev();
       } else if (key === 'ArrowRight') {
         e.preventDefault();
-        if (_index < _images.length - 1) loadIndex(_index + 1);
+        goNextUnfinished();
       } else if (key === 'a' || key === 'A' || code === 'KeyA') {
         e.preventDefault();
         addCrop();
