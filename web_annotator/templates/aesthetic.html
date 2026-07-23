@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>美学</title>
+<link rel="stylesheet" href="/static/css/annotator.css">
+<style>
+  body { margin: 0; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+  .aes-main { flex: 1; display: flex; min-height: 0; }
+  .aes-side {
+    width: 260px; flex-shrink: 0; background: var(--surface);
+    border-right: 1px solid var(--border);
+    display: flex; flex-direction: column; overflow: hidden;
+  }
+  .aes-side h3 {
+    font-size: 13px; padding: 12px 14px 6px; color: var(--text-dim); font-weight: 600;
+  }
+  .dir-list { flex: 1; overflow-y: auto; padding: 4px 10px 12px; }
+  .dir-item {
+    display: flex; align-items: center; gap: 8px;
+    padding: 6px 8px; border-radius: 6px; font-size: 13px; cursor: pointer;
+  }
+  .dir-item:hover { background: rgba(255,255,255,0.04); }
+  .dir-item .meta { color: var(--text-dim); font-size: 11px; margin-left: auto; }
+  .side-actions {
+    padding: 10px 12px; border-top: 1px solid var(--border);
+    display: flex; flex-direction: column; gap: 8px;
+  }
+  .aes-content {
+    flex: 1; display: flex; flex-direction: column; min-width: 0; overflow: hidden;
+  }
+  .opts {
+    display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+    padding: 10px 14px; border-bottom: 1px solid var(--border); background: var(--surface);
+    font-size: 12px; color: var(--text-dim);
+  }
+  .opts label { display: flex; align-items: center; gap: 4px; cursor: pointer; user-select: none; }
+  .opts select {
+    background: #0a1a30; color: var(--text);
+    border: 1px solid var(--border); border-radius: 4px; padding: 3px 6px;
+  }
+  .progress-wrap { padding: 14px 16px; border-bottom: 1px solid var(--border); }
+  .progress-bar {
+    height: 10px; background: #0a1a30; border-radius: 5px; overflow: hidden;
+    border: 1px solid var(--border);
+  }
+  .progress-fill {
+    height: 100%; width: 0%; background: linear-gradient(90deg, #c0392b, #f39c12, #27ae60);
+    transition: width 0.2s ease;
+  }
+  .progress-meta {
+    margin-top: 8px; font-size: 12px; color: var(--text-dim);
+    display: flex; gap: 14px; flex-wrap: wrap;
+  }
+  .progress-meta b { color: var(--text); font-weight: 600; }
+  .summary {
+    display: none; gap: 10px; flex-wrap: wrap;
+    padding: 10px 16px; border-bottom: 1px solid var(--border); font-size: 12px;
+  }
+  .summary.show { display: flex; }
+  .summary .chip {
+    background: rgba(255,255,255,0.04); border: 1px solid var(--border);
+    border-radius: 6px; padding: 6px 10px; color: var(--text-dim);
+  }
+  .summary .chip b { color: var(--text); }
+  .log-box {
+    flex: 1; overflow: auto; padding: 10px 14px 20px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 12px; line-height: 1.45; color: #c8d4e0; white-space: pre-wrap;
+  }
+</style>
+</head>
+<body>
+<div class="toolbar">
+  <div class="toolbar-brand">
+    <a class="nav-home" href="/">主页</a>
+    <span class="title">美学</span>
+    <nav class="toolbar-nav">
+      <a href="/">筛选</a>
+      <a href="/dedupe">去重</a>
+      <a href="/crop">裁剪</a>
+      <a href="/paint">蒙版</a>
+      <a href="/tagging">打标</a>
+      <a href="/tags">标签</a>
+    </nav>
+  </div>
+  <button class="btn green" id="btn-start">开始</button>
+  <button class="btn" id="btn-cancel" disabled>取消</button>
+  <span class="sep"></span>
+  <span class="stat" id="stat-status">就绪</span>
+</div>
+
+<div class="aes-main">
+  <aside class="aes-side">
+    <h3>目录</h3>
+    <div class="dir-list" id="dir-list"></div>
+    <div class="side-actions">
+      <button class="btn" id="btn-all" style="width:100%">全选</button>
+      <button class="btn" id="btn-none" style="width:100%">全不选</button>
+    </div>
+  </aside>
+  <div class="aes-content">
+    <div class="opts">
+      <label>设备
+        <select id="device">
+          <option value="cpu">CPU</option>
+          <option value="cuda">CUDA</option>
+        </select>
+      </label>
+      <label title="文件名前缀写入分数，并同步重命名同名 .txt">
+        <input type="checkbox" id="chk-rename" checked> 按分数重命名
+      </label>
+      <label title="写入数据集根目录 aesthetic_report/">
+        <input type="checkbox" id="chk-report" checked> 生成报告
+      </label>
+    </div>
+    <div class="progress-wrap">
+      <div class="progress-bar"><div class="progress-fill" id="progress-fill"></div></div>
+      <div class="progress-meta">
+        <span>进度 <b id="m-done">0</b>/<b id="m-total">0</b></span>
+        <span>完成 <b id="m-ok">0</b></span>
+        <span>重命名 <b id="m-renamed">0</b></span>
+        <span>失败 <b id="m-fail">0</b></span>
+        <span id="m-current" style="flex:1;min-width:120px;"></span>
+      </div>
+    </div>
+    <div class="summary" id="summary"></div>
+    <div class="log-box" id="log-box">选择目录后点击「开始」。</div>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+<script src="/static/js/aesthetic.js"></script>
+</body>
+</html>

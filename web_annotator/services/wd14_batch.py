@@ -168,6 +168,7 @@ def _load_text(path: Path) -> str:
 @dataclass
 class TaggingProgress:
     status: str = "idle"  # idle|running|done|error|cancelled
+    phase: str = "idle"  # idle|loading|running|done
     total: int = 0
     done: int = 0
     skipped: int = 0
@@ -179,10 +180,17 @@ class TaggingProgress:
     cancel_requested: bool = False
 
     def snapshot(self) -> dict:
+        total = self.total
+        done = self.done
+        pct = round(100.0 * done / total, 1) if total > 0 else 0.0
+        if self.status == "done" and total > 0:
+            pct = 100.0
         return {
             "status": self.status,
-            "total": self.total,
-            "done": self.done,
+            "phase": self.phase,
+            "total": total,
+            "done": done,
+            "pct": pct,
             "skipped": self.skipped,
             "ok": self.ok,
             "failed": self.failed,
@@ -248,7 +256,8 @@ def run_batch(
     progress.ok = 0
     progress.failed = 0
     progress.status = "running"
-    progress.message = f"共 {len(items)} 张"
+    progress.phase = "loading"
+    progress.message = f"共 {len(items)} 张，加载模型…"
     progress.log(
         f"开始: dirs={[d.name for d in dirs]}, threshold={threshold}, "
         f"disable_orig_tags={disable_orig_tags}, force={force}, total={len(items)}"
@@ -258,14 +267,19 @@ def run_batch(
 
     if not items:
         progress.status = "done"
+        progress.phase = "done"
         progress.message = "没有可处理的图片"
         progress.log(progress.message)
         if on_update:
             on_update()
         return
 
-    # 预热模型
+    progress.log("加载 WD14 模型…")
     _get_wd14()
+    progress.phase = "running"
+    progress.message = f"共 {len(items)} 张"
+    if on_update:
+        on_update()
 
     for i, (src, out_dir) in enumerate(items):
         if progress.cancel_requested:
@@ -307,6 +321,7 @@ def run_batch(
             on_update()
 
     progress.status = "done"
+    progress.phase = "done"
     progress.current = ""
     progress.message = (
         f"完成: 新处理 {progress.ok} 张, 跳过 {progress.skipped} 张, "
