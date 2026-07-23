@@ -22,7 +22,7 @@ def normalize_tag(tag: str, *, lower: bool, underscores: bool) -> str:
 
 
 def list_txt_subdirs(root: Path) -> list[dict]:
-    """列出根下含 .txt 的一级子目录（及根目录自身若有 .txt）。"""
+    """列出根下含 .txt 的一级子目录（main 置顶；及根目录自身若有 .txt）。"""
     root = root.resolve()
     out: list[dict] = []
     if not root.is_dir():
@@ -36,9 +36,17 @@ def list_txt_subdirs(root: Path) -> list[dict]:
         if not p.is_dir() or p.name.startswith("."):
             continue
         n = sum(1 for _ in p.glob("*.txt"))
-        if n > 0:
+        if n > 0 or p.name == "main":
             out.append({"name": p.name, "label": p.name, "txt_count": n})
-    return out
+
+    root_item = [d for d in out if d["name"] == "."]
+    rest = [d for d in out if d["name"] != "."]
+    main = [d for d in rest if d["name"] == "main"]
+    others = [d for d in rest if d["name"] != "main"]
+    if not main and (root / "main").is_dir():
+        n = sum(1 for _ in (root / "main").glob("*.txt"))
+        main = [{"name": "main", "label": "main", "txt_count": n}]
+    return root_item + main + others
 
 
 def resolve_selected_dirs(root: Path, names: list[str] | None) -> list[Path]:

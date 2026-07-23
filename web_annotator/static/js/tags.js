@@ -4,7 +4,7 @@
 (function () {
   'use strict';
 
-  var _dirs = [];
+  var _picker = null;
   var _tags = [];
   var _selected = {}; // tag -> true
   var _toastTimer = null;
@@ -27,36 +27,9 @@
   }
 
   function selectedDirNames() {
-    return _dirs.filter(function (d) { return d.checked; }).map(function (d) { return d.name; });
+    return _picker ? _picker.selected() : DirPicker.loadSaved();
   }
 
-  function renderDirs() {
-    var list = document.getElementById('dir-list');
-    list.innerHTML = '';
-    if (!_dirs.length) {
-      list.innerHTML = '<div style="padding:8px;color:var(--text-dim);font-size:12px;">暂无标注目录</div>';
-      return;
-    }
-    _dirs.forEach(function (d, idx) {
-      var row = document.createElement('label');
-      row.className = 'dir-item';
-      var cb = document.createElement('input');
-      cb.type = 'checkbox';
-      cb.checked = !!d.checked;
-      cb.addEventListener('change', function () {
-        _dirs[idx].checked = cb.checked;
-      });
-      var name = document.createElement('span');
-      name.textContent = d.label || d.name;
-      var meta = document.createElement('span');
-      meta.className = 'meta';
-      meta.textContent = d.txt_count + ' txt';
-      row.appendChild(cb);
-      row.appendChild(name);
-      row.appendChild(meta);
-      list.appendChild(row);
-    });
-  }
 
   function selectedTags() {
     return _tags.filter(function (t) { return _selected[t.tag]; });
@@ -140,16 +113,11 @@
   }
 
   async function loadDirs() {
-    var data = await api('/api/tags/dirs');
-    _dirs = (data.dirs || []).map(function (d) {
-      return {
-        name: d.name,
-        label: d.label || d.name,
-        txt_count: d.txt_count || 0,
-        checked: true,
-      };
+    _picker = DirPicker.mount(document.getElementById('dir-list'), {
+      countKey: 'txt_count',
+      countSuffix: ' txt',
     });
-    renderDirs();
+    await _picker.load('/api/tags/dirs');
   }
 
   async function refresh() {
@@ -231,12 +199,10 @@
       refresh().catch(function (e) { toast(String(e.message || e)); });
     });
     document.getElementById('btn-dirs-all').addEventListener('click', function () {
-      _dirs.forEach(function (d) { d.checked = true; });
-      renderDirs();
+      if (_picker) _picker.setAll(true);
     });
     document.getElementById('btn-dirs-none').addEventListener('click', function () {
-      _dirs.forEach(function (d) { d.checked = false; });
-      renderDirs();
+      if (_picker) _picker.setAll(false);
     });
     document.getElementById('btn-select-all-tags').addEventListener('click', function () {
       _tags.forEach(function (t) { _selected[t.tag] = true; });

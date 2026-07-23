@@ -237,13 +237,17 @@ def main() -> int:
     thumb_dir = app.state.thumbnailer.thumb_dir
     app.mount("/thumb", StaticFiles(directory=str(thumb_dir)), name="thumbs")
 
-    images = scan_images(layout.main_dir, path_prefix="main")
+    from services.work_dir import list_work_dirs
+
+    images = []
+    for d in list_work_dirs(layout.root):
+        images.extend(scan_images(layout.root / d["name"], path_prefix=d["name"]))
     state = app.state.state_manager.get()
 
     if not args.skip_thumbnails:
         missing = [img for img in images if not app.state.thumbnailer.exists(img["path"])]
         if missing:
-            print(f"预生成缩略图: {len(missing)} 张...")
+            print(f"预生成缩略图: {len(missing)} 张（含全部子目录）...")
             for i, img in enumerate(missing):
                 app.state.thumbnailer.generate(img["path"])
                 if (i + 1) % 50 == 0 or i == len(missing) - 1:
@@ -273,7 +277,7 @@ def main() -> int:
     print(f"已选待删 : {len(state.get('selected', {}))}")
     print(f"回收站内 : {len(state.get('trashed', {}))}")
     print(f"服务地址 : http://{args.host}:{args.port}")
-    print(f"  筛选 / 去重 / 裁剪 / 蒙版 / 美学 / 打标 / 标签 / 就绪")
+    print(f"  筛选 /filter · 去重 · 裁剪 · 蒙版 · 美学 · 打标 · 标签 · 就绪")
 
     uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
     return 0

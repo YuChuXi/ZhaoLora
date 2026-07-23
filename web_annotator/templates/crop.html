@@ -85,20 +85,8 @@
 </style>
 </head>
 <body>
+<nav class="app-tabs" id="app-tabs"></nav>
 <div class="toolbar">
-  <div class="toolbar-brand">
-    <a class="nav-home" href="/">主页</a>
-    <span class="title">裁剪</span>
-    <nav class="toolbar-nav">
-      <a href="/">筛选</a>
-      <a href="/dedupe">去重</a>
-      <a href="/paint">蒙版</a>
-      <a href="/aesthetic">美学</a>
-      <a href="/tagging">打标</a>
-      <a href="/tags">标签</a>
-      <a href="/ready">就绪</a>
-    </nav>
-  </div>
   <span class="stat" id="crop-progress">0/0</span>
   <span class="stat filename" id="crop-filename" title="-">-</span>
   <span class="sep"></span>
@@ -147,6 +135,7 @@
 </div>
 <div class="toast" id="toast"></div>
 
+<script src="/static/js/nav.js"></script>
 <script src="/static/js/crop.js"></script>
 </body>
 </html>

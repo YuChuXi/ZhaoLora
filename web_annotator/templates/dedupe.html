@@ -121,24 +121,9 @@
 </style>
 </head>
 <body>
+<nav class="app-tabs" id="app-tabs"></nav>
 <div class="toolbar">
-  <div class="toolbar-brand">
-    <a class="nav-home" href="/">主页</a>
-    <span class="title">去重</span>
-    <nav class="toolbar-nav">
-      <a href="/">筛选</a>
-      <a href="/crop">裁剪</a>
-      <a href="/paint">蒙版</a>
-      <a href="/aesthetic">美学</a>
-      <a href="/tagging">打标</a>
-      <a href="/tags">标签</a>
-      <a href="/ready">就绪</a>
-    </nav>
-  </div>
-  <label style="font-size:12px;color:var(--text-dim);display:flex;align-items:center;gap:4px;">
-    目录
-    <select id="work-dir" style="background:var(--card-bg);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:2px 6px;font-size:12px;"></select>
-  </label>
+  <div class="dir-picker compact" id="dir-picker"></div>
   <label style="font-size:12px;color:var(--text-dim);display:flex;align-items:center;gap:4px;">
     MSE
     <input type="number" id="mse-threshold" value="0.0001" min="0.0000001" max="1" step="0.0001" title="指纹 MSE 上限">
@@ -180,6 +165,8 @@
     </div>
   </div>
 </div>
+<script src="/static/js/nav.js"></script>
+<script src="/static/js/dir_picker.js"></script>
 <script src="/static/js/dedupe.js"></script>
 </body>
 </html>

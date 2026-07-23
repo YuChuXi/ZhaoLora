@@ -10,7 +10,7 @@
   var _previewMembers = [];
   var _previewIdx = 0;
   var _previewOpen = false;
-  var _dir = localStorage.getItem('annotator_work_dir') || 'main';
+  var _picker = null;
 
   function toast(msg) {
     var el = document.getElementById('toast');
@@ -31,42 +31,23 @@
     return res.json();
   }
 
-  function getDir() { return _dir; }
-  function setDir(d) {
-    _dir = d || 'main';
-    localStorage.setItem('annotator_work_dir', _dir);
+  function getDirs() {
+    return _picker ? _picker.selected() : DirPicker.loadSaved();
   }
 
-  async function setupDirSelect() {
-    var sel = document.getElementById('work-dir');
-    if (!sel) return;
-    var data = await api('/api/dedupe/dirs');
-    var dirs = data.dirs || [];
-    if (!dirs.some(function (d) { return d.name === _dir; })) {
-      setDir(data.default || 'main');
-    }
-    sel.innerHTML = '';
-    dirs.forEach(function (d) {
-      var opt = document.createElement('option');
-      opt.value = d.name;
-      opt.textContent = d.label + ' (' + d.image_count + ')';
-      if (d.name === _dir) opt.selected = true;
-      sel.appendChild(opt);
+  async function setupDirPicker() {
+    var host = document.getElementById('dir-picker');
+    _picker = DirPicker.mount(host, {
+      mode: 'compact',
+      onChange: function () {
+        _groups = [];
+        _selected = {};
+        document.getElementById('dedupe-main').innerHTML =
+          '<div class="dedupe-empty">目录已切换，请重新扫描。</div>';
+        updateStats();
+      },
     });
-    if (!dirs.length) {
-      var opt = document.createElement('option');
-      opt.value = 'main';
-      opt.textContent = 'main';
-      sel.appendChild(opt);
-    }
-    sel.addEventListener('change', function () {
-      setDir(sel.value);
-      _groups = [];
-      _selected = {};
-      document.getElementById('dedupe-main').innerHTML =
-        '<div class="dedupe-empty">目录已切换，请重新扫描。</div>';
-      updateStats();
-    });
+    await _picker.load('/api/dedupe/dirs');
   }
 
   function thumbUrl(h) { return '/thumb/' + h + '.avif'; }
@@ -247,6 +228,8 @@
   }
 
   async function scan() {
+    var dirs = getDirs();
+    if (!dirs.length) { toast('请选择目录'); return; }
     var mse = parseFloat(document.getElementById('mse-threshold').value);
     var ratio = parseFloat(document.getElementById('res-ratio').value);
     if (!(mse > 0)) { toast('MSE 无效'); return; }
@@ -260,7 +243,7 @@
       var data = await api('/api/dedupe/scan', {
         method: 'POST',
         body: JSON.stringify({
-          dir: getDir(),
+          dirs: getDirs(),
           mse_threshold: mse,
           similar_res_ratio: ratio
         }),
@@ -303,7 +286,7 @@
     try {
       var res = await api('/api/dedupe/apply', {
         method: 'POST',
-        body: JSON.stringify({ paths: paths, dir: getDir() }),
+        body: JSON.stringify({ paths: paths, dirs: getDirs() }),
       });
       toast('已移入回收站 ' + res.moved + ' 张');
       var gone = {};
@@ -361,6 +344,6 @@
     }
   });
 
-  setupDirSelect().catch(function (e) { toast(String(e.message || e)); });
+  setupDirPicker().catch(function (e) { toast(String(e.message || e)); });
   updateStats();
 })();

@@ -81,7 +81,9 @@ var DirPicker = (function () {
         name.textContent = d.label || d.name;
         var meta = document.createElement('span');
         meta.className = 'meta';
-        meta.textContent = (d.image_count != null ? d.image_count : 0) + ' 图';
+        var countKey = opts.countKey || 'image_count';
+        var suffix = opts.countSuffix || ' 图';
+        meta.textContent = (d[countKey] != null ? d[countKey] : (d.image_count || 0)) + suffix;
         row.appendChild(cb);
         row.appendChild(name);
         row.appendChild(meta);
@@ -107,6 +109,7 @@ var DirPicker = (function () {
           name: d.name,
           label: d.label || d.name,
           image_count: d.image_count || 0,
+          txt_count: d.txt_count || 0,
           checked: false,
         };
       });

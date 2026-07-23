@@ -84,6 +84,7 @@ def list_images(
             if rel in trashed_state or rel in seen:
                 continue
             seen.add(rel)
+            thumbnailer.ensure(rel)
             w, h = _image_size(root / rel)
             result.append({
                 **img,
@@ -104,7 +105,9 @@ def list_images(
                 if img["path"] in seen:
                     continue
                 seen.add(img["path"])
-                w, h = _image_size(trash_dir / img["path"])
+                tp = trash_dir / img["path"]
+                thumbnailer.ensure(img["path"], src=tp)
+                w, h = _image_size(tp)
                 result.append({
                     **img,
                     "width": w, "height": h,
@@ -121,6 +124,7 @@ def list_images(
                 if not tp.is_file():
                     continue
                 seen.add(rel)
+                thumbnailer.ensure(rel, src=tp)
                 w, h = _image_size(tp)
                 result.append({
                     "path": rel,

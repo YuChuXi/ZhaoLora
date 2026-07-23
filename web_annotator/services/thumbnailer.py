@@ -45,7 +45,13 @@ class Thumbnailer:
         """缩略图是否已缓存。"""
         return self.get_path(image_rel_path).exists()
 
-    def generate(self, image_rel_path: str) -> bool:
+    def ensure(self, image_rel_path: str, *, src: Path | None = None) -> bool:
+        """确保缩略图存在；缺失则生成。src 可指定源文件（如回收站路径）。"""
+        if self.exists(image_rel_path):
+            return True
+        return self.generate(image_rel_path, src=src)
+
+    def generate(self, image_rel_path: str, *, src: Path | None = None) -> bool:
         """
         生成 AVIF 缩略图。已存在则跳过。返回是否成功。
 
@@ -55,7 +61,7 @@ class Thumbnailer:
         if thumb_path.exists():
             return True
 
-        src_path = self.data_dir / image_rel_path
+        src_path = src if src is not None else (self.data_dir / image_rel_path)
         if not src_path.exists():
             return False
 

@@ -102,37 +102,19 @@
     document.getElementById('btn-restore').addEventListener('click', handleRestore);
     document.getElementById('chk-show-trash').addEventListener('change', refreshView);
 
-    async function setupDirSelect() {
-      var sel = document.getElementById('work-dir');
-      if (!sel) return;
-      var data = await API.listDirs();
-      var dirs = data.dirs || [];
-      var cur = API.getDir();
-      if (!dirs.some(function (d) { return d.name === cur; })) {
-        cur = data.default || 'main';
-        API.setDir(cur);
-      }
-      sel.innerHTML = '';
-      dirs.forEach(function (d) {
-        var opt = document.createElement('option');
-        opt.value = d.name;
-        opt.textContent = d.label + ' (' + d.image_count + ')';
-        if (d.name === cur) opt.selected = true;
-        sel.appendChild(opt);
+    async function setupDirPicker() {
+      var host = document.getElementById('dir-picker');
+      if (!host || typeof DirPicker === 'undefined') return;
+      var picker = DirPicker.mount(host, {
+        mode: 'compact',
+        onChange: function () {
+          Store.load().then(function () {
+            updateStats();
+            refreshView();
+          }).catch(function (e) { toast('加载失败: ' + e.message); });
+        },
       });
-      if (!dirs.length) {
-        var opt = document.createElement('option');
-        opt.value = 'main';
-        opt.textContent = 'main';
-        sel.appendChild(opt);
-      }
-      sel.addEventListener('change', function () {
-        API.setDir(sel.value);
-        Store.load().then(function () {
-          updateStats();
-          refreshView();
-        }).catch(function (e) { toast('加载失败: ' + e.message); });
-      });
+      await picker.load('/api/dirs');
     }
 
     // 列数滑块
@@ -163,7 +145,7 @@
 
     document.addEventListener('keydown', onKeyDown);
 
-    setupDirSelect().then(function () {
+    setupDirPicker().then(function () {
       return Store.load();
     }).then(function() {
       updateStats();

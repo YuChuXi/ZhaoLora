@@ -4,7 +4,7 @@
 (function () {
   'use strict';
 
-  var _dirs = [];
+  var _picker = null;
   var _toastTimer = null;
 
   function toast(msg) {
@@ -25,48 +25,13 @@
   }
 
   function selectedNames() {
-    return _dirs.filter(function (d) { return d.checked; }).map(function (d) { return d.name; });
+    return _picker ? _picker.selected() : DirPicker.loadSaved();
   }
 
-  function renderDirs() {
-    var list = document.getElementById('dir-list');
-    list.innerHTML = '';
-    if (!_dirs.length) {
-      list.innerHTML = '<div style="padding:8px;color:var(--text-dim);font-size:12px;">暂无图片目录</div>';
-      return;
-    }
-    _dirs.forEach(function (d, idx) {
-      var row = document.createElement('label');
-      row.className = 'dir-item';
-      var cb = document.createElement('input');
-      cb.type = 'checkbox';
-      cb.checked = !!d.checked;
-      cb.addEventListener('change', function () {
-        _dirs[idx].checked = cb.checked;
-      });
-      var name = document.createElement('span');
-      name.textContent = d.label || d.name;
-      var meta = document.createElement('span');
-      meta.className = 'meta';
-      meta.textContent = d.image_count + ' 图';
-      row.appendChild(cb);
-      row.appendChild(name);
-      row.appendChild(meta);
-      list.appendChild(row);
-    });
-  }
 
   async function loadDirs() {
-    var data = await api('/api/ready/dirs');
-    _dirs = (data.dirs || []).map(function (d) {
-      return {
-        name: d.name,
-        label: d.label,
-        image_count: d.image_count,
-        checked: true
-      };
-    });
-    renderDirs();
+    _picker = DirPicker.mount(document.getElementById('dir-list'), {});
+    var data = await _picker.load('/api/ready/dirs');
     document.getElementById('root-path').textContent = data.root || '';
   }
 
@@ -103,12 +68,10 @@
   }
 
   document.getElementById('btn-all').addEventListener('click', function () {
-    _dirs.forEach(function (d) { d.checked = true; });
-    renderDirs();
+    if (_picker) _picker.setAll(true);
   });
   document.getElementById('btn-none').addEventListener('click', function () {
-    _dirs.forEach(function (d) { d.checked = false; });
-    renderDirs();
+    if (_picker) _picker.setAll(false);
   });
   document.getElementById('btn-gen').addEventListener('click', function () {
     generate().catch(function (e) { toast(String(e.message || e)); });

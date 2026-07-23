@@ -63,20 +63,8 @@
 </style>
 </head>
 <body>
+<nav class="app-tabs" id="app-tabs"></nav>
 <div class="toolbar">
-  <div class="toolbar-brand">
-    <a class="nav-home" href="/">主页</a>
-    <span class="title">打标</span>
-    <nav class="toolbar-nav">
-      <a href="/">筛选</a>
-      <a href="/dedupe">去重</a>
-      <a href="/crop">裁剪</a>
-      <a href="/paint">蒙版</a>
-      <a href="/aesthetic">美学</a>
-      <a href="/tags">标签</a>
-      <a href="/ready">就绪</a>
-    </nav>
-  </div>
   <button class="btn green" id="btn-start">开始</button>
   <button class="btn" id="btn-cancel" disabled>取消</button>
   <span class="sep"></span>
@@ -125,6 +113,8 @@
   </div>
 </div>
 <div class="toast" id="toast"></div>
+<script src="/static/js/nav.js"></script>
+<script src="/static/js/dir_picker.js"></script>
 <script src="/static/js/tagging.js"></script>
 </body>
 </html>
