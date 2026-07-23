@@ -9,7 +9,7 @@
   body { margin: 0; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
   .aes-main { flex: 1; display: flex; min-height: 0; }
   .aes-side {
-    width: 260px; flex-shrink: 0; background: var(--surface);
+    width: 240px; flex-shrink: 0; background: var(--surface);
     border-right: 1px solid var(--border);
     display: flex; flex-direction: column; overflow: hidden;
   }
@@ -40,35 +40,20 @@
     background: #0a1a30; color: var(--text);
     border: 1px solid var(--border); border-radius: 4px; padding: 3px 6px;
   }
-  .progress-wrap { padding: 14px 16px; border-bottom: 1px solid var(--border); }
-  .progress-bar {
-    height: 10px; background: #0a1a30; border-radius: 5px; overflow: hidden;
-    border: 1px solid var(--border);
-  }
-  .progress-fill {
-    height: 100%; width: 0%; background: linear-gradient(90deg, #c0392b, #f39c12, #27ae60);
-    transition: width 0.2s ease;
-  }
   .progress-meta {
-    margin-top: 8px; font-size: 12px; color: var(--text-dim);
+    padding: 8px 14px; font-size: 12px; color: var(--text-dim);
     display: flex; gap: 14px; flex-wrap: wrap;
+    border-bottom: 1px solid var(--border);
   }
   .progress-meta b { color: var(--text); font-weight: 600; }
-  .summary {
-    display: none; gap: 10px; flex-wrap: wrap;
-    padding: 10px 16px; border-bottom: 1px solid var(--border); font-size: 12px;
+  .report-frame {
+    flex: 1; width: 100%; border: 0; background: #0d0d1a; min-height: 0;
   }
-  .summary.show { display: flex; }
-  .summary .chip {
-    background: rgba(255,255,255,0.04); border: 1px solid var(--border);
-    border-radius: 6px; padding: 6px 10px; color: var(--text-dim);
+  .report-empty {
+    flex: 1; display: flex; align-items: center; justify-content: center;
+    color: var(--text-dim); font-size: 14px; background: #0a101c;
   }
-  .summary .chip b { color: var(--text); }
-  .log-box {
-    flex: 1; overflow: auto; padding: 10px 14px 20px;
-    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-    font-size: 12px; line-height: 1.45; color: #c8d4e0; white-space: pre-wrap;
-  }
+  .report-empty[hidden] { display: none; }
 </style>
 </head>
 <body>
@@ -81,8 +66,10 @@
       <a href="/dedupe">去重</a>
       <a href="/crop">裁剪</a>
       <a href="/paint">蒙版</a>
+      <a href="/aesthetic">美学</a>
       <a href="/tagging">打标</a>
       <a href="/tags">标签</a>
+      <a href="/ready">就绪</a>
     </nav>
   </div>
   <button class="btn green" id="btn-start">开始</button>
@@ -119,19 +106,16 @@
       <label title="文件名前缀写入分数，并同步重命名同名 .txt">
         <input type="checkbox" id="chk-rename" checked> 按分数重命名
       </label>
-      <label title="写入数据集根目录 aesthetic_report.html">
-        <input type="checkbox" id="chk-report" checked> 生成报告
-      </label>
     </div>
-    <div class="progress-meta" style="padding:8px 14px;font-size:12px;color:var(--text-dim);display:flex;gap:14px;flex-wrap:wrap;border-bottom:1px solid var(--border);">
+    <div class="progress-meta">
       <span>进度 <b id="m-done">0</b>/<b id="m-total">0</b></span>
       <span>完成 <b id="m-ok">0</b></span>
       <span>重命名 <b id="m-renamed">0</b></span>
       <span>失败 <b id="m-fail">0</b></span>
       <span id="m-current" style="flex:1;min-width:120px;"></span>
     </div>
-    <div class="summary" id="summary"></div>
-    <div class="log-box" id="log-box">选择目录后点击「开始」。</div>
+    <div class="report-empty" id="report-empty">选择目录后点击「开始」，完成后在此显示报告。</div>
+    <iframe class="report-frame" id="report-frame" title="美学报告" hidden></iframe>
   </div>
 </div>
 <div class="toast" id="toast"></div>

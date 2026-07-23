@@ -1,5 +1,5 @@
 /**
- * aesthetic.js —— 美学评分
+ * aesthetic.js —— 美学评分（内嵌报告）
  */
 (function () {
   'use strict';
@@ -7,6 +7,7 @@
   var _dirs = [];
   var _pollTimer = null;
   var _toastTimer = null;
+  var _lastReportMtime = null;
 
   function toast(msg) {
     var el = document.getElementById('toast');
@@ -62,30 +63,29 @@
     document.getElementById('btn-cancel').disabled = !running;
     document.getElementById('device').disabled = running;
     document.getElementById('chk-rename').disabled = running;
-    document.getElementById('chk-report').disabled = running;
     document.getElementById('btn-all').disabled = running;
     document.getElementById('btn-none').disabled = running;
   }
 
-  function renderSummary(sum) {
-    var box = document.getElementById('summary');
-    if (!sum || !sum.count) {
-      box.classList.remove('show');
-      box.innerHTML = '';
+  function showReport(url, mtime) {
+    var frame = document.getElementById('report-frame');
+    var empty = document.getElementById('report-empty');
+    if (!url) {
+      frame.hidden = true;
+      frame.removeAttribute('src');
+      empty.hidden = false;
       return;
     }
-    var counts = sum.pony_counts || [];
-    var dist = counts.map(function (n, i) { return n ? ('s' + i + ':' + n) : ''; })
-      .filter(Boolean).join(' ');
-    box.innerHTML =
-      '<div class="chip">样本 <b>' + sum.count + '</b></div>' +
-      '<div class="chip">均值 <b>' + sum.mean + '</b></div>' +
-      '<div class="chip">中位 <b>' + sum.median + '</b></div>' +
-      '<div class="chip">最低 <b>' + sum.min + '</b></div>' +
-      '<div class="chip">最高 <b>' + sum.max + '</b></div>' +
-      (sum.renamed ? '<div class="chip">重命名 <b>' + sum.renamed + '</b></div>' : '') +
-      (dist ? '<div class="chip">' + dist + '</div>' : '');
-    box.classList.add('show');
+    var src = url + (mtime != null ? ('?t=' + encodeURIComponent(String(mtime))) : ('?t=' + Date.now()));
+    if (_lastReportMtime === mtime && frame.getAttribute('src')) {
+      empty.hidden = true;
+      frame.hidden = false;
+      return;
+    }
+    _lastReportMtime = mtime;
+    frame.src = src;
+    frame.hidden = false;
+    empty.hidden = true;
   }
 
   function applyStatus(s) {
@@ -123,14 +123,15 @@
     }[s.status] || s.status;
     document.getElementById('stat-status').textContent = label + (s.message ? ' · ' + s.message : '');
 
-    if (s.logs && s.logs.length) {
-      document.getElementById('log-box').textContent = s.logs.join('\n');
-      var box = document.getElementById('log-box');
-      box.scrollTop = box.scrollHeight;
+    if (s.status === 'done' && s.report_ready) {
+      showReport(s.report_url || '/api/aesthetic/report', s.report_mtime);
+    } else if (s.status === 'idle' && s.report_ready) {
+      showReport(s.report_url || '/api/aesthetic/report', s.report_mtime);
+    } else if (s.status === 'running') {
+      // 运行中保留旧报告，不打断查看
+    } else if (s.status === 'error' || s.status === 'cancelled') {
+      // 保持现有报告
     }
-
-    if (s.status === 'done') renderSummary(s.summary);
-    else if (s.status === 'running' || s.status === 'idle') renderSummary(null);
 
     setRunningUi(s.status === 'running');
   }
@@ -149,7 +150,11 @@
       applyStatus(s);
       if (s.status !== 'running') {
         stopPoll();
-        if (s.status === 'done') toast('评分完成');
+        if (s.status === 'done') {
+          _lastReportMtime = null;
+          showReport(s.report_url || '/api/aesthetic/report', s.report_mtime || Date.now());
+          toast('评分完成');
+        }
         if (s.status === 'cancelled') toast('已取消');
         if (s.status === 'error') toast('评分失败');
       }
@@ -172,10 +177,13 @@
     renderDirs();
 
     var sel = document.getElementById('device');
-    // 默认 CPU；有 CUDA 时可选
     sel.value = 'cpu';
     var cudaOpt = sel.querySelector('option[value="cuda"]');
     if (cudaOpt) cudaOpt.disabled = !data.cuda;
+
+    if (data.report_ready) {
+      showReport(data.report_url || '/api/aesthetic/report', Date.now());
+    }
   }
 
   async function startJob() {
@@ -188,7 +196,7 @@
       dirs: dirs,
       device: document.getElementById('device').value,
       rename: document.getElementById('chk-rename').checked,
-      write_report: document.getElementById('chk-report').checked
+      write_report: true
     };
     var data = await api('/api/aesthetic/start', {
       method: 'POST',

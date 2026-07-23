@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import re
 import threading
+from pathlib import Path
+from urllib.parse import quote
 
 from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
 from services.aesthetic import (
@@ -20,6 +24,7 @@ from services.dataset_layout import DatasetLayout
 router = APIRouter(prefix="/api/aesthetic", tags=["aesthetic"])
 
 _JOB_LOCK = threading.Lock()
+_REPORT_NAME = "aesthetic_report.html"
 
 
 def _layout(request: Request) -> DatasetLayout:
@@ -34,6 +39,36 @@ def _progress(request: Request) -> AestheticProgress:
     return prog
 
 
+def _report_path(root: Path) -> Path:
+    return root / _REPORT_NAME
+
+
+def rewrite_report_html(html: str) -> str:
+    """把报告里的相对图片路径改成 /api/image?path=…，便于 iframe 内嵌。"""
+
+    def fix_src(m: re.Match) -> str:
+        url = m.group(1)
+        if not url or url.startswith(("/api/", "http://", "https://", "data:")):
+            return m.group(0)
+        path = url.replace("\\", "/").lstrip("./")
+        if not path:
+            return m.group(0)
+        return f'src="/api/image?path={quote(path, safe="/")}"'
+
+    def fix_lightbox(m: re.Match) -> str:
+        url = m.group(1)
+        if not url or url.startswith(("/api/", "http://", "https://", "data:")):
+            return m.group(0)
+        path = url.replace("\\", "/").lstrip("./")
+        if not path:
+            return m.group(0)
+        return f"openLightbox('/api/image?path={quote(path, safe='/')}'"
+
+    html = re.sub(r'src="([^"]+)"', fix_src, html)
+    html = re.sub(r"openLightbox\('([^']+)'", fix_lightbox, html)
+    return html
+
+
 class StartBody(BaseModel):
     dirs: list[str] = Field(default_factory=list)
     device: str = Field(default="cpu")
@@ -44,17 +79,37 @@ class StartBody(BaseModel):
 @router.get("/dirs")
 def aesthetic_dirs(request: Request):
     root = _layout(request).root
+    report = _report_path(root)
     return {
         "root": str(root),
         "dirs": list_image_subdirs(root),
         "cuda": cuda_available(),
         "default_device": default_device(),
+        "report_ready": report.is_file(),
+        "report_url": "/api/aesthetic/report" if report.is_file() else None,
     }
 
 
 @router.get("/status")
 def aesthetic_status(request: Request):
-    return _progress(request).snapshot()
+    snap = _progress(request).snapshot()
+    root = _layout(request).root
+    report = _report_path(root)
+    snap["report_ready"] = report.is_file()
+    snap["report_url"] = "/api/aesthetic/report" if report.is_file() else None
+    if report.is_file():
+        snap["report_mtime"] = report.stat().st_mtime
+    return snap
+
+
+@router.get("/report")
+def aesthetic_report(request: Request):
+    root = _layout(request).root
+    path = _report_path(root)
+    if not path.is_file():
+        raise HTTPException(404, "报告尚未生成")
+    html = path.read_text(encoding="utf-8")
+    return HTMLResponse(rewrite_report_html(html))
 
 
 @router.post("/start")
@@ -84,7 +139,7 @@ def aesthetic_start(request: Request, body: StartBody):
                     root=root,
                     device=device,
                     rename=body.rename,
-                    write_report=body.write_report,
+                    write_report=True,
                     progress=prog,
                 )
             except Exception as e:

@@ -38,6 +38,7 @@ from routes.tag_stats import router as tag_stats_router
 from routes.tagging import router as tagging_router
 from routes.aesthetic import router as aesthetic_router
 from routes.dedupe import router as dedupe_router
+from routes.ready import router as ready_router
 
 app = FastAPI(title="Image Annotator", version="2.2.0")
 
@@ -93,6 +94,7 @@ app.include_router(aesthetic_router)
 app.include_router(tagging_router)
 app.include_router(tag_stats_router)
 app.include_router(dedupe_router)
+app.include_router(ready_router)
 
 
 @app.get("/")
@@ -141,6 +143,14 @@ def tags_page():
     if template.exists():
         return HTMLResponse(template.read_text(encoding="utf-8"))
     return HTMLResponse("<h1>tags.html not found</h1>", status_code=404)
+
+
+@app.get("/ready")
+def ready_page():
+    template = Path(__file__).parent / "templates" / "ready.html"
+    if template.exists():
+        return HTMLResponse(template.read_text(encoding="utf-8"))
+    return HTMLResponse("<h1>ready.html not found</h1>", status_code=404)
 
 
 @app.get("/dedupe")
@@ -258,7 +268,7 @@ def main() -> int:
     print(f"已选待删 : {len(state.get('selected', {}))}")
     print(f"回收站内 : {len(state.get('trashed', {}))}")
     print(f"服务地址 : http://{args.host}:{args.port}")
-    print(f"  筛选 / 去重 / 裁剪 / 蒙版 / 美学 / 打标 / 标签")
+    print(f"  筛选 / 去重 / 裁剪 / 蒙版 / 美学 / 打标 / 标签 / 就绪")
 
     uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
     return 0
