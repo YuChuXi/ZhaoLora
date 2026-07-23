@@ -8,6 +8,9 @@
   var _selected = {};
   var _toastTimer = null;
 
+  /**
+   * @param {string} msg
+   */
   function toast(msg) {
     var el = document.getElementById('toast');
     el.textContent = msg;
@@ -16,6 +19,11 @@
     _toastTimer = setTimeout(function () { el.classList.remove('show'); }, 2200);
   }
 
+  /**
+   * @param {string} url
+   * @param {RequestInit} [opts]
+   * @returns {Promise<object>}
+   */
   async function api(url, opts) {
     var res = await fetch(url, opts);
     if (!res.ok) {
@@ -25,10 +33,16 @@
     return res.json();
   }
 
+  /**
+   * @returns {Array<object>}
+   */
   function selectedTags() {
     return _tags.filter(function (t) { return _selected[t.tag]; });
   }
 
+  /**
+   * 同步导出框与表头勾选态。
+   */
   function updateExport() {
     var sel = selectedTags();
     document.getElementById('sel-count').textContent = '已选 ' + sel.length;
@@ -46,6 +60,9 @@
     }
   }
 
+  /**
+   * 渲染统计表。
+   */
   function renderTable() {
     var body = document.getElementById('tag-body');
     body.innerHTML = '';
@@ -106,6 +123,10 @@
     updateExport();
   }
 
+  /**
+   * 拉取当前目录标签频率。
+   * @returns {Promise<void>}
+   */
   async function refresh() {
     var dirs = DirPicker.getDirs();
     if (!dirs.length) {
@@ -137,6 +158,9 @@
     renderTable();
   }
 
+  /**
+   * @param {string} text
+   */
   function copyText(text) {
     if (!text) {
       toast('无可复制内容');
@@ -153,6 +177,9 @@
     fallbackCopy(text);
   }
 
+  /**
+   * @param {string} text
+   */
   function fallbackCopy(text) {
     var ta = document.getElementById('export-text');
     ta.value = text;
@@ -162,6 +189,9 @@
     toast('已复制');
   }
 
+  /**
+   * @param {'en'|'zh'} field
+   */
   function exportList(field) {
     var sel = selectedTags();
     if (!sel.length) {
@@ -177,7 +207,10 @@
     copyText(text);
   }
 
-  async function init() {
+  /**
+   * 绑定页面事件。
+   */
+  function init() {
     document.getElementById('btn-refresh').addEventListener('click', function () {
       refresh().catch(function (e) { toast(String(e.message || e)); });
     });
@@ -212,7 +245,6 @@
       refresh().catch(function (e) { toast(String(e.message || e)); });
     });
 
-    // 等导航栏目录下拉就绪
     setTimeout(function () {
       refresh().catch(function (e) {
         document.getElementById('tag-body').innerHTML =

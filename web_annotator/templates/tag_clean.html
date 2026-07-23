@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>清洗</title>
+<link rel="stylesheet" href="/static/css/annotator.css">
+<style>
+  body { margin: 0; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+  .clean-main {
+    flex: 1; display: flex; flex-direction: column; min-height: 0; overflow: hidden;
+    padding: 12px 16px 16px; gap: 10px;
+  }
+  .clean-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px 14px;
+    flex-shrink: 0;
+  }
+  .clean-grid label {
+    display: flex; flex-direction: column; gap: 4px;
+    font-size: 12px; color: var(--text-dim);
+  }
+  .clean-grid textarea {
+    width: 100%; min-height: 88px; resize: vertical;
+    background: #0a1a30; color: var(--text); border: 1px solid var(--border);
+    border-radius: 6px; padding: 8px 10px; font-size: 12px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    box-sizing: border-box;
+  }
+  .clean-hint {
+    font-size: 11px; color: var(--text-dim); line-height: 1.45;
+  }
+  .clean-result {
+    flex: 1; min-height: 0; overflow: auto;
+    font-size: 12px; color: var(--text-dim);
+    background: #0a1a30; border: 1px solid var(--border); border-radius: 8px;
+    padding: 10px 12px;
+    white-space: pre-wrap; font-family: ui-monospace, monospace;
+  }
+  .clean-result:empty::before {
+    content: '预览或执行后，变更样本会显示在这里';
+    color: var(--text-dim); opacity: 0.7;
+  }
+</style>
+</head>
+<body>
+<nav class="app-tabs" id="app-tabs"></nav>
+<div class="toolbar">
+  <button class="btn" type="button" id="btn-clean-preview">预览</button>
+  <button class="btn danger" type="button" id="btn-clean-apply">执行写入</button>
+  <span class="sep"></span>
+  <label style="font-size:12px;color:var(--text-dim);display:flex;align-items:center;gap:4px;cursor:pointer;">
+    <input type="checkbox" id="clean-separator"> ||| 分隔提升块
+  </label>
+  <span class="stat" id="clean-summary">-</span>
+</div>
+
+<div class="clean-main">
+  <p class="clean-hint">
+    规则同 clean_dataset_tags：HTML 反转义、下划线转空格、整词/子串删除（内置 commentary / request）、提升、前置。作用于右上角所选目录中的 .txt。
+  </p>
+  <div class="clean-grid">
+    <label>整词删除
+      <textarea id="clean-drop" placeholder="tag1, tag2"></textarea>
+    </label>
+    <label>子串删除（另含内置 commentary / request）
+      <textarea id="clean-drop-contains" placeholder="可选，逗号分隔"></textarea>
+    </label>
+    <label>提升到最前（已存在才会移动）
+      <textarea id="clean-promote" placeholder="1girl, solo, …"></textarea>
+    </label>
+    <label>前置插入（可新增）
+      <textarea id="clean-prepend" placeholder="@chen bin"></textarea>
+    </label>
+  </div>
+  <div class="clean-result" id="clean-result"></div>
+</div>
+<div class="toast" id="toast"></div>
+<script src="/static/js/dir_picker.js"></script>
+<script src="/static/js/nav.js"></script>
+<script src="/static/js/tag_clean.js"></script>
+</body>
+</html>

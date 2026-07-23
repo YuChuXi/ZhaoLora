@@ -43,26 +43,49 @@ def _report_path(root: Path) -> Path:
     return root / _REPORT_NAME
 
 
-def rewrite_report_html(html: str) -> str:
-    """把报告里的相对图片路径改成 /api/image?path=…，便于 iframe 内嵌。"""
+def _normalize_report_img_path(url: str) -> str | None:
+    """将报告 HTML 中的相对图片路径规范为数据集根相对路径。"""
+    path = (url or "").replace("\\", "/").split("?", 1)[0].strip()
+    if not path or path.startswith(("http://", "https://", "data:", "/api/", "/thumb/")):
+        return None
+    while path.startswith("./"):
+        path = path[2:]
+    parts: list[str] = []
+    for p in path.split("/"):
+        if p in ("", "."):
+            continue
+        if p == "..":
+            if parts:
+                parts.pop()
+            continue
+        parts.append(p)
+    return "/".join(parts) if parts else None
+
+
+def rewrite_report_html(html: str, thumbnailer) -> str:
+    """
+    报告卡片用缩略图；灯箱仍用原图，便于 iframe 内嵌。
+
+    Args:
+        html: aesthetic_report.html 原文。
+        thumbnailer: Thumbnailer 实例，用于 hash 与按需生成缩略图。
+    """
 
     def fix_src(m: re.Match) -> str:
         url = m.group(1)
-        if not url or url.startswith(("/api/", "http://", "https://", "data:")):
+        rel = _normalize_report_img_path(url)
+        if rel is None:
             return m.group(0)
-        path = url.replace("\\", "/").lstrip("./")
-        if not path:
-            return m.group(0)
-        return f'src="/api/image?path={quote(path, safe="/")}"'
+        thumbnailer.ensure(rel)
+        h = thumbnailer.hash_for(rel)
+        return f'src="/thumb/{h}.avif"'
 
     def fix_lightbox(m: re.Match) -> str:
         url = m.group(1)
-        if not url or url.startswith(("/api/", "http://", "https://", "data:")):
+        rel = _normalize_report_img_path(url)
+        if rel is None:
             return m.group(0)
-        path = url.replace("\\", "/").lstrip("./")
-        if not path:
-            return m.group(0)
-        return f"openLightbox('/api/image?path={quote(path, safe='/')}'"
+        return f"openLightbox('/api/image?path={quote(rel, safe='/')}'"
 
     html = re.sub(r'src="([^"]+)"', fix_src, html)
     html = re.sub(r"openLightbox\('([^']+)'", fix_lightbox, html)
@@ -108,7 +131,7 @@ def aesthetic_report(request: Request):
     if not path.is_file():
         raise HTTPException(404, "报告尚未生成")
     html = path.read_text(encoding="utf-8")
-    return HTMLResponse(rewrite_report_html(html))
+    return HTMLResponse(rewrite_report_html(html, request.app.state.thumbnailer))
 
 
 @router.post("/start")

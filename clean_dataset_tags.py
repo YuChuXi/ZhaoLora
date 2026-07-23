@@ -1,63 +1,28 @@
 #!/usr/bin/env python3
 """
-清洗数据集旁路 txt 中的 tag 行（逗号分隔）：
+清洗数据集旁路 txt 中的 tag 行（逗号分隔）。
 
-- HTML/XML 反转义：&lt; &gt; &amp; &quot; &#123; 等
-- 每个 tag 内：下划线替换为空格并折叠连续空白（如 long_hair → long hair）
-- 删除整词（大小写不敏感）：内置列表 + --drop / --drop-file
-- 删除任一 tag 若其小写形式包含子串：内置 commentary、request + --drop-contains
-- --promote：把**已存在**的 tag 按给定顺序移到「正文块」最前（不存在的不会新增）；同 key 在文中多处时只保留最前一条写法，其余去掉
-- --prepend：按顺序插在整条 caption 最前（比 --promote 更靠前）；若正文中已有同名 tag 会先去掉以免重复
-
-处理顺序：先删 tag → --promote → --prepend。
-
-默认原地覆盖；可用 --out_dir 写到另一目录并保持相对路径。
+逻辑实现见 web_annotator/services/tag_clean.py。
 """
 
 from __future__ import annotations
 
 import argparse
-import html
 import sys
 from pathlib import Path
 
+_ROOT = Path(__file__).resolve().parent
+sys.path.insert(0, str(_ROOT / "web_annotator"))
 
-def split_tags_line(s: str) -> list[str]:
-    return [x.strip() for x in s.replace("\n", ",").replace("|||", ",").split(",") if x.strip()]
-
-
-def join_tags_line(tags: list[str]) -> str:
-    return ", ".join(tags)
-
-
-DROP_EXACT = frozenset(
-    {
-
-    }
+from services.tag_clean import (  # noqa: E402
+    clean_caption,
+    expand_cli_list,
+    tag_key,
 )
 
 
-def normalize_tag_underscores(tag: str) -> str:
-    """Danbooru 风格下划线词转为空格，便于与 CLIP/SDXL 习惯一致。"""
-    return " ".join(tag.replace("_", " ").split())
-
-
-def tag_key(tag: str) -> str:
-    return normalize_tag_underscores(tag).strip().lower()
-
-
-def expand_cli_list(items: list[str]) -> list[str]:
-    """支持多次 --flag a --flag b,c，逗号分隔合并为列表。"""
-    out: list[str] = []
-    for it in items:
-        for part in it.split(","):
-            p = part.strip()
-            if p:
-                out.append(p)
-    return out
-
-
 def load_drop_file(path: Path) -> list[str]:
+    """读取每行一个 tag 的删除列表（# 为注释）。"""
     lines: list[str] = []
     for line in path.read_text(encoding="utf-8").splitlines():
         s = line.strip()
@@ -66,122 +31,8 @@ def load_drop_file(path: Path) -> list[str]:
     return lines
 
 
-def should_drop_tag(
-    tag: str,
-    *,
-    user_drop_exact: frozenset[str],
-    user_drop_contains: tuple[str, ...],
-) -> bool:
-    low = tag.strip().lower()
-    if not low:
-        return True
-    key = tag_key(tag)
-    if key in DROP_EXACT or key in user_drop_exact:
-        return True
-    if "commentary" in low:
-        return True
-    if "request" in low:
-        return True
-    for sub in user_drop_contains:
-        if sub and sub in low:
-            return True
-    return False
-
-
-def promote_keys_ordered(promote_tags: tuple[str, ...]) -> list[str]:
-    """用户给出的 promote 列表 → tag_key 序列，去重且保持首次出现顺序。"""
-    seen: set[str] = set()
-    out: list[str] = []
-    for t in promote_tags:
-        if not t.strip():
-            continue
-        k = tag_key(t)
-        if k not in seen:
-            seen.add(k)
-            out.append(k)
-    return out
-
-
-def apply_promote_tags(kept: list[str], promote_order_keys: list[str]) -> tuple[list[str], int]:
-    """将 promote_order_keys 中在 kept 里出现过的 tag 整段移到 kept 最前，其余保持原相对顺序。
-    先精确匹配，未命中时回退为子串匹配（按原文顺序取首个包含该 key 的 tag）。
-    返回 (新列表, 被提升的 tag 数量)。"""
-    if not promote_order_keys:
-        return kept, 0
-
-    promote_set = frozenset(promote_order_keys)
-
-    # --- 精确匹配 ---
-    first_text: dict[str, str] = {}  # promote_key → tag 原文
-    for t in kept:
-        k = tag_key(t)
-        if k in promote_set and k not in first_text:
-            first_text[k] = t
-
-    # 已被消费的 tag_key（精确匹配命中的）
-    consumed_tag_keys: set[str] = {tag_key(v) for v in first_text.values()}
-
-    # --- 子串匹配（回退）---
-    substr_matched: dict[str, str] = {}  # promote_key → tag 原文
-    for pk in promote_order_keys:
-        if pk in first_text:
-            continue  # 已精确命中，跳过
-        for t in kept:
-            k = tag_key(t)
-            if k in consumed_tag_keys:
-                continue
-            if pk in k:  # 子串匹配
-                substr_matched[pk] = t
-                consumed_tag_keys.add(k)
-                break
-
-    # 按 promote_order_keys 顺序组装提升块
-    promoted: list[str] = []
-    for pk in promote_order_keys:
-        if pk in first_text:
-            promoted.append(first_text[pk])
-        elif pk in substr_matched:
-            promoted.append(substr_matched[pk])
-
-    remaining = [t for t in kept if tag_key(t) not in consumed_tag_keys]
-    return promoted + remaining, len(promoted)
-
-
-def clean_caption(
-    raw: str,
-    *,
-    user_drop_exact: frozenset[str] | None = None,
-    user_drop_contains: tuple[str, ...] = (),
-    promote_tags: tuple[str, ...] = (),
-    prepend_tags: tuple[str, ...] = (),
-    use_promote_separator: bool = False,
-) -> str:
-    s = html.unescape(raw.strip())
-    tags = [normalize_tag_underscores(t) for t in split_tags_line(s)]
-    exact = user_drop_exact or frozenset()
-    kept = [
-        t
-        for t in tags
-        if not should_drop_tag(t, user_drop_exact=exact, user_drop_contains=user_drop_contains)
-    ]
-
-    promote_keys = promote_keys_ordered(promote_tags)
-    kept, n_promoted = apply_promote_tags(kept, promote_keys)
-
-    prep = [normalize_tag_underscores(t) for t in prepend_tags if t.strip()]
-    if prep:
-        prep_keys = {tag_key(t) for t in prep}
-        kept = [t for t in kept if tag_key(t) not in prep_keys]
-        kept = prep + kept
-        n_promoted += len(prep)
-
-    if use_promote_separator:
-        return join_tags_line(kept[:n_promoted]) + " ||| " + join_tags_line(kept[n_promoted:])
-
-    return join_tags_line(kept)
-
-
 def iter_txt_files(root: Path, recursive: bool) -> list[Path]:
+    """列举目录内 txt。"""
     if recursive:
         return sorted(root.rglob("*.txt"))
     return sorted(root.glob("*.txt"))
@@ -189,67 +40,20 @@ def iter_txt_files(root: Path, recursive: bool) -> list[Path]:
 
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument(
-        "data_dir",
-        type=Path,
-        help="含 .txt 标签文件的目录（与图片同名的 foo.txt）",
-    )
-    p.add_argument(
-        "--recursive",
-        action="store_true",
-        help="递归子目录中的 .txt",
-    )
-    p.add_argument(
-        "--out_dir",
-        type=Path,
-        default=None,
-        help="输出根目录；不设则原地覆盖",
-    )
-    p.add_argument(
-        "--dry-run",
-        action="store_true",
-        dest="dry_run",
-        help="只打印将修改的文件与前后摘要，不写盘",
-    )
-    p.add_argument(
-        "--drop",
-        action="append",
-        default=[],
-        metavar="TAG",
-        help="额外按整词删除（可多次；可与逗号连用）。匹配前会做下划线→空格与大小写忽略",
-    )
-    p.add_argument(
-        "--drop-file",
-        type=Path,
-        default=None,
-        help="每行一个要整词删除的 tag（# 开头行为注释）",
-    )
-    p.add_argument(
-        "--drop-contains",
-        action="append",
-        default=[],
-        metavar="SUBSTR",
-        help="删除小写形式包含该子串的 tag（可多次）",
-    )
-    p.add_argument(
-        "--promote",
-        action="append",
-        default=[],
-        metavar="TAG",
-        help="将已存在的 tag 按顺序移到正文最前（可多次；逗号分隔）。先精确匹配，未命中则子串匹配。文中没有的不会添加；重复只保留一条",
-    )
-    p.add_argument(
-        "--prepend",
-        action="append",
-        default=[],
-        metavar="TAG",
-        help="按顺序插在整条 caption 最前（在 --promote 之后执行，因此更靠左）。正文里同名 tag 会先去掉以免重复",
-    )
+    p.add_argument("data_dir", type=Path, help="含 .txt 标签文件的目录")
+    p.add_argument("--recursive", action="store_true", help="递归子目录中的 .txt")
+    p.add_argument("--out_dir", type=Path, default=None, help="输出根目录；不设则原地覆盖")
+    p.add_argument("--dry-run", action="store_true", dest="dry_run", help="只打印将修改的文件，不写文件")
+    p.add_argument("--drop", action="append", default=[], metavar="TAG", help="整词删除")
+    p.add_argument("--drop-file", type=Path, default=None, help="每行一个要整词删除的 tag")
+    p.add_argument("--drop-contains", action="append", default=[], metavar="SUBSTR", help="子串删除")
+    p.add_argument("--promote", action="append", default=[], metavar="TAG", help="已存在 tag 提升到最前")
+    p.add_argument("--prepend", action="append", default=[], metavar="TAG", help="插到 caption 最前")
     p.add_argument(
         "--promote-separator",
         action="store_true",
         dest="promote_separator",
-        help="输出时用 '|||' 分隔 --promote / --prepend 新增的 tag 与其余 tag",
+        help="用 ||| 分隔 promote/prepend 与其余 tag",
     )
     args = p.parse_args()
     root: Path = args.data_dir.resolve()
@@ -269,13 +73,9 @@ def main() -> None:
             sys.exit(1)
         drop_from_file = load_drop_file(df)
 
-    user_drop_exact = frozenset(
-        tag_key(t) for t in expand_cli_list(args.drop) + drop_from_file
-    )
+    user_drop_exact = frozenset(tag_key(t) for t in expand_cli_list(args.drop) + drop_from_file)
     user_drop_contains = tuple(
-        s.strip().lower()
-        for s in expand_cli_list(args.drop_contains)
-        if s.strip()
+        s.strip().lower() for s in expand_cli_list(args.drop_contains) if s.strip()
     )
     promote_tags = tuple(expand_cli_list(args.promote))
     prepend_tags = tuple(expand_cli_list(args.prepend))

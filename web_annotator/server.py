@@ -160,6 +160,14 @@ def tags_page():
     return HTMLResponse("<h1>tags.html not found</h1>", status_code=404)
 
 
+@app.get("/tag-clean")
+def tag_clean_page():
+    template = Path(__file__).parent / "templates" / "tag_clean.html"
+    if template.exists():
+        return HTMLResponse(template.read_text(encoding="utf-8"))
+    return HTMLResponse("<h1>tag_clean.html not found</h1>", status_code=404)
+
+
 @app.get("/ready")
 def ready_page():
     template = Path(__file__).parent / "templates" / "ready.html"
@@ -292,7 +300,7 @@ def main() -> int:
     print(f"已选待删 : {len(state.get('selected', {}))}")
     print(f"回收站内 : {len(state.get('trashed', {}))}")
     print(f"服务地址 : http://{args.host}:{args.port}")
-    print("  筛选 · 去重 · 裁剪 · 蒙版 · 美学 · 打标 · 标签 · 就绪")
+    print("  筛选 · 去重 · 裁剪 · 蒙版 · 美学 · 打标 · 标签 · 清洗 · 就绪")
 
     uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
     return 0

@@ -158,6 +158,21 @@ body {
   border-bottom: 1px solid var(--border);
   flex-wrap: wrap;
 }
+.toolbar.compact {
+  gap: 8px;
+  padding: 6px 12px;
+}
+.toolbar.compact .btn {
+  padding: 4px 10px;
+  font-size: 12px;
+}
+.toolbar.compact .stat {
+  font-size: 12px;
+}
+.toolbar.compact .sep {
+  height: 16px;
+  margin: 0 2px;
+}
 .toolbar .title {
   font-size: 14px;
   font-weight: 600;
@@ -330,6 +345,22 @@ body {
   background: var(--surface);
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
+}
+.job-progress.compact {
+  gap: 8px;
+  padding: 4px 12px;
+}
+.job-progress.compact .job-progress-track {
+  height: 8px;
+  border-radius: 4px;
+}
+.job-progress.compact .job-progress-pct {
+  min-width: 40px;
+  font-size: 12px;
+}
+.job-progress.compact .job-progress-meta {
+  font-size: 11px;
+  max-width: 42%;
 }
 .job-progress-track {
   flex: 1;

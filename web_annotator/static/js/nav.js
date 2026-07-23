@@ -12,6 +12,7 @@
     { path: '/aesthetic', label: '美学' },
     { path: '/tagging', label: '打标' },
     { path: '/tags', label: '标签' },
+    { path: '/tag-clean', label: '清洗' },
     { path: '/ready', label: '就绪' },
   ];
 
@@ -36,7 +37,7 @@
     if (cur === '/dedupe') return '/api/dedupe/dirs';
     if (cur === '/aesthetic') return '/api/aesthetic/dirs';
     if (cur === '/tagging') return '/api/tagging/dirs';
-    if (cur === '/tags') return '/api/tags/dirs';
+    if (cur === '/tags' || cur === '/tag-clean') return '/api/tags/dirs';
     return '/api/dirs';
   }
 

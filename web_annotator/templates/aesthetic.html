@@ -7,26 +7,7 @@
 <link rel="stylesheet" href="/static/css/annotator.css">
 <style>
   body { margin: 0; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
-  .aes-main { flex: 1; display: flex; min-height: 0; }
-  .aes-content {
-    flex: 1; display: flex; flex-direction: column; min-width: 0; overflow: hidden;
-  }
-  .opts {
-    display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
-    padding: 10px 14px; border-bottom: 1px solid var(--border); background: var(--surface);
-    font-size: 12px; color: var(--text-dim);
-  }
-  .opts label { display: flex; align-items: center; gap: 4px; cursor: pointer; user-select: none; }
-  .opts select {
-    background: #0a1a30; color: var(--text);
-    border: 1px solid var(--border); border-radius: 4px; padding: 3px 6px;
-  }
-  .progress-meta {
-    padding: 8px 14px; font-size: 12px; color: var(--text-dim);
-    display: flex; gap: 14px; flex-wrap: wrap;
-    border-bottom: 1px solid var(--border);
-  }
-  .progress-meta b { color: var(--text); font-weight: 600; }
+  .aes-main { flex: 1; display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
   .report-frame {
     flex: 1; width: 100%; border: 0; background: #0d0d1a; min-height: 0;
   }
@@ -35,18 +16,41 @@
     color: var(--text-dim); font-size: 14px; background: #0a101c;
   }
   .report-empty[hidden] { display: none; }
+  .toolbar.compact label {
+    display: flex; align-items: center; gap: 4px;
+    font-size: 12px; color: var(--text-dim); cursor: pointer; user-select: none;
+  }
+  .toolbar.compact select {
+    background: #0a1a30; color: var(--text);
+    border: 1px solid var(--border); border-radius: 4px; padding: 2px 6px; font-size: 12px;
+  }
+  .toolbar.compact .meta-inline {
+    font-size: 12px; color: var(--text-dim); white-space: nowrap;
+  }
+  .toolbar.compact .meta-inline b { color: var(--text); font-weight: 600; }
 </style>
 </head>
 <body>
 <nav class="app-tabs" id="app-tabs"></nav>
-<div class="toolbar">
+<div class="toolbar compact">
   <button class="btn green" id="btn-start">开始</button>
   <button class="btn" id="btn-cancel" disabled>取消</button>
   <span class="sep"></span>
+  <label>设备
+    <select id="device">
+      <option value="cpu">CPU</option>
+      <option value="cuda">CUDA</option>
+    </select>
+  </label>
+  <span class="sep"></span>
   <span class="stat" id="stat-status">就绪</span>
+  <span class="meta-inline">进度 <b id="m-done">0</b>/<b id="m-total">0</b></span>
+  <span class="meta-inline">完成 <b id="m-ok">0</b></span>
+  <span class="meta-inline">失败 <b id="m-fail">0</b></span>
+  <span class="meta-inline" id="m-current" style="flex:1;min-width:80px;overflow:hidden;text-overflow:ellipsis;"></span>
 </div>
 
-<div class="job-progress" id="job-progress">
+<div class="job-progress compact" id="job-progress">
   <div class="job-progress-track">
     <div class="job-progress-fill aes" id="progress-fill"></div>
   </div>
@@ -55,24 +59,8 @@
 </div>
 
 <div class="aes-main">
-  <div class="aes-content">
-    <div class="opts">
-      <label>设备
-        <select id="device">
-          <option value="cpu">CPU</option>
-          <option value="cuda">CUDA</option>
-        </select>
-      </label>
-    </div>
-    <div class="progress-meta">
-      <span>进度 <b id="m-done">0</b>/<b id="m-total">0</b></span>
-      <span>完成 <b id="m-ok">0</b></span>
-      <span>失败 <b id="m-fail">0</b></span>
-      <span id="m-current" style="flex:1;min-width:120px;"></span>
-    </div>
-    <div class="report-empty" id="report-empty">暂无报告</div>
-    <iframe class="report-frame" id="report-frame" title="美学报告" hidden></iframe>
-  </div>
+  <div class="report-empty" id="report-empty">暂无报告</div>
+  <iframe class="report-frame" id="report-frame" title="美学报告" hidden></iframe>
 </div>
 <div class="toast" id="toast"></div>
 <script src="/static/js/dir_picker.js"></script>
