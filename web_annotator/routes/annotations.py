@@ -9,7 +9,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Request
 
 from services.scanner import scan_images
-from services.work_dir import resolve_subdir
+from services.work_dir import parse_dir_names, resolve_subdir, resolve_subdirs
 
 router = APIRouter(prefix="/api", tags=["annotations"])
 
@@ -36,22 +36,25 @@ async def toggle(request: Request):
 
 @router.post("/select-all")
 async def select_all(request: Request):
-    """全选当前子目录中未被删除的图片。"""
+    """全选当前选中子目录中未被删除的图片。"""
     body = await request.json()
     root = _root(request)
     state_mgr = _state(request)
+    names = body.get("dirs") or parse_dir_names(None, body.get("dir"))
     try:
-        sub, work = resolve_subdir(root, body.get("dir"))
+        pairs = resolve_subdirs(root, names)
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
 
     trashed = set(state_mgr.get().get("trashed", {}).keys())
-    all_paths = [
-        img["path"] for img in scan_images(work, path_prefix=sub)
-        if img["path"] not in trashed
-    ]
+    all_paths = []
+    for sub, work in pairs:
+        all_paths.extend(
+            img["path"] for img in scan_images(work, path_prefix=sub)
+            if img["path"] not in trashed
+        )
     count = state_mgr.select_all(all_paths)
-    return {"selected": count, "dir": sub}
+    return {"selected": count, "dirs": [s for s, _ in pairs]}
 
 
 @router.post("/deselect-all")
@@ -115,26 +118,33 @@ async def restore(request: Request):
 
 
 @router.get("/state")
-def get_state(request: Request, dir: str = "main"):
+def get_state(request: Request, dirs: str = "", dir: str = "main"):
     """获取当前状态快照（含统计）。"""
     root = _root(request)
     state_mgr = _state(request)
+    names = parse_dir_names(dirs, dir)
     try:
-        sub, work = resolve_subdir(root, dir)
+        pairs = resolve_subdirs(root, names)
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
 
     state = state_mgr.get()
     trashed = set(state.get("trashed", {}).keys())
-    images = scan_images(work, path_prefix=sub)
-    alive = [img for img in images if img["path"] not in trashed]
-    prefix = sub + "/"
-    trashed_n = sum(1 for p in trashed if p.startswith(prefix))
-    selected = sum(1 for p in state.get("selected", {}) if p.startswith(prefix))
+    selected_map = state.get("selected", {})
+    alive_n = 0
+    trashed_n = 0
+    selected_n = 0
+    for sub, work in pairs:
+        prefix = sub + "/"
+        images = scan_images(work, path_prefix=sub)
+        alive_n += sum(1 for img in images if img["path"] not in trashed)
+        trashed_n += sum(1 for p in trashed if p.startswith(prefix))
+        selected_n += sum(1 for p in selected_map if p.startswith(prefix))
     return {
-        "dir": sub,
-        "total": len(alive),
-        "selected": selected,
+        "dirs": [s for s, _ in pairs],
+        "dir": pairs[0][0],
+        "total": alive_n,
+        "selected": selected_n,
         "trashed": trashed_n,
-        "active": len(alive),
+        "active": alive_n,
     }

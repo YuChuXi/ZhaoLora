@@ -23,7 +23,7 @@ from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 import uvicorn
 
 from services.scanner import scan_images
@@ -98,7 +98,12 @@ app.include_router(ready_router)
 
 
 @app.get("/")
-def index():
+def root_redirect():
+    return RedirectResponse(url="/filter", status_code=302)
+
+
+@app.get("/filter")
+def filter_page():
     template = Path(__file__).parent / "templates" / "index.html"
     if template.exists():
         return HTMLResponse(template.read_text(encoding="utf-8"))

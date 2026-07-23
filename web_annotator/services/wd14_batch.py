@@ -87,9 +87,17 @@ def list_image_subdirs(root: Path) -> list[dict]:
         if not p.is_dir() or p.name.startswith(".") or p.name in _SKIP_TAG_DIRS:
             continue
         n = count_images(p)
-        if n > 0:
+        if n > 0 or p.name == "main":
             out.append({"name": p.name, "label": p.name, "image_count": n})
-    return out
+
+    # main 置顶（根目录项「.」仍在最前）
+    root_item = [d for d in out if d["name"] == "."]
+    rest = [d for d in out if d["name"] != "."]
+    main = [d for d in rest if d["name"] == "main"]
+    others = [d for d in rest if d["name"] != "main"]
+    if not main and (root / "main").is_dir():
+        main = [{"name": "main", "label": "main", "image_count": count_images(root / "main")}]
+    return root_item + main + others
 
 
 def resolve_image_dirs(root: Path, names: list[str] | None) -> list[Path]:

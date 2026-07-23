@@ -4,7 +4,13 @@
 var API = (function() {
   'use strict';
 
-  var _dir = localStorage.getItem('annotator_work_dir') || 'main';
+  function dirsParam() {
+    var names = (typeof DirPicker !== 'undefined')
+      ? DirPicker.loadSaved()
+      : ['main'];
+    if (!names.length) names = ['main'];
+    return names.join(',');
+  }
 
   async function request(path, opts) {
     opts = opts || {};
@@ -20,16 +26,18 @@ var API = (function() {
     return res.json();
   }
 
-  function getDir() { return _dir; }
-  function setDir(d) {
-    _dir = d || 'main';
-    localStorage.setItem('annotator_work_dir', _dir);
+  function getDirs() {
+    return (typeof DirPicker !== 'undefined') ? DirPicker.loadSaved() : ['main'];
+  }
+
+  function setDirs(names) {
+    if (typeof DirPicker !== 'undefined') DirPicker.save(names);
   }
 
   function listDirs() { return request('/api/dirs'); }
 
   function listImages(showTrash) {
-    var url = '/api/images?dir=' + encodeURIComponent(_dir);
+    var url = '/api/images?dirs=' + encodeURIComponent(dirsParam());
     if (showTrash) url += '&show_trash=1';
     return request(url);
   }
@@ -44,16 +52,16 @@ var API = (function() {
   function selectAll()    {
     return request('/api/select-all', {
       method: 'POST',
-      body: JSON.stringify({ dir: _dir }),
+      body: JSON.stringify({ dirs: getDirs() }),
     });
   }
   function deselectAll()  { return request('/api/deselect-all', { method: 'POST' }); }
   function applyDelete()  { return request('/api/apply', { method: 'POST' }); }
   function restore(paths) { return request('/api/restore', { method: 'POST', body: JSON.stringify({ paths: paths }) }); }
-  function getState()     { return request('/api/state?dir=' + encodeURIComponent(_dir)); }
+  function getState()     { return request('/api/state?dirs=' + encodeURIComponent(dirsParam())); }
 
   return {
-    getDir: getDir, setDir: setDir, listDirs: listDirs,
+    getDirs: getDirs, setDirs: setDirs, listDirs: listDirs,
     listImages: listImages, thumbnailUrl: thumbnailUrl, imageUrl: imageUrl,
     similarImages: similarImages,
     toggle: toggle, selectAll: selectAll, deselectAll: deselectAll,

@@ -12,7 +12,7 @@ from PIL import Image
 
 from services.scanner import scan_images
 from services.color_similarity import ColorIndex, fingerprint_file
-from services.work_dir import list_work_dirs, resolve_subdir
+from services.work_dir import list_work_dirs, parse_dir_names, resolve_subdir, resolve_subdirs
 
 router = APIRouter(prefix="/api", tags=["images"])
 
@@ -60,45 +60,50 @@ def list_dirs(request: Request):
 def list_images(
     request: Request,
     show_trash: bool = Query(False),
+    dirs: str = Query(""),
     dir: str = Query("main"),
 ):
-    """列出指定子目录图片。路径相对数据集根，如 main/a.png。"""
+    """列出指定子目录图片（dirs=main,head 或 dir=main）。路径相对数据集根。"""
     root, thumbnailer, state_mgr = _services(request)
+    names = parse_dir_names(dirs, dir)
     try:
-        sub, work = resolve_subdir(root, dir)
+        pairs = resolve_subdirs(root, names)
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
 
     state = state_mgr.get()
     selected = set(state.get("selected", {}).keys())
     trashed_state = set(state.get("trashed", {}).keys())
-    prefix = sub + "/"
-
-    images = scan_images(work, path_prefix=sub)
     result = []
     seen = set()
-    for img in images:
-        rel = img["path"]
-        if rel in trashed_state:
-            continue
-        seen.add(rel)
-        w, h = _image_size(root / rel)
-        result.append({
-            **img,
-            "width": w, "height": h,
-            "selected": rel in selected,
-            "trashed": False,
-            "thumbnail_hash": thumbnailer.hash_for(rel),
-            "dir": sub,
-        })
 
-    if show_trash:
+    for sub, work in pairs:
+        prefix = sub + "/"
+        for img in scan_images(work, path_prefix=sub):
+            rel = img["path"]
+            if rel in trashed_state or rel in seen:
+                continue
+            seen.add(rel)
+            w, h = _image_size(root / rel)
+            result.append({
+                **img,
+                "width": w, "height": h,
+                "selected": rel in selected,
+                "trashed": False,
+                "thumbnail_hash": thumbnailer.hash_for(rel),
+                "dir": sub,
+            })
+
+        if not show_trash:
+            continue
+
         trash_dir = state_mgr.trash_dir
         trash_work = trash_dir / sub
         if trash_work.is_dir():
             for img in scan_images(trash_work, path_prefix=sub):
                 if img["path"] in seen:
                     continue
+                seen.add(img["path"])
                 w, h = _image_size(trash_dir / img["path"])
                 result.append({
                     **img,
@@ -110,13 +115,12 @@ def list_images(
                 })
         else:
             for rel in trashed_state:
-                if not rel.startswith(prefix):
-                    continue
-                if rel in seen:
+                if not rel.startswith(prefix) or rel in seen:
                     continue
                 tp = trash_dir / rel
                 if not tp.is_file():
                     continue
+                seen.add(rel)
                 w, h = _image_size(tp)
                 result.append({
                     "path": rel,
