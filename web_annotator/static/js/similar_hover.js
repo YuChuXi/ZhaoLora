@@ -1,10 +1,9 @@
 /**
- * similar_hover.js —— 悬停卡片旁显示色调相似图瀑布流，点击跳转
+ * similar_hover.js —— 右键卡片旁显示色调相似图瀑布流，点击跳转
  */
 var SimilarHover = (function () {
   'use strict';
 
-  var HOVER_DELAY = 900;
   var LIMIT = 12;
   var GAP = 8;
   var PAD = 10;
@@ -13,7 +12,6 @@ var SimilarHover = (function () {
   var _panel = null;
   var _anchorPath = '';
   var _anchorCard = null;
-  var _hoverTimer = null;
   var _cache = {};
   var _reqSeq = 0;
   var _catalogSig = '';
@@ -38,48 +36,16 @@ var SimilarHover = (function () {
       e.stopPropagation();
       hide();
     });
-    _panel.addEventListener('mouseleave', onLeavePanel);
+    _panel.addEventListener('click', function (e) {
+      e.stopPropagation();
+    });
     return _panel;
-  }
-
-  /**
-   * 判断事件目标是否仍在锚定卡片或悬浮面板内。
-   * @param {EventTarget|null} target
-   * @returns {boolean}
-   */
-  function isInsideHoverZone(target) {
-    if (!target || target.nodeType !== 1) return false;
-    if (_panel && _panel.contains(target)) return true;
-    if (_anchorCard && _anchorCard.contains(target)) return true;
-    return false;
-  }
-
-  /**
-   * 鼠标离开主列表卡片：若未进入悬浮面板则立即关闭。
-   * @param {MouseEvent} e
-   */
-  function onLeaveCard(e) {
-    clearTimeout(_hoverTimer);
-    if (isInsideHoverZone(e.relatedTarget)) return;
-    hide();
-  }
-
-  /**
-   * 鼠标离开悬浮面板：若未回到锚定卡片则立即关闭。
-   * @param {MouseEvent} e
-   */
-  function onLeavePanel(e) {
-    clearTimeout(_hoverTimer);
-    if (isInsideHoverZone(e.relatedTarget)) return;
-    hide();
   }
 
   /**
    * 关闭悬浮面板并清除锚定状态。
    */
   function hide() {
-    clearTimeout(_hoverTimer);
-    _hoverTimer = null;
     _anchorPath = '';
     _anchorCard = null;
     if (_panel) _panel.classList.remove('show');
@@ -99,7 +65,7 @@ var SimilarHover = (function () {
   }
 
   /**
-   * 将面板贴靠到卡片边缘（间距为 0，便于 mouseleave.relatedTarget 正确进入面板）。
+   * 将面板贴靠到卡片边缘。
    * @param {HTMLElement} card
    */
   function positionNear(card) {
@@ -285,22 +251,23 @@ var SimilarHover = (function () {
   }
 
   /**
-   * 绑定主列表卡片的悬停显示逻辑。
+   * 绑定主列表卡片：右键打开相似图。
    * @param {HTMLElement} card
    * @param {string} path
    */
   function bindCard(card, path) {
-    card.addEventListener('mouseenter', function () {
-      clearTimeout(_hoverTimer);
-      if (_anchorPath && _anchorPath !== path) hide();
-      _hoverTimer = setTimeout(function () {
-        showFor(path, card).catch(function (err) {
-          if (_anchorPath === path) hide();
-          console.error(err);
-        });
-      }, HOVER_DELAY);
+    card.addEventListener('contextmenu', function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      if (_anchorPath === path && _panel && _panel.classList.contains('show')) {
+        hide();
+        return;
+      }
+      showFor(path, card).catch(function (err) {
+        if (_anchorPath === path) hide();
+        console.error(err);
+      });
     });
-    card.addEventListener('mouseleave', onLeaveCard);
   }
 
   /**
@@ -369,6 +336,12 @@ var SimilarHover = (function () {
       });
     });
   }
+
+  document.addEventListener('click', function (e) {
+    if (!_panel || !_panel.classList.contains('show')) return;
+    if (_panel.contains(e.target)) return;
+    hide();
+  }, true);
 
   window.addEventListener('scroll', function (e) {
     if (!_panel || !_panel.classList.contains('show')) return;

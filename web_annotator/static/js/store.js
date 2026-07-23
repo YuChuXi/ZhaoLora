@@ -108,14 +108,27 @@ var Store = (function() {
     return res;
   }
 
+  /**
+   * 统计当前列表：总计不含回收站。
+   * @returns {{total: number, selected: number, trashed: number, selNotTrashed: number}}
+   */
   function stats() {
-    var total = _images.length;
-    var selected = 0, trashed = 0, selNotTrashed = 0;
+    var total = 0;
+    var selected = 0;
+    var trashed = 0;
+    var selNotTrashed = 0;
     for (var i = 0; i < _images.length; i++) {
       var img = _images[i];
-      if (img.selected) selected++;
-      if (img.trashed) trashed++;
-      if (img.selected && !img.trashed) selNotTrashed++;
+      if (img.trashed) {
+        trashed++;
+        if (img.selected) selected++;
+        continue;
+      }
+      total++;
+      if (img.selected) {
+        selected++;
+        selNotTrashed++;
+      }
     }
     return { total: total, selected: selected, trashed: trashed, selNotTrashed: selNotTrashed };
   }
