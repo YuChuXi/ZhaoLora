@@ -5,6 +5,7 @@
   'use strict';
 
   var TABS = [
+    { path: '/', label: '首页' },
     { path: '/aesthetic', label: '美学' },
     { path: '/filter', label: '筛选' },
     { path: '/dedupe', label: '去重' },
@@ -15,15 +16,14 @@
     { path: '/ready', label: '就绪' },
   ];
 
-  // 裁剪/蒙版固定 main；就绪导出全部目录
-  var HIDE_DIR = { '/crop': 1, '/paint': 1, '/ready': 1 };
+  // 首页/裁剪/蒙版固定；就绪导出全部目录
+  var HIDE_DIR = { '/': 1, '/crop': 1, '/paint': 1, '/ready': 1 };
 
   /**
    * @returns {string}
    */
   function currentPath() {
-    var p = location.pathname.replace(/\/$/, '') || '/filter';
-    if (p === '/') return '/filter';
+    var p = location.pathname.replace(/\/$/, '') || '/';
     return p;
   }
 
