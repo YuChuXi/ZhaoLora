@@ -300,7 +300,7 @@ def main() -> int:
     print(f"已选待删 : {len(state.get('selected', {}))}")
     print(f"回收站内 : {len(state.get('trashed', {}))}")
     print(f"服务地址 : http://{args.host}:{args.port}")
-    print("  筛选 · 去重 · 裁剪 · 蒙版 · 美学 · 打标 · 标签 · 清洗 · 就绪")
+    print("  美学 · 筛选 · 去重 · 裁剪 · 蒙版 · 打标 · 标签 · 清洗 · 就绪")
 
     uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
     return 0

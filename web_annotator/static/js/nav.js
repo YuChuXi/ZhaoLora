@@ -5,11 +5,11 @@
   'use strict';
 
   var TABS = [
+    { path: '/aesthetic', label: '美学' },
     { path: '/filter', label: '筛选' },
     { path: '/dedupe', label: '去重' },
     { path: '/crop', label: '裁剪' },
     { path: '/paint', label: '蒙版' },
-    { path: '/aesthetic', label: '美学' },
     { path: '/tagging', label: '打标' },
     { path: '/tags', label: '标签' },
     { path: '/tag-clean', label: '清洗' },
