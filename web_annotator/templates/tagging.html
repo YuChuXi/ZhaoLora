@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>WD14 打标</title>
+<link rel="stylesheet" href="/static/css/annotator.css">
+<style>
+  body { margin: 0; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+  .tagging-main { flex: 1; display: flex; min-height: 0; }
+  .tagging-side {
+    width: 260px; flex-shrink: 0; background: var(--surface);
+    border-right: 1px solid var(--border);
+    display: flex; flex-direction: column; overflow: hidden;
+  }
+  .tagging-side h3 {
+    font-size: 13px; padding: 12px 14px 6px; color: var(--text-dim); font-weight: 600;
+  }
+  .dir-list { flex: 1; overflow-y: auto; padding: 4px 10px 12px; }
+  .dir-item {
+    display: flex; align-items: center; gap: 8px;
+    padding: 6px 8px; border-radius: 6px; font-size: 13px; cursor: pointer;
+  }
+  .dir-item:hover { background: rgba(255,255,255,0.04); }
+  .dir-item .meta { color: var(--text-dim); font-size: 11px; margin-left: auto; }
+  .side-actions {
+    padding: 10px 12px; border-top: 1px solid var(--border);
+    display: flex; flex-direction: column; gap: 8px;
+  }
+  .tagging-content {
+    flex: 1; display: flex; flex-direction: column; min-width: 0; overflow: hidden;
+  }
+  .opts {
+    display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+    padding: 10px 14px; border-bottom: 1px solid var(--border); background: var(--surface);
+    font-size: 12px; color: var(--text-dim);
+  }
+  .opts label { display: flex; align-items: center; gap: 4px; cursor: pointer; user-select: none; }
+  .opts input[type="number"] {
+    width: 72px; background: #0a1a30; color: var(--text);
+    border: 1px solid var(--border); border-radius: 4px; padding: 3px 6px;
+  }
+  .progress-wrap { padding: 14px 16px; border-bottom: 1px solid var(--border); }
+  .progress-bar {
+    height: 10px; background: #0a1a30; border-radius: 5px; overflow: hidden;
+    border: 1px solid var(--border);
+  }
+  .progress-fill {
+    height: 100%; width: 0%; background: linear-gradient(90deg, #1a6fb5, #3ecf8e);
+    transition: width 0.2s ease;
+  }
+  .progress-meta {
+    margin-top: 8px; font-size: 12px; color: var(--text-dim);
+    display: flex; gap: 14px; flex-wrap: wrap;
+  }
+  .progress-meta b { color: var(--text); font-weight: 600; }
+  .log-box {
+    flex: 1; overflow: auto; padding: 10px 14px 20px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 12px; line-height: 1.45; color: #c8d4e0; white-space: pre-wrap;
+  }
+  .model-warn { color: #e94560; font-size: 12px; padding: 0 14px 8px; }
+</style>
+</head>
+<body>
+<div class="toolbar">
+  <div class="toolbar-brand">
+    <a class="nav-home" href="/">主页</a>
+    <span class="title">WD14 打标</span>
+    <nav class="toolbar-nav">
+      <a href="/dedupe">去重</a>
+      <a href="/">筛选</a>
+      <a href="/crop">裁剪</a>
+      <a href="/paint">绘制</a>
+      <a href="/tags">Tag 统计</a>
+    </nav>
+  </div>
+  <button class="btn green" id="btn-start">开始打标</button>
+  <button class="btn" id="btn-cancel" disabled>取消</button>
+  <span class="sep"></span>
+  <span class="stat" id="stat-status">空闲</span>
+</div>
+
+<div class="tagging-main">
+  <aside class="tagging-side">
+    <h3>子目录</h3>
+    <div class="dir-list" id="dir-list"></div>
+    <div class="side-actions">
+      <button class="btn" id="btn-all" style="width:100%">全选</button>
+      <button class="btn" id="btn-none" style="width:100%">全不选</button>
+    </div>
+  </aside>
+  <div class="tagging-content">
+    <div class="opts">
+      <label>WD14 阈值
+        <input type="number" id="threshold" value="0.1" min="0" max="1" step="0.01" title="置信度下限，默认 0.1">
+      </label>
+      <label title="不读原 txt，仅用 WD14">
+        <input type="checkbox" id="chk-disable-orig" checked> 禁用原标签
+      </label>
+      <label title="已有旁路 .txt 也重新覆盖">
+        <input type="checkbox" id="chk-force" checked> 强制覆盖
+      </label>
+      <span id="model-info" style="margin-left:auto;"></span>
+    </div>
+    <div id="model-warn" class="model-warn" hidden></div>
+    <div class="progress-wrap">
+      <div class="progress-bar"><div class="progress-fill" id="progress-fill"></div></div>
+      <div class="progress-meta">
+        <span>进度 <b id="m-done">0</b>/<b id="m-total">0</b></span>
+        <span>成功 <b id="m-ok">0</b></span>
+        <span>跳过 <b id="m-skip">0</b></span>
+        <span>失败 <b id="m-fail">0</b></span>
+        <span id="m-current" style="flex:1;min-width:120px;"></span>
+      </div>
+    </div>
+    <div class="log-box" id="log-box">选择子目录后点击「开始打标」。
+整图跑 WD14，只写旁路 .txt（不改动图片）。</div>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+<script src="/static/js/tagging.js"></script>
+</body>
+</html>

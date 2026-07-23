@@ -35,6 +35,7 @@ from routes.annotations import router as annotations_router
 from routes.alpha_paint import router as paint_router
 from routes.crop import router as crop_router
 from routes.tag_stats import router as tag_stats_router
+from routes.tagging import router as tagging_router
 from routes.dedupe import router as dedupe_router
 
 app = FastAPI(title="Image Annotator", version="2.2.0")
@@ -47,6 +48,7 @@ app.include_router(images_router)
 app.include_router(annotations_router)
 app.include_router(paint_router)
 app.include_router(crop_router)
+app.include_router(tagging_router)
 app.include_router(tag_stats_router)
 app.include_router(dedupe_router)
 
@@ -73,6 +75,14 @@ def crop_page():
     if template.exists():
         return HTMLResponse(template.read_text(encoding="utf-8"))
     return HTMLResponse("<h1>crop.html not found</h1>", status_code=404)
+
+
+@app.get("/tagging")
+def tagging_page():
+    template = Path(__file__).parent / "templates" / "tagging.html"
+    if template.exists():
+        return HTMLResponse(template.read_text(encoding="utf-8"))
+    return HTMLResponse("<h1>tagging.html not found</h1>", status_code=404)
 
 
 @app.get("/tags")
@@ -191,6 +201,7 @@ def main() -> int:
     print(f"服务地址 : http://{args.host}:{args.port}")
     print(f"去重页面 : http://{args.host}:{args.port}/dedupe")
     print(f"裁剪页面 : http://{args.host}:{args.port}/crop")
+    print(f"WD14打标 : http://{args.host}:{args.port}/tagging")
     print(f"Tag统计  : http://{args.host}:{args.port}/tags")
 
     uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
