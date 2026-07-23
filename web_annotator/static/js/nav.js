@@ -1,5 +1,5 @@
 /**
- * nav.js —— 全站固定标签栏 + 右上角目录下拉
+ * nav.js —— 全站固定标签栏 + 右上角目录多选
  */
 (function () {
   'use strict';
@@ -18,12 +18,31 @@
   // 裁剪/蒙版固定 main；就绪导出全部目录
   var HIDE_DIR = { '/crop': 1, '/paint': 1, '/ready': 1 };
 
+  /**
+   * @returns {string}
+   */
   function currentPath() {
     var p = location.pathname.replace(/\/$/, '') || '/filter';
     if (p === '/') return '/filter';
     return p;
   }
 
+  /**
+   * 当前页对应的目录列表 API。
+   * @param {string} cur
+   * @returns {string}
+   */
+  function dirsApi(cur) {
+    if (cur === '/dedupe') return '/api/dedupe/dirs';
+    if (cur === '/aesthetic') return '/api/aesthetic/dirs';
+    if (cur === '/tagging') return '/api/tagging/dirs';
+    if (cur === '/tags') return '/api/tags/dirs';
+    return '/api/dirs';
+  }
+
+  /**
+   * 渲染顶部标签栏与目录选择器。
+   */
   function render() {
     var host = document.getElementById('app-tabs');
     if (!host) {
@@ -43,18 +62,13 @@
       ? '<div class="app-tabs-right"><div id="app-dir" aria-label="目录"></div></div>'
       : '');
 
-    if (showDir) {
-      DirPicker.bind(document.getElementById('app-dir'));
-      var api =
-        cur === '/dedupe' ? '/api/dedupe/dirs'
-          : cur === '/aesthetic' ? '/api/aesthetic/dirs'
-            : cur === '/tagging' ? '/api/tagging/dirs'
-              : cur === '/tags' ? '/api/tags/dirs'
-                : '/api/dirs';
-      DirPicker.load(api).catch(function () {
-        DirPicker.fill([{ name: 'main', label: 'main', image_count: 0 }]);
-      });
-    }
+    if (!showDir) return;
+
+    DirPicker.bind(document.getElementById('app-dir'));
+    DirPicker.load(dirsApi(cur)).catch(function (err) {
+      console.error(err);
+      DirPicker.fill([{ name: 'main', label: 'main', image_count: 0 }]);
+    });
   }
 
   if (document.readyState === 'loading') {

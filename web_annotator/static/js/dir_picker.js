@@ -133,11 +133,23 @@ var DirPicker = (function () {
   }
 
   /**
+   * 按触发按钮定位悬浮菜单（挂在 body，避免被导航栏 overflow 裁切）。
+   */
+  function positionMenu() {
+    if (!_btn || !_menu) return;
+    var r = _btn.getBoundingClientRect();
+    _menu.style.top = Math.round(r.bottom + 6) + 'px';
+    _menu.style.right = Math.round(window.innerWidth - r.right) + 'px';
+    _menu.style.left = 'auto';
+  }
+
+  /**
    * 打开下拉菜单。
    */
   function openMenu() {
     if (_disabled) return;
     _open = true;
+    positionMenu();
     if (_menu) _menu.hidden = false;
     if (_btn) _btn.setAttribute('aria-expanded', 'true');
   }
@@ -220,8 +232,8 @@ var DirPicker = (function () {
     });
     if (!any) _selected.main = true;
     renderMenu();
-    save(getDirs());
     updateButton();
+    emit();
   }
 
   /**
@@ -263,7 +275,7 @@ var DirPicker = (function () {
     _menu.addEventListener('click', function (e) { e.stopPropagation(); });
 
     _host.appendChild(_btn);
-    _host.appendChild(_menu);
+    document.body.appendChild(_menu);
     updateButton();
   }
 
@@ -285,6 +297,14 @@ var DirPicker = (function () {
   document.addEventListener('keydown', function (e) {
     if (e.key === 'Escape' && _open) closeMenu();
   });
+
+  window.addEventListener('resize', function () {
+    if (_open) positionMenu();
+  });
+
+  window.addEventListener('scroll', function () {
+    if (_open) positionMenu();
+  }, true);
 
   return {
     KEY: KEY,

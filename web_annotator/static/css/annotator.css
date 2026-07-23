@@ -93,10 +93,8 @@ body {
   border-color: var(--accent);
 }
 .app-dir-menu {
-  position: absolute;
-  right: 0;
-  top: calc(100% + 6px);
-  z-index: 200;
+  position: fixed;
+  z-index: 500;
   min-width: 180px;
   max-height: 60vh;
   overflow-y: auto;

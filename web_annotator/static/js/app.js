@@ -142,10 +142,10 @@
 
     document.addEventListener('keydown', onKeyDown);
 
-    Store.load().then(function() {
+    Store.load().then(function () {
       updateStats();
       refreshView();
-    }).catch(function(e) {
+    }).catch(function (e) {
       toast('加载失败: ' + e.message);
     });
   }

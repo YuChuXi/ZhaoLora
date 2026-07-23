@@ -15,6 +15,7 @@
   var _renderScheduled = false;
   var _rgbScaledCanvas = null;
   var _compCanvas = null;
+  var PRELOAD_RADIUS = 15;
 
   // ---- 笔刷半径: sqrt(w*h) * 百分比 ----
   function _calcBrush() {
@@ -101,10 +102,22 @@
       _defaultAlpha = Number.isNaN(value) ? 255 : value;
       _alpha.fill(_defaultAlpha);
       _modified = false;
+      _preloadCache[img.path] = {
+        img: _rgbImg,
+        w: _origW,
+        h: _origH,
+        alpha: new Uint8Array(_alpha),
+      };
       _calcBrush(); _updateBrushUI();
       invalidateScaledCache(); _alphaOrigCanvas = null;
       fitCanvas(); _scheduleRender(); updateNav();
-      loadExistingMask(img.path).then(function() { _alphaOrigCanvas = null; _scheduleRender(); });
+      loadExistingMask(img.path).then(function() {
+        _alphaOrigCanvas = null;
+        var cached = _preloadCache[img.path];
+        if (cached) cached.alpha = new Uint8Array(_alpha);
+        _scheduleRender();
+        updateStatusBar();
+      });
       _preloadNeighbors(_index);
     };
     _rgbImg.onerror = function() { throw new Error('图片解码失败: ' + img.path); };
@@ -134,14 +147,49 @@
 
   // ---- 预加载 ----
   var _preloadSeq = 0;
+
+  /**
+   * 统计当前索引邻域内已进入缓冲区的数量。
+   * @returns {{ready: number, want: number, total: number}}
+   */
+  function bufferStats() {
+    var ready = 0;
+    var want = 0;
+    for (var di = -PRELOAD_RADIUS; di <= PRELOAD_RADIUS; di++) {
+      var ni = _index + di;
+      if (ni < 0 || ni >= _images.length) continue;
+      want++;
+      if (_preloadCache[_images[ni].path]) ready++;
+    }
+    return {
+      ready: ready,
+      want: want,
+      total: Object.keys(_preloadCache).length,
+    };
+  }
+
+  /**
+   * 刷新底部状态栏（标注状态、分辨率、缓冲区）。
+   */
+  function updateStatusBar() {
+    var img = _images[_index];
+    var parts = [];
+    if (img) parts.push(img.has_mask ? '已标注' : '待标注');
+    if (_origW) parts.push(_origW + 'x' + _origH);
+    var buf = bufferStats();
+    parts.push('缓冲 ' + buf.ready + '/' + buf.want + '（缓存 ' + buf.total + '）');
+    document.getElementById('info-text').textContent = parts.join('  |  ');
+  }
+
   async function _preloadNeighbors(idx) {
     var seq = ++_preloadSeq;
-    for (var di = 1; di <= 15; di++) {
+    for (var di = 1; di <= PRELOAD_RADIUS; di++) {
       if (seq !== _preloadSeq) return;
       var ni = idx + di; if (ni < _images.length) await _preloadOne(_images[ni].path);
       ni = idx - di; if (ni >= 0) await _preloadOne(_images[ni].path);
     }
   }
+
   async function _preloadOne(path) {
     if (_preloadCache[path]) return;
     var blob = await fetch('/api/paint/image?path=' + encodeURIComponent(path)).then(function(r) { return r.blob(); });
@@ -151,7 +199,7 @@
       var entry = { img: img, w: img.naturalWidth, h: img.naturalHeight };
       _preloadCache[path] = entry;
       URL.revokeObjectURL(url);
-      // 同时预加载 mask
+      updateStatusBar();
       fetch('/api/paint/mask?path=' + encodeURIComponent(path)).then(function(r) {
         if (!r.ok) return;
         return r.blob();
@@ -170,6 +218,7 @@
             entry.alphaCanvas = tc;
           }
           URL.revokeObjectURL(u);
+          updateStatusBar();
         };
         mi.src = u;
       });
@@ -449,9 +498,7 @@
     for (var i = 0; i < _images.length; i++) { if (_images[i].has_mask) done++; }
     document.getElementById('paint-progress').textContent = (_index+1) + '/' + _images.length + ' (已标注' + done + ')';
     document.getElementById('paint-filename').textContent = img ? img.stem : '-';
-    var status = img ? (img.has_mask ? '已标注' : '待标注') : '';
-    if (_origW) status += '  |  ' + _origW + 'x' + _origH;
-    document.getElementById('info-text').textContent = status;
+    updateStatusBar();
   }
 
   loadConfig().then(loadImages);
