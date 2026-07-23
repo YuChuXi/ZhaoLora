@@ -8,25 +8,6 @@
 <style>
   body { margin: 0; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
   .aes-main { flex: 1; display: flex; min-height: 0; }
-  .aes-side {
-    width: 240px; flex-shrink: 0; background: var(--surface);
-    border-right: 1px solid var(--border);
-    display: flex; flex-direction: column; overflow: hidden;
-  }
-  .aes-side h3 {
-    font-size: 13px; padding: 12px 14px 6px; color: var(--text-dim); font-weight: 600;
-  }
-  .dir-list { flex: 1; overflow-y: auto; padding: 4px 10px 12px; }
-  .dir-item {
-    display: flex; align-items: center; gap: 8px;
-    padding: 6px 8px; border-radius: 6px; font-size: 13px; cursor: pointer;
-  }
-  .dir-item:hover { background: rgba(255,255,255,0.04); }
-  .dir-item .meta { color: var(--text-dim); font-size: 11px; margin-left: auto; }
-  .side-actions {
-    padding: 10px 12px; border-top: 1px solid var(--border);
-    display: flex; flex-direction: column; gap: 8px;
-  }
   .aes-content {
     flex: 1; display: flex; flex-direction: column; min-width: 0; overflow: hidden;
   }
@@ -74,14 +55,6 @@
 </div>
 
 <div class="aes-main">
-  <aside class="aes-side">
-    <h3>目录</h3>
-    <div class="dir-list" id="dir-list"></div>
-    <div class="side-actions">
-      <button class="btn" id="btn-all" style="width:100%">全选</button>
-      <button class="btn" id="btn-none" style="width:100%">全不选</button>
-    </div>
-  </aside>
   <div class="aes-content">
     <div class="opts">
       <label>设备
@@ -90,14 +63,10 @@
           <option value="cuda">CUDA</option>
         </select>
       </label>
-      <label>
-        <input type="checkbox" id="chk-rename" checked> 按分数重命名
-      </label>
     </div>
     <div class="progress-meta">
       <span>进度 <b id="m-done">0</b>/<b id="m-total">0</b></span>
       <span>完成 <b id="m-ok">0</b></span>
-      <span>重命名 <b id="m-renamed">0</b></span>
       <span>失败 <b id="m-fail">0</b></span>
       <span id="m-current" style="flex:1;min-width:120px;"></span>
     </div>
@@ -106,8 +75,8 @@
   </div>
 </div>
 <div class="toast" id="toast"></div>
-<script src="/static/js/nav.js"></script>
 <script src="/static/js/dir_picker.js"></script>
+<script src="/static/js/nav.js"></script>
 <script src="/static/js/aesthetic.js"></script>
 </body>
 </html>

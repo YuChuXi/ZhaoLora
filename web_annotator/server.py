@@ -27,7 +27,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 import uvicorn
 
 from services.scanner import scan_images
-from services.thumbnailer import Thumbnailer
+from services.thumbnailer import Thumbnailer, default_workers
 from services.state_manager import StateManager
 from services.dataset_layout import resolve_dataset_layout
 from routes.images import router as images_router
@@ -39,6 +39,16 @@ from routes.tagging import router as tagging_router
 from routes.aesthetic import router as aesthetic_router
 from routes.dedupe import router as dedupe_router
 from routes.ready import router as ready_router
+
+
+class _DevStaticFiles(StaticFiles):
+    """开发期静态资源不缓存，避免改 JS 后浏览器仍用旧文件。"""
+
+    def file_response(self, *args, **kwargs):
+        resp = super().file_response(*args, **kwargs)
+        resp.headers["Cache-Control"] = "no-store"
+        return resp
+
 
 app = FastAPI(title="Image Annotator", version="2.2.0")
 
@@ -84,7 +94,7 @@ def _migrate_meta_to_root(main_dir: Path, root: Path) -> None:
 
 static_dir = Path(__file__).parent / "static"
 if static_dir.is_dir():
-    app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
+    app.mount("/static", _DevStaticFiles(directory=str(static_dir)), name="static")
 
 app.include_router(images_router)
 app.include_router(annotations_router)
@@ -245,13 +255,18 @@ def main() -> int:
     state = app.state.state_manager.get()
 
     if not args.skip_thumbnails:
-        missing = [img for img in images if not app.state.thumbnailer.exists(img["path"])]
+        missing = [img["path"] for img in images if not app.state.thumbnailer.exists(img["path"])]
         if missing:
-            print(f"预生成缩略图: {len(missing)} 张...")
-            for i, img in enumerate(missing):
-                app.state.thumbnailer.generate(img["path"])
-                if (i + 1) % 50 == 0 or i == len(missing) - 1:
-                    print(f"  {i + 1}/{len(missing)}")
+            workers = default_workers()
+            print(f"预生成缩略图: {len(missing)} 张（并行 {workers}）...")
+
+            def _thumb_progress(done: int, total: int) -> None:
+                if done % 50 == 0 or done == total:
+                    print(f"  {done}/{total}")
+
+            app.state.thumbnailer.generate_many(
+                missing, workers=workers, on_progress=_thumb_progress
+            )
         else:
             print("缩略图已就绪")
 

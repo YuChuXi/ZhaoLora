@@ -4,9 +4,8 @@
 (function () {
   'use strict';
 
-  var _picker = null;
   var _tags = [];
-  var _selected = {}; // tag -> true
+  var _selected = {};
   var _toastTimer = null;
 
   function toast(msg) {
@@ -25,11 +24,6 @@
     }
     return res.json();
   }
-
-  function selectedDirNames() {
-    return _picker ? _picker.selected() : DirPicker.loadSaved();
-  }
-
 
   function selectedTags() {
     return _tags.filter(function (t) { return _selected[t.tag]; });
@@ -112,16 +106,8 @@
     updateExport();
   }
 
-  async function loadDirs() {
-    _picker = DirPicker.mount(document.getElementById('dir-list'), {
-      countKey: 'txt_count',
-      countSuffix: ' txt',
-    });
-    await _picker.load('/api/tags/dirs');
-  }
-
   async function refresh() {
-    var dirs = selectedDirNames();
+    var dirs = DirPicker.getDirs();
     if (!dirs.length) {
       toast('请选择目录');
       return;
@@ -141,17 +127,14 @@
       body: JSON.stringify(body),
     });
     _tags = data.tags || [];
-    // 保留仍存在于新结果中的选中项
     var keep = {};
     _tags.forEach(function (t) {
       if (_selected[t.tag]) keep[t.tag] = true;
     });
     _selected = keep;
     document.getElementById('stat-summary').textContent =
-      '样本 ' + data.sample_count + ' · 标签 ' + data.tag_count +
-      ' · 目录 ' + (data.dirs || []).join(', ');
+      '样本 ' + data.sample_count + ' · 标签 ' + data.tag_count;
     renderTable();
-    toast('完成 ' + data.tag_count + ' 个');
   }
 
   function copyText(text) {
@@ -198,12 +181,6 @@
     document.getElementById('btn-refresh').addEventListener('click', function () {
       refresh().catch(function (e) { toast(String(e.message || e)); });
     });
-    document.getElementById('btn-dirs-all').addEventListener('click', function () {
-      if (_picker) _picker.setAll(true);
-    });
-    document.getElementById('btn-dirs-none').addEventListener('click', function () {
-      if (_picker) _picker.setAll(false);
-    });
     document.getElementById('btn-select-all-tags').addEventListener('click', function () {
       _tags.forEach(function (t) { _selected[t.tag] = true; });
       renderTable();
@@ -231,12 +208,18 @@
       copyText(document.getElementById('export-text').value);
     });
 
-    await loadDirs();
-    await refresh();
+    DirPicker.onChange(function () {
+      refresh().catch(function (e) { toast(String(e.message || e)); });
+    });
+
+    // 等导航栏目录下拉就绪
+    setTimeout(function () {
+      refresh().catch(function (e) {
+        document.getElementById('tag-body').innerHTML =
+          '<tr><td colspan="5" class="empty-hint">' + String(e.message || e) + '</td></tr>';
+      });
+    }, 80);
   }
 
-  init().catch(function (e) {
-    document.getElementById('tag-body').innerHTML =
-      '<tr><td colspan="5" class="empty-hint">' + String(e.message || e) + '</td></tr>';
-  });
+  init();
 })();

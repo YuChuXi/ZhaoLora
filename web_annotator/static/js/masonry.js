@@ -72,7 +72,10 @@ var Masonry = (function() {
     var name = document.createElement('span');
     name.className = 'name';
     var res = (img.width && img.height) ? (img.width + '×' + img.height + ' ') : '';
-    name.textContent = res + img.stem;
+    var score = (typeof img.aesthetic === 'number')
+      ? (img.aesthetic.toFixed(2) + ' ')
+      : '';
+    name.textContent = score + res + img.stem;
     info.appendChild(name);
     card.appendChild(info);
 

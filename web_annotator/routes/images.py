@@ -13,6 +13,7 @@ from PIL import Image
 from services.scanner import scan_images
 from services.color_similarity import ColorIndex, fingerprint_file
 from services.work_dir import list_work_dirs, parse_dir_names, resolve_subdir, resolve_subdirs
+from services.aesthetic import load_scores
 
 router = APIRouter(prefix="/api", tags=["images"])
 
@@ -74,6 +75,7 @@ def list_images(
     state = state_mgr.get()
     selected = set(state.get("selected", {}).keys())
     trashed_state = set(state.get("trashed", {}).keys())
+    scores = load_scores(root)
     result = []
     seen = set()
 
@@ -93,6 +95,7 @@ def list_images(
                 "trashed": False,
                 "thumbnail_hash": thumbnailer.hash_for(rel),
                 "dir": sub,
+                "aesthetic": scores.get(rel),
             })
 
         if not show_trash:
@@ -115,6 +118,7 @@ def list_images(
                     "trashed": True,
                     "thumbnail_hash": thumbnailer.hash_for(img["path"]),
                     "dir": sub,
+                    "aesthetic": scores.get(img["path"]),
                 })
         else:
             for rel in trashed_state:
@@ -137,6 +141,7 @@ def list_images(
                     "trashed": True,
                     "thumbnail_hash": thumbnailer.hash_for(rel),
                     "dir": sub,
+                    "aesthetic": scores.get(rel),
                 })
 
     return result

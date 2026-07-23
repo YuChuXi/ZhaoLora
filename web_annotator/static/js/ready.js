@@ -1,10 +1,9 @@
 /**
- * ready.js —— 导出训练 datasets TOML
+ * ready.js —— 导出训练 datasets TOML（全部子目录）
  */
 (function () {
   'use strict';
 
-  var _picker = null;
   var _toastTimer = null;
 
   function toast(msg) {
@@ -24,23 +23,7 @@
     return res.json();
   }
 
-  function selectedNames() {
-    return _picker ? _picker.selected() : DirPicker.loadSaved();
-  }
-
-
-  async function loadDirs() {
-    _picker = DirPicker.mount(document.getElementById('dir-list'), {});
-    var data = await _picker.load('/api/ready/dirs');
-    document.getElementById('root-path').textContent = data.root || '';
-  }
-
   async function generate() {
-    var dirs = selectedNames();
-    if (!dirs.length) {
-      toast('请选择目录');
-      return;
-    }
     var repeats = parseInt(document.getElementById('num-repeats').value, 10);
     if (!(repeats >= 1)) {
       toast('num_repeats 无效');
@@ -49,11 +32,12 @@
     var data = await api('/api/ready/toml', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ dirs: dirs, num_repeats: repeats })
+      body: JSON.stringify({ dirs: null, num_repeats: repeats })
     });
     document.getElementById('toml-box').value = data.toml || '';
     document.getElementById('stat-summary').textContent =
       (data.subsets || []).length + ' 个 subset';
+    if (data.root) document.getElementById('root-path').textContent = data.root;
     toast('已生成');
   }
 
@@ -67,12 +51,6 @@
     toast('已复制');
   }
 
-  document.getElementById('btn-all').addEventListener('click', function () {
-    if (_picker) _picker.setAll(true);
-  });
-  document.getElementById('btn-none').addEventListener('click', function () {
-    if (_picker) _picker.setAll(false);
-  });
   document.getElementById('btn-gen').addEventListener('click', function () {
     generate().catch(function (e) { toast(String(e.message || e)); });
   });
@@ -80,7 +58,10 @@
     copyText().catch(function (e) { toast(String(e.message || e)); });
   });
 
-  loadDirs()
-    .then(function () { return generate(); })
+  api('/api/ready/dirs')
+    .then(function (data) {
+      document.getElementById('root-path').textContent = data.root || '';
+      return generate();
+    })
     .catch(function (e) { toast(String(e.message || e)); });
 })();

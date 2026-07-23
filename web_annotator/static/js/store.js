@@ -1,5 +1,5 @@
 /**
- * store.js -- toggle 时增量通知，不触发全量渲染
+ * store.js -- toggle 时增量通知，不触发全量渲染；支持排序
  */
 var Store = (function() {
   'use strict';
@@ -7,9 +7,41 @@ var Store = (function() {
   var _images = [];
   var _listeners = [];
   var _toggleListeners = [];
+  var _sortBy = localStorage.getItem('annotator_sort') || 'name';
+
+  function setSort(by) {
+    _sortBy = by || 'name';
+    localStorage.setItem('annotator_sort', _sortBy);
+  }
+
+  function getSort() { return _sortBy; }
+
+  function _sortList(list) {
+    var out = list.slice();
+    if (_sortBy === 'aesthetic') {
+      out.sort(function (a, b) {
+        var da = (typeof a.aesthetic === 'number') ? a.aesthetic : -1;
+        var db = (typeof b.aesthetic === 'number') ? b.aesthetic : -1;
+        if (db !== da) return db - da;
+        return (a.stem || '').localeCompare(b.stem || '', 'en');
+      });
+    } else if (_sortBy === 'pixels') {
+      out.sort(function (a, b) {
+        var pa = (a.width || 0) * (a.height || 0);
+        var pb = (b.width || 0) * (b.height || 0);
+        if (pb !== pa) return pb - pa;
+        return (a.stem || '').localeCompare(b.stem || '', 'en');
+      });
+    } else {
+      out.sort(function (a, b) {
+        return (a.stem || '').localeCompare(b.stem || '', 'en', { numeric: true });
+      });
+    }
+    return out;
+  }
 
   async function load() {
-    _images = await API.listImages(true);  // 始终加载含回收站的数据，前端本地过滤
+    _images = await API.listImages(true);
     _notify();
   }
 
@@ -22,7 +54,7 @@ var Store = (function() {
       if (img.trashed && !showTrash) continue;
       result.push(img);
     }
-    return result;
+    return _sortList(result);
   }
 
   function _findByPath(path) {
@@ -37,7 +69,6 @@ var Store = (function() {
     var img = _findByPath(path);
     if (img) img.selected = res.selected;
     _notify();
-    // 增量通知: 只更新被点的卡片
     for (var i = 0; i < _toggleListeners.length; i++) {
       _toggleListeners[i](path, res.selected);
     }
@@ -102,5 +133,6 @@ var Store = (function() {
     toggle: toggle, selectAll: selectAll, deselectAll: deselectAll,
     invert: invert, applyDelete: applyDelete, restore: restore,
     stats: stats, onChange: onChange, onToggle: onToggle,
+    setSort: setSort, getSort: getSort,
   };
 })();

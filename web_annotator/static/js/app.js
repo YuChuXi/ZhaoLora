@@ -31,18 +31,18 @@
   async function handleApplyDelete() {
     var st = Store.stats();
     if (st.selNotTrashed === 0) { toast('未选择图片'); return; }
-    if (!confirm('删除 ' + st.selNotTrashed + ' 张到回收站？')) return;
+    if (!confirm('将 ' + st.selNotTrashed + ' 张移入回收站？')) return;
     try {
       var res = await Store.applyDelete();
       refreshView();
-      toast('已删除 ' + res.moved + ' 张');
+      toast('已移入回收站 ' + res.moved + ' 张');
     } catch (e) { toast('删除失败'); }
   }
 
   async function handleRestore() {
     var st = Store.stats();
     if (st.trashed === 0) { toast('回收站为空'); return; }
-    var restoreAll = confirm('恢复全部？\n确定 = 全部 · 取消 = 仅选中');
+    var restoreAll = confirm('恢复全部回收站图片？\n确定 = 全部 · 取消 = 仅选中项');
     var paths;
     if (restoreAll) {
       paths = [];
@@ -52,7 +52,7 @@
       paths = [];
       var imgs2 = Store.getAll();
       for (var i = 0; i < imgs2.length; i++) { if (imgs2[i].trashed && imgs2[i].selected) paths.push(imgs2[i].path); }
-      if (paths.length === 0) { toast('请先选中图片'); return; }
+      if (paths.length === 0) { toast('请先显示回收站并选中图片'); return; }
     }
     try {
       var res = await Store.restore(paths);
@@ -62,7 +62,7 @@
   }
 
   function onKeyDown(e) {
-    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return;
     if ((e.ctrlKey || e.metaKey) && e.key === 'a') {
       e.preventDefault(); Store.selectAll().then(refreshView);
     } else if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === 'A' || e.key === 'a')) {
@@ -79,12 +79,10 @@
   function init() {
     Masonry.init('masonry');
 
-    // toggle: 只更新统计 + 增量改 class，不重绘
     Store.onChange(function(st) {
       updateStats(st);
     });
 
-    // toggle 增量回调: 只改被点的卡片
     Store.onToggle(function(path, selected) {
       Masonry.setSelected(path, selected);
     });
@@ -102,22 +100,22 @@
     document.getElementById('btn-restore').addEventListener('click', handleRestore);
     document.getElementById('chk-show-trash').addEventListener('change', refreshView);
 
-    async function setupDirPicker() {
-      var host = document.getElementById('dir-picker');
-      if (!host || typeof DirPicker === 'undefined') return;
-      var picker = DirPicker.mount(host, {
-        mode: 'compact',
-        onChange: function () {
-          Store.load().then(function () {
-            updateStats();
-            refreshView();
-          }).catch(function (e) { toast('加载失败: ' + e.message); });
-        },
+    var sortSel = document.getElementById('sort-by');
+    if (sortSel) {
+      sortSel.value = Store.getSort();
+      sortSel.addEventListener('change', function () {
+        Store.setSort(sortSel.value);
+        refreshView();
       });
-      await picker.load('/api/dirs');
     }
 
-    // 列数滑块
+    DirPicker.onChange(function () {
+      Store.load().then(function () {
+        updateStats();
+        refreshView();
+      }).catch(function (e) { toast('加载失败: ' + e.message); });
+    });
+
     var colsSlider = document.getElementById('cols-slider');
     var colsLabel = document.getElementById('cols-label');
     var _manualCols = 0;
@@ -140,14 +138,11 @@
       var c = w >= 1600 ? 6 : w >= 1280 ? 5 : w >= 960 ? 4 : w >= 640 ? 3 : 2;
       Masonry.setColumns(c);
     }
-    // 初始先用自动，load 后再设
     _autoColumns();
 
     document.addEventListener('keydown', onKeyDown);
 
-    setupDirPicker().then(function () {
-      return Store.load();
-    }).then(function() {
+    Store.load().then(function() {
       updateStats();
       refreshView();
     }).catch(function(e) {

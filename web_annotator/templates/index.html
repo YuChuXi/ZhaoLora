@@ -10,11 +10,18 @@
 <nav class="app-tabs" id="app-tabs"></nav>
 
 <div class="toolbar">
-  <div class="dir-picker compact" id="dir-picker"></div>
-  <span class="sep"></span>
   <span class="stat">总计 <b id="stat-total">0</b></span>
   <span class="stat">已选 <b id="stat-selected">0</b></span>
   <span class="stat">回收站 <b id="stat-trashed">0</b></span>
+  <span class="sep"></span>
+  <label style="font-size:12px;color:var(--text-dim);display:flex;align-items:center;gap:4px;">
+    排序
+    <select id="sort-by">
+      <option value="name">名称</option>
+      <option value="aesthetic">美学</option>
+      <option value="pixels">像素</option>
+    </select>
+  </label>
   <span class="sep"></span>
   <button class="btn" id="btn-select-all" title="Ctrl+A">全选</button>
   <button class="btn" id="btn-deselect-all" title="Ctrl+Shift+A">取消全选</button>
@@ -37,8 +44,8 @@
 <div class="toast" id="toast"></div>
 <div class="hint">点击选中 · Delete 删除</div>
 
-<script src="/static/js/nav.js"></script>
 <script src="/static/js/dir_picker.js"></script>
+<script src="/static/js/nav.js"></script>
 <script src="/static/js/api.js"></script>
 <script src="/static/js/store.js"></script>
 <script src="/static/js/masonry.js"></script>

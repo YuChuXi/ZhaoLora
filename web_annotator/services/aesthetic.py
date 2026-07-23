@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
-import re
+import json
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -16,6 +16,7 @@ from services.wd14_batch import IMAGE_EXTS, list_image_subdirs, resolve_image_di
 
 _REPO_ROOT = Path(__file__).resolve().parents[1].parent
 _SCRIPT = _REPO_ROOT / "aesthetic_score_dataset_pony.py"
+SCORES_NAME = ".aesthetic_scores.json"
 
 _MOD = None
 _MODELS: dict[str, tuple] = {}
@@ -63,7 +64,6 @@ class AestheticProgress:
     ok: int = 0
     skipped: int = 0
     failed: int = 0
-    renamed: int = 0
     current: str = ""
     message: str = ""
     logs: list[str] = field(default_factory=list)
@@ -85,7 +85,6 @@ class AestheticProgress:
             "ok": self.ok,
             "skipped": self.skipped,
             "failed": self.failed,
-            "renamed": self.renamed,
             "current": self.current,
             "message": self.message,
             "logs": list(self.logs[-80:]),
@@ -99,6 +98,36 @@ class AestheticProgress:
             self.logs = self.logs[-300:]
 
 
+def scores_path(root: Path) -> Path:
+    return root.resolve() / SCORES_NAME
+
+
+def load_scores(root: Path) -> dict[str, float]:
+    path = scores_path(root)
+    if not path.is_file():
+        return {}
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(data, dict):
+        return {}
+    out: dict[str, float] = {}
+    for k, v in data.items():
+        key = str(k).replace("\\", "/").lstrip("/")
+        out[key] = float(v)
+    return out
+
+
+def save_scores(root: Path, scores: dict[str, float]) -> None:
+    path = scores_path(root)
+    clean = {
+        str(k).replace("\\", "/").lstrip("/"): round(float(v), 6)
+        for k, v in scores.items()
+    }
+    path.write_text(
+        json.dumps(clean, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+
 def _collect(dirs: list[Path]) -> list[tuple[Path, Path]]:
     items: list[tuple[Path, Path]] = []
     for d in dirs:
@@ -110,26 +139,11 @@ def _collect(dirs: list[Path]) -> list[tuple[Path, Path]]:
     return items
 
 
-def _rename_one(img_path: Path, raw: float) -> Path:
-    """按 {raw:.2f}_原名 重命名图片及同名 .txt；已有前缀则跳过。"""
-    old_stem = img_path.stem
-    if re.match(r"^\d+\.\d{2}_", old_stem):
-        return img_path
-    new_name = f"{raw:.2f}_{old_stem}{img_path.suffix}"
-    new_path = img_path.with_name(new_name)
-    img_path.rename(new_path)
-    txt_path = img_path.with_suffix(".txt")
-    if txt_path.is_file():
-        txt_path.rename(new_path.with_suffix(".txt"))
-    return new_path
-
-
 def run_aesthetic(
     dirs: list[Path],
     *,
     root: Path,
     device: str,
-    rename: bool,
     write_report: bool,
     progress: AestheticProgress,
 ) -> None:
@@ -140,14 +154,11 @@ def run_aesthetic(
     progress.ok = 0
     progress.skipped = 0
     progress.failed = 0
-    progress.renamed = 0
     progress.summary = {}
     progress.status = "running"
     progress.phase = "loading"
     progress.message = f"共 {len(items)} 张，加载模型…"
-    progress.log(
-        f"开始: dirs={[d.name for d in dirs]}, device={device}, rename={rename}, total={len(items)}"
-    )
+    progress.log(f"开始: dirs={[d.name for d in dirs]}, device={device}, total={len(items)}")
 
     if not items:
         progress.status = "done"
@@ -164,6 +175,7 @@ def run_aesthetic(
     progress.log(f"模型就绪 ({device})")
 
     results: list[dict] = []
+    score_map = load_scores(root)
 
     for i, (src, parent) in enumerate(items):
         if progress.cancel_requested:
@@ -171,6 +183,8 @@ def run_aesthetic(
             progress.phase = "done"
             progress.message = f"已取消 ({progress.ok} 完成)"
             progress.log(progress.message)
+            if results:
+                save_scores(root, score_map)
             return
 
         rel = f"{parent.name}/{src.name}" if parent != root else src.name
@@ -181,15 +195,10 @@ def run_aesthetic(
             img = Image.open(src)
             raw = float(mod.get_score(img, clip_model, preprocess, aesthetic_model, device))
             pony = int(mod.raw_to_pony(raw))
-            cur = src
-            if rename:
-                new_path = _rename_one(src, raw)
-                if new_path != src:
-                    progress.renamed += 1
-                    cur = new_path
-            rel_to_root = str(cur.resolve().relative_to(root))
+            rel_to_root = str(src.resolve().relative_to(root)).replace("\\", "/")
+            score_map[rel_to_root] = round(raw, 6)
             results.append({
-                "path": str(cur),
+                "path": str(src),
                 "rel_path": rel_to_root,
                 "raw": round(raw, 6),
                 "pony": pony,
@@ -202,6 +211,9 @@ def run_aesthetic(
             progress.done += 1
             progress.log(f"[{i + 1}/{len(items)}] 失败: {rel} — {e}")
             continue
+
+    save_scores(root, score_map)
+    progress.log(f"分数: {scores_path(root)}")
 
     if write_report and results:
         html_path = root / "aesthetic_report.html"
@@ -224,25 +236,24 @@ def run_aesthetic(
         "min": round(float(np.min(scores)), 4) if scores else 0.0,
         "max": round(float(np.max(scores)), 4) if scores else 0.0,
         "pony_counts": pony_counts,
-        "renamed": progress.renamed,
+        "scores_file": str(scores_path(root)),
     }
     progress.status = "done"
     progress.phase = "done"
     progress.current = ""
-    progress.message = (
-        f"完成 {progress.ok} 张"
-        + (f"，重命名 {progress.renamed}" if rename else "")
-        + f"，均值 {progress.summary['mean']}"
-    )
+    progress.message = f"完成 {progress.ok} 张，均值 {progress.summary['mean']}"
     progress.log(progress.message)
 
 
-# 供路由复用
 __all__ = [
     "AestheticProgress",
+    "SCORES_NAME",
     "cuda_available",
     "default_device",
     "list_image_subdirs",
+    "load_scores",
     "resolve_image_dirs",
     "run_aesthetic",
+    "save_scores",
+    "scores_path",
 ]

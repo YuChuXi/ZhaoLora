@@ -4,7 +4,6 @@
 (function () {
   'use strict';
 
-  var _picker = null;
   var _pollTimer = null;
   var _toastTimer = null;
   var _lastReportMtime = null;
@@ -26,19 +25,15 @@
     return res.json();
   }
 
-  function selectedDirNames() {
-    return _picker ? _picker.selected() : DirPicker.loadSaved();
+  function currentDirs() {
+    return DirPicker.getDirs();
   }
-
 
   function setRunningUi(running) {
     document.getElementById('btn-start').disabled = running;
     document.getElementById('btn-cancel').disabled = !running;
     document.getElementById('device').disabled = running;
-    document.getElementById('chk-rename').disabled = running;
-    document.getElementById('btn-all').disabled = running;
-    document.getElementById('btn-none').disabled = running;
-    if (_picker) _picker.setDisabled(running);
+    DirPicker.setDisabled(running);
   }
 
   function showReport(url, mtime) {
@@ -82,7 +77,6 @@
     document.getElementById('m-done').textContent = String(done);
     document.getElementById('m-total').textContent = String(total);
     document.getElementById('m-ok').textContent = String(s.ok || 0);
-    document.getElementById('m-renamed').textContent = String(s.renamed || 0);
     document.getElementById('m-fail').textContent = String(s.failed || 0);
     document.getElementById('m-current').textContent = s.current
       ? ('当前: ' + s.current)
@@ -97,14 +91,8 @@
     }[s.status] || s.status;
     document.getElementById('stat-status').textContent = label + (s.message ? ' · ' + s.message : '');
 
-    if (s.status === 'done' && s.report_ready) {
+    if ((s.status === 'done' || s.status === 'idle') && s.report_ready) {
       showReport(s.report_url || '/api/aesthetic/report', s.report_mtime);
-    } else if (s.status === 'idle' && s.report_ready) {
-      showReport(s.report_url || '/api/aesthetic/report', s.report_mtime);
-    } else if (s.status === 'running') {
-      // 运行中保留旧报告，不打断查看
-    } else if (s.status === 'error' || s.status === 'cancelled') {
-      // 保持现有报告
     }
 
     setRunningUi(s.status === 'running');
@@ -135,22 +123,19 @@
     }, 300);
   }
 
-  async function loadDirs() {
-    _picker = DirPicker.mount(document.getElementById('dir-list'), {});
-    var data = await _picker.load('/api/aesthetic/dirs');
-
+  async function initDevice() {
+    var data = await api('/api/aesthetic/dirs');
     var sel = document.getElementById('device');
     sel.value = 'cpu';
     var cudaOpt = sel.querySelector('option[value="cuda"]');
     if (cudaOpt) cudaOpt.disabled = !data.cuda;
-
     if (data.report_ready) {
       showReport(data.report_url || '/api/aesthetic/report', Date.now());
     }
   }
 
   async function startJob() {
-    var dirs = selectedDirNames();
+    var dirs = currentDirs();
     if (!dirs.length) {
       toast('请选择目录');
       return;
@@ -158,7 +143,6 @@
     var body = {
       dirs: dirs,
       device: document.getElementById('device').value,
-      rename: document.getElementById('chk-rename').checked,
       write_report: true
     };
     var data = await api('/api/aesthetic/start', {
@@ -173,15 +157,9 @@
 
   async function cancelJob() {
     await api('/api/aesthetic/cancel', { method: 'POST' });
-    toast('取消中…');
+    toast('正在取消…');
   }
 
-  document.getElementById('btn-all').addEventListener('click', function () {
-    if (_picker) _picker.setAll(true);
-  });
-  document.getElementById('btn-none').addEventListener('click', function () {
-    if (_picker) _picker.setAll(false);
-  });
   document.getElementById('btn-start').addEventListener('click', function () {
     startJob().catch(function (e) { toast(String(e.message || e)); });
   });
@@ -189,7 +167,7 @@
     cancelJob().catch(function (e) { toast(String(e.message || e)); });
   });
 
-  loadDirs()
+  initDevice()
     .then(function () { return api('/api/aesthetic/status'); })
     .then(function (s) {
       applyStatus(s);

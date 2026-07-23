@@ -7,13 +7,21 @@
 from __future__ import annotations
 
 import hashlib
+import os
+from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
-from PIL import Image
+from PIL import Image, UnidentifiedImageError
 
 THUMB_DIRNAME = ".thumbnails"
 DEFAULT_SIZE = 400  # 长边像素
 DEFAULT_QUALITY = 50  # AVIF 质量 (0-100)
+
+
+def default_workers() -> int:
+    """按 CPU 核数选取线程池大小。"""
+    return max(1, min(16, (os.cpu_count() or 4)))
 
 
 class Thumbnailer:
@@ -53,9 +61,14 @@ class Thumbnailer:
 
     def generate(self, image_rel_path: str, *, src: Path | None = None) -> bool:
         """
-        生成 AVIF 缩略图。已存在则跳过。返回是否成功。
+        生成 AVIF 缩略图。已存在则跳过。
 
-        失败场景（损坏图片等）返回 False，不抛异常。
+        Args:
+            image_rel_path: 相对数据集根的图片路径。
+            src: 可选源文件路径（如回收站内实际文件）。
+
+        Returns:
+            是否成功。源文件缺失或解码失败时返回 False。
         """
         thumb_path = self.get_path(image_rel_path)
         if thumb_path.exists():
@@ -75,5 +88,46 @@ class Thumbnailer:
                 img = img.resize(new_size, Image.LANCZOS)
             img.save(thumb_path, format="AVIF", quality=self.quality)
             return True
-        except Exception:
+        except (OSError, UnidentifiedImageError, ValueError):
             return False
+
+    def generate_many(
+        self,
+        image_rel_paths: list[str],
+        *,
+        workers: int | None = None,
+        on_progress: Callable[[int, int], None] | None = None,
+    ) -> tuple[int, int]:
+        """
+        并行生成多张缩略图。
+
+        Args:
+            image_rel_paths: 相对路径列表。
+            workers: 线程数；默认按 CPU 核数自动选取。
+            on_progress: 可选回调 ``(done, total)``，每完成一张调用一次。
+
+        Returns:
+            ``(成功数, 总数)``。
+        """
+        paths = list(image_rel_paths)
+        total = len(paths)
+        if total == 0:
+            return 0, 0
+
+        workers = workers or default_workers()
+        ok = 0
+        done = 0
+
+        def _one(rel: str) -> bool:
+            return self.generate(rel)
+
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futs = [pool.submit(_one, rel) for rel in paths]
+            for fut in as_completed(futs):
+                if fut.result():
+                    ok += 1
+                done += 1
+                if on_progress is not None:
+                    on_progress(done, total)
+
+        return ok, total

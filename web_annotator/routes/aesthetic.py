@@ -72,7 +72,6 @@ def rewrite_report_html(html: str) -> str:
 class StartBody(BaseModel):
     dirs: list[str] = Field(default_factory=list)
     device: str = Field(default="cpu")
-    rename: bool = True
     write_report: bool = True
 
 
@@ -138,7 +137,6 @@ def aesthetic_start(request: Request, body: StartBody):
                     selected,
                     root=root,
                     device=device,
-                    rename=body.rename,
                     write_report=True,
                     progress=prog,
                 )
@@ -154,7 +152,6 @@ def aesthetic_start(request: Request, body: StartBody):
         "ok": True,
         "dirs": [p.name if p != root else "." for p in selected],
         "device": device,
-        "rename": body.rename,
         "status": prog.snapshot(),
     }
 

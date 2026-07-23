@@ -1,11 +1,10 @@
 /**
- * similar_hover.js —— 悬停后在卡片旁浮出瀑布流，点击跳转
+ * similar_hover.js —— 悬停卡片旁显示色调相似图瀑布流，点击跳转
  */
 var SimilarHover = (function () {
   'use strict';
 
   var HOVER_DELAY = 900;
-  var HIDE_DELAY = 80; // 仅留给「卡片→浮层」的缝隙，离开后尽快关
   var LIMIT = 12;
   var GAP = 8;
   var PAD = 10;
@@ -15,10 +14,14 @@ var SimilarHover = (function () {
   var _anchorPath = '';
   var _anchorCard = null;
   var _hoverTimer = null;
-  var _hideTimer = null;
   var _cache = {};
   var _reqSeq = 0;
+  var _catalogSig = '';
 
+  /**
+   * 创建并返回悬浮面板 DOM（单例）。
+   * @returns {HTMLElement}
+   */
   function ensurePanel() {
     if (_panel) return _panel;
     _panel = document.createElement('div');
@@ -35,71 +38,85 @@ var SimilarHover = (function () {
       e.stopPropagation();
       hide();
     });
-    _panel.addEventListener('mouseenter', function () {
-      clearTimeout(_hideTimer);
-    });
     _panel.addEventListener('mouseleave', onLeavePanel);
     return _panel;
   }
 
-  function scheduleHide() {
-    clearTimeout(_hideTimer);
-    _hideTimer = setTimeout(hide, HIDE_DELAY);
+  /**
+   * 判断事件目标是否仍在锚定卡片或悬浮面板内。
+   * @param {EventTarget|null} target
+   * @returns {boolean}
+   */
+  function isInsideHoverZone(target) {
+    if (!target || target.nodeType !== 1) return false;
+    if (_panel && _panel.contains(target)) return true;
+    if (_anchorCard && _anchorCard.contains(target)) return true;
+    return false;
   }
 
-  function onLeaveCard() {
+  /**
+   * 鼠标离开主列表卡片：若未进入悬浮面板则立即关闭。
+   * @param {MouseEvent} e
+   */
+  function onLeaveCard(e) {
     clearTimeout(_hoverTimer);
-    // 浮层已开：短延迟方便移入；未开：立刻取消待显示
-    if (_panel && _panel.classList.contains('show')) {
-      scheduleHide();
-      return;
-    }
+    if (isInsideHoverZone(e.relatedTarget)) return;
     hide();
   }
 
+  /**
+   * 鼠标离开悬浮面板：若未回到锚定卡片则立即关闭。
+   * @param {MouseEvent} e
+   */
   function onLeavePanel(e) {
     clearTimeout(_hoverTimer);
-    if (_anchorCard && e.relatedTarget && _anchorCard.contains(e.relatedTarget)) {
-      scheduleHide();
-      return;
-    }
+    if (isInsideHoverZone(e.relatedTarget)) return;
     hide();
   }
 
+  /**
+   * 关闭悬浮面板并清除锚定状态。
+   */
   function hide() {
     clearTimeout(_hoverTimer);
-    clearTimeout(_hideTimer);
+    _hoverTimer = null;
     _anchorPath = '';
     _anchorCard = null;
     if (_panel) _panel.classList.remove('show');
   }
 
+  /**
+   * 按视口计算面板宽度、最大高度与列数。
+   * @returns {{width: number, maxH: number, cols: number}}
+   */
   function panelMetrics() {
     var vw = window.innerWidth;
     var vh = window.innerHeight;
-    // 悬浮面板：约半屏宽，高度可滚
     var width = Math.min(560, Math.max(360, Math.floor(vw * 0.38)));
     var maxH = Math.min(640, Math.floor(vh * 0.78));
     var cols = width >= 480 ? 3 : 2;
     return { width: width, maxH: maxH, cols: cols };
   }
 
+  /**
+   * 将面板贴靠到卡片边缘（间距为 0，便于 mouseleave.relatedTarget 正确进入面板）。
+   * @param {HTMLElement} card
+   */
   function positionNear(card) {
     ensurePanel();
     var m = panelMetrics();
     var rect = card.getBoundingClientRect();
     var pw = m.width;
     var ph = Math.min(m.maxH, _panel.offsetHeight || 420);
-    var gap = 12;
-    var left = rect.right + gap;
+    var left = rect.right;
     var top = rect.top;
 
     if (left + pw > window.innerWidth - 10) {
-      left = rect.left - pw - gap;
+      left = rect.left - pw;
     }
     if (left < 10) {
       left = Math.max(10, Math.round((window.innerWidth - pw) / 2));
-      top = rect.bottom + gap;
+      top = rect.bottom;
     }
     if (top + ph > window.innerHeight - 10) {
       top = Math.max(10, window.innerHeight - ph - 10);
@@ -112,6 +129,10 @@ var SimilarHover = (function () {
     _panel.style.top = Math.round(top) + 'px';
   }
 
+  /**
+   * @param {string} path
+   * @returns {boolean}
+   */
   function isSelected(path) {
     var all = Store.getAll();
     for (var i = 0; i < all.length; i++) {
@@ -120,6 +141,10 @@ var SimilarHover = (function () {
     return false;
   }
 
+  /**
+   * @param {string} path
+   * @returns {boolean}
+   */
   function isAlive(path) {
     var all = Store.getAll();
     for (var i = 0; i < all.length; i++) {
@@ -128,6 +153,11 @@ var SimilarHover = (function () {
     return false;
   }
 
+  /**
+   * 过滤已删除项。
+   * @param {Array<{path: string}>} list
+   * @returns {Array<{path: string}>}
+   */
   function filterAlive(list) {
     var out = [];
     for (var i = 0; i < list.length; i++) {
@@ -136,6 +166,9 @@ var SimilarHover = (function () {
     return out;
   }
 
+  /**
+   * 同步悬浮面板内卡片的选中态。
+   */
   function syncSelectedInPanel() {
     if (!_panel || !_panel.classList.contains('show')) return;
     var cards = _panel.querySelectorAll('.similar-float-card');
@@ -146,26 +179,24 @@ var SimilarHover = (function () {
     }
   }
 
+  /**
+   * 在面板内按瀑布流排布相似图列表。
+   * @param {Array<object>} list
+   */
   function layoutMasonry(list) {
     var body = document.getElementById('similar-float-body');
     var m = panelMetrics();
-    body.innerHTML = '';
-
-    if (!list.length) {
-      body.innerHTML = '<div class="similar-float-empty">暂无相似图</div>';
-      body.style.height = '80px';
-      return;
-    }
-
     list = filterAlive(list);
+
     if (!list.length) {
       body.innerHTML = '<div class="similar-float-empty">暂无相似图</div>';
       body.style.height = '80px';
       return;
     }
 
+    body.innerHTML = '';
     var cols = m.cols;
-    var innerW = m.width - 20; // panel padding
+    var innerW = m.width - 20;
     var cw = (innerW - PAD * 2 - GAP * (cols - 1)) / cols;
     var heights = [];
     for (var c0 = 0; c0 < cols; c0++) heights.push(0);
@@ -222,6 +253,12 @@ var SimilarHover = (function () {
     body.style.height = Math.max(120, viewH) + 'px';
   }
 
+  /**
+   * 为指定卡片拉取并展示相似图。
+   * @param {string} path
+   * @param {HTMLElement} card
+   * @returns {Promise<void>}
+   */
   async function showFor(path, card) {
     ensurePanel();
     _anchorPath = path;
@@ -235,16 +272,9 @@ var SimilarHover = (function () {
     var seq = ++_reqSeq;
     var list = _cache[path];
     if (!list) {
-      try {
-        var data = await API.similarImages(path, LIMIT);
-        list = filterAlive(data.similar || []);
-        _cache[path] = list;
-      } catch (e) {
-        if (_anchorPath === path && seq === _reqSeq) {
-          body.innerHTML = '<div class="similar-float-empty">加载失败</div>';
-        }
-        return;
-      }
+      var data = await API.similarImages(path, LIMIT);
+      list = filterAlive(data.similar || []);
+      _cache[path] = list;
     } else {
       list = filterAlive(list);
     }
@@ -252,22 +282,92 @@ var SimilarHover = (function () {
 
     layoutMasonry(list);
     positionNear(card);
-    requestAnimationFrame(function () {
-      if (_anchorPath !== path || seq !== _reqSeq) return;
-      layoutMasonry(list);
-      positionNear(card);
-    });
   }
 
+  /**
+   * 绑定主列表卡片的悬停显示逻辑。
+   * @param {HTMLElement} card
+   * @param {string} path
+   */
   function bindCard(card, path) {
     card.addEventListener('mouseenter', function () {
-      clearTimeout(_hideTimer);
       clearTimeout(_hoverTimer);
+      if (_anchorPath && _anchorPath !== path) hide();
       _hoverTimer = setTimeout(function () {
-        showFor(path, card);
+        showFor(path, card).catch(function (err) {
+          if (_anchorPath === path) hide();
+          console.error(err);
+        });
       }, HOVER_DELAY);
     });
     card.addEventListener('mouseleave', onLeaveCard);
+  }
+
+  /**
+   * 目录存活签名（未删除数:已删除数），用于判断是否需要清缓存。
+   * @returns {string}
+   */
+  function catalogSig() {
+    var live = 0;
+    var trash = 0;
+    var all = Store.getAll();
+    for (var i = 0; i < all.length; i++) {
+      if (all[i].trashed) trash++;
+      else live++;
+    }
+    return live + ':' + trash;
+  }
+
+  /**
+   * 在主列表中查找仍存在的卡片 DOM。
+   * @param {string} path
+   * @returns {HTMLElement|null}
+   */
+  function findMainCard(path) {
+    var root = document.getElementById('masonry');
+    if (!root) return null;
+    var cards = root.querySelectorAll('.card');
+    for (var i = 0; i < cards.length; i++) {
+      if (cards[i].dataset.path === path) return cards[i];
+    }
+    return null;
+  }
+
+  /**
+   * Store 变更：同步选中态；目录变化时清缓存并刷新当前浮层。
+   */
+  function onStoreChange() {
+    syncSelectedInPanel();
+    var sig = catalogSig();
+    if (sig === _catalogSig) return;
+    _catalogSig = sig;
+    _cache = {};
+    if (!_panel || !_panel.classList.contains('show') || !_anchorPath) return;
+
+    var keepPath = _anchorPath;
+    queueMicrotask(function () {
+      var still = null;
+      var all = Store.getAll();
+      for (var i = 0; i < all.length; i++) {
+        if (all[i].path === keepPath && !all[i].trashed) {
+          still = all[i];
+          break;
+        }
+      }
+      if (!still) {
+        hide();
+        return;
+      }
+      var card = findMainCard(keepPath);
+      if (!card) {
+        hide();
+        return;
+      }
+      showFor(keepPath, card).catch(function (err) {
+        hide();
+        console.error(err);
+      });
+    });
   }
 
   window.addEventListener('scroll', function (e) {
@@ -284,50 +384,9 @@ var SimilarHover = (function () {
     if (_panel && _panel.classList.contains('show')) hide();
   });
 
-  // 主列表变化：同步勾选；目录变化（删除/恢复）清缓存并刷新浮层
-  if (typeof Store !== 'undefined') {
-    var _catalogSig = '';
-    function catalogSig() {
-      var live = 0, trash = 0;
-      var all = Store.getAll();
-      for (var i = 0; i < all.length; i++) {
-        if (all[i].trashed) trash++;
-        else live++;
-      }
-      return live + ':' + trash;
-    }
-    function onStoreChange() {
-      syncSelectedInPanel();
-      var sig = catalogSig();
-      if (sig === _catalogSig) return;
-      _catalogSig = sig;
-      _cache = {};
-      if (!_panel || !_panel.classList.contains('show') || !_anchorPath) return;
-      var keepPath = _anchorPath;
-      // 等主列表 re-render 完成后再刷新浮层
-      setTimeout(function () {
-        var still = null;
-        var all = Store.getAll();
-        for (var i = 0; i < all.length; i++) {
-          if (all[i].path === keepPath && !all[i].trashed) { still = all[i]; break; }
-        }
-        if (!still) { hide(); return; }
-        var card = null;
-        var root = document.getElementById('masonry');
-        if (root) {
-          var cards = root.querySelectorAll('.card');
-          for (var j = 0; j < cards.length; j++) {
-            if (cards[j].dataset.path === keepPath) { card = cards[j]; break; }
-          }
-        }
-        if (!card) { hide(); return; }
-        showFor(keepPath, card);
-      }, 0);
-    }
-    _catalogSig = catalogSig();
-    Store.onToggle(function () { syncSelectedInPanel(); });
-    Store.onChange(onStoreChange);
-  }
+  _catalogSig = catalogSig();
+  Store.onToggle(function () { syncSelectedInPanel(); });
+  Store.onChange(onStoreChange);
 
   return {
     bindCard: bindCard,

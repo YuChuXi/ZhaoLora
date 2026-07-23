@@ -4,7 +4,6 @@
 (function () {
   'use strict';
 
-  var _picker = null;
   var _pollTimer = null;
   var _toastTimer = null;
 
@@ -25,20 +24,13 @@
     return res.json();
   }
 
-  function selectedDirNames() {
-    return _picker ? _picker.selected() : DirPicker.loadSaved();
-  }
-
-
   function setRunningUi(running) {
     document.getElementById('btn-start').disabled = running;
     document.getElementById('btn-cancel').disabled = !running;
     document.getElementById('threshold').disabled = running;
     document.getElementById('chk-disable-orig').disabled = running;
     document.getElementById('chk-force').disabled = running;
-    document.getElementById('btn-all').disabled = running;
-    document.getElementById('btn-none').disabled = running;
-    if (_picker) _picker.setDisabled(running);
+    DirPicker.setDisabled(running);
   }
 
   function applyStatus(s) {
@@ -106,17 +98,15 @@
     }, 300);
   }
 
-  async function loadDirs() {
-    _picker = DirPicker.mount(document.getElementById('dir-list'), {});
-    var data = await _picker.load('/api/tagging/dirs');
-
+  async function initModel() {
+    var data = await api('/api/tagging/dirs');
     var info = document.getElementById('model-info');
     var warn = document.getElementById('model-warn');
     if (data.model_ready) {
       info.textContent = '模型就绪';
       warn.hidden = true;
     } else {
-      info.textContent = '模型缺失';
+      info.textContent = '模型未就绪';
       warn.hidden = false;
       warn.textContent = data.model_path || '未找到模型';
       document.getElementById('btn-start').disabled = true;
@@ -127,14 +117,14 @@
   }
 
   async function startJob() {
-    var dirs = selectedDirNames();
+    var dirs = DirPicker.getDirs();
     if (!dirs.length) {
       toast('请选择目录');
       return;
     }
     var threshold = parseFloat(document.getElementById('threshold').value);
     if (!(threshold >= 0 && threshold <= 1)) {
-      toast('置信度无效');
+      toast('置信度须在 0～1');
       return;
     }
     var body = {
@@ -155,15 +145,9 @@
 
   async function cancelJob() {
     await api('/api/tagging/cancel', { method: 'POST' });
-    toast('取消中…');
+    toast('正在取消…');
   }
 
-  document.getElementById('btn-all').addEventListener('click', function () {
-    if (_picker) _picker.setAll(true);
-  });
-  document.getElementById('btn-none').addEventListener('click', function () {
-    if (_picker) _picker.setAll(false);
-  });
   document.getElementById('btn-start').addEventListener('click', function () {
     startJob().catch(function (e) { toast(String(e.message || e)); });
   });
@@ -171,7 +155,7 @@
     cancelJob().catch(function (e) { toast(String(e.message || e)); });
   });
 
-  loadDirs()
+  initModel()
     .then(function () { return api('/api/tagging/status'); })
     .then(function (s) {
       applyStatus(s);

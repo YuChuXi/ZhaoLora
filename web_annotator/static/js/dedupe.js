@@ -10,7 +10,6 @@
   var _previewMembers = [];
   var _previewIdx = 0;
   var _previewOpen = false;
-  var _picker = null;
 
   function toast(msg) {
     var el = document.getElementById('toast');
@@ -32,22 +31,7 @@
   }
 
   function getDirs() {
-    return _picker ? _picker.selected() : DirPicker.loadSaved();
-  }
-
-  async function setupDirPicker() {
-    var host = document.getElementById('dir-picker');
-    _picker = DirPicker.mount(host, {
-      mode: 'compact',
-      onChange: function () {
-        _groups = [];
-        _selected = {};
-        document.getElementById('dedupe-main').innerHTML =
-          '<div class="dedupe-empty">目录已切换</div>';
-        updateStats();
-      },
-    });
-    await _picker.load('/api/dedupe/dirs');
+    return DirPicker.getDirs();
   }
 
   function thumbUrl(h) { return '/thumb/' + h + '.avif'; }
@@ -243,7 +227,7 @@
       var data = await api('/api/dedupe/scan', {
         method: 'POST',
         body: JSON.stringify({
-          dirs: getDirs(),
+          dirs: dirs,
           mse_threshold: mse,
           similar_res_ratio: ratio
         }),
@@ -344,6 +328,12 @@
     }
   });
 
-  setupDirPicker().catch(function (e) { toast(String(e.message || e)); });
+  DirPicker.onChange(function () {
+    _groups = [];
+    _selected = {};
+    document.getElementById('dedupe-main').innerHTML =
+      '<div class="dedupe-empty">目录已切换</div>';
+    updateStats();
+  });
   updateStats();
 })();
