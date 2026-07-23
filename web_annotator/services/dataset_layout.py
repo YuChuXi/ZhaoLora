@@ -21,9 +21,11 @@ from pathlib import Path
 RESERVED_DIR_NAMES = frozenset({
     "main",
     "mask",
-    "crops",       # 未命名选区兜底
+    "crops",              # 未命名选区兜底
+    "aesthetic_report",   # 美学报告
     ".trash",
     ".thumbs",
+    ".thumbnails",
     "__pycache__",
 })
 

@@ -2,8 +2,8 @@
 状态管理器 —— 读写 .annotator_state.json，管理选中/回收站状态。
 
 隔离设计：
-  - 状态文件与数据目录并列，不修改原始文件
-  - 删除操作将文件移入 .trash/ 目录（物理隔离）
+  - 状态与回收站放在数据集根（meta_dir），不污染 main/
+  - 删除操作将文件移入 .trash/（物理隔离）
   - 状态为 {selected: {path: timestamp}, trashed: {path: timestamp}}
 """
 
@@ -21,10 +21,12 @@ TRASH_DIRNAME = ".trash"
 class StateManager:
     """管理标注状态和回收站操作。"""
 
-    def __init__(self, data_dir: Path) -> None:
+    def __init__(self, data_dir: Path, *, meta_dir: Path | None = None) -> None:
         self.data_dir = data_dir
-        self.state_path = data_dir / STATE_FILENAME
-        self.trash_dir = data_dir / TRASH_DIRNAME
+        meta = meta_dir or data_dir
+        self.meta_dir = meta
+        self.state_path = meta / STATE_FILENAME
+        self.trash_dir = meta / TRASH_DIRNAME
 
     # ---- state file I/O ----
 

@@ -1,5 +1,5 @@
 """
-缩略图生成器 —— AVIF 格式，按需生成，缓存到 .thumbnails/。
+缩略图生成器 —— AVIF 格式，按需生成，缓存到数据集根 .thumbnails/。
 
 依赖: Pillow (内置 AVIF 编码支持)
 """
@@ -19,9 +19,16 @@ DEFAULT_QUALITY = 50  # AVIF 质量 (0-100)
 class Thumbnailer:
     """AVIF 缩略图管理器。"""
 
-    def __init__(self, data_dir: Path, size: int = DEFAULT_SIZE, quality: int = DEFAULT_QUALITY) -> None:
+    def __init__(
+        self,
+        data_dir: Path,
+        size: int = DEFAULT_SIZE,
+        quality: int = DEFAULT_QUALITY,
+        *,
+        meta_dir: Path | None = None,
+    ) -> None:
         self.data_dir = data_dir
-        self.thumb_dir = data_dir / THUMB_DIRNAME
+        self.thumb_dir = (meta_dir or data_dir) / THUMB_DIRNAME
         self.size = size
         self.quality = quality
         self.thumb_dir.mkdir(parents=True, exist_ok=True)

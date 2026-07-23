@@ -59,7 +59,14 @@ class Tags:
 
 
 # 打标页不列出这些目录（mask 是 alpha，非待打标图）
-_SKIP_TAG_DIRS = frozenset({"mask", ".trash", ".thumbs", "__pycache__"})
+_SKIP_TAG_DIRS = frozenset({
+    "mask",
+    "aesthetic_report",
+    ".trash",
+    ".thumbs",
+    ".thumbnails",
+    "__pycache__",
+})
 
 
 def list_image_subdirs(root: Path) -> list[dict]:

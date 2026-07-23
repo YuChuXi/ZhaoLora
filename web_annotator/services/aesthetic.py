@@ -204,9 +204,7 @@ def run_aesthetic(
             continue
 
     if write_report and results:
-        out_dir = root / "aesthetic_report"
-        out_dir.mkdir(parents=True, exist_ok=True)
-        html_path = out_dir / "aesthetic_report.html"
+        html_path = root / "aesthetic_report.html"
         mod.generate_html(results, root.name, str(html_path), str(root))
         progress.log(f"报告: {html_path}")
         progress.summary["report"] = str(html_path)

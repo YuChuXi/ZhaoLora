@@ -41,6 +41,46 @@ from routes.dedupe import router as dedupe_router
 
 app = FastAPI(title="Image Annotator", version="2.2.0")
 
+
+def _migrate_meta_to_root(main_dir: Path, root: Path) -> None:
+    """将误放在 main/ 下的元数据迁到数据集根。"""
+    import shutil
+
+    pairs = [
+        (main_dir / ".thumbnails", root / ".thumbnails"),
+        (main_dir / ".trash", root / ".trash"),
+        (main_dir / ".annotator_state.json", root / ".annotator_state.json"),
+    ]
+    for old, new in pairs:
+        if not old.exists():
+            continue
+        if not new.exists():
+            shutil.move(str(old), str(new))
+            print(f"已迁移: {old.name} → {root}/")
+            continue
+        # 目标已有：合并目录内容后删除旧目录
+        if old.is_dir() and new.is_dir():
+            for child in old.iterdir():
+                dest = new / child.name
+                if not dest.exists():
+                    shutil.move(str(child), str(dest))
+            shutil.rmtree(old, ignore_errors=True)
+            print(f"已合并迁移: {old.name} → {root}/")
+        elif old.is_file() and new.is_file():
+            # 保留根目录已有状态，删除 main 下旧文件避免双份
+            old.unlink(missing_ok=True)
+            print(f"已清理重复: {old}")
+
+    # 旧版套层目录 → 根目录单文件
+    for nested in (main_dir / "aesthetic_report", root / "aesthetic_report"):
+        html = nested / "aesthetic_report.html"
+        dest = root / "aesthetic_report.html"
+        if html.is_file() and not dest.exists():
+            shutil.move(str(html), str(dest))
+            print(f"已迁移: aesthetic_report.html → {root}/")
+        if nested.is_dir():
+            shutil.rmtree(nested, ignore_errors=True)
+
 static_dir = Path(__file__).parent / "static"
 if static_dir.is_dir():
     app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
@@ -144,12 +184,18 @@ def main() -> int:
         print(f"错误: {e}")
         return 1
 
-    # data_dir = main（图片所在目录）；layout.root = 数据集根
+    # data_dir = main（图片所在目录）；layout.root = 数据集根（元数据放根目录）
+    _migrate_meta_to_root(layout.main_dir, layout.root)
+
     app.state.layout = layout
     app.state.dataset_root = layout.root
     app.state.data_dir = layout.main_dir
-    app.state.thumbnailer = Thumbnailer(layout.main_dir, size=args.thumbnail_size)
-    app.state.state_manager = StateManager(layout.main_dir)
+    app.state.thumbnailer = Thumbnailer(
+        layout.main_dir,
+        size=args.thumbnail_size,
+        meta_dir=layout.root,
+    )
+    app.state.state_manager = StateManager(layout.main_dir, meta_dir=layout.root)
 
     mask_dir = Path(args.mask_dir).resolve() if args.mask_dir else layout.mask_dir
     mask_dir.mkdir(parents=True, exist_ok=True)
