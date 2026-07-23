@@ -198,6 +198,7 @@ def similar_images(
 
     out = []
     for sim_rel, dist in hits:
+        thumbnailer.ensure(sim_rel)
         w, h = _image_size(root / sim_rel)
         out.append({
             "path": sim_rel,

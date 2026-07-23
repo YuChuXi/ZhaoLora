@@ -247,13 +247,13 @@ def main() -> int:
     if not args.skip_thumbnails:
         missing = [img for img in images if not app.state.thumbnailer.exists(img["path"])]
         if missing:
-            print(f"预生成缩略图: {len(missing)} 张（含全部子目录）...")
+            print(f"预生成缩略图: {len(missing)} 张...")
             for i, img in enumerate(missing):
                 app.state.thumbnailer.generate(img["path"])
                 if (i + 1) % 50 == 0 or i == len(missing) - 1:
                     print(f"  {i + 1}/{len(missing)}")
         else:
-            print("缩略图缓存完整，跳过预生成")
+            print("缩略图已就绪")
 
     # 后台预热色调索引（用缩略图，不挡启动）
     def _prewarm_color():
@@ -277,7 +277,7 @@ def main() -> int:
     print(f"已选待删 : {len(state.get('selected', {}))}")
     print(f"回收站内 : {len(state.get('trashed', {}))}")
     print(f"服务地址 : http://{args.host}:{args.port}")
-    print(f"  筛选 /filter · 去重 · 裁剪 · 蒙版 · 美学 · 打标 · 标签 · 就绪")
+    print("  筛选 · 去重 · 裁剪 · 蒙版 · 美学 · 打标 · 标签 · 就绪")
 
     uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
     return 0

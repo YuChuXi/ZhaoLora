@@ -77,7 +77,7 @@
       : (Math.min(100, Math.round(pct)) + '%');
     document.getElementById('progress-meta-line').textContent = s.current
       ? s.current
-      : (s.message || '等待开始');
+      : (s.message || '待命');
 
     document.getElementById('m-done').textContent = String(done);
     document.getElementById('m-total').textContent = String(total);
@@ -173,7 +173,7 @@
 
   async function cancelJob() {
     await api('/api/aesthetic/cancel', { method: 'POST' });
-    toast('正在取消…');
+    toast('取消中…');
   }
 
   document.getElementById('btn-all').addEventListener('click', function () {

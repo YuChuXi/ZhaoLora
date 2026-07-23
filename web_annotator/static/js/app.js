@@ -31,18 +31,18 @@
   async function handleApplyDelete() {
     var st = Store.stats();
     if (st.selNotTrashed === 0) { toast('未选择图片'); return; }
-    if (!confirm('将 ' + st.selNotTrashed + ' 张移入回收站？')) return;
+    if (!confirm('删除 ' + st.selNotTrashed + ' 张到回收站？')) return;
     try {
       var res = await Store.applyDelete();
       refreshView();
-      toast('已移入回收站 ' + res.moved + ' 张');
+      toast('已删除 ' + res.moved + ' 张');
     } catch (e) { toast('删除失败'); }
   }
 
   async function handleRestore() {
     var st = Store.stats();
     if (st.trashed === 0) { toast('回收站为空'); return; }
-    var restoreAll = confirm('恢复全部回收站图片？\n确定 = 全部 · 取消 = 仅选中项');
+    var restoreAll = confirm('恢复全部？\n确定 = 全部 · 取消 = 仅选中');
     var paths;
     if (restoreAll) {
       paths = [];
@@ -52,7 +52,7 @@
       paths = [];
       var imgs2 = Store.getAll();
       for (var i = 0; i < imgs2.length; i++) { if (imgs2[i].trashed && imgs2[i].selected) paths.push(imgs2[i].path); }
-      if (paths.length === 0) { toast('请先显示回收站并选中图片'); return; }
+      if (paths.length === 0) { toast('请先选中图片'); return; }
     }
     try {
       var res = await Store.restore(paths);

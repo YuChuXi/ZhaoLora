@@ -60,6 +60,11 @@ var Masonry = (function() {
     imgEl.src = API.thumbnailUrl(img.thumbnail_hash);
     imgEl.loading = 'lazy';
     imgEl.alt = img.stem;
+    imgEl.addEventListener('error', function () {
+      if (imgEl.dataset.fallback) return;
+      imgEl.dataset.fallback = '1';
+      imgEl.src = API.imageUrl(img.path);
+    });
     card.appendChild(imgEl);
 
     var info = document.createElement('div');

@@ -151,12 +151,12 @@
       '样本 ' + data.sample_count + ' · 标签 ' + data.tag_count +
       ' · 目录 ' + (data.dirs || []).join(', ');
     renderTable();
-    toast('完成：' + data.tag_count + ' 个标签');
+    toast('完成 ' + data.tag_count + ' 个');
   }
 
   function copyText(text) {
     if (!text) {
-      toast('没有可复制内容');
+      toast('无可复制内容');
       return;
     }
     if (navigator.clipboard && navigator.clipboard.writeText) {
@@ -182,7 +182,7 @@
   function exportList(field) {
     var sel = selectedTags();
     if (!sel.length) {
-      toast('请先勾选标签');
+      toast('请先勾选');
       return;
     }
     var parts = sel.map(function (t) {

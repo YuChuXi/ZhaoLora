@@ -61,7 +61,7 @@ var DirPicker = (function () {
       else el.classList.remove('compact');
 
       if (!state.dirs.length) {
-        el.innerHTML = '<div class="dir-picker-empty">暂无图片目录</div>';
+    el.innerHTML = '<div class="dir-picker-empty">无目录</div>';
         return;
       }
 

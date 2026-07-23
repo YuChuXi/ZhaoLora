@@ -43,7 +43,7 @@
         _groups = [];
         _selected = {};
         document.getElementById('dedupe-main').innerHTML =
-          '<div class="dedupe-empty">目录已切换，请重新扫描。</div>';
+          '<div class="dedupe-empty">目录已切换</div>';
         updateStats();
       },
     });
@@ -86,8 +86,8 @@
   function syncPreviewToggleLabel() {
     var m = _previewMembers[_previewIdx];
     var btn = document.getElementById('dup-preview-toggle');
-    if (!m) { btn.textContent = '选中/取消'; return; }
-    btn.textContent = _selected[m.path] ? '取消选中' : '选中删除';
+    if (!m) { btn.textContent = '选中'; return; }
+    btn.textContent = _selected[m.path] ? '取消' : '选中';
   }
 
   function showPreview(members, index) {
@@ -168,7 +168,7 @@
       var btnKeepOnly = document.createElement('button');
       btnKeepOnly.type = 'button';
       btnKeepOnly.className = 'btn';
-      btnKeepOnly.textContent = '本组勾选其它';
+      btnKeepOnly.textContent = '仅留建议';
       btnKeepOnly.addEventListener('click', function () {
         (g.members || []).forEach(function (m) {
           if (m.is_keep) delete _selected[m.path];
@@ -188,7 +188,7 @@
           (_selected[m.path] ? ' selected' : '') +
           (m.is_keep ? ' keep-hint' : '');
         card.dataset.path = m.path;
-        card.title = m.path + ' · 右键预览';
+        card.title = m.path;
 
         var im = document.createElement('img');
         im.src = thumbUrl(m.thumbnail_hash);
@@ -237,7 +237,7 @@
 
     hidePreview();
     var main = document.getElementById('dedupe-main');
-    main.innerHTML = '<div class="dedupe-empty">扫描中，请稍候…</div>';
+    main.innerHTML = '<div class="dedupe-empty">扫描中…</div>';
     document.getElementById('btn-scan').disabled = true;
     try {
       var data = await api('/api/dedupe/scan', {
@@ -254,9 +254,9 @@
         (g.suggested_remove || []).forEach(function (p) { _selected[p] = true; });
       });
       render();
-      toast('扫描完成：' + _groups.length + ' 组');
+      toast('完成 ' + _groups.length + ' 组');
     } catch (e) {
-      main.innerHTML = '<div class="dedupe-empty">扫描失败: ' + (e.message || e) + '</div>';
+      main.innerHTML = '<div class="dedupe-empty">扫描失败</div>';
       toast(String(e.message || e));
     } finally {
       document.getElementById('btn-scan').disabled = false;
@@ -281,14 +281,14 @@
   async function applyDelete() {
     var paths = Object.keys(_selected).filter(function (p) { return _selected[p]; });
     if (!paths.length) { toast('未选择图片'); return; }
-    if (!confirm('将 ' + paths.length + ' 张移入回收站？')) return;
+    if (!confirm('删除 ' + paths.length + ' 张到回收站？')) return;
     hidePreview();
     try {
       var res = await api('/api/dedupe/apply', {
         method: 'POST',
         body: JSON.stringify({ paths: paths, dirs: getDirs() }),
       });
-      toast('已移入回收站 ' + res.moved + ' 张');
+      toast('已删除 ' + res.moved + ' 张');
       var gone = {};
       paths.forEach(function (p) { gone[p] = true; });
       _groups = _groups.map(function (g) {

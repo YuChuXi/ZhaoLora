@@ -126,11 +126,11 @@
   <div class="dir-picker compact" id="dir-picker"></div>
   <label style="font-size:12px;color:var(--text-dim);display:flex;align-items:center;gap:4px;">
     MSE
-    <input type="number" id="mse-threshold" value="0.0001" min="0.0000001" max="1" step="0.0001" title="指纹 MSE 上限">
+    <input type="number" id="mse-threshold" value="0.0001" min="0.0000001" max="1" step="0.0001">
   </label>
   <label style="font-size:12px;color:var(--text-dim);display:flex;align-items:center;gap:4px;">
     分辨率比
-    <input type="number" id="res-ratio" value="1.05" min="1" max="10" step="0.01" title="分辨率接近时优先保留更清晰的一张">
+    <input type="number" id="res-ratio" value="1.05" min="1" max="10" step="0.01">
   </label>
   <button class="btn green" id="btn-scan">扫描</button>
   <span class="sep"></span>
@@ -143,7 +143,7 @@
 </div>
 
 <div class="dedupe-main" id="dedupe-main">
-  <div class="dedupe-empty">点击「扫描」查找相似图片。左键勾选，右键预览。</div>
+  <div class="dedupe-empty">暂无结果</div>
 </div>
 <div class="toast" id="toast"></div>
 <div class="dup-preview" id="dup-preview">
@@ -159,7 +159,7 @@
       <b id="dup-preview-name">-</b>
       <span id="dup-preview-keep"></span>
       <div class="dup-preview-actions">
-        <button type="button" class="btn" id="dup-preview-toggle">切换选中</button>
+        <button type="button" class="btn" id="dup-preview-toggle">选中</button>
         <button type="button" class="btn" id="dup-preview-close">关闭</button>
       </div>
     </div>

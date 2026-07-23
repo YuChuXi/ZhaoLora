@@ -508,7 +508,7 @@
         del.type = 'button';
         del.className = 'btn-del';
         del.textContent = '删除';
-        del.title = '仅删除当前图选区';
+        del.title = '仅当前图';
         del.addEventListener('click', function (e) {
           e.stopPropagation();
           removeCropAt(idx);
@@ -520,7 +520,7 @@
         delPerm.type = 'button';
         delPerm.className = 'btn-del btn-del-perm';
         delPerm.textContent = '永久';
-        delPerm.title = '删除并取消后续自动应用';
+        delPerm.title = '取消自动应用';
         delPerm.addEventListener('click', function (e) {
           e.stopPropagation();
           removeCropPermanently(idx);

@@ -60,7 +60,7 @@
   async function copyText() {
     var text = document.getElementById('toml-box').value;
     if (!text) {
-      toast('没有可复制内容');
+      toast('无可复制内容');
       return;
     }
     await navigator.clipboard.writeText(text);

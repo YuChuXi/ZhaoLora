@@ -88,9 +88,9 @@
   </aside>
   <div class="tags-content">
     <div class="tags-toolbar2">
-      <label title="大小写视为同一标签"><input type="checkbox" id="opt-lower" checked> 忽略大小写</label>
-      <label title="下划线与空格视为同一写法"><input type="checkbox" id="opt-underscores" checked> 统一空格</label>
-      <label title="同一张图内重复标签只计一次"><input type="checkbox" id="opt-per-sample" checked> 按图去重</label>
+      <label><input type="checkbox" id="opt-lower" checked> 忽略大小写</label>
+      <label><input type="checkbox" id="opt-underscores" checked> 统一空格</label>
+      <label><input type="checkbox" id="opt-per-sample" checked> 按图去重</label>
       <label>最少出现 <input type="number" id="opt-min" value="1" min="1" style="width:52px;background:#0a1a30;color:var(--text);border:1px solid var(--border);border-radius:4px;padding:2px 4px;"></label>
       <span id="sel-count">已选 0</span>
     </div>
@@ -111,7 +111,7 @@
       </table>
     </div>
     <div class="export-box">
-      <textarea id="export-text" readonly placeholder="已选标签（逗号分隔）"></textarea>
+      <textarea id="export-text" readonly placeholder="已选标签"></textarea>
       <button class="btn green" id="btn-copy-box" type="button">复制</button>
     </div>
   </div>

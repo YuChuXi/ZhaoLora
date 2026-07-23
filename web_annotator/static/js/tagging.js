@@ -56,7 +56,7 @@
       : (Math.min(100, Math.round(pct)) + '%');
     document.getElementById('progress-meta-line').textContent = s.current
       ? s.current
-      : (s.message || '等待开始');
+      : (s.message || '待命');
 
     document.getElementById('m-done').textContent = String(done);
     document.getElementById('m-total').textContent = String(total);
@@ -113,12 +113,12 @@
     var info = document.getElementById('model-info');
     var warn = document.getElementById('model-warn');
     if (data.model_ready) {
-      info.textContent = '模型已加载';
+      info.textContent = '模型就绪';
       warn.hidden = true;
     } else {
-      info.textContent = '模型未就绪';
+      info.textContent = '模型缺失';
       warn.hidden = false;
-      warn.textContent = data.model_path || '未找到 WD14 模型';
+      warn.textContent = data.model_path || '未找到模型';
       document.getElementById('btn-start').disabled = true;
     }
     if (data.default_threshold != null) {
@@ -134,7 +134,7 @@
     }
     var threshold = parseFloat(document.getElementById('threshold').value);
     if (!(threshold >= 0 && threshold <= 1)) {
-      toast('置信度须在 0～1');
+      toast('置信度无效');
       return;
     }
     var body = {
@@ -155,7 +155,7 @@
 
   async function cancelJob() {
     await api('/api/tagging/cancel', { method: 'POST' });
-    toast('正在取消…');
+    toast('取消中…');
   }
 
   document.getElementById('btn-all').addEventListener('click', function () {
