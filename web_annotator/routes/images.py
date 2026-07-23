@@ -86,7 +86,6 @@ def list_images(
             if rel in trashed_state or rel in seen:
                 continue
             seen.add(rel)
-            thumbnailer.ensure(rel)
             w, h = _image_size(root / rel)
             result.append({
                 **img,
@@ -109,7 +108,6 @@ def list_images(
                     continue
                 seen.add(img["path"])
                 tp = trash_dir / img["path"]
-                thumbnailer.ensure(img["path"], src=tp)
                 w, h = _image_size(tp)
                 result.append({
                     **img,
@@ -128,7 +126,6 @@ def list_images(
                 if not tp.is_file():
                     continue
                 seen.add(rel)
-                thumbnailer.ensure(rel, src=tp)
                 w, h = _image_size(tp)
                 result.append({
                     "path": rel,
@@ -218,12 +215,20 @@ def similar_images(
     return {"path": rel, "similar": out}
 
 
-_size_cache: dict[str, tuple[int, int]] = {}
+_size_cache: dict[str, tuple[float, int, int]] = {}
 
 
-def _image_size(path):
+def _image_size(path: Path) -> tuple[int, int]:
+    """读取图片宽高（仅文件头）；按路径 + mtime 缓存。"""
     key = str(path)
-    if key not in _size_cache:
-        with Image.open(path) as im:
-            _size_cache[key] = im.size
-    return _size_cache.get(key, (0, 0))
+    try:
+        mtime = path.stat().st_mtime
+    except OSError:
+        return (0, 0)
+    cached = _size_cache.get(key)
+    if cached is not None and cached[0] == mtime:
+        return cached[1], cached[2]
+    with Image.open(path) as im:
+        w, h = im.size
+    _size_cache[key] = (mtime, w, h)
+    return w, h

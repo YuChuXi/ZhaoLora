@@ -7,6 +7,7 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
+from services.aesthetic import load_scores
 from services.dataset_layout import DatasetLayout
 from services.tag_clean import clean_txt_dirs
 from services.tag_stats import count_tags, list_txt_subdirs, load_translation_map, resolve_selected_dirs
@@ -38,6 +39,9 @@ class CleanBody(BaseModel):
     promote: list[str] = Field(default_factory=list, description="已存在 tag 提升到最前")
     prepend: list[str] = Field(default_factory=list, description="插到 caption 最前")
     promote_separator: bool = False
+    inject_pony_score: bool = Field(
+        False, description="按 .aesthetic_scores.json 在前置前插入 score_N"
+    )
     dry_run: bool = True
     sample_limit: int = Field(default=40, ge=0, le=200)
 
@@ -85,6 +89,7 @@ def tag_clean(request: Request, body: CleanBody):
     if not selected:
         raise HTTPException(400, "请选择目录")
 
+    scores = load_scores(root) if body.inject_pony_score else {}
     result = clean_txt_dirs(
         selected,
         drop=body.drop,
@@ -92,6 +97,9 @@ def tag_clean(request: Request, body: CleanBody):
         promote=body.promote,
         prepend=body.prepend,
         promote_separator=body.promote_separator,
+        inject_pony_score=body.inject_pony_score,
+        dataset_root=root,
+        aesthetic_scores=scores,
         dry_run=body.dry_run,
         sample_limit=body.sample_limit,
     )

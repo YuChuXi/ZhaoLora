@@ -43,6 +43,49 @@
     border-radius: 6px; padding: 6px 8px; font-size: 12px; font-family: ui-monospace, monospace;
   }
   .empty-hint { padding: 40px; text-align: center; color: var(--text-dim); }
+
+  /* 自动生成（打标）对话框 */
+  .tagging-modal {
+    display: none; position: fixed; inset: 0; z-index: 400;
+    align-items: center; justify-content: center;
+    background: rgba(0,0,0,0.55);
+  }
+  .tagging-modal.open { display: flex; }
+  .tagging-panel {
+    width: min(920px, 94vw); height: min(720px, 88vh);
+    background: var(--bg); border: 1px solid var(--border); border-radius: 10px;
+    box-shadow: 0 16px 48px rgba(0,0,0,0.5);
+    display: flex; flex-direction: column; overflow: hidden;
+  }
+  .tagging-panel-head {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    padding: 10px 12px; border-bottom: 1px solid var(--border); background: var(--surface);
+  }
+  .tagging-panel-head .title {
+    font-size: 14px; font-weight: 600; margin-right: 4px;
+  }
+  .tagging-panel-head label {
+    display: flex; align-items: center; gap: 4px;
+    font-size: 12px; color: var(--text-dim); cursor: pointer; user-select: none;
+  }
+  .tagging-panel-head input[type="number"] {
+    width: 56px; background: #0a1a30; color: var(--text);
+    border: 1px solid var(--border); border-radius: 4px; padding: 2px 4px; font-size: 12px;
+  }
+  .tagging-panel-head .meta-inline {
+    font-size: 12px; color: var(--text-dim); white-space: nowrap;
+  }
+  .tagging-panel-head .meta-inline b { color: var(--text); font-weight: 600; }
+  .tagging-panel-head .spacer { flex: 1; min-width: 8px; }
+  .model-warn {
+    color: #e94560; font-size: 12px; padding: 4px 12px;
+    border-bottom: 1px solid var(--border);
+  }
+  .tagging-log {
+    flex: 1; overflow: auto; padding: 8px 12px 16px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 12px; line-height: 1.45; color: #c8d4e0; white-space: pre-wrap;
+  }
 </style>
 </head>
 <body>
@@ -50,6 +93,7 @@
 <div class="toolbar">
   <span class="stat" id="stat-summary">-</span>
   <span class="sep"></span>
+  <button class="btn green" id="btn-auto-tag" type="button">自动生成</button>
   <button class="btn green" id="btn-refresh">统计</button>
   <button class="btn" id="btn-select-all-tags">全选</button>
   <button class="btn" id="btn-clear-tags">清空</button>
@@ -89,9 +133,45 @@
     </div>
   </div>
 </div>
+
+<div class="tagging-modal" id="tagging-modal" aria-hidden="true">
+  <div class="tagging-panel" role="dialog" aria-labelledby="tagging-title">
+    <div class="tagging-panel-head">
+      <span class="title" id="tagging-title">自动生成</span>
+      <button class="btn green" id="btn-start" type="button">开始</button>
+      <button class="btn" id="btn-cancel" type="button" disabled>取消</button>
+      <span class="sep"></span>
+      <label>置信度
+        <input type="number" id="threshold" value="0.1" min="0" max="1" step="0.01">
+      </label>
+      <label><input type="checkbox" id="chk-disable-orig" checked> 忽略已有</label>
+      <label><input type="checkbox" id="chk-force" checked> 覆盖</label>
+      <span class="sep"></span>
+      <span class="stat" id="stat-status">就绪</span>
+      <span class="meta-inline" id="model-info"></span>
+      <span class="meta-inline">进度 <b id="m-done">0</b>/<b id="m-total">0</b></span>
+      <span class="meta-inline">完成 <b id="m-ok">0</b></span>
+      <span class="meta-inline">跳过 <b id="m-skip">0</b></span>
+      <span class="meta-inline">失败 <b id="m-fail">0</b></span>
+      <span class="spacer"></span>
+      <button class="btn" id="btn-tagging-close" type="button">关闭</button>
+    </div>
+    <div class="job-progress compact" id="job-progress">
+      <div class="job-progress-track">
+        <div class="job-progress-fill" id="progress-fill"></div>
+      </div>
+      <span class="job-progress-pct" id="progress-pct">0%</span>
+      <span class="job-progress-meta" id="progress-meta-line">待命</span>
+    </div>
+    <div id="model-warn" class="model-warn" hidden></div>
+    <div class="tagging-log" id="log-box"></div>
+  </div>
+</div>
+
 <div class="toast" id="toast"></div>
 <script src="/static/js/dir_picker.js"></script>
 <script src="/static/js/nav.js"></script>
+<script src="/static/js/tagging.js"></script>
 <script src="/static/js/tags.js"></script>
 </body>
 </html>

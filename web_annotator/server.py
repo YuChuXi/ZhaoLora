@@ -146,10 +146,8 @@ def aesthetic_page():
 
 @app.get("/tagging")
 def tagging_page():
-    template = Path(__file__).parent / "templates" / "tagging.html"
-    if template.exists():
-        return HTMLResponse(template.read_text(encoding="utf-8"))
-    return HTMLResponse("<h1>tagging.html not found</h1>", status_code=404)
+    """兼容旧入口：打标已并入标签页「自动生成」对话框。"""
+    return RedirectResponse(url="/tags", status_code=302)
 
 
 @app.get("/tags")
@@ -300,7 +298,7 @@ def main() -> int:
     print(f"已选待删 : {len(state.get('selected', {}))}")
     print(f"回收站内 : {len(state.get('trashed', {}))}")
     print(f"服务地址 : http://{args.host}:{args.port}")
-    print("  美学 · 筛选 · 去重 · 裁剪 · 蒙版 · 打标 · 标签 · 清洗 · 就绪")
+    print("  美学 · 筛选 · 去重 · 裁剪 · 蒙版 · 标签 · 清洗 · 就绪")
 
     uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
     return 0

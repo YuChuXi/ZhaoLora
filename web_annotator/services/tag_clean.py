@@ -5,6 +5,10 @@ from __future__ import annotations
 import html
 from pathlib import Path
 
+_IMAGE_EXTS = (".png", ".jpg", ".jpeg", ".webp")
+# 与 tag_key 一致：score_9 → "score 9"
+SCORE_TAG_KEYS = frozenset(f"score {i}" for i in range(10))
+
 
 def split_tags_line(s: str) -> list[str]:
     """按逗号 / ||| / 换行拆分 caption。"""
@@ -14,6 +18,28 @@ def split_tags_line(s: str) -> list[str]:
 def join_tags_line(tags: list[str]) -> str:
     """用逗号空格拼接 tag 列表。"""
     return ", ".join(tags)
+
+
+def raw_to_pony(raw: float) -> int:
+    """原始美学分 [0,1] → score_0 … score_9（与 aesthetic_score_dataset_pony 一致）。"""
+    return int(max(0.0, min(0.99, float(raw))) * 10)
+
+
+def format_pony_score_tag(raw: float) -> str:
+    """生成 pony 美学 tag（保留下划线），如 score_9。"""
+    return f"score_{raw_to_pony(raw)}"
+
+
+def rel_image_for_txt(txt: Path, root: Path) -> str | None:
+    """同 stem 旁路图相对数据集根的路径（用于查美学分）。"""
+    root_r = root.resolve()
+    parent = txt.parent
+    stem = txt.stem
+    for ext in _IMAGE_EXTS:
+        img = parent / f"{stem}{ext}"
+        if img.is_file():
+            return str(img.resolve().relative_to(root_r)).replace("\\", "/")
+    return None
 
 
 DROP_EXACT = frozenset()
@@ -125,12 +151,14 @@ def clean_caption(
     user_drop_contains: tuple[str, ...] = (),
     promote_tags: tuple[str, ...] = (),
     prepend_tags: tuple[str, ...] = (),
+    pony_score_tag: str | None = None,
     use_promote_separator: bool = False,
 ) -> str:
     """
     清洗单条 caption。
 
-    顺序：反转义与下划线归一 → 删除 → promote → prepend。
+    顺序：反转义与下划线归一 → 删除 → promote → pony score → prepend。
+    pony_score_tag（如 score_9）插在前置插入之前；会去掉已有 score_0…score_9。
     """
     s = html.unescape(raw.strip())
     tags = [normalize_tag_underscores(t) for t in split_tags_line(s)]
@@ -144,12 +172,20 @@ def clean_caption(
     promote_keys = promote_keys_ordered(promote_tags)
     kept, n_promoted = apply_promote_tags(kept, promote_keys)
 
+    if pony_score_tag:
+        kept = [t for t in kept if tag_key(t) not in SCORE_TAG_KEYS]
+
+    header: list[str] = []
+    if pony_score_tag and pony_score_tag.strip():
+        # pony 训练用下划线形式，不做 underscore→space
+        header.append(pony_score_tag.strip())
     prep = [normalize_tag_underscores(t) for t in prepend_tags if t.strip()]
-    if prep:
-        prep_keys = {tag_key(t) for t in prep}
-        kept = [t for t in kept if tag_key(t) not in prep_keys]
-        kept = prep + kept
-        n_promoted += len(prep)
+    header.extend(prep)
+    if header:
+        header_keys = {tag_key(t) for t in header}
+        kept = [t for t in kept if tag_key(t) not in header_keys]
+        kept = header + kept
+        n_promoted += len(header)
 
     if use_promote_separator:
         return join_tags_line(kept[:n_promoted]) + " ||| " + join_tags_line(kept[n_promoted:])
@@ -165,6 +201,9 @@ def clean_txt_dirs(
     promote: list[str] | None = None,
     prepend: list[str] | None = None,
     promote_separator: bool = False,
+    inject_pony_score: bool = False,
+    dataset_root: Path | None = None,
+    aesthetic_scores: dict[str, float] | None = None,
     dry_run: bool = True,
     sample_limit: int = 40,
 ) -> dict:
@@ -177,6 +216,9 @@ def clean_txt_dirs(
         drop_contains: 子串删除列表（另有内置 commentary/request）。
         promote / prepend: 提升与前置列表。
         promote_separator: 是否用 ||| 分隔提升块。
+        inject_pony_score: 按 .aesthetic_scores.json 在前置前插入 score_N。
+        dataset_root: 数据集根（查旁路图相对路径）。
+        aesthetic_scores: 相对路径 → 原始美学分。
         dry_run: True 只预览不写文件。
         sample_limit: 返回的前后对比条数上限。
 
@@ -189,6 +231,8 @@ def clean_txt_dirs(
     )
     promote_tags = tuple(expand_cli_list(promote or []))
     prepend_tags = tuple(expand_cli_list(prepend or []))
+    scores = aesthetic_scores or {}
+    root = dataset_root.resolve() if dataset_root is not None else None
 
     files: list[Path] = []
     for d in dirs:
@@ -198,6 +242,8 @@ def clean_txt_dirs(
     changed = 0
     unchanged = 0
     failed = 0
+    pony_injected = 0
+    pony_missing = 0
     samples: list[dict] = []
 
     for path in files:
@@ -206,12 +252,26 @@ def clean_txt_dirs(
         except OSError:
             failed += 1
             continue
+
+        score_tag: str | None = None
+        if inject_pony_score:
+            if root is None:
+                failed += 1
+                continue
+            rel = rel_image_for_txt(path, root)
+            if rel is not None and rel in scores:
+                score_tag = format_pony_score_tag(scores[rel])
+                pony_injected += 1
+            else:
+                pony_missing += 1
+
         new = clean_caption(
             raw,
             user_drop_exact=user_drop_exact,
             user_drop_contains=user_drop_contains,
             promote_tags=promote_tags,
             prepend_tags=prepend_tags,
+            pony_score_tag=score_tag,
             use_promote_separator=promote_separator,
         )
         if new == raw.strip():
@@ -239,4 +299,7 @@ def clean_txt_dirs(
         "drop_contains": list(user_drop_contains),
         "promote": list(promote_tags),
         "prepend": list(prepend_tags),
+        "inject_pony_score": inject_pony_score,
+        "pony_injected": pony_injected,
+        "pony_missing": pony_missing,
     }

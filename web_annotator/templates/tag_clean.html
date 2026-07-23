@@ -31,6 +31,19 @@
   .clean-hint {
     font-size: 11px; color: var(--text-dim); line-height: 1.45;
   }
+  .clean-pony-switch {
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+    padding: 8px 12px; border: 1px solid var(--border); border-radius: 8px;
+    background: var(--surface); font-size: 13px; color: var(--text);
+    cursor: pointer; user-select: none; flex-shrink: 0;
+  }
+  .clean-pony-switch input { width: 16px; height: 16px; accent-color: var(--accent); }
+  .clean-pony-switch .clean-pony-desc {
+    font-size: 11px; color: var(--text-dim); font-weight: 400;
+  }
+  .clean-options {
+    display: flex; flex-direction: column; gap: 8px; flex-shrink: 0;
+  }
   .clean-result {
     flex: 1; min-height: 0; overflow: auto;
     font-size: 12px; color: var(--text-dim);
@@ -50,9 +63,6 @@
   <button class="btn" type="button" id="btn-clean-preview">预览</button>
   <button class="btn danger" type="button" id="btn-clean-apply">执行写入</button>
   <span class="sep"></span>
-  <label style="font-size:12px;color:var(--text-dim);display:flex;align-items:center;gap:4px;cursor:pointer;">
-    <input type="checkbox" id="clean-separator"> ||| 分隔提升块
-  </label>
   <span class="stat" id="clean-summary">-</span>
 </div>
 
@@ -60,6 +70,18 @@
   <p class="clean-hint">
     规则同 clean_dataset_tags：HTML 反转义、下划线转空格、整词/子串删除（内置 commentary / request）、提升、前置。作用于右上角所选目录中的 .txt。
   </p>
+  <div class="clean-options">
+    <label class="clean-pony-switch" title="读取数据集根 .aesthetic_scores.json">
+      <input type="checkbox" id="clean-inject-pony">
+      <span>注入 pony 美学</span>
+      <span class="clean-pony-desc">按分数写入 score_0…score_9，插在「前置插入」之前；会去掉旧的 score_N</span>
+    </label>
+    <label class="clean-pony-switch">
+      <input type="checkbox" id="clean-separator">
+      <span>||| 分隔提升块</span>
+      <span class="clean-pony-desc">提升 / pony / 前置 与其余 tag 之间插入 |||</span>
+    </label>
+  </div>
   <div class="clean-grid">
     <label>整词删除
       <textarea id="clean-drop" placeholder="tag1, tag2"></textarea>

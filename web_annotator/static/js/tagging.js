@@ -1,14 +1,16 @@
 /**
- * tagging.js —— 批量打标
+ * tagging.js —— WD14 批量打标（标签页「自动生成」对话框）
  */
-(function () {
+var Tagging = (function () {
   'use strict';
 
   var _pollTimer = null;
   var _toastTimer = null;
+  var _modelReady = false;
 
   function toast(msg) {
     var el = document.getElementById('toast');
+    if (!el) return;
     el.textContent = msg;
     el.classList.add('show');
     clearTimeout(_toastTimer);
@@ -24,13 +26,17 @@
     return res.json();
   }
 
+  function modal() {
+    return document.getElementById('tagging-modal');
+  }
+
   function setRunningUi(running) {
-    document.getElementById('btn-start').disabled = running;
+    document.getElementById('btn-start').disabled = running || !_modelReady;
     document.getElementById('btn-cancel').disabled = !running;
     document.getElementById('threshold').disabled = running;
     document.getElementById('chk-disable-orig').disabled = running;
     document.getElementById('chk-force').disabled = running;
-    DirPicker.setDisabled(running);
+    if (typeof DirPicker !== 'undefined') DirPicker.setDisabled(running);
   }
 
   function applyStatus(s) {
@@ -55,9 +61,6 @@
     document.getElementById('m-ok').textContent = String(s.ok || 0);
     document.getElementById('m-skip').textContent = String(s.skipped || 0);
     document.getElementById('m-fail').textContent = String(s.failed || 0);
-    document.getElementById('m-current').textContent = s.current
-      ? ('当前: ' + s.current)
-      : (s.message || '');
 
     var label = {
       idle: '就绪',
@@ -69,12 +72,17 @@
     document.getElementById('stat-status').textContent = label + (s.message ? ' · ' + s.message : '');
 
     if (s.logs && s.logs.length) {
-      document.getElementById('log-box').textContent = s.logs.join('\n');
       var box = document.getElementById('log-box');
+      box.textContent = s.logs.join('\n');
       box.scrollTop = box.scrollHeight;
     }
 
     setRunningUi(s.status === 'running');
+
+    var openBtn = document.getElementById('btn-auto-tag');
+    if (openBtn) {
+      openBtn.textContent = s.status === 'running' ? '自动生成…' : '自动生成';
+    }
   }
 
   function stopPoll() {
@@ -102,7 +110,8 @@
     var data = await api('/api/tagging/dirs');
     var info = document.getElementById('model-info');
     var warn = document.getElementById('model-warn');
-    if (data.model_ready) {
+    _modelReady = !!data.model_ready;
+    if (_modelReady) {
       info.textContent = '模型就绪';
       warn.hidden = true;
     } else {
@@ -148,18 +157,63 @@
     toast('正在取消…');
   }
 
-  document.getElementById('btn-start').addEventListener('click', function () {
-    startJob().catch(function (e) { toast(String(e.message || e)); });
-  });
-  document.getElementById('btn-cancel').addEventListener('click', function () {
-    cancelJob().catch(function (e) { toast(String(e.message || e)); });
-  });
+  function open() {
+    var m = modal();
+    if (!m) return;
+    m.classList.add('open');
+    m.setAttribute('aria-hidden', 'false');
+  }
 
-  initModel()
-    .then(function () { return api('/api/tagging/status'); })
-    .then(function (s) {
-      applyStatus(s);
-      if (s.status === 'running') startPoll();
-    })
-    .catch(function (e) { toast(String(e.message || e)); });
+  function close() {
+    var m = modal();
+    if (!m) return;
+    m.classList.remove('open');
+    m.setAttribute('aria-hidden', 'true');
+  }
+
+  function init() {
+    if (!document.getElementById('btn-start')) return;
+
+    var openBtn = document.getElementById('btn-auto-tag');
+    if (openBtn) openBtn.addEventListener('click', open);
+
+    var closeBtn = document.getElementById('btn-tagging-close');
+    if (closeBtn) closeBtn.addEventListener('click', close);
+
+    var m = modal();
+    if (m) {
+      m.addEventListener('click', function (e) {
+        if (e.target === m) close();
+      });
+    }
+
+    document.addEventListener('keydown', function (e) {
+      if (e.key !== 'Escape') return;
+      var box = modal();
+      if (box && box.classList.contains('open')) close();
+    });
+
+    document.getElementById('btn-start').addEventListener('click', function () {
+      startJob().catch(function (e) { toast(String(e.message || e)); });
+    });
+    document.getElementById('btn-cancel').addEventListener('click', function () {
+      cancelJob().catch(function (e) { toast(String(e.message || e)); });
+    });
+
+    initModel()
+      .then(function () { return api('/api/tagging/status'); })
+      .then(function (s) {
+        applyStatus(s);
+        if (s.status === 'running') startPoll();
+      })
+      .catch(function (e) { toast(String(e.message || e)); });
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+  } else {
+    init();
+  }
+
+  return { open: open, close: close };
 })();

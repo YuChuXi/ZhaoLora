@@ -10,7 +10,6 @@
     { path: '/dedupe', label: '去重' },
     { path: '/crop', label: '裁剪' },
     { path: '/paint', label: '蒙版' },
-    { path: '/tagging', label: '打标' },
     { path: '/tags', label: '标签' },
     { path: '/tag-clean', label: '清洗' },
     { path: '/ready', label: '就绪' },
@@ -36,7 +35,6 @@
   function dirsApi(cur) {
     if (cur === '/dedupe') return '/api/dedupe/dirs';
     if (cur === '/aesthetic') return '/api/aesthetic/dirs';
-    if (cur === '/tagging') return '/api/tagging/dirs';
     if (cur === '/tags' || cur === '/tag-clean') return '/api/tags/dirs';
     return '/api/dirs';
   }

@@ -15,7 +15,7 @@ from pathlib import Path
 from PIL import Image, UnidentifiedImageError
 
 THUMB_DIRNAME = ".thumbnails"
-DEFAULT_SIZE = 400  # 长边像素
+DEFAULT_SIZE = 2560  # 长边像素（与 server --thumbnail-size 默认一致）
 DEFAULT_QUALITY = 50  # AVIF 质量 (0-100)
 
 
@@ -37,13 +37,18 @@ class Thumbnailer:
     ) -> None:
         self.data_dir = data_dir
         self.thumb_dir = (meta_dir or data_dir) / THUMB_DIRNAME
-        self.size = size
+        self.size = int(size)
         self.quality = quality
         self.thumb_dir.mkdir(parents=True, exist_ok=True)
 
     def hash_for(self, image_rel_path: str) -> str:
-        """计算图片的缩略图 hash 文件名（不含后缀）。"""
-        return hashlib.md5(image_rel_path.encode()).hexdigest()[:12]
+        """
+        计算缩略图文件名 hash（不含后缀）。
+
+        计入长边尺寸，避免改 --thumbnail-size 后仍命中旧分辨率缓存。
+        """
+        key = f"{image_rel_path}\0s{self.size}".encode()
+        return hashlib.md5(key).hexdigest()[:12]
 
     def get_path(self, image_rel_path: str) -> Path:
         """获取缩略图缓存路径。"""

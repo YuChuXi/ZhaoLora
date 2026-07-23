@@ -49,9 +49,14 @@
    */
   function showCleanResult(data) {
     var mode = data.dry_run ? '预览' : '已写入';
+    var ponyBit = '';
+    if (data.inject_pony_score) {
+      ponyBit = ' · pony ' + (data.pony_injected || 0) +
+        (data.pony_missing ? '（缺分 ' + data.pony_missing + '）' : '');
+    }
     document.getElementById('clean-summary').textContent =
       mode + ' · 变更 ' + data.changed + ' · 未改 ' + data.unchanged +
-      ' · 共 ' + data.file_count + ' 个 txt';
+      ' · 共 ' + data.file_count + ' 个 txt' + ponyBit;
     var lines = [];
     (data.samples || []).forEach(function (s) {
       lines.push('## ' + (s.name || s.path));
@@ -84,6 +89,7 @@
       promote: parseTagList(document.getElementById('clean-promote').value),
       prepend: parseTagList(document.getElementById('clean-prepend').value),
       promote_separator: document.getElementById('clean-separator').checked,
+      inject_pony_score: document.getElementById('clean-inject-pony').checked,
       dry_run: !!dryRun,
       sample_limit: 60,
     };

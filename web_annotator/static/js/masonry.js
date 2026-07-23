@@ -1,11 +1,14 @@
 /**
  * masonry.js -- JS 绝对定位瀑布流，横排不乱 + 无空隙
+ * 缩略图用 IntersectionObserver 懒加载（原生 loading=lazy 在快网下预取范围过大）
  */
 var Masonry = (function() {
   'use strict';
 
   var _container = null;
   var _columns = 5;
+  var _io = null;
+  var _LAZY_MARGIN = '400px 0px';
 
   function init(containerId) {
     _container = document.getElementById(containerId);
@@ -13,8 +16,38 @@ var Masonry = (function() {
 
   function setColumns(n) { _columns = n; renderAll(); }
 
+  function _stopLazy() {
+    if (_io) {
+      _io.disconnect();
+      _io = null;
+    }
+  }
+
+  function _loadImg(imgEl) {
+    var url = imgEl.dataset.src;
+    if (!url) return;
+    imgEl.src = url;
+    delete imgEl.dataset.src;
+    if (_io) _io.unobserve(imgEl);
+  }
+
+  function _startLazy() {
+    _stopLazy();
+    if (!_container) return;
+    _io = new IntersectionObserver(function (entries) {
+      for (var i = 0; i < entries.length; i++) {
+        if (!entries[i].isIntersecting) continue;
+        _loadImg(entries[i].target);
+      }
+    }, { root: null, rootMargin: _LAZY_MARGIN, threshold: 0 });
+
+    var imgs = _container.querySelectorAll('img[data-src]');
+    for (var j = 0; j < imgs.length; j++) _io.observe(imgs[j]);
+  }
+
   function render(images) {
     if (!_container) return;
+    _stopLazy();
     _container.innerHTML = '';
     if (images.length === 0) {
       _container.innerHTML =
@@ -28,7 +61,7 @@ var Masonry = (function() {
 
     for (var i = 0; i < images.length; i++) {
       var img = images[i];
-      var card = _createCard(img);
+      var card = _createCard(img, cw);
       var ih = cw * (img.height || 1) / (img.width || 1) + 22; // 22px for info bar
       var col = _shortestCol(heights);
       card.style.position = 'absolute';
@@ -39,6 +72,7 @@ var Masonry = (function() {
       _container.appendChild(card);
     }
     _container.style.height = Math.max.apply(null, heights) + 'px';
+    _startLazy();
   }
 
   function _shortestCol(h) {
@@ -47,7 +81,7 @@ var Masonry = (function() {
     return min;
   }
 
-  function _createCard(img) {
+  function _createCard(img, colW) {
     var card = document.createElement('div');
     card.className = 'card';
     if (img.selected) card.classList.add('selected');
@@ -57,13 +91,19 @@ var Masonry = (function() {
     if (typeof SimilarHover !== 'undefined') SimilarHover.bindCard(card, img.path);
 
     var imgEl = document.createElement('img');
-    imgEl.src = API.thumbnailUrl(img.thumbnail_hash);
-    imgEl.loading = 'lazy';
     imgEl.alt = img.stem;
+    imgEl.dataset.src = API.thumbnailUrl(img.thumbnail_hash);
+    imgEl.dataset.full = API.imageUrl(img.path);
+    // 占位高度，避免未加载时卡片塌缩导致整页被当成「可见」
+    var ph = Math.max(1, Math.round(colW * (img.height || 1) / (img.width || 1)));
+    imgEl.style.height = ph + 'px';
+    imgEl.addEventListener('load', function () {
+      imgEl.style.height = '';
+    });
     imgEl.addEventListener('error', function () {
       if (imgEl.dataset.fallback) return;
       imgEl.dataset.fallback = '1';
-      imgEl.src = API.imageUrl(img.path);
+      imgEl.src = imgEl.dataset.full || API.imageUrl(img.path);
     });
     card.appendChild(imgEl);
 
@@ -108,6 +148,8 @@ var Masonry = (function() {
   function jumpTo(path) {
     var card = _findCard(path);
     if (!card) return false;
+    var imgEl = card.querySelector('img[data-src]');
+    if (imgEl) _loadImg(imgEl);
     card.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'nearest' });
     card.classList.add('jump-flash');
     setTimeout(function () { card.classList.remove('jump-flash'); }, 1200);
