@@ -6,15 +6,20 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request
 
 from services.scanner import scan_images
+from services.work_dir import resolve_subdir
 
 router = APIRouter(prefix="/api", tags=["annotations"])
 
 
-def _services(request: Request):
-    return request.app.state.data_dir, request.app.state.state_manager
+def _root(request: Request):
+    return request.app.state.dataset_root
+
+
+def _state(request: Request):
+    return request.app.state.state_manager
 
 
 @router.post("/toggle")
@@ -25,41 +30,50 @@ async def toggle(request: Request):
     if not path:
         return {"error": "Missing 'path'"}
 
-    _, state_mgr = _services(request)
-    selected = state_mgr.toggle(path)
+    selected = _state(request).toggle(path)
     return {"path": path, "selected": selected}
 
 
 @router.post("/select-all")
-def select_all(request: Request):
-    """全选所有未被删除的图片。"""
-    data_dir, state_mgr = _services(request)
+async def select_all(request: Request):
+    """全选当前子目录中未被删除的图片。"""
+    body = await request.json()
+    root = _root(request)
+    state_mgr = _state(request)
+    try:
+        sub, work = resolve_subdir(root, body.get("dir"))
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+
     trashed = set(state_mgr.get().get("trashed", {}).keys())
-    all_paths = [img["path"] for img in scan_images(data_dir) if img["path"] not in trashed]
+    all_paths = [
+        img["path"] for img in scan_images(work, path_prefix=sub)
+        if img["path"] not in trashed
+    ]
     count = state_mgr.select_all(all_paths)
-    return {"selected": count}
+    return {"selected": count, "dir": sub}
 
 
 @router.post("/deselect-all")
 def deselect_all(request: Request):
     """取消全选。"""
-    _, state_mgr = _services(request)
-    state_mgr.deselect_all()
+    _state(request).deselect_all()
     return {"selected": 0}
 
 
 @router.post("/apply")
 def apply_delete(request: Request):
     """将选中的图片移入回收站。"""
-    data_dir, state_mgr = _services(request)
+    root = _root(request)
+    state_mgr = _state(request)
     state = state_mgr.get()
     selected = list(state.get("selected", {}).keys())
 
     if not selected:
         return {"moved": 0}
 
-    existing = [p for p in selected if (data_dir / p).exists()]
-    already_gone = [p for p in selected if not (data_dir / p).exists()]
+    existing = [p for p in selected if (root / p).exists()]
+    already_gone = [p for p in selected if not (root / p).exists()]
 
     moved = state_mgr.apply_delete(existing)
 
@@ -70,13 +84,17 @@ def apply_delete(request: Request):
         state_mgr._write(state)
         moved += len(already_gone)
 
+    idx = getattr(request.app.state, "color_index", None)
+    if idx is not None:
+        idx.clear()
+
     return {"moved": moved}
 
 
 @router.post("/restore")
 async def restore(request: Request):
     """从回收站恢复图片。"""
-    _, state_mgr = _services(request)
+    state_mgr = _state(request)
     body = await request.json()
     paths: list[str] = body.get("paths", [])
 
@@ -90,21 +108,33 @@ async def restore(request: Request):
         return {"restored": 0}
 
     restored = state_mgr.restore(to_restore)
+    idx = getattr(request.app.state, "color_index", None)
+    if idx is not None:
+        idx.clear()
     return {"restored": restored}
 
 
 @router.get("/state")
-def get_state(request: Request):
+def get_state(request: Request, dir: str = "main"):
     """获取当前状态快照（含统计）。"""
-    data_dir, state_mgr = _services(request)
+    root = _root(request)
+    state_mgr = _state(request)
+    try:
+        sub, work = resolve_subdir(root, dir)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+
     state = state_mgr.get()
-    images = scan_images(data_dir)
-    total = len(images)
-    selected = len(state.get("selected", {}))
-    trashed = len(state.get("trashed", {}))
+    trashed = set(state.get("trashed", {}).keys())
+    images = scan_images(work, path_prefix=sub)
+    alive = [img for img in images if img["path"] not in trashed]
+    prefix = sub + "/"
+    trashed_n = sum(1 for p in trashed if p.startswith(prefix))
+    selected = sum(1 for p in state.get("selected", {}) if p.startswith(prefix))
     return {
-        "total": total,
+        "dir": sub,
+        "total": len(alive),
         "selected": selected,
-        "trashed": trashed,
-        "active": total - trashed,
+        "trashed": trashed_n,
+        "active": len(alive),
     }

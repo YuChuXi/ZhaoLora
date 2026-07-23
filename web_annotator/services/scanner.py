@@ -21,21 +21,18 @@ def _natural_key(s: str) -> tuple:
     return tuple(int(p) if p.isdigit() else p.lower() for p in parts)
 
 
-def scan_images(data_dir: Path) -> list[dict]:
+def scan_images(data_dir: Path, *, path_prefix: str = "") -> list[dict]:
     """
     扫描 data_dir 下所有图片文件及其关联文件。
 
-    返回列表，每项:
-      {
-        "path": str,        # 相对于 data_dir 的路径
-        "stem": str,        # 无后缀文件名
-        "suffix": str,      # 后缀（含点）
-        "size": int,        # 文件字节数
-        "siblings": [str],  # 同 stem 的非图片文件路径列表
-      }
+    path_prefix 非空时，返回的 path / siblings 会加上此前缀（相对数据集根），
+    例如 path_prefix=\"main\" → path=\"main/foo.png\"。
     """
-    # 建立 stem -> 文件列表 的索引
+    prefix = (path_prefix or "").replace("\\", "/").strip("/")
     stem_map: dict[str, list[Path]] = {}
+    if not data_dir.is_dir():
+        return []
+
     for f in data_dir.iterdir():
         if not f.is_file():
             continue
@@ -43,20 +40,22 @@ def scan_images(data_dir: Path) -> list[dict]:
 
     result: list[dict] = []
     for stem, files in sorted(stem_map.items(), key=lambda x: _natural_key(x[0])):
-        # 找图片文件
         img_file = None
         siblings: list[str] = []
         for f in files:
             if f.suffix.lower() in IMAGE_EXTS:
                 img_file = f
             else:
-                siblings.append(str(f.relative_to(data_dir)))
+                name = f.name
+                siblings.append(f"{prefix}/{name}" if prefix else name)
 
         if img_file is None:
-            continue  # 只有附属文件没有图，跳过
+            continue
 
+        name = img_file.name
+        rel = f"{prefix}/{name}" if prefix else name
         result.append({
-            "path": str(img_file.relative_to(data_dir)),
+            "path": rel,
             "stem": img_file.stem,
             "suffix": img_file.suffix.lower(),
             "size": img_file.stat().st_size,

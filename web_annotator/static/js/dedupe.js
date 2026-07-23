@@ -10,6 +10,7 @@
   var _previewMembers = [];
   var _previewIdx = 0;
   var _previewOpen = false;
+  var _dir = localStorage.getItem('annotator_work_dir') || 'main';
 
   function toast(msg) {
     var el = document.getElementById('toast');
@@ -28,6 +29,44 @@
       throw new Error(t || res.statusText);
     }
     return res.json();
+  }
+
+  function getDir() { return _dir; }
+  function setDir(d) {
+    _dir = d || 'main';
+    localStorage.setItem('annotator_work_dir', _dir);
+  }
+
+  async function setupDirSelect() {
+    var sel = document.getElementById('work-dir');
+    if (!sel) return;
+    var data = await api('/api/dedupe/dirs');
+    var dirs = data.dirs || [];
+    if (!dirs.some(function (d) { return d.name === _dir; })) {
+      setDir(data.default || 'main');
+    }
+    sel.innerHTML = '';
+    dirs.forEach(function (d) {
+      var opt = document.createElement('option');
+      opt.value = d.name;
+      opt.textContent = d.label + ' (' + d.image_count + ')';
+      if (d.name === _dir) opt.selected = true;
+      sel.appendChild(opt);
+    });
+    if (!dirs.length) {
+      var opt = document.createElement('option');
+      opt.value = 'main';
+      opt.textContent = 'main';
+      sel.appendChild(opt);
+    }
+    sel.addEventListener('change', function () {
+      setDir(sel.value);
+      _groups = [];
+      _selected = {};
+      document.getElementById('dedupe-main').innerHTML =
+        '<div class="dedupe-empty">目录已切换，请重新扫描。</div>';
+      updateStats();
+    });
   }
 
   function thumbUrl(h) { return '/thumb/' + h + '.avif'; }
@@ -220,7 +259,11 @@
     try {
       var data = await api('/api/dedupe/scan', {
         method: 'POST',
-        body: JSON.stringify({ mse_threshold: mse, similar_res_ratio: ratio }),
+        body: JSON.stringify({
+          dir: getDir(),
+          mse_threshold: mse,
+          similar_res_ratio: ratio
+        }),
       });
       _groups = data.groups || [];
       _selected = {};
@@ -260,7 +303,7 @@
     try {
       var res = await api('/api/dedupe/apply', {
         method: 'POST',
-        body: JSON.stringify({ paths: paths }),
+        body: JSON.stringify({ paths: paths, dir: getDir() }),
       });
       toast('已移入回收站 ' + res.moved + ' 张');
       var gone = {};
@@ -318,5 +361,6 @@
     }
   });
 
+  setupDirSelect().catch(function (e) { toast(String(e.message || e)); });
   updateStats();
 })();

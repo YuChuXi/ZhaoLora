@@ -184,18 +184,21 @@ def main() -> int:
         print(f"错误: {e}")
         return 1
 
-    # data_dir = main（图片所在目录）；layout.root = 数据集根（元数据放根目录）
+    # data_dir = main（裁剪/蒙版）；dataset_root = 根（筛选路径 / 缩略图 / 回收站）
     _migrate_meta_to_root(layout.main_dir, layout.root)
 
     app.state.layout = layout
     app.state.dataset_root = layout.root
     app.state.data_dir = layout.main_dir
     app.state.thumbnailer = Thumbnailer(
-        layout.main_dir,
+        layout.root,
         size=args.thumbnail_size,
         meta_dir=layout.root,
     )
-    app.state.state_manager = StateManager(layout.main_dir, meta_dir=layout.root)
+    app.state.state_manager = StateManager(layout.root, meta_dir=layout.root)
+    n_mig = app.state.state_manager.migrate_flat_main_keys()
+    if n_mig:
+        print(f"已迁移旧路径键/回收站: {n_mig}")
 
     mask_dir = Path(args.mask_dir).resolve() if args.mask_dir else layout.mask_dir
     mask_dir.mkdir(parents=True, exist_ok=True)
@@ -219,7 +222,7 @@ def main() -> int:
     thumb_dir = app.state.thumbnailer.thumb_dir
     app.mount("/thumb", StaticFiles(directory=str(thumb_dir)), name="thumbs")
 
-    images = scan_images(layout.main_dir)
+    images = scan_images(layout.main_dir, path_prefix="main")
     state = app.state.state_manager.get()
 
     if not args.skip_thumbnails:
@@ -240,7 +243,7 @@ def main() -> int:
         app.state.color_index = idx
         rels = [img["path"] for img in images]
         thumbs = {r: app.state.thumbnailer.get_path(r) for r in rels}
-        idx.ensure_many(layout.main_dir, rels, thumbs)
+        idx.ensure_many(layout.root, rels, thumbs)
         print(f"色调索引就绪: {len(rels)} 张")
 
     import threading

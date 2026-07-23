@@ -102,6 +102,39 @@
     document.getElementById('btn-restore').addEventListener('click', handleRestore);
     document.getElementById('chk-show-trash').addEventListener('change', refreshView);
 
+    async function setupDirSelect() {
+      var sel = document.getElementById('work-dir');
+      if (!sel) return;
+      var data = await API.listDirs();
+      var dirs = data.dirs || [];
+      var cur = API.getDir();
+      if (!dirs.some(function (d) { return d.name === cur; })) {
+        cur = data.default || 'main';
+        API.setDir(cur);
+      }
+      sel.innerHTML = '';
+      dirs.forEach(function (d) {
+        var opt = document.createElement('option');
+        opt.value = d.name;
+        opt.textContent = d.label + ' (' + d.image_count + ')';
+        if (d.name === cur) opt.selected = true;
+        sel.appendChild(opt);
+      });
+      if (!dirs.length) {
+        var opt = document.createElement('option');
+        opt.value = 'main';
+        opt.textContent = 'main';
+        sel.appendChild(opt);
+      }
+      sel.addEventListener('change', function () {
+        API.setDir(sel.value);
+        Store.load().then(function () {
+          updateStats();
+          refreshView();
+        }).catch(function (e) { toast('加载失败: ' + e.message); });
+      });
+    }
+
     // 列数滑块
     var colsSlider = document.getElementById('cols-slider');
     var colsLabel = document.getElementById('cols-label');
@@ -130,7 +163,9 @@
 
     document.addEventListener('keydown', onKeyDown);
 
-    Store.load().then(function() {
+    setupDirSelect().then(function () {
+      return Store.load();
+    }).then(function() {
       updateStats();
       refreshView();
     }).catch(function(e) {

@@ -111,15 +111,25 @@ class StateManager:
             except OSError:
                 continue
 
-            # 移动关联文件
-            stem = Path(rel_path).stem
-            for sib in list(self.data_dir.iterdir()):
-                if sib.is_file() and sib.stem == stem and sib.suffix.lower() not in {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif"}:
-                    sib_dst = self.trash_dir / sib.name
-                    try:
-                        shutil.move(str(sib), str(sib_dst))
-                    except OSError:
-                        pass
+            # 移动关联文件（同目录同 stem）
+            src_path = Path(src)
+            parent = src_path.parent
+            stem = src_path.stem
+            img_name = src_path.name
+            rel_parent = str(Path(rel_path).parent)
+            for sib in list(parent.iterdir()):
+                if not sib.is_file() or sib.name == img_name:
+                    continue
+                if sib.stem != stem:
+                    continue
+                if sib.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif"}:
+                    continue
+                sib_rel = f"{rel_parent}/{sib.name}" if rel_parent not in ("", ".") else sib.name
+                sib_dst = self.trash_dir / sib_rel
+                try:
+                    shutil.move(str(sib), str(sib_dst))
+                except OSError:
+                    pass
 
         # 清空选中
         state["selected"] = {}
@@ -156,10 +166,17 @@ class StateManager:
                 continue
 
             # 恢复关联文件
+            trash_parent = src.parent
             stem = Path(rel_path).stem
-            for sib in list(self.trash_dir.iterdir()):
-                if sib.is_file() and sib.stem == stem:
-                    sib_dst = self.data_dir / sib.name
+            rel_parent = str(Path(rel_path).parent)
+            if trash_parent.is_dir():
+                for sib in list(trash_parent.iterdir()):
+                    if not sib.is_file() or sib.stem != stem:
+                        continue
+                    if sib.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif"}:
+                        continue
+                    sib_rel = f"{rel_parent}/{sib.name}" if rel_parent not in ("", ".") else sib.name
+                    sib_dst = self.data_dir / sib_rel
                     try:
                         shutil.move(str(sib), str(sib_dst))
                     except OSError:
@@ -167,3 +184,32 @@ class StateManager:
 
         self._write(state)
         return restored
+
+    def migrate_flat_main_keys(self) -> int:
+        """旧版无目录前缀的路径 → main/xxx；扁平回收站文件 → .trash/main/。"""
+        state = self.get()
+        changed = 0
+        for key in ("selected", "trashed"):
+            mapping = state.get(key) or {}
+            new_map: dict = {}
+            for p, v in mapping.items():
+                p2 = p.replace("\\", "/")
+                if p2 and "/" not in p2:
+                    p2 = f"main/{p2}"
+                    changed += 1
+                new_map[p2] = v
+            state[key] = new_map
+        if changed:
+            self._write(state)
+
+        trash = self.trash_dir
+        if trash.is_dir():
+            main_trash = trash / "main"
+            for f in list(trash.iterdir()):
+                if f.is_file():
+                    main_trash.mkdir(parents=True, exist_ok=True)
+                    dest = main_trash / f.name
+                    if not dest.exists():
+                        f.rename(dest)
+                        changed += 1
+        return changed

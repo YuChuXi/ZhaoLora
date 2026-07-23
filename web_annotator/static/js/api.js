@@ -4,6 +4,8 @@
 var API = (function() {
   'use strict';
 
+  var _dir = localStorage.getItem('annotator_work_dir') || 'main';
+
   async function request(path, opts) {
     opts = opts || {};
     var res = await fetch(path, {
@@ -18,9 +20,17 @@ var API = (function() {
     return res.json();
   }
 
+  function getDir() { return _dir; }
+  function setDir(d) {
+    _dir = d || 'main';
+    localStorage.setItem('annotator_work_dir', _dir);
+  }
+
+  function listDirs() { return request('/api/dirs'); }
+
   function listImages(showTrash) {
-    var url = '/api/images';
-    if (showTrash) url += '?show_trash=1';
+    var url = '/api/images?dir=' + encodeURIComponent(_dir);
+    if (showTrash) url += '&show_trash=1';
     return request(url);
   }
   function thumbnailUrl(h) { return '/thumb/' + h + '.avif'; }
@@ -31,13 +41,19 @@ var API = (function() {
     return request(url);
   }
   function toggle(p)      { return request('/api/toggle', { method: 'POST', body: JSON.stringify({ path: p }) }); }
-  function selectAll()    { return request('/api/select-all', { method: 'POST' }); }
+  function selectAll()    {
+    return request('/api/select-all', {
+      method: 'POST',
+      body: JSON.stringify({ dir: _dir }),
+    });
+  }
   function deselectAll()  { return request('/api/deselect-all', { method: 'POST' }); }
   function applyDelete()  { return request('/api/apply', { method: 'POST' }); }
   function restore(paths) { return request('/api/restore', { method: 'POST', body: JSON.stringify({ paths: paths }) }); }
-  function getState()     { return request('/api/state'); }
+  function getState()     { return request('/api/state?dir=' + encodeURIComponent(_dir)); }
 
   return {
+    getDir: getDir, setDir: setDir, listDirs: listDirs,
     listImages: listImages, thumbnailUrl: thumbnailUrl, imageUrl: imageUrl,
     similarImages: similarImages,
     toggle: toggle, selectAll: selectAll, deselectAll: deselectAll,
