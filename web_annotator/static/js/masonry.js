@@ -54,6 +54,7 @@ var Masonry = (function() {
     if (img.trashed)  card.classList.add('trashed');
     card.dataset.path = img.path;
     card.addEventListener('click', function() { Store.toggle(img.path); });
+    if (typeof SimilarHover !== 'undefined') SimilarHover.bindCard(card, img.path);
 
     var imgEl = document.createElement('img');
     imgEl.src = API.thumbnailUrl(img.thumbnail_hash);
@@ -65,7 +66,8 @@ var Masonry = (function() {
     info.className = 'info';
     var name = document.createElement('span');
     name.className = 'name';
-    name.textContent = img.stem;
+    var res = (img.width && img.height) ? (img.width + '×' + img.height + ' ') : '';
+    name.textContent = res + img.stem;
     info.appendChild(name);
     card.appendChild(info);
 
@@ -80,10 +82,28 @@ var Masonry = (function() {
   /** 增量更新选中态 */
   function setSelected(path, selected) {
     if (!_container) return;
-    var card = _container.querySelector('.card[data-path="' + path.replace(/"/g, '\\"') + '"]');
+    var card = _findCard(path);
     if (!card) return;
     if (selected) card.classList.add('selected');
     else card.classList.remove('selected');
+  }
+
+  function _findCard(path) {
+    if (!_container) return null;
+    var cards = _container.querySelectorAll('.card');
+    for (var i = 0; i < cards.length; i++) {
+      if (cards[i].dataset.path === path) return cards[i];
+    }
+    return null;
+  }
+
+  function jumpTo(path) {
+    var card = _findCard(path);
+    if (!card) return false;
+    card.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'nearest' });
+    card.classList.add('jump-flash');
+    setTimeout(function () { card.classList.remove('jump-flash'); }, 1200);
+    return true;
   }
 
   function renderAll() {
@@ -95,5 +115,8 @@ var Masonry = (function() {
     }
   }
 
-  return { init: init, render: render, setSelected: setSelected, setColumns: setColumns };
+  return {
+    init: init, render: render, setSelected: setSelected,
+    setColumns: setColumns, jumpTo: jumpTo,
+  };
 })();

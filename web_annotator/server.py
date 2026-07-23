@@ -35,6 +35,7 @@ from routes.annotations import router as annotations_router
 from routes.alpha_paint import router as paint_router
 from routes.crop import router as crop_router
 from routes.tag_stats import router as tag_stats_router
+from routes.dedupe import router as dedupe_router
 
 app = FastAPI(title="Image Annotator", version="2.2.0")
 
@@ -47,6 +48,7 @@ app.include_router(annotations_router)
 app.include_router(paint_router)
 app.include_router(crop_router)
 app.include_router(tag_stats_router)
+app.include_router(dedupe_router)
 
 
 @app.get("/")
@@ -79,6 +81,14 @@ def tags_page():
     if template.exists():
         return HTMLResponse(template.read_text(encoding="utf-8"))
     return HTMLResponse("<h1>tags.html not found</h1>", status_code=404)
+
+
+@app.get("/dedupe")
+def dedupe_page():
+    template = Path(__file__).parent / "templates" / "dedupe.html"
+    if template.exists():
+        return HTMLResponse(template.read_text(encoding="utf-8"))
+    return HTMLResponse("<h1>dedupe.html not found</h1>", status_code=404)
 
 
 def main() -> int:
@@ -157,6 +167,19 @@ def main() -> int:
         else:
             print("缩略图缓存完整，跳过预生成")
 
+    # 后台预热色调索引（用缩略图，不挡启动）
+    def _prewarm_color():
+        from services.color_similarity import ColorIndex
+        idx = ColorIndex(app.state.thumbnailer.thumb_dir)
+        app.state.color_index = idx
+        rels = [img["path"] for img in images]
+        thumbs = {r: app.state.thumbnailer.get_path(r) for r in rels}
+        idx.ensure_many(layout.main_dir, rels, thumbs)
+        print(f"色调索引就绪: {len(rels)} 张")
+
+    import threading
+    threading.Thread(target=_prewarm_color, daemon=True).start()
+
     part_names = [p.name for p in layout.list_part_dirs()]
     print(f"数据集根 : {layout.root}")
     print(f"源图目录 : {layout.main_dir}")
@@ -166,6 +189,7 @@ def main() -> int:
     print(f"已选待删 : {len(state.get('selected', {}))}")
     print(f"回收站内 : {len(state.get('trashed', {}))}")
     print(f"服务地址 : http://{args.host}:{args.port}")
+    print(f"去重页面 : http://{args.host}:{args.port}/dedupe")
     print(f"裁剪页面 : http://{args.host}:{args.port}/crop")
     print(f"Tag统计  : http://{args.host}:{args.port}/tags")
 

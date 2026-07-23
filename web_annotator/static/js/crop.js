@@ -549,13 +549,17 @@
     for (var i = 0; i < _images.length; i++) if (_images[i].done) done++;
     document.getElementById('crop-progress').textContent =
       (_index + 1) + '/' + _images.length + ' (已裁 ' + done + ')';
+    var nameEl = document.getElementById('crop-filename');
     if (!img) {
-      document.getElementById('crop-filename').textContent = '-';
+      nameEl.textContent = '-';
+      nameEl.title = '';
       document.getElementById('info-text').textContent = '无图片';
       return;
     }
     var status = img.done ? '已裁剪' : '未裁剪';
-    document.getElementById('crop-filename').textContent = img.path + ' · ' + status;
+    var base = img.path.split(/[/\\]/).pop() || img.path;
+    nameEl.textContent = base + ' · ' + status;
+    nameEl.title = img.path + ' · ' + status;
     document.getElementById('info-text').textContent =
       '[' + status + '] ' + img.path + ' | 原图 ' + _origW + 'x' + _origH + ' | 选区 ' + _crops.length +
       (_autoParts.length ? ' | 自动部位: ' + _autoParts.join(', ') : '');
@@ -565,39 +569,86 @@
   function hitTestBox(rx, ry, box) {
     var left = Math.min(box.x1, box.x2), right = Math.max(box.x1, box.x2);
     var top = Math.min(box.y1, box.y2), bottom = Math.max(box.y1, box.y2);
-    var tol = uiPx(Math.max(8, HANDLE_TOL));
+    var edgeTol = uiPx(Math.max(8, HANDLE_TOL));
+    // 角点用更大圆形命中区，且比边/整框优先
+    var cornerTol = uiPx(Math.max(16, HANDLE_TOL * 1.8));
 
-    var nearTL = Math.abs(rx - left) <= tol && Math.abs(ry - top) <= tol;
-    var nearTR = Math.abs(rx - right) <= tol && Math.abs(ry - top) <= tol;
-    var nearBL = Math.abs(rx - left) <= tol && Math.abs(ry - bottom) <= tol;
-    var nearBR = Math.abs(rx - right) <= tol && Math.abs(ry - bottom) <= tol;
-    var nearL = Math.abs(rx - left) <= tol && top <= ry && ry <= bottom;
-    var nearR = Math.abs(rx - right) <= tol && top <= ry && ry <= bottom;
-    var nearT = Math.abs(ry - top) <= tol && left <= rx && rx <= right;
-    var nearB = Math.abs(ry - bottom) <= tol && left <= rx && rx <= right;
-    var inside = left <= rx && rx <= right && top <= ry && ry <= bottom;
+    var corners = [
+      { mode: 'resize_tl', x: left, y: top },
+      { mode: 'resize_tr', x: right, y: top },
+      { mode: 'resize_bl', x: left, y: bottom },
+      { mode: 'resize_br', x: right, y: bottom },
+    ];
+    var bestCorner = null;
+    var bestCornerD = Infinity;
+    for (var i = 0; i < corners.length; i++) {
+      var c = corners[i];
+      var d = Math.hypot(rx - c.x, ry - c.y);
+      if (d < bestCornerD) {
+        bestCornerD = d;
+        bestCorner = c.mode;
+      }
+    }
+    if (bestCorner && bestCornerD <= cornerTol) return bestCorner;
 
-    if (nearTL) return 'resize_tl';
-    if (nearTR) return 'resize_tr';
-    if (nearBL) return 'resize_bl';
-    if (nearBR) return 'resize_br';
+    // 边：若同时靠近某角点，仍让角点赢（上面已返回）；此处排除角点附近残留边命中
+    var nearL = Math.abs(rx - left) <= edgeTol && top <= ry && ry <= bottom;
+    var nearR = Math.abs(rx - right) <= edgeTol && top <= ry && ry <= bottom;
+    var nearT = Math.abs(ry - top) <= edgeTol && left <= rx && rx <= right;
+    var nearB = Math.abs(ry - bottom) <= edgeTol && left <= rx && rx <= right;
+
+    // 边上但更靠近角时，不抢边（距离角 < 边容差*1.2）
+    if (bestCornerD <= edgeTol * 1.25) {
+      nearL = nearL && !(bestCorner === 'resize_tl' || bestCorner === 'resize_bl');
+      nearR = nearR && !(bestCorner === 'resize_tr' || bestCorner === 'resize_br');
+      nearT = nearT && !(bestCorner === 'resize_tl' || bestCorner === 'resize_tr');
+      nearB = nearB && !(bestCorner === 'resize_bl' || bestCorner === 'resize_br');
+    }
+
     if (nearL) return 'resize_left';
     if (nearR) return 'resize_right';
     if (nearT) return 'resize_top';
     if (nearB) return 'resize_bottom';
+
+    var inside = left <= rx && rx <= right && top <= ry && ry <= bottom;
     if (inside) return 'move';
     return null;
   }
 
   function hitTest(rx, ry) {
+    var cornerTol = uiPx(Math.max(16, HANDLE_TOL * 1.8));
+    var best = null;
+    var bestD = Infinity;
+
+    // 先全局找最近角点：比焦点框的移动/边更优先
+    for (var i = _crops.length - 1; i >= 0; i--) {
+      var box = _crops[i];
+      var left = Math.min(box.x1, box.x2), right = Math.max(box.x1, box.x2);
+      var top = Math.min(box.y1, box.y2), bottom = Math.max(box.y1, box.y2);
+      var pts = [
+        { mode: 'resize_tl', x: left, y: top },
+        { mode: 'resize_tr', x: right, y: top },
+        { mode: 'resize_bl', x: left, y: bottom },
+        { mode: 'resize_br', x: right, y: bottom },
+      ];
+      for (var p = 0; p < pts.length; p++) {
+        var d = Math.hypot(rx - pts[p].x, ry - pts[p].y);
+        if (d < bestD) {
+          bestD = d;
+          best = { idx: i, mode: pts[p].mode };
+        }
+      }
+    }
+    if (best && bestD <= cornerTol) return best;
+
     if (_selected >= 0 && _selected < _crops.length) {
       var m = hitTestBox(rx, ry, _crops[_selected]);
       if (m) return { idx: _selected, mode: m };
     }
-    for (var i = _crops.length - 1; i >= 0; i--) {
-      if (i === _selected) continue;
-      var m2 = hitTestBox(rx, ry, _crops[i]);
-      if (m2) return { idx: i, mode: m2 };
+    for (var j = _crops.length - 1; j >= 0; j--) {
+      if (j === _selected) continue;
+      var m2 = hitTestBox(rx, ry, _crops[j]);
+      if (m2) return { idx: j, mode: m2 };
     }
     return { idx: -1, mode: 'new' };
   }
@@ -909,6 +960,15 @@
     updateNav();
   }
 
+  function cycleSelected(delta) {
+    if (_noCrop || _crops.length < 2) return;
+    if (_selected < 0) _selected = 0;
+    else _selected = (_selected + delta + _crops.length) % _crops.length;
+    redraw();
+    renderList();
+    updateNav();
+  }
+
   function clearCrops() {
     if (_noCrop) return;
     initDefaultCrop();
@@ -966,6 +1026,11 @@
     });
 
     canvas.addEventListener('mousedown', onPress);
+    wrap.addEventListener('wheel', function (e) {
+      if (_noCrop || _crops.length < 2 || _dragMode) return;
+      e.preventDefault();
+      cycleSelected(e.deltaY > 0 ? 1 : -1);
+    }, { passive: false });
     window.addEventListener('mousemove', function (e) {
       if (_dragMode) onDrag(e);
       else onMove(e);

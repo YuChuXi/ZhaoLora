@@ -68,6 +68,20 @@
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
   .crop-info .live { color: #5eb8ff; }
+  .toolbar .stat.filename {
+    max-width: min(200px, 18vw);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    flex-shrink: 1;
+    min-width: 0;
+  }
+  .toolbar {
+    flex-wrap: nowrap;
+  }
+  .toolbar .btn,
+  .toolbar label {
+    flex-shrink: 0;
+  }
 </style>
 </head>
 <body>
@@ -77,7 +91,7 @@
     <span class="title">子图裁剪</span>
   </div>
   <span class="stat" id="crop-progress">0/0</span>
-  <span class="stat" id="crop-filename">-</span>
+  <span class="stat filename" id="crop-filename" title="-">-</span>
   <span class="sep"></span>
   <button class="btn" id="btn-prev" title="←">← 上一张</button>
   <button class="btn" id="btn-next" title="→">下一张 →</button>
@@ -114,7 +128,7 @@
         输出：xxx/&lt;部位&gt;/同名.png<br>
         删除=仅当前图 · 永久=注销自动部位<br>
         Ctrl+S / S 保存并下一张 · 空格 / Ctrl+N 跳过<br>
-        ←/→ 翻页 · A 新建 · D / Delete 删除 · C 清空
+        ←/→ 翻页 · 滚轮切换焦点 · A 新建 · D / Delete 删除 · C 清空
       </div>
     </div>
   </aside>

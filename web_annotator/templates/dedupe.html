@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>去重</title>
+<link rel="stylesheet" href="/static/css/annotator.css">
+<style>
+  body { margin: 0; min-height: 100vh; display: flex; flex-direction: column; }
+  .dedupe-main { flex: 1; overflow: auto; padding: 12px 16px 40px; }
+  .dedupe-empty {
+    padding: 60px 20px; text-align: center; color: var(--text-dim); font-size: 14px;
+  }
+  .dup-group {
+    margin-bottom: 16px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--surface);
+    overflow: hidden;
+  }
+  .dup-group-head {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    padding: 8px 12px; border-bottom: 1px solid var(--border);
+    font-size: 13px; color: var(--text-dim);
+  }
+  .dup-group-head b { color: var(--text); }
+  .dup-row {
+    display: flex; flex-wrap: nowrap; gap: 10px;
+    padding: 10px; overflow-x: auto;
+  }
+  .dup-card {
+    flex: 0 0 auto;
+    width: 180px;
+    border: 2px solid transparent;
+    border-radius: var(--radius);
+    overflow: hidden;
+    background: var(--card-bg);
+    cursor: pointer;
+    position: relative;
+    transition: border-color var(--transition), box-shadow var(--transition);
+  }
+  .dup-card:hover { border-color: #4a6a9a; }
+  .dup-card.selected {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px var(--accent), 0 4px 16px rgba(233,69,96,0.28);
+  }
+  .dup-card.selected img { filter: brightness(0.55); }
+  .dup-card.keep-hint { box-shadow: inset 0 0 0 1px rgba(74,222,128,0.35); }
+  .dup-card img {
+    display: block; width: 100%; height: 140px; object-fit: cover; background: #111;
+  }
+  .dup-card .meta {
+    padding: 6px 8px; font-size: 11px; color: var(--text-dim);
+    line-height: 1.35;
+  }
+  .dup-card .meta .name {
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .dup-badge {
+    position: absolute; top: 6px; left: 6px;
+    font-size: 10px; padding: 2px 6px; border-radius: 4px;
+    background: rgba(0,0,0,0.55); color: #9fe6b0;
+  }
+  .dup-mark {
+    position: absolute; top: 6px; right: 6px;
+    width: 24px; height: 24px; border-radius: 50%;
+    background: var(--accent); color: #fff;
+    font-size: 14px; font-weight: bold;
+    display: flex; align-items: center; justify-content: center;
+    opacity: 0; transform: scale(0.6);
+    transition: opacity var(--transition), transform var(--transition);
+    pointer-events: none;
+  }
+  .dup-card.selected .dup-mark { opacity: 1; transform: scale(1); }
+  .toolbar input[type="number"] {
+    width: 90px; background: var(--card-bg); color: var(--text);
+    border: 1px solid var(--border); border-radius: 4px; padding: 3px 6px; font-size: 12px;
+  }
+
+  /* 悬停预览 */
+  .dup-preview {
+    position: fixed; inset: 0; z-index: 400;
+    display: none; align-items: center; justify-content: center;
+    background: rgba(6, 8, 14, 0.78);
+    padding: 24px;
+  }
+  .dup-preview.show { display: flex; }
+  .dup-preview-panel {
+    position: relative;
+    width: min(960px, 100%);
+    max-height: 100%;
+    display: flex; flex-direction: column; gap: 10px;
+  }
+  .dup-preview-stage {
+    position: relative;
+    background: #0a101c;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+    min-height: 240px;
+  }
+  .dup-preview-stage img {
+    display: block; width: 100%; max-height: min(72vh, 820px);
+    object-fit: contain; background: #05070d;
+  }
+  .dup-preview-nav {
+    position: absolute; top: 50%; transform: translateY(-50%);
+    width: 42px; height: 64px; border: none; border-radius: 8px;
+    background: rgba(0,0,0,0.45); color: #fff; font-size: 28px;
+    cursor: pointer; line-height: 1;
+  }
+  .dup-preview-nav:hover { background: rgba(233,69,96,0.8); }
+  .dup-preview-nav.prev { left: 10px; }
+  .dup-preview-nav.next { right: 10px; }
+  .dup-preview-meta {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    color: var(--text-dim); font-size: 13px;
+  }
+  .dup-preview-meta b { color: var(--text); }
+  .dup-preview-actions { margin-left: auto; display: flex; gap: 8px; }
+</style>
+</head>
+<body>
+<div class="toolbar">
+  <div class="toolbar-brand">
+    <a class="nav-home" href="/">主页</a>
+    <span class="title">去重</span>
+    <nav class="toolbar-nav">
+      <a href="/">筛选</a>
+      <a href="/crop">裁剪</a>
+      <a href="/paint">绘制</a>
+      <a href="/tags">Tag 统计</a>
+    </nav>
+  </div>
+  <label style="font-size:12px;color:var(--text-dim);display:flex;align-items:center;gap:4px;">
+    MSE阈值
+    <input type="number" id="mse-threshold" value="0.0001" min="0.0000001" max="1" step="0.0001" title="128×128 归一化 MSE">
+  </label>
+  <label style="font-size:12px;color:var(--text-dim);display:flex;align-items:center;gap:4px;">
+    分辨率比
+    <input type="number" id="res-ratio" value="1.05" min="1" max="10" step="0.01" title="≤该值视为分辨率接近，优先保清晰度">
+  </label>
+  <button class="btn green" id="btn-scan">扫描重复</button>
+  <span class="sep"></span>
+  <span class="stat">组: <b id="stat-groups">0</b></span>
+  <span class="stat">已选待删: <b id="stat-selected">0</b></span>
+  <span class="sep"></span>
+  <button class="btn" id="btn-suggest">勾选建议删除</button>
+  <button class="btn" id="btn-clear">清空勾选</button>
+  <button class="btn danger" id="btn-apply">删除选中</button>
+</div>
+
+<div class="dedupe-main" id="dedupe-main">
+  <div class="dedupe-empty">设置阈值后点「扫描重复」。一行一组；右键预览、←→翻页；点击勾选删除。</div>
+</div>
+<div class="toast" id="toast"></div>
+<div class="dup-preview" id="dup-preview">
+  <div class="dup-preview-panel">
+    <div class="dup-preview-stage">
+      <img id="dup-preview-img" alt="">
+      <button type="button" class="dup-preview-nav prev" id="dup-preview-prev" title="←">‹</button>
+      <button type="button" class="dup-preview-nav next" id="dup-preview-next" title="→">›</button>
+    </div>
+    <div class="dup-preview-meta">
+      <span id="dup-preview-index">1/1</span>
+      <span id="dup-preview-res">-</span>
+      <b id="dup-preview-name">-</b>
+      <span id="dup-preview-keep"></span>
+      <div class="dup-preview-actions">
+        <button type="button" class="btn" id="dup-preview-toggle">选中/取消</button>
+        <button type="button" class="btn" id="dup-preview-close">关闭</button>
+      </div>
+    </div>
+  </div>
+</div>
+<script src="/static/js/dedupe.js"></script>
+</body>
+</html>
