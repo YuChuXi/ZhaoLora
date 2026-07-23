@@ -3,31 +3,31 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Image Annotator</title>
+<title>筛选</title>
 <link rel="stylesheet" href="/static/css/annotator.css">
 </head>
 <body>
 
 <div class="toolbar">
   <div class="toolbar-brand">
-    <span class="title">图片筛选</span>
+    <span class="title">筛选</span>
     <nav class="toolbar-nav">
       <a href="/dedupe">去重</a>
       <a href="/crop">裁剪</a>
-      <a href="/paint">绘制</a>
-      <a href="/tagging">WD14 打标</a>
-      <a href="/tags">Tag 统计</a>
+      <a href="/paint">蒙版</a>
+      <a href="/tagging">打标</a>
+      <a href="/tags">标签</a>
     </nav>
   </div>
-  <span class="stat">总计: <b id="stat-total">0</b></span>
-  <span class="stat">已选: <b id="stat-selected">0</b></span>
-  <span class="stat">回收站: <b id="stat-trashed">0</b></span>
+  <span class="stat">总计 <b id="stat-total">0</b></span>
+  <span class="stat">已选 <b id="stat-selected">0</b></span>
+  <span class="stat">回收站 <b id="stat-trashed">0</b></span>
   <span class="sep"></span>
   <button class="btn" id="btn-select-all" title="Ctrl+A">全选</button>
   <button class="btn" id="btn-deselect-all" title="Ctrl+Shift+A">取消全选</button>
   <button class="btn" id="btn-invert" title="Ctrl+I">反选</button>
   <span class="sep"></span>
-  <button class="btn danger" id="btn-apply" title="Delete">删除选中</button>
+  <button class="btn danger" id="btn-apply" title="Delete">删除</button>
   <button class="btn green" id="btn-restore" title="Ctrl+Z">恢复</button>
   <span class="sep"></span>
   <label style="font-size:12px;color:var(--text-dim);cursor:pointer;user-select:none;display:flex;align-items:center;gap:4px;">
@@ -42,7 +42,7 @@
 
 <div class="masonry" id="masonry"></div>
 <div class="toast" id="toast"></div>
-<div class="hint">左键选中 · 悬停看相似 · 点相似跳转 · Delete 删除</div>
+<div class="hint">点击选中 · 悬停查看相似 · Delete 移入回收站</div>
 
 <script src="/static/js/api.js"></script>
 <script src="/static/js/store.js"></script>

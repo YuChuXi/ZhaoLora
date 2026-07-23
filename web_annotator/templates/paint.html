@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Alpha Paint</title>
+<title>蒙版</title>
 <link rel="stylesheet" href="/static/css/annotator.css">
 <style>
   body { margin: 0; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
@@ -18,34 +18,43 @@
 <div class="toolbar">
   <div class="toolbar-brand">
     <a class="nav-home" href="/">主页</a>
-    <span class="title">Alpha 绘制</span>
+    <span class="title">蒙版</span>
+    <nav class="toolbar-nav">
+      <a href="/">筛选</a>
+      <a href="/dedupe">去重</a>
+      <a href="/crop">裁剪</a>
+      <a href="/tagging">打标</a>
+      <a href="/tags">标签</a>
+    </nav>
   </div>
   <span class="stat" id="paint-progress">0/0</span>
   <span class="stat" id="paint-filename">-</span>
   <span class="sep"></span>
-  <button class="btn" id="btn-prev">← 上一张</button>
-  <button class="btn" id="btn-next">下一张 →</button>
+  <button class="btn" id="btn-prev">上一张</button>
+  <button class="btn" id="btn-next">下一张</button>
   <button class="btn" id="btn-skip">跳过</button>
   <button class="btn green" id="btn-save">保存</button>
   <span class="sep"></span>
-  <button class="btn" id="btn-clear">清空透明</button>
-  <button class="btn" id="btn-fill">填满不透明</button>
-  <button class="btn" id="btn-default">重置默认</button>
+  <button class="btn" id="btn-clear">全透明</button>
+  <button class="btn" id="btn-fill">全不透明</button>
+  <button class="btn" id="btn-default">恢复默认</button>
   <span class="sep"></span>
   <label style="font-size:12px;color:var(--text-dim);display:flex;align-items:center;gap:4px;">
-    笔刷:
+    笔刷
     <input type="range" id="brush-slider" min="0.5" max="20" value="3" step="0.1" style="width:80px;">
     <span id="brush-label">3.0%</span>
   </label>
   <label style="font-size:12px;color:var(--text-dim);display:flex;align-items:center;gap:4px;">
-    <input type="checkbox" id="chk-left-transparent" checked> 左键透明
+    <input type="checkbox" id="chk-left-transparent" checked> 左键擦除
   </label>
   <label style="font-size:12px;color:var(--text-dim);display:flex;align-items:center;gap:4px;">
-    默认α: <input type="number" id="default-alpha" value="255" min="0" max="255" step="1" style="width:50px;background:var(--card-bg);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:2px 4px;font-size:12px;">
+    默认 Alpha
+    <input type="number" id="default-alpha" value="255" min="0" max="255" step="1" style="width:50px;background:var(--card-bg);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:2px 4px;font-size:12px;">
   </label>
   <label style="font-size:12px;color:var(--text-dim);display:flex;align-items:center;gap:4px;">
-    保存: <select id="save-format" style="background:var(--card-bg);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:2px 4px;font-size:12px;">
-      <option value="alpha_bw">灰度 alpha</option>
+    格式
+    <select id="save-format" style="background:var(--card-bg);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:2px 4px;font-size:12px;">
+      <option value="alpha_bw">灰度</option>
       <option value="rgba">RGBA</option>
     </select>
   </label>
@@ -55,7 +64,7 @@
   <div class="brush-preview" id="brush-preview"></div>
 </div>
 <div class="paint-info">
-  <span id="info-text">加载中...</span>
+  <span id="info-text">加载中…</span>
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/fabric.js/5.3.1/fabric.min.js"></script>

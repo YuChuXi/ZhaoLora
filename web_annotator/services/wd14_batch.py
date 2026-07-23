@@ -1,4 +1,4 @@
-"""WD14 批量打标（对齐 guo582_label_tk.run_batch_no_gui）。"""
+"""WD14 批量打标。"""
 
 from __future__ import annotations
 
@@ -199,7 +199,7 @@ class TaggingProgress:
 
 
 def collect_jobs(dirs: list[Path]) -> list[tuple[Path, Path]]:
-    """返回 (src_image, out_dir) 列表；原位输出。"""
+    """返回 (src_image, out_dir) 列表。"""
     items: list[tuple[Path, Path]] = []
     for d in dirs:
         if not d.is_dir():
@@ -217,7 +217,7 @@ def process_one(
     disable_orig_tags: bool,
     force: bool,
 ) -> str:
-    """处理单张：只写旁路 .txt，不改动图片。返回 skip|ok。"""
+    """处理单张：只写同名 .txt。返回 skip|ok。"""
     out_txt_path = src.with_suffix(".txt")
     if not force and out_txt_path.exists():
         return "skip"

@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>WD14 打标</title>
+<title>打标</title>
 <link rel="stylesheet" href="/static/css/annotator.css">
 <style>
   body { margin: 0; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
@@ -66,24 +66,24 @@
 <div class="toolbar">
   <div class="toolbar-brand">
     <a class="nav-home" href="/">主页</a>
-    <span class="title">WD14 打标</span>
+    <span class="title">打标</span>
     <nav class="toolbar-nav">
-      <a href="/dedupe">去重</a>
       <a href="/">筛选</a>
+      <a href="/dedupe">去重</a>
       <a href="/crop">裁剪</a>
-      <a href="/paint">绘制</a>
-      <a href="/tags">Tag 统计</a>
+      <a href="/paint">蒙版</a>
+      <a href="/tags">标签</a>
     </nav>
   </div>
-  <button class="btn green" id="btn-start">开始打标</button>
+  <button class="btn green" id="btn-start">开始</button>
   <button class="btn" id="btn-cancel" disabled>取消</button>
   <span class="sep"></span>
-  <span class="stat" id="stat-status">空闲</span>
+  <span class="stat" id="stat-status">就绪</span>
 </div>
 
 <div class="tagging-main">
   <aside class="tagging-side">
-    <h3>子目录</h3>
+    <h3>目录</h3>
     <div class="dir-list" id="dir-list"></div>
     <div class="side-actions">
       <button class="btn" id="btn-all" style="width:100%">全选</button>
@@ -92,14 +92,14 @@
   </aside>
   <div class="tagging-content">
     <div class="opts">
-      <label>WD14 阈值
-        <input type="number" id="threshold" value="0.1" min="0" max="1" step="0.01" title="置信度下限，默认 0.1">
+      <label title="WD14 置信度下限">置信度
+        <input type="number" id="threshold" value="0.1" min="0" max="1" step="0.01">
       </label>
-      <label title="不读原 txt，仅用 WD14">
-        <input type="checkbox" id="chk-disable-orig" checked> 禁用原标签
+      <label title="不合并已有 .txt 标签">
+        <input type="checkbox" id="chk-disable-orig" checked> 忽略已有标签
       </label>
-      <label title="已有旁路 .txt 也重新覆盖">
-        <input type="checkbox" id="chk-force" checked> 强制覆盖
+      <label title="已有 .txt 时仍重新写入">
+        <input type="checkbox" id="chk-force" checked> 覆盖已有
       </label>
       <span id="model-info" style="margin-left:auto;"></span>
     </div>
@@ -108,14 +108,13 @@
       <div class="progress-bar"><div class="progress-fill" id="progress-fill"></div></div>
       <div class="progress-meta">
         <span>进度 <b id="m-done">0</b>/<b id="m-total">0</b></span>
-        <span>成功 <b id="m-ok">0</b></span>
+        <span>完成 <b id="m-ok">0</b></span>
         <span>跳过 <b id="m-skip">0</b></span>
         <span>失败 <b id="m-fail">0</b></span>
         <span id="m-current" style="flex:1;min-width:120px;"></span>
       </div>
     </div>
-    <div class="log-box" id="log-box">选择子目录后点击「开始打标」。
-整图跑 WD14，只写旁路 .txt（不改动图片）。</div>
+    <div class="log-box" id="log-box">选择目录后点击「开始」。</div>
   </div>
 </div>
 <div class="toast" id="toast"></div>

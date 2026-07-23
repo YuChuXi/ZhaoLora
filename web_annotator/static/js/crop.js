@@ -1,5 +1,5 @@
 /**
- * crop.js —— 多区域吸附裁剪（行为对齐 guo582_label_tk.py，无打标）
+ * crop.js —— 多区域吸附裁剪
  */
 (function () {
   'use strict';
@@ -309,7 +309,7 @@
     var input = document.getElementById('part-add-input');
     var name = (input.value || '').trim();
     if (!/^\w[\w\-]{0,63}$/.test(name)) {
-      toast('部位名不合法（字母数字下划线/短横线）');
+      toast('部位名无效');
       return;
     }
     registerAutoPart(name);
@@ -320,7 +320,7 @@
       renderList();
       updateNav();
     }
-    toast('已添加: ' + name + '（后续自动带上）');
+    toast('已添加 ' + name);
   }
 
   function initDefaultCrop() {
@@ -446,27 +446,27 @@
   function updateLive(box) {
     var live = document.getElementById('live-match');
     if (_noCrop) {
-      live.textContent = ' | 整图即部位 · 原尺寸 ' + _origW + 'x' + _origH;
+      live.textContent = ' | 整图输出 · ' + _origW + '×' + _origH;
       return;
     }
     if (!box) {
       live.textContent = '';
       return;
     }
-    live.textContent = ' | 选中: 裁剪区 ' + (box.x2 - box.x1) + 'x' + (box.y2 - box.y1) +
-      ' → ' + box.target_w + 'x' + box.target_h + ' @ ' + Number(box.zoom).toFixed(1) + 'x';
+    live.textContent = ' | ' + (box.x2 - box.x1) + '×' + (box.y2 - box.y1) +
+      ' → ' + box.target_w + '×' + box.target_h + ' @' + Number(box.zoom).toFixed(1) + 'x';
   }
 
   function renderList() {
     var list = document.getElementById('crop-list');
     list.innerHTML = '';
     if (_noCrop) {
-      list.innerHTML = '<div class="crop-item"><div class="body">整图即部位 · 原尺寸 ' + _origW + 'x' + _origH +
-        '<div class="meta">写入 xxx/&lt;部位名&gt;/同名.png</div></div></div>';
+      list.innerHTML = '<div class="crop-item"><div class="body">整图输出 · ' + _origW + '×' + _origH +
+        '<div class="meta">写入对应部位目录</div></div></div>';
       return;
     }
     if (!_crops.length) {
-      list.innerHTML = '<div style="font-size:11px;color:var(--text-dim);padding:4px 0;">暂无选区，上方添加部位或按 A 新建</div>';
+      list.innerHTML = '<div style="font-size:11px;color:var(--text-dim);padding:4px 0;">暂无选区</div>';
       return;
     }
     for (var i = 0; i < _crops.length; i++) {
@@ -482,7 +482,7 @@
           ' → ' + box.target_w + 'x' + box.target_h + ' @' + Number(box.zoom).toFixed(1) + 'x</div>';
         var input = document.createElement('input');
         input.type = 'text';
-        input.placeholder = '部位名，如 head';
+        input.placeholder = '部位名';
         input.value = box.name || '';
         input.addEventListener('click', function (e) { e.stopPropagation(); });
         input.addEventListener('change', function () {
@@ -508,7 +508,7 @@
         del.type = 'button';
         del.className = 'btn-del';
         del.textContent = '删除';
-        del.title = 'D / Delete：仅删当前图选区';
+        del.title = '仅删除当前图选区';
         del.addEventListener('click', function (e) {
           e.stopPropagation();
           removeCropAt(idx);
@@ -520,14 +520,14 @@
         delPerm.type = 'button';
         delPerm.className = 'btn-del btn-del-perm';
         delPerm.textContent = '永久';
-        delPerm.title = '永久删除部位：当前图去掉，后续也不再自动带上';
+        delPerm.title = '删除并取消后续自动应用';
         delPerm.addEventListener('click', function (e) {
           e.stopPropagation();
           removeCropPermanently(idx);
           redraw();
           renderList();
           updateNav();
-          toast(nameHint ? ('已永久删除部位: ' + nameHint) : '已永久删除选区');
+          toast(nameHint ? ('已移除部位 ' + nameHint) : '已移除选区');
         });
         actions.appendChild(del);
         actions.appendChild(delPerm);
@@ -548,7 +548,7 @@
     var done = 0;
     for (var i = 0; i < _images.length; i++) if (_images[i].done) done++;
     document.getElementById('crop-progress').textContent =
-      (_index + 1) + '/' + _images.length + ' (已裁 ' + done + ')';
+      (_index + 1) + '/' + _images.length + ' · 已裁 ' + done;
     var nameEl = document.getElementById('crop-filename');
     if (!img) {
       nameEl.textContent = '-';
@@ -561,8 +561,8 @@
     nameEl.textContent = base + ' · ' + status;
     nameEl.title = img.path + ' · ' + status;
     document.getElementById('info-text').textContent =
-      '[' + status + '] ' + img.path + ' | 原图 ' + _origW + 'x' + _origH + ' | 选区 ' + _crops.length +
-      (_autoParts.length ? ' | 自动部位: ' + _autoParts.join(', ') : '');
+      img.path + ' · ' + _origW + '×' + _origH + ' · 选区 ' + _crops.length +
+      (_autoParts.length ? ' · 自动 ' + _autoParts.join(', ') : '');
   }
 
   // ---- hit test（原图像素坐标）----
@@ -903,7 +903,7 @@
     var imgMeta = _images[_index];
     var partName = (document.getElementById('part-name').value || '').trim();
     if (_noCrop && !partName) {
-      toast('整图即部位：请填写部位名（如 head）');
+      toast('整图输出需填写部位名');
       return;
     }
     var body = {
@@ -928,11 +928,11 @@
       body: JSON.stringify(body),
     })).json();
     imgMeta.done = true;
-    toast('已保存 ' + res.count + ' 张 → ' + res.saved.map(function (s) { return s.file; }).join(', '));
+    toast('已保存 ' + res.count + ' 张');
     var next = findNextUnfinished(_index);
     if (next < 0) {
       updateNav();
-      toast('全部处理完');
+      toast('全部完成');
       return;
     }
     await loadIndex(next);
@@ -1004,8 +1004,9 @@
       var dc = _defaultCrop
         ? (_defaultCrop.target_w + 'x' + _defaultCrop.target_h + '@' + Number(_defaultCrop.zoom).toFixed(1) + 'x')
         : '自动匹配';
-      hint.textContent = '根: ' + (_datasetRoot || '-') + ' | 默认尺寸: ' + dc +
-        (_autoParts.length ? ' | 自动部位: ' + _autoParts.join(', ') : '');
+      hint.textContent = (_datasetRoot || '-') +
+        ' · 默认 ' + dc +
+        (_autoParts.length ? ' · 自动部位 ' + _autoParts.join(', ') : '');
     }
 
     var matchCfg = await (await api('/api/crop/candidates')).json();

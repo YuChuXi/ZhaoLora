@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Tag 统计</title>
+<title>标签</title>
 <link rel="stylesheet" href="/static/css/annotator.css">
 <style>
   body { margin: 0; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
@@ -68,51 +68,47 @@
 <div class="toolbar">
   <div class="toolbar-brand">
     <a class="nav-home" href="/">主页</a>
-    <span class="title">Tag 统计</span>
+    <span class="title">标签</span>
     <nav class="toolbar-nav">
-      <a href="/dedupe">去重</a>
       <a href="/">筛选</a>
+      <a href="/dedupe">去重</a>
       <a href="/crop">裁剪</a>
-      <a href="/paint">绘制</a>
-      <a href="/tagging">WD14 打标</a>
+      <a href="/paint">蒙版</a>
+      <a href="/tagging">打标</a>
     </nav>
   </div>
   <span class="stat" id="stat-summary">-</span>
   <span class="sep"></span>
   <button class="btn green" id="btn-refresh">统计</button>
-  <button class="btn" id="btn-select-all-tags">全选 tag</button>
-  <button class="btn" id="btn-clear-tags">清空选择</button>
-  <button class="btn" id="btn-copy">复制选中</button>
+  <button class="btn" id="btn-select-all-tags">全选</button>
+  <button class="btn" id="btn-clear-tags">清空</button>
+  <button class="btn" id="btn-copy">复制</button>
   <button class="btn" id="btn-export-en">导出英文</button>
   <button class="btn" id="btn-export-zh">导出中文</button>
 </div>
 
 <div class="tags-main">
   <aside class="tags-side">
-    <h3>子目录（默认全选）</h3>
+    <h3>目录</h3>
     <div class="dir-list" id="dir-list"></div>
     <div class="side-actions">
-      <button class="btn" id="btn-dirs-all" type="button">全选目录</button>
+      <button class="btn" id="btn-dirs-all" type="button">全选</button>
       <button class="btn" id="btn-dirs-none" type="button">全不选</button>
-      <div style="font-size:11px;color:var(--text-dim);line-height:1.45;">
-        按出现百分比降序<br>
-        勾选 tag 后复制 / 导出为逗号分隔列表
-      </div>
     </div>
   </aside>
   <div class="tags-content">
     <div class="tags-toolbar2">
-      <label><input type="checkbox" id="opt-lower" checked> 小写合并</label>
-      <label><input type="checkbox" id="opt-underscores" checked> 下划线→空格</label>
-      <label><input type="checkbox" id="opt-per-sample" checked> 按样本去重</label>
-      <label>最少次数 <input type="number" id="opt-min" value="1" min="1" style="width:52px;background:#0a1a30;color:var(--text);border:1px solid var(--border);border-radius:4px;padding:2px 4px;"></label>
+      <label title="大小写视为同一标签"><input type="checkbox" id="opt-lower" checked> 忽略大小写</label>
+      <label title="下划线与空格视为同一写法"><input type="checkbox" id="opt-underscores" checked> 统一空格</label>
+      <label title="同一张图内重复标签只计一次"><input type="checkbox" id="opt-per-sample" checked> 按图去重</label>
+      <label>最少出现 <input type="number" id="opt-min" value="1" min="1" style="width:52px;background:#0a1a30;color:var(--text);border:1px solid var(--border);border-radius:4px;padding:2px 4px;"></label>
       <span id="sel-count">已选 0</span>
     </div>
     <div class="tags-scroll">
       <table class="tag-table" id="tag-table">
         <thead>
           <tr>
-            <th class="col-check"><input type="checkbox" id="chk-head" title="全选当前列表"></th>
+            <th class="col-check"><input type="checkbox" id="chk-head" title="全选列表"></th>
             <th class="col-pct">占比</th>
             <th class="col-count">次数</th>
             <th class="col-en">英文</th>
@@ -120,13 +116,13 @@
           </tr>
         </thead>
         <tbody id="tag-body">
-          <tr><td colspan="5" class="empty-hint">加载中...</td></tr>
+          <tr><td colspan="5" class="empty-hint">加载中…</td></tr>
         </tbody>
       </table>
     </div>
     <div class="export-box">
-      <textarea id="export-text" readonly placeholder="选中的 tag 会显示在这里（逗号分隔）"></textarea>
-      <button class="btn green" id="btn-copy-box" type="button">复制框内</button>
+      <textarea id="export-text" readonly placeholder="已选标签（逗号分隔）"></textarea>
+      <button class="btn green" id="btn-copy-box" type="button">复制</button>
     </div>
   </div>
 </div>

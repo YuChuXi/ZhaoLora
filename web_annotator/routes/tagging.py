@@ -68,12 +68,12 @@ def tagging_start(request: Request, body: StartBody):
 
     selected = resolve_image_dirs(root, body.dirs)
     if not selected:
-        raise HTTPException(400, "请至少选择一个含图片的子目录")
+        raise HTTPException(400, "请选择目录")
 
     with _JOB_LOCK:
         prog = _progress(request)
         if prog.status == "running":
-            raise HTTPException(409, "已有打标任务在运行")
+            raise HTTPException(409, "已有任务在运行")
         prog = TaggingProgress()
         request.app.state.tagging_progress = prog
 
@@ -107,6 +107,6 @@ def tagging_start(request: Request, body: StartBody):
 def tagging_cancel(request: Request):
     prog = _progress(request)
     if prog.status != "running":
-        raise HTTPException(400, "当前没有运行中的任务")
+        raise HTTPException(400, "当前无运行中的任务")
     prog.cancel_requested = True
     return {"ok": True, "status": prog.snapshot()}

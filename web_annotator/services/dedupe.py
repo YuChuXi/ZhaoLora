@@ -1,7 +1,4 @@
-"""
-图像近似去重（对齐 dedupe_dataset_images.py）：
-128×128 RGB 指纹 MSE < 阈值 → 同组；组内建议保留策略同脚本。
-"""
+"""图像近似去重：指纹 MSE 分组，组内建议保留更清晰样本。"""
 
 from __future__ import annotations
 

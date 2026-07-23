@@ -128,31 +128,31 @@
     <nav class="toolbar-nav">
       <a href="/">筛选</a>
       <a href="/crop">裁剪</a>
-      <a href="/paint">绘制</a>
-      <a href="/tagging">WD14 打标</a>
-      <a href="/tags">Tag 统计</a>
+      <a href="/paint">蒙版</a>
+      <a href="/tagging">打标</a>
+      <a href="/tags">标签</a>
     </nav>
   </div>
   <label style="font-size:12px;color:var(--text-dim);display:flex;align-items:center;gap:4px;">
-    MSE阈值
-    <input type="number" id="mse-threshold" value="0.0001" min="0.0000001" max="1" step="0.0001" title="128×128 归一化 MSE">
+    MSE
+    <input type="number" id="mse-threshold" value="0.0001" min="0.0000001" max="1" step="0.0001" title="指纹 MSE 上限">
   </label>
   <label style="font-size:12px;color:var(--text-dim);display:flex;align-items:center;gap:4px;">
     分辨率比
-    <input type="number" id="res-ratio" value="1.05" min="1" max="10" step="0.01" title="≤该值视为分辨率接近，优先保清晰度">
+    <input type="number" id="res-ratio" value="1.05" min="1" max="10" step="0.01" title="分辨率接近时优先保留更清晰的一张">
   </label>
-  <button class="btn green" id="btn-scan">扫描重复</button>
+  <button class="btn green" id="btn-scan">扫描</button>
   <span class="sep"></span>
-  <span class="stat">组: <b id="stat-groups">0</b></span>
-  <span class="stat">已选待删: <b id="stat-selected">0</b></span>
+  <span class="stat">组 <b id="stat-groups">0</b></span>
+  <span class="stat">已选 <b id="stat-selected">0</b></span>
   <span class="sep"></span>
-  <button class="btn" id="btn-suggest">勾选建议删除</button>
-  <button class="btn" id="btn-clear">清空勾选</button>
-  <button class="btn danger" id="btn-apply">删除选中</button>
+  <button class="btn" id="btn-suggest">建议删除</button>
+  <button class="btn" id="btn-clear">清空</button>
+  <button class="btn danger" id="btn-apply">删除</button>
 </div>
 
 <div class="dedupe-main" id="dedupe-main">
-  <div class="dedupe-empty">设置阈值后点「扫描重复」。一行一组；右键预览、←→翻页；点击勾选删除。</div>
+  <div class="dedupe-empty">点击「扫描」查找相似图片。左键勾选，右键预览。</div>
 </div>
 <div class="toast" id="toast"></div>
 <div class="dup-preview" id="dup-preview">
@@ -168,7 +168,7 @@
       <b id="dup-preview-name">-</b>
       <span id="dup-preview-keep"></span>
       <div class="dup-preview-actions">
-        <button type="button" class="btn" id="dup-preview-toggle">选中/取消</button>
+        <button type="button" class="btn" id="dup-preview-toggle">切换选中</button>
         <button type="button" class="btn" id="dup-preview-close">关闭</button>
       </div>
     </div>

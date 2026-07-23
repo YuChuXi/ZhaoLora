@@ -106,7 +106,7 @@
     document.getElementById('dup-preview-res').textContent =
       (m.width && m.height) ? (m.width + '×' + m.height) : '-';
     document.getElementById('dup-preview-name').textContent = m.stem || m.path;
-    document.getElementById('dup-preview-keep').textContent = m.is_keep ? '· 建议保留' : '';
+    document.getElementById('dup-preview-keep').textContent = m.is_keep ? '建议保留' : '';
     syncPreviewToggleLabel();
 
     var multi = _previewMembers.length > 1;
@@ -131,7 +131,7 @@
     var main = document.getElementById('dedupe-main');
     main.innerHTML = '';
     if (!_groups.length) {
-      main.innerHTML = '<div class="dedupe-empty">未发现重复组</div>';
+      main.innerHTML = '<div class="dedupe-empty">未发现相似组</div>';
       updateStats();
       return;
     }
@@ -144,7 +144,7 @@
       head.className = 'dup-group-head';
       head.innerHTML = '<span>组 <b>#' + (gi + 1) + '</b></span>' +
         '<span>' + g.size + ' 张</span>' +
-        '<span>建议保留: <b>' + (g.keep || '-') + '</b></span>';
+        '<span>建议保留 <b>' + (g.keep || '-') + '</b></span>';
       var btnKeepOnly = document.createElement('button');
       btnKeepOnly.type = 'button';
       btnKeepOnly.className = 'btn';
@@ -168,7 +168,7 @@
           (_selected[m.path] ? ' selected' : '') +
           (m.is_keep ? ' keep-hint' : '');
         card.dataset.path = m.path;
-        card.title = m.path + ' · 右键预览 · 点击勾选';
+        card.title = m.path + ' · 右键预览';
 
         var im = document.createElement('img');
         im.src = thumbUrl(m.thumbnail_hash);
@@ -210,7 +210,7 @@
   async function scan() {
     var mse = parseFloat(document.getElementById('mse-threshold').value);
     var ratio = parseFloat(document.getElementById('res-ratio').value);
-    if (!(mse > 0)) { toast('MSE 阈值无效'); return; }
+    if (!(mse > 0)) { toast('MSE 无效'); return; }
     if (!(ratio >= 1)) { toast('分辨率比无效'); return; }
 
     hidePreview();
@@ -228,7 +228,7 @@
         (g.suggested_remove || []).forEach(function (p) { _selected[p] = true; });
       });
       render();
-      toast('扫描完成: ' + _groups.length + ' 组 / 样本 ' + data.image_count);
+      toast('扫描完成：' + _groups.length + ' 组');
     } catch (e) {
       main.innerHTML = '<div class="dedupe-empty">扫描失败: ' + (e.message || e) + '</div>';
       toast(String(e.message || e));
@@ -254,15 +254,15 @@
 
   async function applyDelete() {
     var paths = Object.keys(_selected).filter(function (p) { return _selected[p]; });
-    if (!paths.length) { toast('未勾选'); return; }
-    if (!confirm('确认将 ' + paths.length + ' 张移入回收站？\n（含同名 .txt）')) return;
+    if (!paths.length) { toast('未选择图片'); return; }
+    if (!confirm('将 ' + paths.length + ' 张移入回收站？')) return;
     hidePreview();
     try {
       var res = await api('/api/dedupe/apply', {
         method: 'POST',
         body: JSON.stringify({ paths: paths }),
       });
-      toast('已移入回收站: ' + res.moved + ' 张');
+      toast('已移入回收站 ' + res.moved + ' 张');
       var gone = {};
       paths.forEach(function (p) { gone[p] = true; });
       _groups = _groups.map(function (g) {

@@ -45,9 +45,9 @@ def tag_stats(request: Request, body: StatsBody):
     root = _root(request)
     selected = resolve_selected_dirs(root, body.dirs)
     if not selected:
-        raise HTTPException(400, "未选中任何含 .txt 的子目录")
+        raise HTTPException(400, "请选择目录")
     if body.min_count < 1:
-        raise HTTPException(400, "min_count 至少为 1")
+        raise HTTPException(400, "最少出现次数至少为 1")
 
     zh_map = load_translation_map(root)
     result = count_tags(

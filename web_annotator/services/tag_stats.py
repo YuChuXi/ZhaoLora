@@ -1,4 +1,4 @@
-"""旁路 .txt 标注 tag 频率统计（规则对齐 tag_frequency.py）。"""
+"""标注文件标签频率统计。"""
 
 from __future__ import annotations
 

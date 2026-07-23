@@ -33,7 +33,7 @@
     var list = document.getElementById('dir-list');
     list.innerHTML = '';
     if (!_dirs.length) {
-      list.innerHTML = '<div style="padding:8px;color:var(--text-dim);font-size:12px;">无含图片的子目录</div>';
+      list.innerHTML = '<div style="padding:8px;color:var(--text-dim);font-size:12px;">暂无图片目录</div>';
       return;
     }
     _dirs.forEach(function (d, idx) {
@@ -82,10 +82,10 @@
       : (s.message || '');
 
     var label = {
-      idle: '空闲',
+      idle: '就绪',
       running: '运行中',
       done: '已完成',
-      error: '出错',
+      error: '失败',
       cancelled: '已取消'
     }[s.status] || s.status;
     document.getElementById('stat-status').textContent = label + (s.message ? ' · ' + s.message : '');
@@ -115,7 +115,7 @@
         stopPoll();
         if (s.status === 'done') toast('打标完成');
         if (s.status === 'cancelled') toast('已取消');
-        if (s.status === 'error') toast('任务失败');
+        if (s.status === 'error') toast('打标失败');
       }
     }, 600);
   }
@@ -130,7 +130,7 @@
         checked: false
       };
     });
-    // 默认勾选 head（若存在），贴近常用 CLI
+    // 默认勾选 head（若存在）
     _dirs.forEach(function (d) {
       if (d.name === 'head') d.checked = true;
     });
@@ -139,12 +139,12 @@
     var info = document.getElementById('model-info');
     var warn = document.getElementById('model-warn');
     if (data.model_ready) {
-      info.textContent = '模型就绪';
+      info.textContent = '模型已加载';
       warn.hidden = true;
     } else {
-      info.textContent = '模型缺失';
+      info.textContent = '模型未就绪';
       warn.hidden = false;
-      warn.textContent = data.model_path || '找不到 WD14 模型';
+      warn.textContent = data.model_path || '未找到 WD14 模型';
       document.getElementById('btn-start').disabled = true;
     }
     if (data.default_threshold != null) {
@@ -155,12 +155,12 @@
   async function startJob() {
     var dirs = selectedDirNames();
     if (!dirs.length) {
-      toast('请选择子目录');
+      toast('请选择目录');
       return;
     }
     var threshold = parseFloat(document.getElementById('threshold').value);
     if (!(threshold >= 0 && threshold <= 1)) {
-      toast('阈值须在 0~1');
+      toast('置信度须在 0～1');
       return;
     }
     var body = {

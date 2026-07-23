@@ -34,7 +34,7 @@
     var list = document.getElementById('dir-list');
     list.innerHTML = '';
     if (!_dirs.length) {
-      list.innerHTML = '<div style="padding:8px;color:var(--text-dim);font-size:12px;">无含 .txt 的子目录</div>';
+      list.innerHTML = '<div style="padding:8px;color:var(--text-dim);font-size:12px;">暂无标注目录</div>';
       return;
     }
     _dirs.forEach(function (d, idx) {
@@ -155,11 +155,11 @@
   async function refresh() {
     var dirs = selectedDirNames();
     if (!dirs.length) {
-      toast('请至少选择一个子目录');
+      toast('请选择目录');
       return;
     }
     document.getElementById('tag-body').innerHTML =
-      '<tr><td colspan="5" class="empty-hint">统计中...</td></tr>';
+      '<tr><td colspan="5" class="empty-hint">统计中…</td></tr>';
     var body = {
       dirs: dirs,
       lower: document.getElementById('opt-lower').checked,
@@ -180,11 +180,10 @@
     });
     _selected = keep;
     document.getElementById('stat-summary').textContent =
-      '样本 ' + data.sample_count + ' · tag ' + data.tag_count +
-      ' · 目录 ' + (data.dirs || []).join(',') +
-      ' · 译文缓存 ' + (data.zh_cache_size || 0);
+      '样本 ' + data.sample_count + ' · 标签 ' + data.tag_count +
+      ' · 目录 ' + (data.dirs || []).join(', ');
     renderTable();
-    toast('统计完成: ' + data.tag_count + ' 个 tag');
+    toast('完成：' + data.tag_count + ' 个标签');
   }
 
   function copyText(text) {
@@ -215,7 +214,7 @@
   function exportList(field) {
     var sel = selectedTags();
     if (!sel.length) {
-      toast('请先勾选 tag');
+      toast('请先勾选标签');
       return;
     }
     var parts = sel.map(function (t) {

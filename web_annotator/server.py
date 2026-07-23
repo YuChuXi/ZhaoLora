@@ -199,10 +199,7 @@ def main() -> int:
     print(f"已选待删 : {len(state.get('selected', {}))}")
     print(f"回收站内 : {len(state.get('trashed', {}))}")
     print(f"服务地址 : http://{args.host}:{args.port}")
-    print(f"去重页面 : http://{args.host}:{args.port}/dedupe")
-    print(f"裁剪页面 : http://{args.host}:{args.port}/crop")
-    print(f"WD14打标 : http://{args.host}:{args.port}/tagging")
-    print(f"Tag统计  : http://{args.host}:{args.port}/tags")
+    print(f"  筛选 / 去重 / 裁剪 / 蒙版 / 打标 / 标签")
 
     uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
     return 0
