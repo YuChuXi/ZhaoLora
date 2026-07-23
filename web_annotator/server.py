@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-网页图片标注工具 —— 瀑布流浏览 / Alpha 绘制 / 子图裁剪。
+网页图片标注工具。
 
 目录约定（--data-dir = datasets/xxx）:
   datasets/xxx/

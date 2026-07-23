@@ -1,6 +1,4 @@
-"""
-Alpha Paint API —— 提供原始尺寸 AVIF 图片，接收前端 mask PNG。
-"""
+"""蒙版绘制 API。"""
 
 from __future__ import annotations
 

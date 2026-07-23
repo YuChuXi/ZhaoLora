@@ -1,5 +1,5 @@
 /**
- * dedupe.js —— 近似去重：阈值扫描、分组手选删除、右键预览同组翻页
+ * dedupe.js —— 近似去重
  */
 (function () {
   'use strict';

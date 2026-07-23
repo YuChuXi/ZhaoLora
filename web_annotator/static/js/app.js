@@ -33,37 +33,16 @@
     if (st.selNotTrashed === 0) { toast('未选择图片'); return; }
     if (!confirm('将 ' + st.selNotTrashed + ' 张移入回收站？')) return;
     try {
-      var res = await API.applyDelete();
-      toast('已移入回收站 ' + res.moved + ' 张');
-    } catch (e) { toast('删除失败'); }
-  }
-
-  async function doRestore() {
-    var st = Store.get();
-    if (st.trashed === 0) { toast('回收站为空'); return; }
-    var showTrash = document.getElementById('chk-show-trash').checked;
-    var paths;
-    if (showTrash) {
-      paths = Object.keys(st.selected).filter(function (p) { return st.trashed[p]; });
-      if (paths.length === 0) { toast('请勾选要恢复的图片'); return; }
-      var res = await API.restore(paths);
-      toast('已恢复 ' + res.restored + ' 张');
-    } else {
-      var res2 = await API.restoreAll();
-      toast('已恢复 ' + res2.restored + ' 张');
-    }
-    if (!confirm('确认将 ' + st.selNotTrashed + ' 张图片移入回收站？')) return;
-    try {
       var res = await Store.applyDelete();
       refreshView();
-      toast('已移入回收站: ' + res.moved + ' 张');
-    } catch (e) { toast('删除失败: ' + e.message); }
+      toast('已移入回收站 ' + res.moved + ' 张');
+    } catch (e) { toast('删除失败'); }
   }
 
   async function handleRestore() {
     var st = Store.stats();
     if (st.trashed === 0) { toast('回收站为空'); return; }
-    var restoreAll = confirm('恢复全部回收站图片？\n\n"确定"=恢复全部\n"取消"=仅恢复选中项');
+    var restoreAll = confirm('恢复全部回收站图片？\n确定 = 全部 · 取消 = 仅选中项');
     var paths;
     if (restoreAll) {
       paths = [];
@@ -73,13 +52,13 @@
       paths = [];
       var imgs2 = Store.getAll();
       for (var i = 0; i < imgs2.length; i++) { if (imgs2[i].trashed && imgs2[i].selected) paths.push(imgs2[i].path); }
-      if (paths.length === 0) { toast('请先勾选"显示回收站",再选中要恢复的图片'); return; }
+      if (paths.length === 0) { toast('请先显示回收站并选中图片'); return; }
     }
     try {
       var res = await Store.restore(paths);
       refreshView();
-      toast('已恢复: ' + res.restored + ' 张');
-    } catch (e) { toast('恢复失败: ' + e.message); }
+      toast('已恢复 ' + res.restored + ' 张');
+    } catch (e) { toast('恢复失败'); }
   }
 
   function onKeyDown(e) {

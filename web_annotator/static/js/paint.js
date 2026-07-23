@@ -1,5 +1,5 @@
 /**
- * paint.js -- Canvas Alpha 绘制. 无 try/catch, 全局错误处理.
+ * paint.js —— 蒙版绘制
  */
 (function() {
   'use strict';
@@ -449,7 +449,7 @@
     for (var i = 0; i < _images.length; i++) { if (_images[i].has_mask) done++; }
     document.getElementById('paint-progress').textContent = (_index+1) + '/' + _images.length + ' (已标注' + done + ')';
     document.getElementById('paint-filename').textContent = img ? img.stem : '-';
-    var status = img ? (img.has_mask ? '\u2705 已标注' : '\ud83d\udd8c\ufe0f 待绘制') : '';
+    var status = img ? (img.has_mask ? '已标注' : '待标注') : '';
     if (_origW) status += '  |  ' + _origW + 'x' + _origH;
     document.getElementById('info-text').textContent = status;
   }

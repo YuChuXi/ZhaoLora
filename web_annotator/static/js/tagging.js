@@ -1,5 +1,5 @@
 /**
- * tagging.js —— WD14 批量打标页
+ * tagging.js —— 批量打标
  */
 (function () {
   'use strict';

@@ -813,7 +813,7 @@
 
     if (!newBox) return;
     var base = makeCrop(newBox.x1, newBox.y1, newBox.x2, newBox.y2, cand, name);
-    // 二次吸附（与 guo582 一致）
+    // 二次吸附
     if (!cand) cand = chooseBest(base.x2 - base.x1, base.y2 - base.y1, base.x2 - base.x1, base.y2 - base.y1);
     _crops[_dragIdx] = applySnap(base, cand, _dragMode);
     redraw();

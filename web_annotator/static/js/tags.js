@@ -1,5 +1,5 @@
 /**
- * tags.js —— 标注 tag 频率统计页
+ * tags.js —— 标签频率统计
  */
 (function () {
   'use strict';

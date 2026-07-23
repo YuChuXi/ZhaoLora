@@ -1,13 +1,4 @@
-"""
-子图裁剪 API —— 多区域裁剪并缩放到匹配目标分辨率，不打标。
-
-输出路径（相对数据集根 datasets/xxx）:
-  - 选区命名 head       → xxx/head/{stem}.png
-  - 选区命名 foot       → xxx/foot/{stem}.png
-  - 未命名多选区        → xxx/crops/{stem}_001.png
-  - 未命名单选区        → xxx/crops/{stem}.png
-  - 不裁切缩放+部位名   → xxx/{部位}/{stem}.png（整图原尺寸，整图即该部位）
-"""
+"""裁剪 API：多选区吸附并输出到部位目录。"""
 
 from __future__ import annotations
 
