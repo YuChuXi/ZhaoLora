@@ -70,8 +70,20 @@
   function applyStatus(s) {
     var total = s.total || 0;
     var done = s.done || 0;
-    var pct = total > 0 ? Math.min(100, (done / total) * 100) : 0;
-    document.getElementById('progress-fill').style.width = pct + '%';
+    var pct = (typeof s.pct === 'number') ? s.pct : (total > 0 ? (done / total) * 100 : 0);
+    var fill = document.getElementById('progress-fill');
+    var loading = s.status === 'running' && s.phase === 'loading';
+    fill.classList.toggle('indeterminate', loading);
+    if (!loading) {
+      fill.style.width = Math.min(100, pct) + '%';
+    }
+    document.getElementById('progress-pct').textContent = loading
+      ? '…'
+      : (Math.min(100, Math.round(pct)) + '%');
+    document.getElementById('progress-meta-line').textContent = s.current
+      ? s.current
+      : (s.message || '等待开始');
+
     document.getElementById('m-done').textContent = String(done);
     document.getElementById('m-total').textContent = String(total);
     document.getElementById('m-ok').textContent = String(s.ok || 0);
@@ -117,7 +129,7 @@
         if (s.status === 'cancelled') toast('已取消');
         if (s.status === 'error') toast('打标失败');
       }
-    }, 600);
+    }, 300);
   }
 
   async function loadDirs() {

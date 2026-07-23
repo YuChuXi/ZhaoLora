@@ -89,6 +89,7 @@ def aesthetic_start(request: Request, body: StartBody):
                 )
             except Exception as e:
                 prog.status = "error"
+                prog.phase = "done"
                 prog.message = str(e)
                 prog.log(f"任务异常: {e}")
 

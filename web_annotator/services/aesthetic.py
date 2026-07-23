@@ -168,6 +168,7 @@ def run_aesthetic(
     for i, (src, parent) in enumerate(items):
         if progress.cancel_requested:
             progress.status = "cancelled"
+            progress.phase = "done"
             progress.message = f"已取消 ({progress.ok} 完成)"
             progress.log(progress.message)
             return

@@ -284,6 +284,7 @@ def run_batch(
     for i, (src, out_dir) in enumerate(items):
         if progress.cancel_requested:
             progress.status = "cancelled"
+            progress.phase = "done"
             progress.message = f"已取消 ({progress.ok} 成功 / {progress.skipped} 跳过)"
             progress.log(progress.message)
             if on_update:
