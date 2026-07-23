@@ -51,12 +51,12 @@
     var mode = data.dry_run ? '预览' : '已写入';
     var ponyBit = '';
     if (data.inject_pony_score) {
-      ponyBit = ' · pony ' + (data.pony_injected || 0) +
-        (data.pony_missing ? '（缺分 ' + data.pony_missing + '）' : '');
+      ponyBit = ' · 美学档位 ' + (data.pony_injected || 0) +
+        (data.pony_missing ? '（无评分 ' + data.pony_missing + '）' : '');
     }
     document.getElementById('clean-summary').textContent =
-      mode + ' · 变更 ' + data.changed + ' · 未改 ' + data.unchanged +
-      ' · 共 ' + data.file_count + ' 个 txt' + ponyBit;
+      mode + ' · 已变更 ' + data.changed + ' · 未变更 ' + data.unchanged +
+      ' · 共 ' + data.file_count + ' 个 .txt' + ponyBit;
     var lines = [];
     (data.samples || []).forEach(function (s) {
       lines.push('## ' + (s.name || s.path));
@@ -79,7 +79,7 @@
       return;
     }
     if (!dryRun) {
-      var ok = confirm('将原地覆盖所选目录中的 .txt，确认执行？');
+      var ok = confirm('将覆盖所选目录中的旁路 .txt，是否继续？');
       if (!ok) return;
     }
     var body = {
@@ -100,7 +100,7 @@
       body: JSON.stringify(body),
     });
     showCleanResult(data);
-    toast((dryRun ? '预览完成' : '清洗完成') + ' · 变更 ' + data.changed);
+    toast((dryRun ? '预览完成' : '写入完成') + ' · 已变更 ' + data.changed);
   }
 
   document.getElementById('btn-clean-preview').addEventListener('click', function () {

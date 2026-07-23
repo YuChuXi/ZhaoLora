@@ -157,8 +157,8 @@ def clean_caption(
     """
     清洗单条 caption。
 
-    顺序：反转义与下划线归一 → 删除 → promote → pony score → prepend。
-    pony_score_tag（如 score_9）插在前置插入之前；会去掉已有 score_0…score_9。
+    顺序：HTML 实体还原与下划线规范化 → 删除 → 提升重排 → 美学档位 → 头部前置。
+    pony_score_tag（如 score_9）写入头部前置之前，并移除既有 score_0…score_9。
     """
     s = html.unescape(raw.strip())
     tags = [normalize_tag_underscores(t) for t in split_tags_line(s)]
@@ -216,11 +216,11 @@ def clean_txt_dirs(
         drop_contains: 子串删除列表（另有内置 commentary/request）。
         promote / prepend: 提升与前置列表。
         promote_separator: 是否用 ||| 分隔提升块。
-        inject_pony_score: 按 .aesthetic_scores.json 在前置前插入 score_N。
-        dataset_root: 数据集根（查旁路图相对路径）。
-        aesthetic_scores: 相对路径 → 原始美学分。
-        dry_run: True 只预览不写文件。
-        sample_limit: 返回的前后对比条数上限。
+        inject_pony_score: 是否根据 .aesthetic_scores.json 写入 score_0…score_9（位于头部前置之前）。
+        dataset_root: 数据集根目录（用于解析旁路图像相对路径）。
+        aesthetic_scores: 相对路径 → 原始美学分 [0,1]。
+        dry_run: True 仅预览，不写文件。
+        sample_limit: 返回的前后对比样本上限。
 
     Returns:
         统计与可选样本对比。

@@ -34,13 +34,13 @@ class StatsBody(BaseModel):
 
 class CleanBody(BaseModel):
     dirs: list[str] | None = Field(default=None, description="子目录名")
-    drop: list[str] = Field(default_factory=list, description="整词删除")
+    drop: list[str] = Field(default_factory=list, description="整词精确删除")
     drop_contains: list[str] = Field(default_factory=list, description="子串删除")
-    promote: list[str] = Field(default_factory=list, description="已存在 tag 提升到最前")
-    prepend: list[str] = Field(default_factory=list, description="插到 caption 最前")
-    promote_separator: bool = False
+    promote: list[str] = Field(default_factory=list, description="将已存在标签提升至头部")
+    prepend: list[str] = Field(default_factory=list, description="头部前置（可新增）")
+    promote_separator: bool = Field(False, description="以 ||| 分隔头部与正文")
     inject_pony_score: bool = Field(
-        False, description="按 .aesthetic_scores.json 在前置前插入 score_N"
+        False, description="根据 .aesthetic_scores.json 写入 score_0…score_9（位于头部前置之前）"
     )
     dry_run: bool = True
     sample_limit: int = Field(default=40, ge=0, le=200)

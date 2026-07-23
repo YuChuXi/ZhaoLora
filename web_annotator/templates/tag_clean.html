@@ -52,7 +52,7 @@
     white-space: pre-wrap; font-family: ui-monospace, monospace;
   }
   .clean-result:empty::before {
-    content: '预览或执行后，变更样本会显示在这里';
+    content: '预览或写入后，变更样本对比显示于此';
     color: var(--text-dim); opacity: 0.7;
   }
 </style>
@@ -61,38 +61,38 @@
 <nav class="app-tabs" id="app-tabs"></nav>
 <div class="toolbar">
   <button class="btn" type="button" id="btn-clean-preview">预览</button>
-  <button class="btn danger" type="button" id="btn-clean-apply">执行写入</button>
+  <button class="btn danger" type="button" id="btn-clean-apply">写入</button>
   <span class="sep"></span>
   <span class="stat" id="clean-summary">-</span>
 </div>
 
 <div class="clean-main">
   <p class="clean-hint">
-    规则同 clean_dataset_tags：HTML 反转义、下划线转空格、整词/子串删除（内置 commentary / request）、提升、前置。作用于右上角所选目录中的 .txt。
+    处理所选目录旁路 <code>.txt</code>。流水线：HTML 实体还原 → 下划线规范化为空格 → 删除 → 提升重排 →（可选）写入 Pony 美学档位 → 头部前置；可选以 <code>|||</code> 分隔头部与正文。
   </p>
   <div class="clean-options">
-    <label class="clean-pony-switch" title="读取数据集根 .aesthetic_scores.json">
+    <label class="clean-pony-switch" title="数据源：数据集根目录 .aesthetic_scores.json">
       <input type="checkbox" id="clean-inject-pony">
-      <span>注入 pony 美学</span>
-      <span class="clean-pony-desc">按分数写入 score_0…score_9，插在「前置插入」之前；会去掉旧的 score_N</span>
+      <span>写入 Pony 美学档位</span>
+      <span class="clean-pony-desc">根据原始美学分映射为 score_0…score_9，置于头部前置之前；并移除既有 score_0…score_9</span>
     </label>
     <label class="clean-pony-switch">
       <input type="checkbox" id="clean-separator">
-      <span>||| 分隔提升块</span>
-      <span class="clean-pony-desc">提升 / pony / 前置 与其余 tag 之间插入 |||</span>
+      <span>以 ||| 分隔头部与正文</span>
+      <span class="clean-pony-desc">头部含：美学档位、前置标签、被提升标签；其后为其余标签</span>
     </label>
   </div>
   <div class="clean-grid">
-    <label>整词删除
+    <label>整词删除（精确匹配）
       <textarea id="clean-drop" placeholder="tag1, tag2"></textarea>
     </label>
-    <label>子串删除（另含内置 commentary / request）
-      <textarea id="clean-drop-contains" placeholder="可选，逗号分隔"></textarea>
+    <label>子串删除（另含内置 commentary、request）
+      <textarea id="clean-drop-contains" placeholder="逗号或换行分隔"></textarea>
     </label>
-    <label>提升到最前（已存在才会移动）
-      <textarea id="clean-promote" placeholder="1girl, solo, …"></textarea>
+    <label>提升至头部（仅重排已存在项）
+      <textarea id="clean-promote" placeholder="1girl, solo"></textarea>
     </label>
-    <label>前置插入（可新增）
+    <label>头部前置（可新增）
       <textarea id="clean-prepend" placeholder="@chen bin"></textarea>
     </label>
   </div>
