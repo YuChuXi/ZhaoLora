@@ -165,6 +165,7 @@ var BooruFilter = (function () {
       var k = _EX_KEYS[i];
       if (f[k + 'Lo'] || f[k + 'Hi']) n += 1;
     }
+    if (f.dateLo || f.dateHi) n += 1;
     if (f.user) n += 1;
     var more = f.more;
     if (Array.isArray(more)) n += more.length;
@@ -185,7 +186,7 @@ var BooruFilter = (function () {
   }
 
   function parseExtra(raw) {
-    var out = { rating: '', user: '', more: [] };
+    var out = { rating: '', user: '', more: [], dateLo: '', dateHi: '' };
     for (var i = 0; i < _EX_KEYS.length; i++) {
       out[_EX_KEYS[i] + 'Lo'] = '';
       out[_EX_KEYS[i] + 'Hi'] = '';
@@ -199,6 +200,14 @@ var BooruFilter = (function () {
         if (op === '<=' || op === '<') out[k + 'Hi'] = v;
         else if (op === '=') { out[k + 'Lo'] = v; out[k + 'Hi'] = v; }
         else out[k + 'Lo'] = v;
+      } else if ((m = /^date:(\d{4}-\d{2}-\d{2})\.\.(\d{4}-\d{2}-\d{2})$/i.exec(t))) {
+        out.dateLo = m[1];
+        out.dateHi = m[2];
+      } else if ((m = /^date:(>=|>|<=|<)?(\d{4}-\d{2}-\d{2})$/i.exec(t))) {
+        var dop = m[1] || '=', dv = m[2];
+        if (dop === '<=' || dop === '<') out.dateHi = dv;
+        else if (dop === '=') { out.dateLo = dv; out.dateHi = dv; }
+        else out.dateLo = dv;
       } else if ((m = /^user:(.+)$/i.exec(t))) out.user = m[1];
       else out.more.push(t);
     }
@@ -216,6 +225,12 @@ var BooruFilter = (function () {
         if (hi) parts.push(k + ':<=' + hi);
       }
     }
+    var dLo = f.dateLo || '', dHi = f.dateHi || '';
+    if (dLo && dHi && dLo === dHi) parts.push('date:' + dLo);
+    else {
+      if (dLo) parts.push('date:>=' + dLo);
+      if (dHi) parts.push('date:<=' + dHi);
+    }
     if (f.user) parts.push('user:' + f.user);
     if (f.more) parts.push(f.more);
     return parts.join(' ').trim();
@@ -229,7 +244,10 @@ var BooruFilter = (function () {
     var fields = document.querySelectorAll('#booru-extra-dlg [data-ex]');
     for (var i = 0; i < fields.length; i++) {
       var el = fields[i], key = el.dataset.ex, raw = el.value.trim();
-      if (key === 'user' || key === 'more') { f[key] = raw; continue; }
+      if (key === 'user' || key === 'more' || key === 'dateLo' || key === 'dateHi') {
+        f[key] = raw;
+        continue;
+      }
       if (!raw) { f[key] = ''; continue; }
       var n = parseInt(raw, 10);
       f[key] = isNaN(n) ? '' : String(n);
@@ -251,7 +269,10 @@ var BooruFilter = (function () {
   }
 
   function setExtraDlg(show) {
-    if (show) fillExtraDlg();
+    if (show) {
+      syncCheatLink();
+      fillExtraDlg();
+    }
     var dlg = document.getElementById('booru-extra-dlg');
     if (!dlg) return;
     dlg.classList.toggle('show', !!show);

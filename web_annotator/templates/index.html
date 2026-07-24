@@ -36,7 +36,8 @@
     border: 1px solid var(--border); border-radius: 4px; padding: 3px 6px; font-size: 12px;
   }
   #booru-cheat {
-    font-size: 11px; color: var(--accent, #6af); text-decoration: none; white-space: nowrap;
+    font-size: 12px; color: var(--accent, #6af); text-decoration: none; white-space: nowrap;
+    margin-right: auto;
   }
   #booru-cheat:hover { text-decoration: underline; }
   /* display:contents 会盖掉 [hidden]，用 class 切换 */
@@ -106,12 +107,14 @@
   }
   .booru-extra-row > span.label { min-width: 2.5em; color: var(--text-dim); }
   .booru-extra-row input[type="number"],
-  .booru-extra-row input[type="text"] {
+  .booru-extra-row input[type="text"],
+  .booru-extra-row input[type="date"] {
     background: #0a1a30; color: var(--text);
     border: 1px solid var(--border); border-radius: 4px;
     padding: 4px 8px; font-size: 12px;
   }
   .booru-extra-row input[type="number"] { width: 5.5rem; }
+  .booru-extra-row input[type="date"] { width: 9.2rem; }
   .booru-extra-row input[type="text"] { flex: 1; min-width: 8rem; }
   .booru-rate-chip {
     font-size: 11px; padding: 4px 10px; border-radius: 4px;
@@ -119,7 +122,7 @@
     cursor: pointer;
   }
   .booru-rate-chip.on { border-color: var(--accent); background: #132a4a; color: #fff; }
-  .booru-extra-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 4px; }
+  .booru-extra-actions { display: flex; gap: 8px; justify-content: flex-end; align-items: center; margin-top: 4px; }
   #btn-booru-extra { position: relative; }
   #btn-booru-extra.has-extra { border-color: var(--accent); color: #9cf; }
   .booru-extra-badge {
@@ -182,7 +185,6 @@
     <label style="font-size:12px;color:var(--text-dim);cursor:pointer;user-select:none;display:flex;align-items:center;gap:4px;" title="开启后缩略图/大图经本机后端拉取（防盗链或直连失败时用）">
       <input type="checkbox" id="booru-proxy"> 代理图
     </label>
-    <a id="booru-cheat" href="https://gelbooru.com/index.php?page=help&topic=cheatsheet" target="_blank" rel="noopener">cheatsheet</a>
     <span class="sep"></span>
   </div>
 
@@ -269,6 +271,12 @@
       <span>≤ ID ≤</span>
       <input type="number" data-ex="idHi" min="1" step="1" placeholder="上限">
     </div>
+    <div class="booru-extra-row" title="上传日期；Danbooru 支持，Gelbooru 可能无效">
+      <span class="label">日期</span>
+      <input type="date" data-ex="dateLo">
+      <span>≤ 日 ≤</span>
+      <input type="date" data-ex="dateHi">
+    </div>
     <div class="booru-extra-row">
       <span class="label">用户</span>
       <input type="text" data-ex="user" placeholder="上传者" spellcheck="false">
@@ -278,6 +286,7 @@
       <input type="text" data-ex="more" placeholder="其它元标签，空格分隔" spellcheck="false">
     </div>
     <div class="booru-extra-actions">
+      <a id="booru-cheat" href="https://gelbooru.com/index.php?page=help&topic=cheatsheet" target="_blank" rel="noopener">cheatsheet</a>
       <button type="button" class="btn" data-ex-act="clear">清空</button>
       <button type="button" class="btn" data-ex-act="cancel">取消</button>
       <button type="button" class="btn green" data-ex-act="apply">确定</button>
