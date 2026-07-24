@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 
 from routes.deps import registry
 from services.scanner import scan_images
-from services.task_store import TaskStore
+from services.task_store import TaskStore, validate_task_name
 
 router = APIRouter(prefix="/api/tasks", tags=["tasks"])
 
@@ -49,7 +49,7 @@ def list_tasks(request: Request):
     """
     列出清单内全部任务及概况。
 
-    引用：tasks_home.js。
+    引用：home.js。
     """
     store = _store(request)
     reg = registry(request)
@@ -76,12 +76,37 @@ def list_tasks(request: Request):
     return {"tasks": items, "root": str(store.root)}
 
 
+@router.get("/candidates")
+def list_candidates(request: Request):
+    """
+    任务根下尚未登记、名称合法的一级子目录，供添加任务补全。
+
+    引用：home.js。
+    """
+    store = _store(request)
+    registered = {e["name"] for e in store.list_entries()}
+    names: list[str] = []
+    if not store.root.is_dir():
+        return {"candidates": names}
+    for child in sorted(store.root.iterdir(), key=lambda p: p.name.lower()):
+        if not child.is_dir() or child.name.startswith("."):
+            continue
+        if child.name in registered:
+            continue
+        try:
+            validate_task_name(child.name)
+        except ValueError:
+            continue
+        names.append(child.name)
+    return {"candidates": names}
+
+
 @router.post("")
 def add_task(request: Request, body: AddTaskBody):
     """
     登记任务；必要时创建目录。
 
-    引用：tasks_home.js。
+    引用：home.js。
     """
     store = _store(request)
     try:
@@ -94,7 +119,7 @@ def add_task(request: Request, body: AddTaskBody):
 
 @router.post("/{name}/complete")
 def complete_task(request: Request, name: str):
-    """引用：tasks_home.js。"""
+    """引用：home.js。"""
     store = _store(request)
     try:
         info = store.set_completed(name, True)
@@ -105,7 +130,7 @@ def complete_task(request: Request, name: str):
 
 @router.post("/{name}/reopen")
 def reopen_task(request: Request, name: str):
-    """引用：tasks_home.js。"""
+    """引用：home.js。"""
     store = _store(request)
     try:
         info = store.set_completed(name, False)

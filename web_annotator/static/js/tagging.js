@@ -49,13 +49,9 @@ var Tagging = (function () {
     document.getElementById('progress-pct').textContent = (loading || waiting)
       ? '…'
       : (Math.min(100, Math.round(pct)) + '%');
-    document.getElementById('progress-meta-line').textContent = waiting
-      ? '等待执行'
-      : (s.current ? s.current : (s.message || '待命'));
 
     document.getElementById('m-done').textContent = String(done);
     document.getElementById('m-total').textContent = String(total);
-    document.getElementById('m-ok').textContent = String(s.ok || 0);
     document.getElementById('m-skip').textContent = String(s.skipped || 0);
     document.getElementById('m-fail').textContent = String(s.failed || 0);
 
@@ -68,10 +64,7 @@ var Tagging = (function () {
       cancelled: '已取消'
     }[s.status] || s.status;
     var statusEl = document.getElementById('stat-status');
-    statusEl.textContent = label;
-    if (s.message && s.message !== label) {
-      statusEl.textContent = label + ' · ' + s.message;
-    }
+    statusEl.textContent = (s.message && s.message !== label) ? (label + ' · ' + s.message) : label;
 
     if (s.logs && s.logs.length) {
       var box = document.getElementById('log-box');

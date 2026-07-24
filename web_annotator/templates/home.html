@@ -6,120 +6,129 @@
 <title>任务 · ZhaoLora 标注工具</title>
 <link rel="stylesheet" href="/static/css/annotator.css">
 <style>
-  body { margin: 0; min-height: 100vh; display: flex; flex-direction: column; background: var(--bg); }
-  .home-wrap { flex: 1; overflow-y: auto; }
-  .home-section { max-width: 960px; margin: 0 auto; padding: 28px 24px 16px; }
-  .home-section h1 { font-size: 22px; font-weight: 700; margin: 0 0 8px; color: var(--text); }
-  .home-section h2 { font-size: 15px; font-weight: 600; margin: 0 0 12px; color: var(--text-dim); }
-  .home-lead { font-size: 13px; color: var(--text-dim); margin: 0 0 20px; line-height: 1.5; }
-  .task-add { display: flex; gap: 8px; margin-bottom: 20px; flex-wrap: wrap; align-items: center; }
-  .task-add input {
-    flex: 1; min-width: 160px; max-width: 280px; padding: 8px 10px;
-    background: var(--surface); color: var(--text); border: 1px solid var(--border);
-    border-radius: 6px; font-size: 13px;
-  }
-  .task-grid {
-    display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-    gap: 14px; margin-bottom: 12px;
-  }
-  .task-card {
-    background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
-    padding: 14px; display: flex; flex-direction: column; gap: 10px;
-  }
-  .task-card h3 { margin: 0; font-size: 16px; color: var(--text); }
-  .task-card .meta { font-size: 12px; color: var(--text-dim); }
-  .task-previews { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; min-height: 48px; }
-  .task-previews img {
-    width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 4px; background: #0a101c;
-  }
-  .task-previews .empty-slot {
-    background: #0a101c; border-radius: 4px; aspect-ratio: 1;
-  }
-  .task-actions { display: flex; flex-wrap: wrap; gap: 6px; }
-  .home-empty { color: var(--text-dim); font-size: 13px; padding: 12px 0; }
-  .home-docs {
-    border-top: 1px solid var(--border); margin-top: 8px;
-  }
-  .docs-shell {
-    max-width: 960px; margin: 0 auto; padding: 20px 24px 48px;
-    display: flex; gap: 20px; min-height: 280px;
-  }
+  body { margin: 0; height: 100vh; display: flex; flex-direction: column; overflow: hidden; background: var(--bg); }
+  .home-shell { flex: 1; display: flex; min-height: 0; overflow: hidden; }
   .docs-side {
-    width: 160px; flex-shrink: 0;
+    width: 200px; flex-shrink: 0; background: var(--surface);
+    border-right: 1px solid var(--border);
+    display: flex; flex-direction: column; overflow: hidden;
+  }
+  .side-tasks {
+    display: block; margin: 12px 8px 4px; padding: 9px 10px; border-radius: 6px;
+    font-size: 14px; font-weight: 600; color: var(--text-dim); text-decoration: none;
+  }
+  .side-tasks:hover { background: rgba(255,255,255,0.04); color: var(--text); }
+  .side-tasks.active {
+    background: rgba(233,69,96,0.16); color: var(--text);
   }
   .docs-side-head {
-    font-size: 11px; color: var(--text-dim); font-weight: 600;
-    letter-spacing: 0.04em; text-transform: uppercase; margin-bottom: 8px;
+    padding: 14px 14px 8px; font-size: 12px; color: var(--text-dim); font-weight: 600;
+    letter-spacing: 0.04em; text-transform: uppercase;
   }
+  .docs-nav { flex: 1; overflow-y: auto; padding: 4px 8px 16px; }
   .docs-nav a {
-    display: block; padding: 6px 8px; border-radius: 6px;
-    font-size: 12px; color: var(--text-dim); text-decoration: none;
+    display: block; padding: 7px 10px; border-radius: 6px;
+    font-size: 13px; color: var(--text-dim); text-decoration: none;
   }
   .docs-nav a:hover { background: rgba(255,255,255,0.04); color: var(--text); }
   .docs-nav a.active {
     background: rgba(233,69,96,0.16); color: var(--text); font-weight: 600;
   }
-  .docs-main { flex: 1; min-width: 0; }
-  .docs-article { font-size: 13px; line-height: 1.65; color: var(--text-dim); }
-  .docs-article h1 { font-size: 18px; color: var(--text); }
-  .docs-article h2 { font-size: 14px; color: var(--text); margin-top: 20px; }
-  .docs-article a { color: #8eb4e8; }
-  .docs-article code {
-    font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px;
-    background: #0a1a30; border: 1px solid var(--border); border-radius: 4px; padding: 1px 5px;
+  .home-main { flex: 1; min-width: 0; overflow-y: auto; padding: 28px 32px 72px; }
+  .home-pane { max-width: 1280px; margin: 0 auto; }
+  .home-pane[hidden] { display: none !important; }
+  .home-pane h1 { font-size: 26px; font-weight: 700; margin: 0 0 8px; color: var(--text); }
+  .home-lead { font-size: 14px; color: var(--text-dim); margin: 0 0 24px; line-height: 1.55; max-width: 52em; }
+  .task-add { display: flex; gap: 10px; margin-bottom: 28px; flex-wrap: wrap; align-items: center; }
+  .task-input-wrap { position: relative; flex: 1; min-width: 220px; max-width: 360px; }
+  .task-add input {
+    width: 100%; box-sizing: border-box; padding: 10px 12px;
+    background: var(--surface); color: var(--text); border: 1px solid var(--border);
+    border-radius: 8px; font-size: 14px;
   }
-  .docs-article pre {
-    padding: 10px 12px; overflow-x: auto; background: #0a1a30;
-    border: 1px solid var(--border); border-radius: 8px; font-size: 12px;
+  .task-suggest {
+    position: absolute; left: 0; right: 0; top: 100%; z-index: 20; margin-top: 4px;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+    max-height: 240px; overflow-y: auto; display: none;
   }
-  .docs-empty { color: var(--text-dim); }
-  .docs-side-foot { margin-top: 12px; font-size: 11px; color: var(--text-dim); }
-  .docs-side-foot a { color: #8eb4e8; }
-  details.completed-block { margin-top: 20px; }
+  .task-suggest.open { display: block; }
+  .task-suggest button {
+    display: block; width: 100%; text-align: left; padding: 10px 12px;
+    background: transparent; border: 0; color: var(--text); font-size: 14px; cursor: pointer;
+  }
+  .task-suggest button:hover, .task-suggest button.active { background: rgba(233,69,96,0.16); }
+  .task-grid {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+    gap: 20px; margin-bottom: 16px;
+  }
+  .task-card {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 14px;
+    overflow: hidden; display: flex; flex-direction: column;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  }
+  .task-card:hover {
+    border-color: #4a6a9a;
+    box-shadow: 0 10px 28px rgba(0,0,0,0.28);
+  }
+  .task-previews {
+    display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr;
+    gap: 2px; background: #060a12; aspect-ratio: 16 / 11;
+  }
+  .task-previews img, .task-previews .empty-slot {
+    width: 100%; height: 100%; object-fit: cover; background: #0a101c; display: block;
+  }
+  .task-body {
+    padding: 16px 18px 18px; display: flex; flex-direction: column; gap: 12px; flex: 1;
+  }
+  .task-card h3 { margin: 0; font-size: 18px; font-weight: 700; color: var(--text); letter-spacing: 0.01em; }
+  .task-card .meta { font-size: 13px; color: var(--text-dim); }
+  .task-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: auto; }
+  .task-actions .btn { padding: 7px 14px; font-size: 13px; }
+  .task-actions .btn.green { min-width: 88px; }
+  .home-empty { color: var(--text-dim); font-size: 14px; padding: 28px 0; }
+  details.completed-block { margin-top: 32px; }
   details.completed-block > summary {
-    cursor: pointer; color: var(--text-dim); font-size: 13px; margin-bottom: 10px;
+    cursor: pointer; color: var(--text-dim); font-size: 14px; margin-bottom: 14px;
   }
 </style>
 </head>
 <body>
 <nav class="app-tabs" id="app-tabs"></nav>
-<div class="home-wrap">
-  <section class="home-section">
-    <h1>任务</h1>
-    <p class="home-lead">手动添加任务后进入处理。子目录不会自动出现在列表中。</p>
-    <form class="task-add" id="task-add-form">
-      <input type="text" id="task-name" placeholder="任务目录名" autocomplete="off" required
-        pattern="[A-Za-z0-9][A-Za-z0-9_-]{0,63}" title="字母、数字、下划线或连字符">
-      <button type="submit" class="btn green">添加任务</button>
-    </form>
-    <div class="task-grid" id="task-active"></div>
-    <p class="home-empty" id="task-empty" hidden>尚未添加任务</p>
-    <details class="completed-block" id="completed-wrap" hidden>
-      <summary>已完成（<span id="completed-count">0</span>）</summary>
-      <div class="task-grid" id="task-completed"></div>
-    </details>
-  </section>
-  <section class="home-docs">
-    <div class="home-section" style="padding-bottom:0">
-      <h2>文档</h2>
+<div class="home-shell">
+  <aside class="docs-side">
+    <a class="side-tasks" id="nav-tasks" href="/">任务</a>
+    <div class="docs-side-head">文档</div>
+    <nav class="docs-nav" id="docs-nav"></nav>
+  </aside>
+  <div class="home-main">
+    <div class="home-pane" id="pane-tasks">
+      <h1>任务</h1>
+      <p class="home-lead">手动添加任务后进入处理。未登记的子目录不会出现；输入框可补全尚未登记的目录名。</p>
+      <form class="task-add" id="task-add-form" autocomplete="off">
+        <div class="task-input-wrap">
+          <input type="text" id="task-name" placeholder="任务目录名" required
+            pattern="[A-Za-z0-9][A-Za-z0-9_-]{0,63}" title="字母、数字、下划线或连字符"
+            aria-autocomplete="list" aria-controls="task-suggest">
+          <div class="task-suggest" id="task-suggest" role="listbox"></div>
+        </div>
+        <button type="submit" class="btn green">添加任务</button>
+      </form>
+      <div class="task-grid" id="task-active"></div>
+      <p class="home-empty" id="task-empty" hidden>尚未添加任务</p>
+      <details class="completed-block" id="completed-wrap" hidden>
+        <summary>已完成（<span id="completed-count">0</span>）</summary>
+        <div class="task-grid" id="task-completed"></div>
+      </details>
     </div>
-    <div class="docs-shell">
-      <aside class="docs-side">
-        <div class="docs-side-head">目录</div>
-        <nav class="docs-nav" id="docs-nav"></nav>
-        <div class="docs-side-foot" id="docs-raw-link"></div>
-      </aside>
-      <div class="docs-main">
-        <article class="docs-article" id="docs-article">
-          <p class="docs-empty">加载中…</p>
-        </article>
-      </div>
+    <div class="home-pane" id="pane-docs" hidden>
+      <article class="docs-article" id="docs-article">
+        <p class="docs-empty">加载中…</p>
+      </article>
     </div>
-  </section>
+  </div>
 </div>
 <div class="toast" id="toast"></div>
 <script src="/static/js/nav.js"></script>
-<script src="/static/js/tasks_home.js"></script>
-<script src="/static/js/docs_home.js"></script>
+<script src="/static/js/home.js"></script>
 </body>
 </html>

@@ -158,14 +158,32 @@ var BooruFilter = (function () {
     _minY = 0;
   }
 
+  /**
+   * 统计已生效的附加条件条数（每项上下限分别计；精确相等计 1）。
+   * 引用：syncExtraBtn。
+   * @param {object} f
+   * @returns {number}
+   */
   function countExtra(f) {
     var n = 0;
     if (f.rating) n += 1;
     for (var i = 0; i < _EX_KEYS.length; i++) {
       var k = _EX_KEYS[i];
-      if (f[k + 'Lo'] || f[k + 'Hi']) n += 1;
+      var lo = f[k + 'Lo'] || '';
+      var hi = f[k + 'Hi'] || '';
+      if (lo && hi && lo === hi) n += 1;
+      else {
+        if (lo) n += 1;
+        if (hi) n += 1;
+      }
     }
-    if (f.dateLo || f.dateHi) n += 1;
+    var dLo = f.dateLo || '';
+    var dHi = f.dateHi || '';
+    if (dLo && dHi && dLo === dHi) n += 1;
+    else {
+      if (dLo) n += 1;
+      if (dHi) n += 1;
+    }
     if (f.user) n += 1;
     var more = f.more;
     if (Array.isArray(more)) n += more.length;
@@ -173,14 +191,45 @@ var BooruFilter = (function () {
     return n;
   }
 
+  /**
+   * 附加条件可读摘要。引用：syncExtraBtn 的 title。
+   * @param {object} f
+   * @returns {string}
+   */
+  function summarizeExtra(f) {
+    var bits = [];
+    if (f.rating) bits.push('评级:' + f.rating);
+    for (var i = 0; i < _EX_KEYS.length; i++) {
+      var k = _EX_KEYS[i];
+      var lo = f[k + 'Lo'] || '';
+      var hi = f[k + 'Hi'] || '';
+      if (lo && hi && lo === hi) bits.push(k + '=' + lo);
+      else if (lo && hi) bits.push(k + ' ' + lo + '…' + hi);
+      else if (lo) bits.push(k + '≥' + lo);
+      else if (hi) bits.push(k + '≤' + hi);
+    }
+    var dLo = f.dateLo || '';
+    var dHi = f.dateHi || '';
+    if (dLo && dHi && dLo === dHi) bits.push('日期=' + dLo);
+    else if (dLo && dHi) bits.push('日期 ' + dLo + '…' + dHi);
+    else if (dLo) bits.push('日期≥' + dLo);
+    else if (dHi) bits.push('日期≤' + dHi);
+    if (f.user) bits.push('用户:' + f.user);
+    var more = f.more;
+    if (Array.isArray(more) && more.length) bits.push(more.join(' '));
+    else if (more && String(more).trim()) bits.push(String(more).trim());
+    return bits.join(' · ');
+  }
+
   function syncExtraBtn() {
     var btn = document.getElementById('btn-booru-extra');
     var el = document.getElementById('booru-extra');
     if (!btn || !el) return;
-    var raw = el.value.trim();
-    var n = countExtra(parseExtra(raw));
+    var f = parseExtra(el.value.trim());
+    var n = countExtra(f);
+    var summary = summarizeExtra(f);
     btn.classList.toggle('has-extra', n > 0);
-    btn.title = n > 0 ? raw : '评级、分数、分辨率等';
+    btn.title = n > 0 ? summary : '评级、分数、分辨率、日期、用户等';
     var badge = btn.querySelector('.booru-extra-badge');
     if (badge) badge.textContent = n > 0 ? String(n) : '';
   }
@@ -232,7 +281,8 @@ var BooruFilter = (function () {
       if (dHi) parts.push('date:<=' + dHi);
     }
     if (f.user) parts.push('user:' + f.user);
-    if (f.more) parts.push(f.more);
+    if (Array.isArray(f.more) && f.more.length) parts.push(f.more.join(' '));
+    else if (f.more && String(f.more).trim()) parts.push(String(f.more).trim());
     return parts.join(' ').trim();
   }
 
@@ -467,7 +517,7 @@ var BooruFilter = (function () {
 
   /**
    * 同步本地/远程工具栏显隐与统计段标签。
-   * 段位：1 总计 · 2 已选/已保存 · 6 回收站（仅本地）。
+   * 本地：总计 · 已选 · 回收站；远程：总计 · 已保存 · 未保存。
    * 引用：mode 切换、init。
    */
   function syncToolbar() {
@@ -478,6 +528,8 @@ var BooruFilter = (function () {
     if (booruBar) booruBar.classList.toggle('is-off', !remote);
     var selLabel = document.getElementById('stat-selected-label');
     if (selLabel) selLabel.textContent = remote ? '已保存' : '已选';
+    var unsavedWrap = document.getElementById('stat-unsaved-wrap');
+    if (unsavedWrap) unsavedWrap.hidden = !remote;
     var trashedWrap = document.getElementById('stat-trashed-wrap');
     if (trashedWrap) trashedWrap.hidden = remote;
     var hint = document.getElementById('filter-hint');
@@ -496,7 +548,7 @@ var BooruFilter = (function () {
   }
 
   /**
-   * 刷新筛选统计。远程「已保存」= 结果集中已写入工作目录的条目数。
+   * 刷新筛选统计。远程「已保存/未保存」与卡片状态一致。
    * 引用：render、下载/移除完成、syncToolbar。
    */
   function updateStats() {
@@ -507,8 +559,14 @@ var BooruFilter = (function () {
     });
     var t = document.getElementById('stat-total');
     var s = document.getElementById('stat-selected');
+    var u = document.getElementById('stat-unsaved');
     if (t) t.textContent = String(total);
-    if (s) s.textContent = String(isRemote() ? done : Object.keys(_selected).length);
+    if (isRemote()) {
+      if (s) s.textContent = String(done);
+      if (u) u.textContent = String(Math.max(0, total - done));
+    } else if (s) {
+      s.textContent = String(Object.keys(_selected).length);
+    }
   }
 
   function cardLabel(post) {

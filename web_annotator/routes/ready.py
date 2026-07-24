@@ -1,4 +1,4 @@
-"""就绪：导出训练 datasets TOML。"""
+"""就绪：导出训练 datasets TOML，并返回目录与蒙版统计。"""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from routes.deps import get_runtime
-from services.ready_toml import build_ready_toml
+from services.ready_toml import build_ready_toml, main_mask_stats
 from services.work_dir import list_work_dirs
 
 router = APIRouter(prefix="/ready", tags=["ready"])
@@ -19,12 +19,25 @@ class ReadyBody(BaseModel):
 
 @router.get("/dirs")
 def ready_dirs(request: Request):
+    """
+    可导出工作目录与 main 蒙版统计。
+
+    蒙版状态仅「无」或「完整」。引用：ready.js。
+    """
     root = get_runtime(request).root
-    return {"root": str(root), "dirs": list_work_dirs(root)}
+    mask = main_mask_stats(root)
+    return {
+        "root": str(root),
+        "dirs": list_work_dirs(root),
+        **mask,
+    }
 
 
 @router.post("/toml")
 def ready_toml(request: Request, body: ReadyBody):
+    """
+    生成 TOML 预览文本。引用：ready.js。
+    """
     root = get_runtime(request).root
     result = build_ready_toml(root, dirs=body.dirs, num_repeats=body.num_repeats)
     if not result["subsets"]:

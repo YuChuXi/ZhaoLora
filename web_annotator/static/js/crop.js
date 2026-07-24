@@ -22,7 +22,6 @@
   var _offsetY = 0;
   var _crops = []; // {x1,y1,x2,y2,target_w,target_h,zoom,name}
   var _selected = -1;
-  var _datasetRoot = '';
   var _autoParts = []; // 已添加的部位名，后续每张图自动生成选区
   var _deniedParts = []; // 永久删除的部位，刷新后也不再自动纳入
   var _noCrop = false;
@@ -344,11 +343,11 @@
   }
 
   function partsStorageKey() {
-    return 'crop_auto_parts:' + (_datasetRoot || 'default');
+    return 'crop_auto_parts:' + API.dataset();
   }
 
   function partsDenyKey() {
-    return 'crop_auto_parts_deny:' + (_datasetRoot || 'default');
+    return 'crop_auto_parts_deny:' + API.dataset();
   }
 
   function loadParts(serverParts) {
@@ -1151,14 +1150,7 @@
 
   async function init() {
     var cfg = await (await api('/api/crop/config')).json();
-    _datasetRoot = cfg.root || '';
     loadParts(cfg.parts || []);
-    var hint = document.getElementById('layout-hint');
-    if (hint) {
-      hint.textContent = (_datasetRoot || '-') +
-        ' · 默认裁切见侧栏（按部位保存在本机）' +
-        (_autoParts.length ? ' · 自动部位 ' + _autoParts.join(', ') : '');
-    }
 
     var matchCfg = await (await api('/api/crop/candidates')).json();
     applyMatchConfig(matchCfg);

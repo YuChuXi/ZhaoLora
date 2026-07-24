@@ -5,39 +5,30 @@
 ## 启动
 
 ```bash
-python web_annotator/server.py --data-dir datasets/chen_bin/ --default-crop 1536x1536@1.0
+python web_annotator/server.py --data-dir datasets
 ```
 
-默认监听 `http://0.0.0.0:8765`。顶栏「首页」进入本文档；其余入口为各功能模块。
+默认监听 `http://0.0.0.0:8765`。`--data-dir` 指向**任务根**（例如 `datasets/`），不是某一个角色子目录。
+
+## 首页
+
+左侧上方为 **任务**；下方 **文档** 从概览起列出各模块说明。
+
+1. 在输入框填写或补全任务目录名，点击 **添加任务** 写入清单。
+2. 卡片可 **进入**、**复制链接**、**完成**；已完成任务可 **重新打开**。
+3. 磁盘上已有子目录但未登记时，不会自动出现；补全列表只提示尚未登记的合法目录名。
 
 ## 推荐流程
 
-1. [美学](aesthetic.md) — 打分并生成报告  
-2. [筛选](filter.md) — 浏览、排序、删除不合格样本  
-3. [去重](dedupe.md) — 相似图分组清理  
-4. [裁剪](crop.md) — 部位选区输出  
-5. [蒙版](paint.md) — 绘制 Alpha（可选）  
-6. [标签](tags.md) — WD14 自动生成 + 频率统计  
-7. [清洗](tag-clean.md) — 规范化旁路 `.txt`，可选写入 Pony 美学档位  
-8. [就绪](ready.md) — 生成训练用 TOML 片段  
+进入某个任务后，按顶栏切换模块：
 
-## 文档索引
+1. [美学](?doc=aesthetic) — 打分并查看报告  
+2. [筛选](?doc=filter) — 浏览、排序、删除不合格样本；可从 Gelbooru / Danbooru 写入  
+3. [去重](?doc=dedupe) — 相似图分组清理  
+4. [裁剪](?doc=crop) — 部位选区输出  
+5. [蒙版](?doc=paint) — 绘制 Alpha（可选）  
+6. [标签](?doc=tags) — WD14 自动生成 + 频率统计  
+7. [清洗](?doc=tag-clean) — 规范化旁路标签，可选写入 Pony 美学档位  
+8. [就绪](?doc=ready) — 生成训练用 TOML 片段  
 
-| 文档 | 说明 |
-|------|------|
-| [目录约定](layout.md) | 数据集布局、元数据、路径规则、启动参数 |
-| [美学](aesthetic.md) | 美学评分与报告 |
-| [筛选](filter.md) | 瀑布流筛选与回收站 |
-| [去重](dedupe.md) | 指纹去重 |
-| [裁剪](crop.md) | 多选区吸附裁剪 |
-| [蒙版](paint.md) | Alpha 绘制 |
-| [标签](tags.md) | 频率统计与 WD14 打标 |
-| [清洗](tag-clean.md) | 旁路标签清洗流水线 |
-| [就绪](ready.md) | 训练子集 TOML 导出 |
-
-## 全局约定摘要
-
-- **数据集根**由 `--data-dir` 指定（可指向含 `main/` 的根，或直接指向 `main/`）。
-- 筛选 / 去重 / 美学 / 标签 / 清洗：路径形如 `main/foo.png`（相对根）。
-- 裁剪 / 蒙版：路径相对 `main/`，形如 `foo.png`；目录选择器隐藏。
-- 右上角目录多选状态保存在浏览器 `localStorage`（键 `annotator_work_dirs`）。
+目录与元数据约定见 [目录约定](?doc=layout)。
