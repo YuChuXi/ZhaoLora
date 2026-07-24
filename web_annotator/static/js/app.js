@@ -24,6 +24,7 @@
   }
 
   function refreshView() {
+    if (typeof BooruFilter !== 'undefined' && BooruFilter.isRemote()) return;
     var showTrash = document.getElementById('chk-show-trash').checked;
     Masonry.render(Store.getVisible(showTrash));
   }
@@ -63,6 +64,7 @@
 
   function onKeyDown(e) {
     if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return;
+    if (typeof BooruFilter !== 'undefined' && BooruFilter.isRemote()) return;
     if ((e.ctrlKey || e.metaKey) && e.key === 'a') {
       e.preventDefault(); Store.selectAll().then(refreshView);
     } else if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === 'A' || e.key === 'a')) {
@@ -78,12 +80,15 @@
 
   function init() {
     Masonry.init('masonry');
+    if (typeof BooruFilter !== 'undefined') BooruFilter.init();
 
     Store.onChange(function(st) {
+      if (typeof BooruFilter !== 'undefined' && BooruFilter.isRemote()) return;
       updateStats(st);
     });
 
     Store.onToggle(function(path, selected) {
+      if (typeof BooruFilter !== 'undefined' && BooruFilter.isRemote()) return;
       Masonry.setSelected(path, selected);
     });
 
@@ -110,6 +115,7 @@
     }
 
     DirPicker.onChange(function () {
+      if (typeof BooruFilter !== 'undefined' && BooruFilter.isRemote()) return;
       Store.load().then(function () {
         updateStats();
         refreshView();
@@ -127,7 +133,8 @@
         _autoColumns();
       } else {
         colsLabel.textContent = v;
-        Masonry.setColumns(v);
+        if (typeof BooruFilter !== 'undefined' && BooruFilter.isRemote()) BooruFilter.render();
+        else Masonry.setColumns(v);
       }
     });
     window.addEventListener('resize', function() {
@@ -136,7 +143,8 @@
     function _autoColumns() {
       var w = window.innerWidth;
       var c = w >= 1600 ? 6 : w >= 1280 ? 5 : w >= 960 ? 4 : w >= 640 ? 3 : 2;
-      Masonry.setColumns(c);
+      if (typeof BooruFilter !== 'undefined' && BooruFilter.isRemote()) BooruFilter.render();
+      else Masonry.setColumns(c);
     }
     _autoColumns();
 

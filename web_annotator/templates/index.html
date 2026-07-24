@@ -5,44 +5,187 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>筛选</title>
 <link rel="stylesheet" href="/static/css/annotator.css">
+<style>
+  #booru-tags, #booru-extra {
+    background: #0a1a30; color: var(--text);
+    border: 1px solid var(--border); border-radius: 4px; padding: 4px 8px; font-size: 12px;
+  }
+  #booru-tags { width: min(220px, 28vw); }
+  #booru-extra { width: min(260px, 32vw); }
+  .booru-page-wrap {
+    display: inline-flex; align-items: stretch;
+    border: 1px solid var(--border); border-radius: 4px;
+    overflow: hidden; background: #0a1a30; height: 26px;
+  }
+  .booru-page-wrap input {
+    width: 3.2rem; border: 0; border-radius: 0;
+    border-left: 1px solid var(--border); border-right: 1px solid var(--border);
+    background: transparent; color: var(--text);
+    padding: 0 4px; font-size: 12px; text-align: center;
+    -moz-appearance: textfield;
+  }
+  .booru-page-wrap input::-webkit-outer-spin-button,
+  .booru-page-wrap input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+  .booru-page-btn {
+    width: 22px; border: 0; background: transparent; color: var(--text-dim);
+    cursor: pointer; font-size: 14px; line-height: 1; padding: 0;
+  }
+  .booru-page-btn:hover:not(:disabled) { color: var(--text); background: rgba(255,255,255,0.06); }
+  .booru-page-btn:disabled { opacity: 0.28; cursor: default; }
+  #filter-mode, #booru-order {
+    background: var(--card-bg); color: var(--text);
+    border: 1px solid var(--border); border-radius: 4px; padding: 3px 6px; font-size: 12px;
+  }
+  #booru-cheat {
+    font-size: 11px; color: var(--accent, #6af); text-decoration: none; white-space: nowrap;
+  }
+  #booru-cheat:hover { text-decoration: underline; }
+  /* display:contents 会盖掉 [hidden]，用 class 切换 */
+  .toolbar-group { display: contents; }
+  .toolbar-group.is-off { display: none !important; }
+
+  .booru-preview {
+    position: fixed; inset: 0; z-index: 500;
+    display: none; align-items: stretch; justify-content: center;
+    background: rgba(6, 8, 14, 0.82);
+    padding: 20px;
+    gap: 16px;
+  }
+  .booru-preview.show { display: flex; }
+  .booru-preview-stage {
+    flex: 1 1 auto; min-width: 0;
+    display: flex; align-items: center; justify-content: center;
+    background: #05070d; border: 1px solid var(--border); border-radius: 10px;
+    overflow: hidden;
+  }
+  .booru-preview-stage img {
+    max-width: 100%; max-height: calc(100vh - 40px);
+    object-fit: contain; display: block;
+  }
+  .booru-preview-side {
+    flex: 0 0 min(340px, 36vw);
+    display: flex; flex-direction: column; gap: 10px;
+    max-height: calc(100vh - 40px); overflow: hidden;
+    background: var(--card-bg); border: 1px solid var(--border);
+    border-radius: 10px; padding: 12px 14px;
+  }
+  .booru-preview-meta {
+    font-size: 12px; color: var(--text-dim); line-height: 1.5;
+  }
+  .booru-preview-meta b { color: var(--text); }
+  .booru-preview-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+  .booru-preview-tags {
+    flex: 1; overflow: auto; display: flex; flex-wrap: wrap; gap: 6px;
+    align-content: flex-start; padding-top: 4px;
+  }
+  .booru-tag-chip {
+    font-size: 11px; line-height: 1.3;
+    padding: 3px 8px; border-radius: 4px;
+    background: #0a1a30; color: var(--text);
+    border: 1px solid var(--border); cursor: pointer;
+    max-width: 100%; word-break: break-all;
+  }
+  .booru-tag-chip:hover { border-color: var(--accent); color: #fff; }
+  @media (max-width: 860px) {
+    .booru-preview { flex-direction: column; }
+    .booru-preview-side { flex: 0 0 auto; max-height: 40vh; width: 100%; }
+    .booru-preview-stage img { max-height: 50vh; }
+  }
+</style>
 </head>
 <body>
 <nav class="app-tabs" id="app-tabs"></nav>
 
 <div class="toolbar">
-  <span class="stat">总计 <b id="stat-total">0</b></span>
-  <span class="stat">已选 <b id="stat-selected">0</b></span>
-  <span class="stat">回收站 <b id="stat-trashed">0</b></span>
-  <span class="sep"></span>
   <label style="font-size:12px;color:var(--text-dim);display:flex;align-items:center;gap:4px;">
-    排序
-    <select id="sort-by">
-      <option value="name">名称</option>
-      <option value="aesthetic">美学</option>
-      <option value="pixels">像素</option>
+    来源
+    <select id="filter-mode">
+      <option value="local">本地</option>
+      <option value="gelbooru">Gelbooru</option>
+      <option value="danbooru">Danbooru</option>
     </select>
   </label>
   <span class="sep"></span>
-  <button class="btn" id="btn-select-all" title="Ctrl+A">全选</button>
-  <button class="btn" id="btn-deselect-all" title="Ctrl+Shift+A">取消全选</button>
-  <button class="btn" id="btn-invert" title="Ctrl+I">反选</button>
+  <span class="stat">总计 <b id="stat-total">0</b></span>
+  <span class="stat">已选 <b id="stat-selected">0</b></span>
+  <span class="stat" id="stat-trashed-wrap"><span class="stat-label">回收站</span> <b id="stat-trashed">0</b></span>
   <span class="sep"></span>
-  <button class="btn danger" id="btn-apply" title="Delete">删除</button>
-  <button class="btn green" id="btn-restore" title="Ctrl+Z">恢复</button>
-  <span class="sep"></span>
-  <label style="font-size:12px;color:var(--text-dim);cursor:pointer;user-select:none;display:flex;align-items:center;gap:4px;">
-    <input type="checkbox" id="chk-show-trash"> 显示回收站
-  </label>
-  <span class="sep"></span>
+
+  <div id="toolbar-booru" class="toolbar-group is-off">
+    <input type="text" id="booru-tags" placeholder="标签，空格分隔" spellcheck="false">
+    <label style="font-size:12px;color:var(--text-dim);display:flex;align-items:center;gap:4px;">
+      排序
+      <select id="booru-order">
+        <option value="">默认</option>
+        <option value="score">分数</option>
+        <option value="id">ID 新→旧</option>
+        <option value="id_asc">ID 旧→新</option>
+      </select>
+    </label>
+    <input type="text" id="booru-extra" placeholder="额外：rating:g score:>=10 width:>=1920" spellcheck="false" title="元标签，如 rating: / width: / height: / score: / user: / date:">
+    <label style="font-size:12px;color:var(--text-dim);display:flex;align-items:center;gap:4px;" title="当前页；两侧可加载上/下一页">
+      页
+      <span class="booru-page-wrap">
+        <button type="button" class="booru-page-btn" id="btn-booru-page-prev" title="上一页" disabled>‹</button>
+        <input type="number" id="booru-start-page" min="1" max="10000" value="1" step="1">
+        <button type="button" class="booru-page-btn" id="btn-booru-page-next" title="下一页" disabled>›</button>
+      </span>
+    </label>
+    <button class="btn green" id="btn-booru-search" type="button">搜索</button>
+    <label style="font-size:12px;color:var(--text-dim);cursor:pointer;user-select:none;display:flex;align-items:center;gap:4px;" title="开启后缩略图/大图经本机后端拉取（防盗链或直连失败时用）">
+      <input type="checkbox" id="booru-proxy"> 代理图
+    </label>
+    <a id="booru-cheat" href="https://gelbooru.com/index.php?page=help&topic=cheatsheet" target="_blank" rel="noopener">cheatsheet</a>
+    <span class="sep"></span>
+  </div>
+
+  <div id="toolbar-local" class="toolbar-group">
+    <label style="font-size:12px;color:var(--text-dim);display:flex;align-items:center;gap:4px;">
+      排序
+      <select id="sort-by">
+        <option value="name">名称</option>
+        <option value="aesthetic">美学</option>
+        <option value="pixels">像素</option>
+      </select>
+    </label>
+    <span class="sep"></span>
+    <button class="btn" id="btn-select-all" title="Ctrl+A">全选</button>
+    <button class="btn" id="btn-deselect-all" title="Ctrl+Shift+A">取消全选</button>
+    <button class="btn" id="btn-invert" title="Ctrl+I">反选</button>
+    <span class="sep"></span>
+    <button class="btn danger" id="btn-apply" title="Delete">删除</button>
+    <button class="btn green" id="btn-restore" title="Ctrl+Z">恢复</button>
+    <span class="sep"></span>
+    <label style="font-size:12px;color:var(--text-dim);cursor:pointer;user-select:none;display:flex;align-items:center;gap:4px;">
+      <input type="checkbox" id="chk-show-trash"> 显示回收站
+    </label>
+    <span class="sep"></span>
+  </div>
+
   <label style="font-size:12px;color:var(--text-dim);display:flex;align-items:center;gap:4px;">
-    列数 <input type="range" id="cols-slider" min="1" max="8" value="0" step="1" style="width:60px;">
+    列数 <input type="range" id="cols-slider" min="0" max="8" value="0" step="1" style="width:60px;">
     <span id="cols-label">自动</span>
   </label>
 </div>
 
 <div class="masonry" id="masonry"></div>
 <div class="toast" id="toast"></div>
-<div class="hint">点击选中 · 右键相似 · Delete 删除</div>
+<div class="hint" id="filter-hint">点击选中 · 右键相似 · Delete 删除</div>
+
+<div class="booru-preview" id="booru-preview">
+  <div class="booru-preview-stage">
+    <img id="booru-preview-img" alt="">
+  </div>
+  <aside class="booru-preview-side">
+    <div class="booru-preview-meta" id="booru-preview-meta"></div>
+    <div class="booru-preview-actions">
+      <button type="button" class="btn green" id="booru-preview-dl">下载/取消</button>
+      <a class="btn" id="booru-preview-open" href="#" target="_blank" rel="noopener">原站</a>
+      <button type="button" class="btn" id="booru-preview-close">关闭</button>
+    </div>
+    <div class="booru-preview-tags" id="booru-preview-tags"></div>
+  </aside>
+</div>
 
 <script src="/static/js/dir_picker.js"></script>
 <script src="/static/js/nav.js"></script>
@@ -50,6 +193,7 @@
 <script src="/static/js/store.js"></script>
 <script src="/static/js/masonry.js"></script>
 <script src="/static/js/similar_hover.js"></script>
+<script src="/static/js/booru_filter.js"></script>
 <script src="/static/js/app.js"></script>
 
 </body>

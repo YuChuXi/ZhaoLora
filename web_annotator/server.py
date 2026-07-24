@@ -40,6 +40,7 @@ from routes.aesthetic import router as aesthetic_router
 from routes.dedupe import router as dedupe_router
 from routes.ready import router as ready_router
 from routes.docs import router as docs_router
+from routes.booru import router as booru_router
 
 
 class _DevStaticFiles(StaticFiles):
@@ -107,6 +108,7 @@ app.include_router(tag_stats_router)
 app.include_router(dedupe_router)
 app.include_router(ready_router)
 app.include_router(docs_router)
+app.include_router(booru_router)
 
 
 @app.get("/")
@@ -212,6 +214,12 @@ def main() -> int:
         metavar="WxH@Z",
         help="打开每张图时的默认裁切匹配，如 1152x1152@1.0",
     )
+    parser.add_argument(
+        "--booru-proxy",
+        type=str,
+        default="http://127.0.0.1:7890",
+        help="Danbooru/Gelbooru 请求代理；空字符串表示直连",
+    )
     args = parser.parse_args()
 
     try:
@@ -239,6 +247,7 @@ def main() -> int:
     mask_dir = Path(args.mask_dir).resolve() if args.mask_dir else layout.mask_dir
     mask_dir.mkdir(parents=True, exist_ok=True)
     app.state.mask_dir = mask_dir
+    app.state.booru_proxy = (args.booru_proxy or "").strip() or None
 
     app.state.crop_default_tw = None
     app.state.crop_default_th = None

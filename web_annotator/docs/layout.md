@@ -72,6 +72,7 @@ datasets/xxx/                 # root（数据集根）
 | `--skip-thumbnails` | 关 | 跳过启动时缩略图预生成 |
 | `--mask-dir` | `<root>/mask` | Alpha 蒙版目录 |
 | `--default-crop` | 空 | 裁剪默认匹配，如 `1536x1536@1.0` |
+| `--booru-proxy` | `http://127.0.0.1:7890` | Gelbooru/Danbooru 代理；空字符串直连 |
 
 ## 目录选择器
 

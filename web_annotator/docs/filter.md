@@ -4,6 +4,47 @@
 
 瀑布流浏览所选目录图像：选中、删除进回收站、恢复、按色调找相似图。
 
+## 挂载 Gelbooru / Danbooru
+
+筛选页「来源」可切换为远程图站：
+
+1. 选择 **Gelbooru** 或 **Danbooru**
+2. 输入搜索 tag（空格分隔，语法与站内一致）
+3. **搜索** / **加载更多**：瀑布流展示预览图（经本机 `/api/booru/thumb` 代理）
+4. **点击选中即自动下载**到右上角当前目录（默认取多选中的第一个，一般为 `main`）
+
+### 下载产物
+
+写入 `<root>/<dir>/`：
+
+| 文件 | 说明 |
+|------|------|
+| `{id}.jpg/png/…` | 原图 |
+| `{id}.txt` | 旁路标签（逗号分隔） |
+| `.gelbooru_meta/{id}.json` 或 `.danbooru_meta/{id}.json` | 帖子元数据 |
+
+已存在同 id 图像与 txt 时跳过下载（仍记为已完成）。
+
+### API
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| POST | `/api/booru/search` | `{ source, tags, page, limit }` |
+| GET | `/api/booru/thumb?source=&id=` | 预览图代理 |
+| POST | `/api/booru/download` | `{ source, id, dir, overwrite? }` |
+
+### 代理
+
+启动参数 `--booru-proxy`（默认 `http://127.0.0.1:7890`）；设为空字符串则直连。
+
+### 注意
+
+- 远程模式下本地删除 / 回收站 / 相似图快捷键停用。
+- Danbooru 部分帖子无 `file_url`（登录墙）会搜索不到或下载失败。
+- Gelbooru 单页通常最多约 100 条。
+
+---
+
 ## 目录范围
 
 - 右上角多选工作目录（排除 `mask` 等非工作目录）。
