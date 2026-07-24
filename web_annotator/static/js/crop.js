@@ -405,6 +405,7 @@
       _deniedParts.push(name);
       saveDeniedParts();
     }
+    syncDefaultsUi();
   }
 
   function removeCropPermanently(idx) {
@@ -996,7 +997,8 @@
         await loadIndex(start);
       }
     } else {
-      document.getElementById('info-text').textContent = '没有图片';
+      updateNav();
+      toast('没有图片');
     }
   }
 
@@ -1144,21 +1146,24 @@
 
   async function init() {
     var cfg = await (await api('/api/crop/config')).json();
-    _defaultCrop = cfg.default_crop || null;
     _datasetRoot = cfg.root || '';
     loadParts(cfg.parts || []);
     var hint = document.getElementById('layout-hint');
     if (hint) {
-      var dc = _defaultCrop
-        ? (_defaultCrop.target_w + 'x' + _defaultCrop.target_h + '@' + Number(_defaultCrop.zoom).toFixed(1) + 'x')
-        : '自动匹配';
       hint.textContent = (_datasetRoot || '-') +
-        ' · 默认 ' + dc +
+        ' · 默认裁切见侧栏（按部位保存在本机）' +
         (_autoParts.length ? ' · 自动部位 ' + _autoParts.join(', ') : '');
     }
 
     var matchCfg = await (await api('/api/crop/candidates')).json();
     applyMatchConfig(matchCfg);
+
+    var globalDefault = document.getElementById('crop-default-global');
+    if (globalDefault) {
+      globalDefault.addEventListener('change', function () {
+        commitPartDefault('', globalDefault.value);
+      });
+    }
 
     document.getElementById('btn-prev').addEventListener('click', goPrev);
     document.getElementById('btn-next').addEventListener('click', goNextUnfinished);

@@ -1,5 +1,8 @@
 /**
- * aesthetic.js —— 美学评分（Server-Sent Events 进度）
+ * aesthetic.js —— 美学评分（Server-Sent Events 进度）。
+ *
+ * 顶栏仅操作；底栏六段状态；进度条仅 queued/running 显示。
+ * 引用：templates/aesthetic.html。
  */
 (function () {
   'use strict';
@@ -9,6 +12,9 @@
   var _toastTimer = null;
   var _lastReportMtime = null;
 
+  /**
+   * @param {string} msg
+   */
   function toast(msg) {
     var el = document.getElementById('toast');
     el.textContent = msg;
@@ -17,10 +23,16 @@
     _toastTimer = setTimeout(function () { el.classList.remove('show'); }, 2200);
   }
 
+  /**
+   * @returns {string[]}
+   */
   function currentDirs() {
     return DirPicker.getDirs();
   }
 
+  /**
+   * @param {boolean} running
+   */
   function setRunningUi(running) {
     document.getElementById('btn-start').disabled = running;
     document.getElementById('btn-cancel').disabled = !running;
@@ -28,6 +40,10 @@
     DirPicker.setDisabled(running);
   }
 
+  /**
+   * @param {string|null} url
+   * @param {number|null} mtime
+   */
   function showReport(url, mtime) {
     var frame = document.getElementById('report-frame');
     var empty = document.getElementById('report-empty');
@@ -49,12 +65,22 @@
     empty.hidden = true;
   }
 
+  /**
+   * 应用任务状态到底栏与进度条。
+   * 段1 任务态 · 段2 完成数 · 段5 进度 · 段6 失败与说明。
+   * 引用：startWatch、startJob。
+   * @param {object} s
+   */
   function applyStatus(s) {
     var total = s.total || 0;
     var done = s.done || 0;
     var pct = (typeof s.pct === 'number') ? s.pct : (total > 0 ? (done / total) * 100 : 0);
+    var running = s.status === 'running' || s.status === 'queued';
+    var bar = document.getElementById('job-progress');
+    if (bar) bar.hidden = !running;
+
     var fill = document.getElementById('progress-fill');
-    var loading = (s.status === 'running' || s.status === 'queued') && s.phase === 'loading';
+    var loading = running && s.phase === 'loading';
     var waiting = s.status === 'queued';
     fill.classList.toggle('indeterminate', loading || waiting);
     if (!loading && !waiting) {
@@ -63,17 +89,6 @@
     document.getElementById('progress-pct').textContent = (loading || waiting)
       ? '…'
       : (Math.min(100, Math.round(pct)) + '%');
-    document.getElementById('progress-meta-line').textContent = waiting
-      ? '等待执行'
-      : (s.current ? s.current : (s.message || '待命'));
-
-    document.getElementById('m-done').textContent = String(done);
-    document.getElementById('m-total').textContent = String(total);
-    document.getElementById('m-ok').textContent = String(s.ok || 0);
-    document.getElementById('m-fail').textContent = String(s.failed || 0);
-    document.getElementById('m-current').textContent = s.current
-      ? ('当前: ' + s.current)
-      : (s.message || '');
 
     var label = {
       idle: '就绪',
@@ -83,13 +98,22 @@
       error: '失败',
       cancelled: '已取消'
     }[s.status] || s.status;
-    document.getElementById('stat-status').textContent = label + (s.message ? ' · ' + s.message : '');
+
+    document.getElementById('seg-pos').textContent = label;
+    document.getElementById('seg-done').textContent = '完成 ' + done;
+    document.getElementById('seg-metric').textContent = '进度 ' + done + '/' + total;
+
+    var extras = ['失败 ' + (s.failed || 0)];
+    var note = s.message || '';
+    if (note && note !== label) extras.push(note);
+    if (s.current) extras.push(s.current);
+    document.getElementById('seg-extra').textContent = extras.join(' · ');
 
     if ((s.status === 'done' || s.status === 'idle') && s.report_ready) {
       showReport(s.report_url || API.apiPath('/aesthetic/report'), s.report_mtime);
     }
 
-    setRunningUi(s.status === 'running' || s.status === 'queued');
+    setRunningUi(running);
   }
 
   function stopWatch() {
@@ -99,6 +123,9 @@
     }
   }
 
+  /**
+   * @param {string} jobId
+   */
   function startWatch(jobId) {
     stopWatch();
     _jobId = jobId;
@@ -123,6 +150,7 @@
     if (data.report_ready) {
       showReport(data.report_url || API.apiPath('/aesthetic/report'), Date.now());
     }
+    applyStatus({ status: 'idle', done: 0, total: 0, failed: 0 });
   }
 
   async function startJob() {
@@ -140,7 +168,7 @@
       method: 'POST',
       body: JSON.stringify(body)
     });
-    applyStatus({ status: 'queued', message: '等待执行' });
+    applyStatus({ status: 'queued', message: '等待执行', done: 0, total: 0, failed: 0 });
     toast('已提交');
     startWatch(data.job_id);
   }

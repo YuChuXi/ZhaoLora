@@ -35,8 +35,12 @@ var Tagging = (function () {
     var total = s.total || 0;
     var done = s.done || 0;
     var pct = (typeof s.pct === 'number') ? s.pct : (total > 0 ? (done / total) * 100 : 0);
+    var running = s.status === 'running' || s.status === 'queued';
+    var bar = document.getElementById('job-progress');
+    if (bar) bar.hidden = !running;
+
     var fill = document.getElementById('progress-fill');
-    var loading = (s.status === 'running' || s.status === 'queued') && s.phase === 'loading';
+    var loading = running && s.phase === 'loading';
     var waiting = s.status === 'queued';
     fill.classList.toggle('indeterminate', loading || waiting);
     if (!loading && !waiting) {
@@ -63,7 +67,11 @@ var Tagging = (function () {
       error: '失败',
       cancelled: '已取消'
     }[s.status] || s.status;
-    document.getElementById('stat-status').textContent = label + (s.message ? ' · ' + s.message : '');
+    var statusEl = document.getElementById('stat-status');
+    statusEl.textContent = label;
+    if (s.message && s.message !== label) {
+      statusEl.textContent = label + ' · ' + s.message;
+    }
 
     if (s.logs && s.logs.length) {
       var box = document.getElementById('log-box');
@@ -71,11 +79,11 @@ var Tagging = (function () {
       box.scrollTop = box.scrollHeight;
     }
 
-    setRunningUi(s.status === 'running' || s.status === 'queued');
+    setRunningUi(running);
 
     var openBtn = document.getElementById('btn-auto-tag');
     if (openBtn) {
-      openBtn.textContent = (s.status === 'running' || s.status === 'queued') ? '自动生成…' : '自动生成';
+      openBtn.textContent = running ? '自动生成…' : '自动生成';
     }
   }
 

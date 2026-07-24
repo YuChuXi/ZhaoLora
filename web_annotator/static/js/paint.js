@@ -27,13 +27,28 @@
   var ctx = canvas.getContext('2d');
   var wrap = document.getElementById('canvas-wrap');
   var _brushPreview = document.getElementById('brush-preview');
+  var _toastTimer = null;
 
-  // ---- 全局错误显示 ----
+  /**
+   * @param {string} msg
+   * 引用：保存成功、错误提示。
+   */
+  function toast(msg) {
+    var el = document.getElementById('toast');
+    if (!el) return;
+    el.textContent = msg;
+    el.classList.add('show');
+    clearTimeout(_toastTimer);
+    _toastTimer = setTimeout(function () { el.classList.remove('show'); }, 2200);
+  }
+
   function errshow(msg) {
-    document.getElementById('info-text').textContent = '\u26a0 ' + msg;
+    toast('\u26a0 ' + msg);
   }
   window.addEventListener('error', function(e) { errshow(e.message); });
-  window.addEventListener('unhandledrejection', function(e) { errshow(e.reason); });
+  window.addEventListener('unhandledrejection', function(e) {
+    errshow(String(e.reason && e.reason.message ? e.reason.message : e.reason));
+  });
 
   // ---- API ----
   async function api(path, opts) {
@@ -66,7 +81,10 @@
     var res = await (await api('/api/paint/images')).json();
     _images = res;
     if (_images.length > 0) loadIndex(0);
-    else document.getElementById('info-text').textContent = '没有图片';
+    else {
+      updateNav();
+      toast('没有图片');
+    }
   }
 
   async function loadIndex(idx) {
@@ -169,16 +187,27 @@
   }
 
   /**
-   * 刷新底部状态栏（标注状态、分辨率、缓冲区）。
+   * 刷新底部六段状态栏。引用：updateNav、预加载完成。
    */
   function updateStatusBar() {
     var img = _images[_index];
-    var parts = [];
-    if (img) parts.push(img.has_mask ? '已标注' : '待标注');
-    if (_origW) parts.push(_origW + 'x' + _origH);
+    var done = 0;
+    for (var i = 0; i < _images.length; i++) {
+      if (_images[i].has_mask) done++;
+    }
+    document.getElementById('seg-pos').textContent =
+      (_images.length ? (_index + 1) : 0) + '/' + _images.length;
+    document.getElementById('seg-done').textContent = '已标注 ' + done;
+    document.getElementById('seg-name').textContent = img ? img.stem : '-';
+    document.getElementById('seg-obj').textContent = img
+      ? (img.has_mask ? '已标注' : '待标注')
+      : '-';
+    document.getElementById('seg-metric').textContent = _origW
+      ? (_origW + '×' + _origH)
+      : '-';
     var buf = bufferStats();
-    parts.push('缓冲 ' + buf.ready + '/' + buf.want + '（缓存 ' + buf.total + '）');
-    document.getElementById('info-text').textContent = parts.join('  |  ');
+    document.getElementById('seg-extra').textContent =
+      '缓冲 ' + buf.ready + '/' + buf.want + '（缓存 ' + buf.total + '）';
   }
 
   async function _preloadNeighbors(idx) {
@@ -453,7 +482,7 @@
         }).then(function(r) { return r.json(); }).then(function(res) {
           _modified = false;
           _images[_index].has_mask = true; updateNav();
-          document.getElementById('info-text').textContent = '已保存: ' + res.saved;
+          toast('已保存: ' + res.saved);
           var cached = _preloadCache[img.path];
           if (cached) { cached.alpha = new Uint8Array(_alpha); cached.alphaCanvas = _alphaOrigCanvas; }
           resolve();
@@ -493,11 +522,6 @@
   });
 
   function updateNav() {
-    var img = _images[_index];
-    var done = 0;
-    for (var i = 0; i < _images.length; i++) { if (_images[i].has_mask) done++; }
-    document.getElementById('paint-progress').textContent = (_index+1) + '/' + _images.length + ' (已标注' + done + ')';
-    document.getElementById('paint-filename').textContent = img ? img.stem : '-';
     updateStatusBar();
   }
 
