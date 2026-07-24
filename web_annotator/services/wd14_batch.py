@@ -31,27 +31,27 @@ _WD14_LOCK = threading.Lock()
 class Tags:
     @staticmethod
     def split_caption(caption: str) -> list[str]:
-        """``split_caption``。引用：``Tags``。"""
+        """按逗号拆 caption。引用：Tags.merge / process_one。"""
         return [x.strip() for x in caption.replace("\n", ",").split(",") if x.strip()]
 
     @staticmethod
     def join_caption(tags: Iterable[str]) -> str:
-        """``join_caption``。引用：``Tags``。"""
+        """用逗号空格拼接 tags。引用：Tags.merge。"""
         return ", ".join([t.strip() for t in tags if t.strip()])
 
     @staticmethod
     def equivalence_key(tag: str) -> str:
-        """``equivalence_key``。引用：``Tags``。"""
+        """标签等价键（小写、空格化）。引用：merge_for_disk_by_confidence。"""
         return " ".join(tag.strip().lower().replace("_", " ").split())
 
     @staticmethod
     def _canonical_spacing(tag: str) -> str:
-        """``_canonical_spacing``。引用：``Tags``。"""
+        """规范化空格，保留大小写。引用：merge_for_disk_by_confidence。"""
         return " ".join(tag.strip().replace("_", " ").split())
 
     @staticmethod
     def merge_for_disk_by_confidence(base: list[str], wd_scored: list[tuple[str, float]]) -> str:
-        """``merge_for_disk_by_confidence``。引用：``Tags``。"""
+        """按置信度合并原标签与 WD14。引用：process_one。"""
         score_by_key: dict[str, float] = {}
         canonical_by_key: dict[str, str] = {}
         for tag, score in wd_scored:
@@ -136,7 +136,7 @@ def resolve_image_dirs(root: Path, names: list[str] | None) -> list[Path]:
 
 
 def model_ready() -> tuple[bool, str]:
-    """``model_ready``。引用：本模块调用方。"""
+    """检查本地 WD14 权重是否齐全。引用：routes.tagging。"""
     if WD14_ONNX_PATH.is_file() and WD14_CSV_PATH.is_file():
         return True, str(WD14_MODEL_DIR)
     return False, f"找不到本地 WD14 模型: {WD14_MODEL_DIR}"
@@ -167,7 +167,7 @@ def _get_wd14() -> tuple[InferenceSession, list[str]]:
 
 
 def run_wd14_on_image_scored(img: Image.Image, threshold: float) -> list[tuple[str, float]]:
-    """``run_wd14_on_image_scored``。引用：本模块调用方。"""
+    """对单张图跑 WD14，返回 (tag, score)。引用：process_one。"""
     session, labels = _get_wd14()
     if img.mode == "RGBA":
         rgb = Image.new("RGB", img.size, (255, 255, 255))
@@ -197,7 +197,7 @@ def run_wd14_on_image_scored(img: Image.Image, threshold: float) -> list[tuple[s
 
 
 def _load_text(path: Path) -> str:
-    """``_load_text``。引用：本模块调用方。"""
+    """读取旁路 txt；不存在则空串。引用：process_one。"""
     if not path.is_file():
         return ""
     return path.read_text(encoding="utf-8")
@@ -240,7 +240,7 @@ class TaggingProgress:
         )
 
     def log(self, line: str) -> None:
-        """``log``。引用：``TaggingProgress``。"""
+        """追加进度日志并截断。引用：run_batch。"""
         self.logs.append(line)
         if len(self.logs) > 400:
             self.logs = self.logs[-300:]
@@ -289,7 +289,7 @@ def run_batch(
     progress: TaggingProgress,
     on_update: Callable[[], None] | None = None,
 ) -> None:
-    """``run_batch``。引用：本模块调用方。"""
+    """批量打标主循环。引用：routes.tagging。"""
     items = collect_jobs(dirs)
     progress.total = len(items)
     progress.done = 0

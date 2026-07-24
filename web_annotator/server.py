@@ -105,7 +105,7 @@ def _migrate_meta_to_root(main_dir: Path, root: Path) -> None:
 
 
 def _read_template(name: str) -> HTMLResponse:
-    """``_read_template``。引用：本模块调用方。"""
+    """读取 templates 下 HTML。引用：home_page / dataset_page。"""
     template = Path(__file__).parent / "templates" / name
     if not template.exists():
         return HTMLResponse(f"<h1>{name} not found</h1>", status_code=404)

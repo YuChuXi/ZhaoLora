@@ -42,7 +42,7 @@ class DatasetLayout:
         return self.root / name
 
     def list_part_dirs(self) -> list[Path]:
-        """``list_part_dirs``。引用：``DatasetLayout``。"""
+        """列出部位输出目录。引用：routes.crop。"""
         if not self.root.is_dir():
             return []
         out = []

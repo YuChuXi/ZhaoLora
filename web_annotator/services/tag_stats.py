@@ -111,7 +111,7 @@ def load_translation_map(root: Path) -> dict[str, str]:
 
 
 def lookup_zh(tag: str, zh_map: dict[str, str]) -> str:
-    """``lookup_zh``。引用：本模块调用方。"""
+    """查标签中文译名；支持下划线与空格键。引用：count_tags。"""
     if tag in zh_map:
         return zh_map[tag]
     nk = " ".join(tag.replace("_", " ").split()).lower()

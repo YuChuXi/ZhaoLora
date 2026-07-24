@@ -35,7 +35,7 @@ class Thumbnailer:
         *,
         meta_dir: Path | None = None,
     ) -> None:
-        """``__init__``。引用：``Thumbnailer``。"""
+        """绑定缩略图目录与长边尺寸。引用：DatasetRuntime。"""
         self.data_dir = data_dir
         self.thumb_dir = (meta_dir or data_dir) / THUMB_DIRNAME
         self.size = int(size)

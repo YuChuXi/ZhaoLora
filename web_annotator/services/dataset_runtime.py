@@ -31,12 +31,12 @@ class DatasetRuntime:
 
     @property
     def root(self) -> Path:
-        """``root``。引用：``DatasetRuntime``。"""
+        """任务根目录。引用：各路由 get_runtime。"""
         return self.layout.root
 
     @property
     def main_dir(self) -> Path:
-        """``main_dir``。引用：``DatasetRuntime``。"""
+        """main 图像目录。引用：各路由。"""
         return self.layout.main_dir
 
 
@@ -54,11 +54,11 @@ class DatasetRegistry:
     _migrate: Callable[[Path, Path], None] | None = None
 
     def get(self, name: str) -> DatasetRuntime | None:
-        """``get``。引用：``DatasetRegistry``。"""
+        """按名取已加载运行时。引用：DatasetRegistry。"""
         return self.by_name.get(name)
 
     def names(self) -> list[str]:
-        """``names``。引用：``DatasetRegistry``。"""
+        """已加载任务名列表。引用：管理接口。"""
         return sorted(self.by_name.keys())
 
     def ensure(self, name: str) -> DatasetRuntime:

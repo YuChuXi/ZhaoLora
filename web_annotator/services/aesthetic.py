@@ -109,14 +109,14 @@ class AestheticProgress:
         )
 
     def log(self, line: str) -> None:
-        """``log``。引用：``AestheticProgress``。"""
+        """追加美学任务日志。引用：run_aesthetic。"""
         self.logs.append(line)
         if len(self.logs) > 400:
             self.logs = self.logs[-300:]
 
 
 def scores_path(root: Path) -> Path:
-    """``scores_path``。引用：本模块调用方。"""
+    """美学分 JSON 路径。引用：load_scores / save_scores。"""
     return root.resolve() / SCORES_NAME
 
 
@@ -145,7 +145,7 @@ def load_scores(root: Path) -> dict[str, float]:
 
 
 def save_scores(root: Path, scores: dict[str, float]) -> None:
-    """``save_scores``。引用：本模块调用方。"""
+    """写入相对路径→分数表。引用：run_aesthetic。"""
     path = scores_path(root)
     clean = {
         str(k).replace("\\", "/").lstrip("/"): round(float(v), 6)
@@ -158,7 +158,7 @@ def save_scores(root: Path, scores: dict[str, float]) -> None:
 
 
 def _collect(dirs: list[Path]) -> list[tuple[Path, Path]]:
-    """``_collect``。引用：本模块调用方。"""
+    """收集待评分 (图路径, 目录)。引用：run_aesthetic。"""
     items: list[tuple[Path, Path]] = []
     for d in dirs:
         if not d.is_dir():

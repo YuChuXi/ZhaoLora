@@ -20,7 +20,7 @@ _BUILD_WORKERS = 8
 
 
 def fingerprint_image(im: Image.Image) -> np.ndarray:
-    """``fingerprint_image``。引用：本模块调用方。"""
+    """由 PIL 图计算色调指纹向量。引用：fingerprint_file。"""
     small = im.resize((_FP_SIZE, _FP_SIZE), Image.BILINEAR)
     arr = np.asarray(small, dtype=np.float32) * (1.0 / 255.0)
     r, g, b = arr[..., 0], arr[..., 1], arr[..., 2]
@@ -63,7 +63,7 @@ def fingerprint_image(im: Image.Image) -> np.ndarray:
 
 
 def fingerprint_file(path: Path) -> np.ndarray | None:
-    """``fingerprint_file``。引用：本模块调用方。"""
+    """读文件计算指纹；失败返回 None。引用：ColorIndex / routes.images。"""
     if not path.is_file():
         return None
     with Image.open(path) as im:
@@ -71,7 +71,7 @@ def fingerprint_file(path: Path) -> np.ndarray | None:
 
 
 def distance(a: np.ndarray, b: np.ndarray) -> float:
-    """``distance``。引用：本模块调用方。"""
+    """两指纹 L2 距离。引用：similar_matrix。"""
     return float(np.linalg.norm(a - b))
 
 
@@ -79,7 +79,7 @@ class ColorIndex:
     """内存 + 磁盘色调索引。"""
 
     def __init__(self, cache_dir: Path | None = None) -> None:
-        """``__init__``。引用：``ColorIndex``。"""
+        """内存色调索引。引用：DatasetRuntime.color_index。"""
         self._lock = threading.RLock()
         self._fps: dict[str, tuple[float, np.ndarray]] = {}
         self._cache_path = (cache_dir / _CACHE_NAME) if cache_dir else None
@@ -88,7 +88,7 @@ class ColorIndex:
             self._load_disk()
 
     def set_cache_dir(self, cache_dir: Path) -> None:
-        """``set_cache_dir``。引用：``ColorIndex``。"""
+        """设置磁盘指纹缓存目录。引用：routes.images。"""
         with self._lock:
             self._cache_path = cache_dir / _CACHE_NAME
             cache_dir.mkdir(parents=True, exist_ok=True)
@@ -96,19 +96,19 @@ class ColorIndex:
                 self._load_disk()
 
     def clear(self) -> None:
-        """``clear``。引用：``ColorIndex``。"""
+        """清空内存指纹。引用：annotations / dedupe 删除后。"""
         with self._lock:
             self._fps.clear()
             self._dirty = True
 
     def put(self, rel: str, mtime: float, fp: np.ndarray) -> None:
-        """``put``。引用：``ColorIndex``。"""
+        """写入单条指纹。引用：routes.images.similar_images。"""
         with self._lock:
             self._fps[rel] = (mtime, fp.astype(np.float32, copy=False))
             self._dirty = True
 
     def _load_disk(self) -> None:
-        """``_load_disk``。引用：``ColorIndex``。"""
+        """从 npz 加载缓存。引用：ensure_many。"""
         if not self._cache_path or not self._cache_path.is_file():
             return
         data = np.load(self._cache_path, allow_pickle=True)
@@ -119,7 +119,7 @@ class ColorIndex:
             self._fps[str(rel)] = (float(mtimes[i]), matrix[i].astype(np.float32, copy=False))
 
     def flush(self) -> None:
-        """``flush``。引用：``ColorIndex``。"""
+        """把内存指纹写回 npz。引用：ensure_many。"""
         with self._lock:
             if not self._dirty or not self._cache_path:
                 return
@@ -140,7 +140,7 @@ class ColorIndex:
         rel: str,
         thumb_path: Path | None = None,
     ) -> np.ndarray | None:
-        """``fingerprint_for``。引用：``ColorIndex``。"""
+        """取相对路径指纹（可走缩略图）。引用：ensure_many。"""
         path = data_dir / rel
         if not path.is_file():
             with self._lock:
@@ -167,7 +167,7 @@ class ColorIndex:
         rels: list[str],
         thumb_paths: dict[str, Path] | None = None,
     ) -> None:
-        """``ensure_many``。引用：``ColorIndex``。"""
+        """批量确保候选指纹在内存中。引用：routes.images。"""
         thumb_paths = thumb_paths or {}
         missing: list[str] = []
         with self._lock:
@@ -212,7 +212,7 @@ class ColorIndex:
         exclude: str | None = None,
         limit: int = 8,
     ) -> list[tuple[str, float]]:
-        """``similar_matrix``。引用：``ColorIndex``。"""
+        """矩阵比对返回最近邻。引用：routes.images。"""
         with self._lock:
             rows: list[str] = []
             vecs: list[np.ndarray] = []
