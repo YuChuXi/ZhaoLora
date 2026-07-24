@@ -6,12 +6,11 @@
 <title>筛选</title>
 <link rel="stylesheet" href="/static/css/annotator.css">
 <style>
-  #booru-tags, #booru-extra {
+  #booru-tags {
     background: #0a1a30; color: var(--text);
     border: 1px solid var(--border); border-radius: 4px; padding: 4px 8px; font-size: 12px;
+    width: min(220px, 28vw);
   }
-  #booru-tags { width: min(220px, 28vw); }
-  #booru-extra { width: min(260px, 32vw); }
   .booru-page-wrap {
     display: inline-flex; align-items: stretch;
     border: 1px solid var(--border); border-radius: 4px;
@@ -86,6 +85,43 @@
     max-width: 100%; word-break: break-all;
   }
   .booru-tag-chip:hover { border-color: var(--accent); color: #fff; }
+
+  .booru-extra-dlg {
+    position: fixed; inset: 0; z-index: 520;
+    display: none; align-items: center; justify-content: center;
+    background: rgba(6, 8, 14, 0.72); padding: 16px;
+  }
+  .booru-extra-dlg.show { display: flex; }
+  .booru-extra-panel {
+    width: min(420px, 94vw); background: var(--card-bg);
+    border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px;
+    display: flex; flex-direction: column; gap: 12px;
+  }
+  .booru-extra-panel h3 {
+    margin: 0; font-size: 14px; font-weight: 600; color: var(--text);
+  }
+  .booru-extra-row {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+    font-size: 12px; color: var(--text-dim);
+  }
+  .booru-extra-row > span.label { min-width: 2.5em; color: var(--text-dim); }
+  .booru-extra-row input[type="number"],
+  .booru-extra-row input[type="text"] {
+    background: #0a1a30; color: var(--text);
+    border: 1px solid var(--border); border-radius: 4px;
+    padding: 4px 8px; font-size: 12px;
+  }
+  .booru-extra-row input[type="number"] { width: 5.5rem; }
+  .booru-extra-row input[type="text"] { flex: 1; min-width: 8rem; }
+  .booru-rate-chip {
+    font-size: 11px; padding: 4px 10px; border-radius: 4px;
+    border: 1px solid var(--border); background: #0a1a30; color: var(--text);
+    cursor: pointer;
+  }
+  .booru-rate-chip.on { border-color: var(--accent); background: #132a4a; color: #fff; }
+  .booru-extra-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 4px; }
+  #btn-booru-extra.has-extra { border-color: var(--accent); color: #9cf; }
+
   @media (max-width: 860px) {
     .booru-preview { flex-direction: column; }
     .booru-preview-side { flex: 0 0 auto; max-height: 40vh; width: 100%; }
@@ -107,7 +143,7 @@
   </label>
   <span class="sep"></span>
   <span class="stat">总计 <b id="stat-total">0</b></span>
-  <span class="stat">已选 <b id="stat-selected">0</b></span>
+  <span class="stat" id="stat-selected-wrap">已选 <b id="stat-selected">0</b></span>
   <span class="stat" id="stat-trashed-wrap"><span class="stat-label">回收站</span> <b id="stat-trashed">0</b></span>
   <span class="sep"></span>
 
@@ -122,7 +158,8 @@
         <option value="id_asc">ID 旧→新</option>
       </select>
     </label>
-    <input type="text" id="booru-extra" placeholder="额外：rating:g score:>=10 width:>=1920" spellcheck="false" title="元标签，如 rating: / width: / height: / score: / user: / date:">
+    <button type="button" class="btn" id="btn-booru-extra" title="评分 / 分辨率 / 分数等">筛选</button>
+    <input type="hidden" id="booru-extra" value="">
     <label style="font-size:12px;color:var(--text-dim);display:flex;align-items:center;gap:4px;" title="当前页；两侧可加载上/下一页">
       页
       <span class="booru-page-wrap">
@@ -185,6 +222,42 @@
     </div>
     <div class="booru-preview-tags" id="booru-preview-tags"></div>
   </aside>
+</div>
+
+<div class="booru-extra-dlg" id="booru-extra-dlg" aria-hidden="true">
+  <div class="booru-extra-panel" role="dialog" aria-labelledby="booru-extra-title">
+    <h3 id="booru-extra-title">筛选条件</h3>
+    <div class="booru-extra-row">
+      <span class="label">分级</span>
+      <button type="button" class="booru-rate-chip on" data-rate="">不限</button>
+      <button type="button" class="booru-rate-chip" data-rate="g">G</button>
+      <button type="button" class="booru-rate-chip" data-rate="s">S</button>
+      <button type="button" class="booru-rate-chip" data-rate="q">Q</button>
+      <button type="button" class="booru-rate-chip" data-rate="e">E</button>
+    </div>
+    <div class="booru-extra-row">
+      <span class="label">分数</span>
+      ≥ <input type="number" id="booru-ex-score" min="0" step="1" placeholder="不限">
+    </div>
+    <div class="booru-extra-row">
+      <span class="label">尺寸</span>
+      宽 ≥ <input type="number" id="booru-ex-w" min="0" step="1" placeholder="不限">
+      高 ≥ <input type="number" id="booru-ex-h" min="0" step="1" placeholder="不限">
+    </div>
+    <div class="booru-extra-row">
+      <span class="label">用户</span>
+      <input type="text" id="booru-ex-user" placeholder="上传者" spellcheck="false">
+    </div>
+    <div class="booru-extra-row">
+      <span class="label">其它</span>
+      <input type="text" id="booru-ex-more" placeholder="自由元标签" spellcheck="false">
+    </div>
+    <div class="booru-extra-actions">
+      <button type="button" class="btn" id="booru-extra-clear">清空</button>
+      <button type="button" class="btn" id="booru-extra-cancel">取消</button>
+      <button type="button" class="btn green" id="booru-extra-apply">应用</button>
+    </div>
+  </div>
 </div>
 
 <script src="/static/js/dir_picker.js"></script>

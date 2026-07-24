@@ -150,12 +150,133 @@ var BooruFilter = (function () {
     } else {
       _pendingScrollY = null;
     }
+    syncExtraBtn();
   }
 
   function resetLayout() {
     _colLo = null;
     _colHi = null;
     _minY = 0;
+  }
+
+  function getExtra() {
+    var el = document.getElementById('booru-extra');
+    return el ? el.value.trim() : '';
+  }
+
+  function setExtra(v) {
+    var el = document.getElementById('booru-extra');
+    if (el) el.value = v || '';
+    syncExtraBtn();
+  }
+
+  function syncExtraBtn() {
+    var btn = document.getElementById('btn-booru-extra');
+    if (!btn) return;
+    var ex = getExtra();
+    btn.classList.toggle('has-extra', !!ex);
+    btn.textContent = ex ? '筛选·' : '筛选';
+    btn.title = ex || '评分 / 分辨率 / 分数等';
+  }
+
+  function parseExtra(raw) {
+    var out = { rating: '', score: '', width: '', height: '', user: '', more: [] };
+    var tokens = String(raw || '').split(/\s+/).filter(Boolean);
+    for (var i = 0; i < tokens.length; i++) {
+      var t = tokens[i];
+      var m;
+      if ((m = /^rating:([gsqe])$/i.exec(t))) out.rating = m[1].toLowerCase();
+      else if ((m = /^score:>=?(\d+)$/i.exec(t))) out.score = m[1];
+      else if ((m = /^width:>=?(\d+)$/i.exec(t))) out.width = m[1];
+      else if ((m = /^height:>=?(\d+)$/i.exec(t))) out.height = m[1];
+      else if ((m = /^user:(.+)$/i.exec(t))) out.user = m[1];
+      else out.more.push(t);
+    }
+    return out;
+  }
+
+  function buildExtra(f) {
+    var parts = [];
+    if (f.rating) parts.push('rating:' + f.rating);
+    if (f.score) parts.push('score:>=' + f.score);
+    if (f.width) parts.push('width:>=' + f.width);
+    if (f.height) parts.push('height:>=' + f.height);
+    if (f.user) parts.push('user:' + f.user);
+    if (f.more) parts.push(f.more);
+    return parts.join(' ').trim();
+  }
+
+  function fillExtraDlg() {
+    var f = parseExtra(getExtra());
+    var chips = document.querySelectorAll('#booru-extra-dlg .booru-rate-chip');
+    for (var i = 0; i < chips.length; i++) {
+      chips[i].classList.toggle('on', (chips[i].dataset.rate || '') === f.rating);
+    }
+    var score = document.getElementById('booru-ex-score');
+    var w = document.getElementById('booru-ex-w');
+    var h = document.getElementById('booru-ex-h');
+    var user = document.getElementById('booru-ex-user');
+    var more = document.getElementById('booru-ex-more');
+    if (score) score.value = f.score;
+    if (w) w.value = f.width;
+    if (h) h.value = f.height;
+    if (user) user.value = f.user;
+    if (more) more.value = f.more.join(' ');
+  }
+
+  function readExtraDlg() {
+    var rating = '';
+    var on = document.querySelector('#booru-extra-dlg .booru-rate-chip.on');
+    if (on) rating = on.dataset.rate || '';
+    function num(id) {
+      var el = document.getElementById(id);
+      var n = el ? parseInt(el.value, 10) : NaN;
+      return n > 0 ? String(n) : '';
+    }
+    var user = document.getElementById('booru-ex-user');
+    var more = document.getElementById('booru-ex-more');
+    return {
+      rating: rating,
+      score: num('booru-ex-score'),
+      width: num('booru-ex-w'),
+      height: num('booru-ex-h'),
+      user: user ? user.value.trim() : '',
+      more: more ? more.value.trim() : '',
+    };
+  }
+
+  function openExtraDlg() {
+    fillExtraDlg();
+    var dlg = document.getElementById('booru-extra-dlg');
+    if (dlg) {
+      dlg.classList.add('show');
+      dlg.setAttribute('aria-hidden', 'false');
+    }
+  }
+
+  function closeExtraDlg() {
+    var dlg = document.getElementById('booru-extra-dlg');
+    if (dlg) {
+      dlg.classList.remove('show');
+      dlg.setAttribute('aria-hidden', 'true');
+    }
+  }
+
+  function applyExtraDlg() {
+    setExtra(buildExtra(readExtraDlg()));
+    closeExtraDlg();
+    saveUiState();
+  }
+
+  function clearExtraDlg() {
+    var chips = document.querySelectorAll('#booru-extra-dlg .booru-rate-chip');
+    for (var i = 0; i < chips.length; i++) {
+      chips[i].classList.toggle('on', !(chips[i].dataset.rate));
+    }
+    ['booru-ex-score', 'booru-ex-w', 'booru-ex-h', 'booru-ex-user', 'booru-ex-more'].forEach(function (id) {
+      var el = document.getElementById(id);
+      if (el) el.value = '';
+    });
   }
 
   function updatePageStatus() {
@@ -305,6 +426,8 @@ var BooruFilter = (function () {
     var booruBar = document.getElementById('toolbar-booru');
     if (localBar) localBar.classList.toggle('is-off', remote);
     if (booruBar) booruBar.classList.toggle('is-off', !remote);
+    var selWrap = document.getElementById('stat-selected-wrap');
+    if (selWrap) selWrap.style.display = remote ? 'none' : '';
     var hint = document.getElementById('filter-hint');
     if (hint) {
       hint.textContent = remote
@@ -321,7 +444,6 @@ var BooruFilter = (function () {
 
   function updateStats() {
     var total = _posts.length;
-    var sel = Object.keys(_selected).length;
     var done = 0;
     Object.keys(_status).forEach(function (k) {
       if (_status[k] === 'done') done += 1;
@@ -330,8 +452,11 @@ var BooruFilter = (function () {
     var s = document.getElementById('stat-selected');
     var tr = document.getElementById('stat-trashed');
     if (t) t.textContent = String(total);
-    if (s) s.textContent = String(sel);
-    if (tr) tr.textContent = String(done);
+    if (isRemote()) {
+      if (tr) tr.textContent = String(done);
+    } else if (s) {
+      s.textContent = String(Object.keys(_selected).length);
+    }
     var trashedStat = document.getElementById('stat-trashed-wrap');
     if (trashedStat) {
       var label = trashedStat.querySelector('.stat-label');
@@ -987,11 +1112,33 @@ var BooruFilter = (function () {
       tagsInput.addEventListener('keydown', onSearchKey);
       tagsInput.addEventListener('change', saveUiState);
     }
-    var extraInput = document.getElementById('booru-extra');
-    if (extraInput) {
-      extraInput.addEventListener('keydown', onSearchKey);
-      extraInput.addEventListener('change', saveUiState);
+    var extraBtn = document.getElementById('btn-booru-extra');
+    if (extraBtn) extraBtn.addEventListener('click', openExtraDlg);
+    var extraDlg = document.getElementById('booru-extra-dlg');
+    if (extraDlg) {
+      extraDlg.addEventListener('click', function (e) {
+        if (e.target === extraDlg) closeExtraDlg();
+      });
     }
+    var chips = document.querySelectorAll('#booru-extra-dlg .booru-rate-chip');
+    for (var ci = 0; ci < chips.length; ci++) {
+      chips[ci].addEventListener('click', function () {
+        var all = document.querySelectorAll('#booru-extra-dlg .booru-rate-chip');
+        for (var j = 0; j < all.length; j++) all[j].classList.remove('on');
+        this.classList.add('on');
+      });
+    }
+    var exClear = document.getElementById('booru-extra-clear');
+    if (exClear) exClear.addEventListener('click', clearExtraDlg);
+    var exCancel = document.getElementById('booru-extra-cancel');
+    if (exCancel) exCancel.addEventListener('click', closeExtraDlg);
+    var exApply = document.getElementById('booru-extra-apply');
+    if (exApply) {
+      exApply.addEventListener('click', function () {
+        applyExtraDlg();
+      });
+    }
+    syncExtraBtn();
     var orderEl = document.getElementById('booru-order');
     if (orderEl) orderEl.addEventListener('change', saveUiState);
     var startEl = document.getElementById('booru-start-page');
@@ -1016,7 +1163,13 @@ var BooruFilter = (function () {
     if (previewDl) previewDl.addEventListener('click', togglePreviewDownload);
 
     document.addEventListener('keydown', function (e) {
-      if (e.key === 'Escape' && document.getElementById('booru-preview') &&
+      if (e.key !== 'Escape') return;
+      var extraDlg = document.getElementById('booru-extra-dlg');
+      if (extraDlg && extraDlg.classList.contains('show')) {
+        closeExtraDlg();
+        return;
+      }
+      if (document.getElementById('booru-preview') &&
           document.getElementById('booru-preview').classList.contains('show')) {
         hidePreview();
       }
