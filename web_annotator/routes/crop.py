@@ -29,8 +29,12 @@ def _main_dir(request: Request) -> Path:
 
 
 def _safe_resolve(base: Path, rel: str) -> Path:
-    src = (base / rel).resolve()
-    if not str(src).startswith(str(base.resolve())):
+    base = base.resolve()
+    text = (rel or "").replace("\\", "/").strip("/")
+    if not text or ".." in text.split("/"):
+        raise HTTPException(400, "非法路径")
+    src = (base / text).resolve()
+    if not src.is_relative_to(base):
         raise HTTPException(400, "非法路径")
     return src
 

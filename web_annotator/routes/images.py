@@ -32,14 +32,16 @@ def _color_index(request: Request) -> ColorIndex:
 
 
 def _resolve_image(root: Path, trash_dir: Path, rel: str) -> Path:
-    rel = (rel or "").replace("\\", "/").lstrip("/")
-    if not rel or ".." in rel.split("/"):
+    root = root.resolve()
+    trash_dir = trash_dir.resolve()
+    text = (rel or "").replace("\\", "/").strip("/")
+    if not text or ".." in text.split("/"):
         raise HTTPException(400, "非法路径")
-    main = (root / rel).resolve()
-    if str(main).startswith(str(root.resolve())) and main.is_file():
+    main = (root / text).resolve()
+    if main.is_relative_to(root) and main.is_file():
         return main
-    trash = (trash_dir / rel).resolve()
-    if str(trash).startswith(str(trash_dir.resolve())) and trash.is_file():
+    trash = (trash_dir / text).resolve()
+    if trash.is_relative_to(trash_dir) and trash.is_file():
         return trash
     raise HTTPException(404, "文件不存在")
 

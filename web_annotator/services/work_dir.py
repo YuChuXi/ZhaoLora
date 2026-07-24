@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from services.wd14_batch import IMAGE_EXTS, list_image_subdirs
+from services.scanner import IMAGE_EXTS
+from services.wd14_batch import list_image_subdirs
 
 # 不允许当作筛选目录的名字
 _BLOCKED = frozenset({
@@ -29,7 +30,7 @@ def resolve_subdir(root: Path, name: str | None) -> tuple[str, Path]:
     if "/" in raw or ".." in raw or raw.startswith(".") or raw in _BLOCKED:
         raise ValueError(f"非法目录: {name}")
     path = (root / raw).resolve()
-    if not str(path).startswith(str(root)) or not path.is_dir():
+    if not path.is_relative_to(root) or not path.is_dir():
         raise ValueError(f"目录不存在: {raw}")
     return raw, path
 
