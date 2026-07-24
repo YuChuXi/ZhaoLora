@@ -10,32 +10,25 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import FileResponse
 from PIL import Image
 
+from routes.deps import get_runtime
 from services.scanner import scan_images
 from services.color_similarity import ColorIndex, fingerprint_file
 from services.work_dir import list_work_dirs, parse_dir_names, resolve_subdir, resolve_subdirs
 from services.aesthetic import load_scores
 
-router = APIRouter(prefix="/api", tags=["images"])
-
-
-def _root(request: Request) -> Path:
-    return request.app.state.dataset_root
+router = APIRouter(tags=["images"])
 
 
 def _services(request: Request):
-    return (
-        request.app.state.dataset_root,
-        request.app.state.thumbnailer,
-        request.app.state.state_manager,
-    )
+    rt = get_runtime(request)
+    return rt.root, rt.thumbnailer, rt.state_manager
 
 
 def _color_index(request: Request) -> ColorIndex:
-    idx = getattr(request.app.state, "color_index", None)
-    if idx is None:
-        idx = ColorIndex()
-        request.app.state.color_index = idx
-    return idx
+    rt = get_runtime(request)
+    if rt.color_index is None:
+        rt.color_index = ColorIndex()
+    return rt.color_index
 
 
 def _resolve_image(root: Path, trash_dir: Path, rel: str) -> Path:
@@ -53,7 +46,7 @@ def _resolve_image(root: Path, trash_dir: Path, rel: str) -> Path:
 
 @router.get("/dirs")
 def list_dirs(request: Request):
-    root = _root(request)
+    root = get_runtime(request).root
     return {"root": str(root), "dirs": list_work_dirs(root), "default": "main"}
 
 

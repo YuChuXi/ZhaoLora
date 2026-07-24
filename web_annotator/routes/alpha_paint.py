@@ -10,14 +10,16 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import Response
 from PIL import Image
 
+from routes.deps import get_runtime
 from services.scanner import scan_images
 from services.mask_manager import has_mask, load_mask, save_mask
 
-router = APIRouter(prefix="/api/paint", tags=["paint"])
+router = APIRouter(prefix="/paint", tags=["paint"])
 
 
 def _services(request: Request):
-    return request.app.state.data_dir, request.app.state.mask_dir
+    rt = get_runtime(request)
+    return rt.main_dir, rt.mask_dir
 
 
 @router.get("/images")

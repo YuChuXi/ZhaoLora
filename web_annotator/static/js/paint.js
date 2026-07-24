@@ -38,10 +38,10 @@
   // ---- API ----
   async function api(path, opts) {
     opts = opts || {};
-    var res = await fetch(path, { headers: opts.headers || {}, method: opts.method || 'GET', body: opts.body || undefined });
+    var url = path.indexOf('/api/') === 0 ? API.apiPath(path.slice(4)) : path;
+    var res = await fetch(url, { headers: opts.headers || {}, method: opts.method || 'GET', body: opts.body || undefined });
     if (!res.ok) {
-      var msg = '';
-      try { var j = await res.json(); msg = j.detail || JSON.stringify(j); } catch(_) { msg = await res.text(); }
+      var msg = await res.text();
       throw new Error(res.status + ': ' + msg);
     }
     return res;
@@ -125,7 +125,7 @@
   }
 
   async function loadExistingMask(path) {
-    var resp = await fetch('/api/paint/mask?path=' + encodeURIComponent(path));
+    var resp = await fetch(API.apiPath('/paint/mask') + '?path=' + encodeURIComponent(path));
     if (!resp.ok) return;  // 404 = 无 mask, 正常
     var blob = await resp.blob();
     var url = URL.createObjectURL(blob);
@@ -192,7 +192,7 @@
 
   async function _preloadOne(path) {
     if (_preloadCache[path]) return;
-    var blob = await fetch('/api/paint/image?path=' + encodeURIComponent(path)).then(function(r) { return r.blob(); });
+    var blob = await fetch(API.apiPath('/paint/image') + '?path=' + encodeURIComponent(path)).then(function(r) { return r.blob(); });
     var url = URL.createObjectURL(blob);
     var img = new Image();
     img.onload = function() {
@@ -200,7 +200,7 @@
       _preloadCache[path] = entry;
       URL.revokeObjectURL(url);
       updateStatusBar();
-      fetch('/api/paint/mask?path=' + encodeURIComponent(path)).then(function(r) {
+      fetch(API.apiPath('/paint/mask') + '?path=' + encodeURIComponent(path)).then(function(r) {
         if (!r.ok) return;
         return r.blob();
       }).then(function(b) {
@@ -448,7 +448,7 @@
     return new Promise(function(resolve) {
       _alphaOrigCanvas.toBlob(function(blob) {
         if (!blob) { errshow('toBlob failed'); resolve(); return; }
-        fetch('/api/paint/upload-mask?path=' + encodeURIComponent(img.path) + '&format=' + fmt, {
+        fetch(API.apiPath('/paint/upload-mask') + '?path=' + encodeURIComponent(img.path) + '&format=' + fmt, {
           method: 'POST', headers: { 'Content-Type': 'image/png' }, body: blob
         }).then(function(r) { return r.json(); }).then(function(res) {
           _modified = false;

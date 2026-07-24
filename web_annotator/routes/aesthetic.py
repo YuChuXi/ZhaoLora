@@ -1,9 +1,8 @@
-"""美学评分 API。"""
+"""美学评分 API（数据集作用域）。"""
 
 from __future__ import annotations
 
 import re
-import threading
 from pathlib import Path
 from urllib.parse import quote
 
@@ -11,6 +10,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
+from routes.deps import get_runtime, jobs
 from services.aesthetic import (
     AestheticProgress,
     cuda_available,
@@ -19,24 +19,10 @@ from services.aesthetic import (
     resolve_image_dirs,
     run_aesthetic,
 )
-from services.dataset_layout import DatasetLayout
 
-router = APIRouter(prefix="/api/aesthetic", tags=["aesthetic"])
+router = APIRouter(prefix="/aesthetic", tags=["aesthetic"])
 
-_JOB_LOCK = threading.Lock()
 _REPORT_NAME = "aesthetic_report.html"
-
-
-def _layout(request: Request) -> DatasetLayout:
-    return request.app.state.layout
-
-
-def _progress(request: Request) -> AestheticProgress:
-    prog = getattr(request.app.state, "aesthetic_progress", None)
-    if prog is None:
-        prog = AestheticProgress()
-        request.app.state.aesthetic_progress = prog
-    return prog
 
 
 def _report_path(root: Path) -> Path:
@@ -46,7 +32,7 @@ def _report_path(root: Path) -> Path:
 def _normalize_report_img_path(url: str) -> str | None:
     """将报告 HTML 中的相对图片路径规范为数据集根相对路径。"""
     path = (url or "").replace("\\", "/").split("?", 1)[0].strip()
-    if not path or path.startswith(("http://", "https://", "data:", "/api/", "/thumb/")):
+    if not path or path.startswith(("http://", "https://", "data:", "/api/", "/thumb/", "/d/")):
         return None
     while path.startswith("./"):
         path = path[2:]
@@ -62,13 +48,11 @@ def _normalize_report_img_path(url: str) -> str | None:
     return "/".join(parts) if parts else None
 
 
-def rewrite_report_html(html: str, thumbnailer) -> str:
+def rewrite_report_html(html: str, thumbnailer, dataset: str) -> str:
     """
-    报告卡片用缩略图；灯箱仍用原图，便于 iframe 内嵌。
+    报告卡片用缩略图；灯箱仍用原图。
 
-    Args:
-        html: aesthetic_report.html 原文。
-        thumbnailer: Thumbnailer 实例，用于 hash 与按需生成缩略图。
+    引用：aesthetic_report 路由。
     """
 
     def fix_src(m: re.Match) -> str:
@@ -78,14 +62,17 @@ def rewrite_report_html(html: str, thumbnailer) -> str:
             return m.group(0)
         thumbnailer.ensure(rel)
         h = thumbnailer.hash_for(rel)
-        return f'src="/thumb/{h}.avif"'
+        return f'src="/d/{quote(dataset, safe="")}/thumb/{h}.avif"'
 
     def fix_lightbox(m: re.Match) -> str:
         url = m.group(1)
         rel = _normalize_report_img_path(url)
         if rel is None:
             return m.group(0)
-        return f"openLightbox('/api/image?path={quote(rel, safe='/')}'"
+        return (
+            f"openLightbox('/api/d/{quote(dataset, safe='')}/image?"
+            f"path={quote(rel, safe='/')}'"
+        )
 
     html = re.sub(r'src="([^"]+)"', fix_src, html)
     html = re.sub(r"openLightbox\('([^']+)'", fix_lightbox, html)
@@ -100,7 +87,8 @@ class StartBody(BaseModel):
 
 @router.get("/dirs")
 def aesthetic_dirs(request: Request):
-    root = _layout(request).root
+    rt = get_runtime(request)
+    root = rt.root
     report = _report_path(root)
     return {
         "root": str(root),
@@ -108,35 +96,30 @@ def aesthetic_dirs(request: Request):
         "cuda": cuda_available(),
         "default_device": default_device(),
         "report_ready": report.is_file(),
-        "report_url": "/api/aesthetic/report" if report.is_file() else None,
+        "report_url": f"/api/d/{rt.name}/aesthetic/report" if report.is_file() else None,
     }
-
-
-@router.get("/status")
-def aesthetic_status(request: Request):
-    snap = _progress(request).snapshot()
-    root = _layout(request).root
-    report = _report_path(root)
-    snap["report_ready"] = report.is_file()
-    snap["report_url"] = "/api/aesthetic/report" if report.is_file() else None
-    if report.is_file():
-        snap["report_mtime"] = report.stat().st_mtime
-    return snap
 
 
 @router.get("/report")
 def aesthetic_report(request: Request):
-    root = _layout(request).root
-    path = _report_path(root)
+    rt = get_runtime(request)
+    path = _report_path(rt.root)
     if not path.is_file():
         raise HTTPException(404, "报告尚未生成")
     html = path.read_text(encoding="utf-8")
-    return HTMLResponse(rewrite_report_html(html, request.app.state.thumbnailer))
+    return HTMLResponse(rewrite_report_html(html, rt.thumbnailer, rt.name))
 
 
 @router.post("/start")
-def aesthetic_start(request: Request, body: StartBody):
-    root = _layout(request).root
+async def aesthetic_start(request: Request, body: StartBody):
+    """
+    提交美学评分长任务。
+
+    返回 job_id；进度见 GET /api/jobs/{id}/events。
+    引用：aesthetic.js。
+    """
+    rt = get_runtime(request)
+    root = rt.root
     selected = resolve_image_dirs(root, body.dirs)
     if not selected:
         raise HTTPException(400, "请选择目录")
@@ -147,42 +130,38 @@ def aesthetic_start(request: Request, body: StartBody):
     if device == "cuda" and not cuda_available():
         raise HTTPException(400, "当前环境无 CUDA")
 
-    with _JOB_LOCK:
-        prog = _progress(request)
-        if prog.status == "running":
-            raise HTTPException(409, "已有任务在运行")
-        prog = AestheticProgress()
-        request.app.state.aesthetic_progress = prog
+    prog = AestheticProgress()
+    report_url = f"/api/d/{rt.name}/aesthetic/report"
 
-        def worker():
-            try:
-                run_aesthetic(
-                    selected,
-                    root=root,
-                    device=device,
-                    write_report=True,
-                    progress=prog,
-                )
-            except Exception as e:
-                prog.status = "error"
-                prog.phase = "done"
-                prog.message = str(e)
-                prog.log(f"任务异常: {e}")
+    def run(emit) -> None:
+        def on_update() -> None:
+            snap = prog.snapshot()
+            report = _report_path(root)
+            snap["report_ready"] = report.is_file()
+            snap["report_url"] = report_url if report.is_file() else None
+            if report.is_file():
+                snap["report_mtime"] = report.stat().st_mtime
+            emit(snap)
 
-        threading.Thread(target=worker, daemon=True).start()
+        run_aesthetic(
+            selected,
+            root=root,
+            device=device,
+            write_report=True,
+            progress=prog,
+            on_update=on_update,
+        )
+        on_update()
 
+    job_id = jobs(request).submit(
+        kind="aesthetic",
+        dataset=rt.name,
+        run=run,
+        cancel_fn=lambda: setattr(prog, "cancel_requested", True),
+    )
     return {
         "ok": True,
+        "job_id": job_id,
         "dirs": [p.name if p != root else "." for p in selected],
         "device": device,
-        "status": prog.snapshot(),
     }
-
-
-@router.post("/cancel")
-def aesthetic_cancel(request: Request):
-    prog = _progress(request)
-    if prog.status != "running":
-        raise HTTPException(400, "当前无运行中的任务")
-    prog.cancel_requested = True
-    return {"ok": True, "status": prog.snapshot()}

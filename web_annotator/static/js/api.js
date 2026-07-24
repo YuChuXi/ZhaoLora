@@ -1,8 +1,60 @@
 /**
- * api.js —— 后端 API 客户端
+ * api.js —— 数据集绑定与请求客户端。
+ *
+ * 引用：nav.js 启动时 bindDataset；各业务页通过 API.apiPath / watchJob / 封装方法访问后端。
  */
-var API = (function() {
+var API = (function () {
   'use strict';
+
+  var _dataset = null;
+  var _bound = false;
+
+  /**
+   * 从路径解析数据集名。引用：boot / nav.js。
+   * @returns {string|null}
+   */
+  function parseDatasetFromPath() {
+    var m = location.pathname.match(/^\/d\/([^/]+)/);
+    return m ? decodeURIComponent(m[1]) : null;
+  }
+
+  /**
+   * 绑定当前页面数据集，整个文档生命周期仅一次。
+   * @param {string} name
+   * 引用：nav.js boot。
+   */
+  function bindDataset(name) {
+    if (_bound) {
+      throw new Error('数据集已绑定，同一页面内不得更换');
+    }
+    if (!name) {
+      throw new Error('数据集名为空');
+    }
+    _dataset = name;
+    _bound = true;
+  }
+
+  /**
+   * @returns {string}
+   */
+  function dataset() {
+    if (!_bound || !_dataset) {
+      throw new Error('未绑定数据集');
+    }
+    return _dataset;
+  }
+
+  /**
+   * 构造数据集作用域 API 路径。
+   * @param {string} suffix 如 '/dirs' 或 '/aesthetic/start'
+   * @returns {string}
+   * 引用：本模块各请求；各页本地 fetch。
+   */
+  function apiPath(suffix) {
+    if (!suffix) suffix = '';
+    if (suffix.charAt(0) !== '/') suffix = '/' + suffix;
+    return '/api/d/' + encodeURIComponent(dataset()) + suffix;
+  }
 
   /**
    * 当前已选子目录列表。
@@ -16,7 +68,6 @@ var API = (function() {
   }
 
   /**
-   * dirs 查询参数（逗号分隔）。
    * @returns {string}
    */
   function dirsQuery() {
@@ -49,20 +100,33 @@ var API = (function() {
     return res.json();
   }
 
-  function listDirs() { return request('/api/dirs'); }
+  function listDirs() { return request(apiPath('/dirs')); }
 
   /**
    * @param {boolean} [showTrash]
    * @returns {Promise<object>}
    */
   function listImages(showTrash) {
-    var url = '/api/images?' + dirsQuery();
+    var url = apiPath('/images') + '?' + dirsQuery();
     if (showTrash) url += '&show_trash=1';
     return request(url);
   }
 
-  function thumbnailUrl(h) { return '/thumb/' + h + '.avif'; }
-  function imageUrl(p) { return '/api/image?path=' + encodeURIComponent(p); }
+  /**
+   * @param {string} h
+   * @returns {string}
+   */
+  function thumbnailUrl(h) {
+    return '/d/' + encodeURIComponent(dataset()) + '/thumb/' + h + '.avif';
+  }
+
+  /**
+   * @param {string} p
+   * @returns {string}
+   */
+  function imageUrl(p) {
+    return apiPath('/image') + '?path=' + encodeURIComponent(p);
+  }
 
   /**
    * @param {string} p
@@ -70,33 +134,76 @@ var API = (function() {
    * @returns {Promise<object>}
    */
   function similarImages(p, limit) {
-    var url = '/api/images/similar?path=' + encodeURIComponent(p);
+    var url = apiPath('/images/similar') + '?path=' + encodeURIComponent(p);
     if (limit) url += '&limit=' + limit;
     return request(url);
   }
 
   function toggle(p) {
-    return request('/api/toggle', { method: 'POST', body: JSON.stringify({ path: p }) });
+    return request(apiPath('/toggle'), { method: 'POST', body: JSON.stringify({ path: p }) });
   }
 
   function selectAll() {
-    return request('/api/select-all', {
+    return request(apiPath('/select-all'), {
       method: 'POST',
       body: JSON.stringify({ dirs: getDirs() }),
     });
   }
 
-  function deselectAll() { return request('/api/deselect-all', { method: 'POST' }); }
-  function applyDelete()  { return request('/api/apply', { method: 'POST' }); }
+  function deselectAll() {
+    return request(apiPath('/deselect-all'), { method: 'POST' });
+  }
+
+  function applyDelete() {
+    return request(apiPath('/apply'), { method: 'POST' });
+  }
+
   function restore(paths) {
-    return request('/api/restore', { method: 'POST', body: JSON.stringify({ paths: paths }) });
+    return request(apiPath('/restore'), { method: 'POST', body: JSON.stringify({ paths: paths }) });
   }
 
   function getState() {
-    return request('/api/state?' + dirsQuery());
+    return request(apiPath('/state') + '?' + dirsQuery());
+  }
+
+  /**
+   * 订阅长任务 Server-Sent Events。
+   * @param {string} jobId
+   * @param {(ev: object) => void} onEvent
+   * @returns {{ close: function }}
+   * 引用：aesthetic.js、tagging.js、dedupe.js、tag_clean.js。
+   */
+  function watchJob(jobId, onEvent) {
+    var es = new EventSource('/api/jobs/' + encodeURIComponent(jobId) + '/events');
+    es.onmessage = function (msg) {
+      var data = JSON.parse(msg.data);
+      onEvent(data);
+      if (data.status === 'done' || data.status === 'error' || data.status === 'cancelled') {
+        es.close();
+      }
+    };
+    es.onerror = function () {
+      es.close();
+    };
+    return {
+      close: function () { es.close(); },
+    };
+  }
+
+  /**
+   * 请求取消长任务。
+   * @param {string} jobId
+   * @returns {Promise<object>}
+   */
+  function cancelJob(jobId) {
+    return request('/api/jobs/' + encodeURIComponent(jobId) + '/cancel', { method: 'POST' });
   }
 
   return {
+    parseDatasetFromPath: parseDatasetFromPath,
+    bindDataset: bindDataset,
+    dataset: dataset,
+    apiPath: apiPath,
     getDirs: getDirs,
     setDirs: setDirs,
     getDir: function () { return getDirs()[0] || 'main'; },
@@ -112,5 +219,13 @@ var API = (function() {
     applyDelete: applyDelete,
     restore: restore,
     getState: getState,
+    watchJob: watchJob,
+    cancelJob: cancelJob,
+    request: request,
   };
+})();
+
+(function () {
+  var name = API.parseDatasetFromPath();
+  if (name) API.bindDataset(name);
 })();

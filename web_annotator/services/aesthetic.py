@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import threading
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -146,7 +147,15 @@ def run_aesthetic(
     device: str,
     write_report: bool,
     progress: AestheticProgress,
+    on_update: Callable[[], None] | None = None,
 ) -> None:
+    """
+    对所选目录跑美学评分。
+
+    Args:
+        on_update: 进度字段变更后的同步回调；由 jobs 桥接到事件循环。
+            引用：routes/aesthetic.py 提交任务时传入。
+    """
     root = root.resolve()
     items = _collect(dirs)
     progress.total = len(items)
@@ -159,12 +168,16 @@ def run_aesthetic(
     progress.phase = "loading"
     progress.message = f"共 {len(items)} 张，加载模型…"
     progress.log(f"开始: dirs={[d.name for d in dirs]}, device={device}, total={len(items)}")
+    if on_update:
+        on_update()
 
     if not items:
         progress.status = "done"
         progress.phase = "done"
         progress.message = "没有可处理的图片"
         progress.log(progress.message)
+        if on_update:
+            on_update()
         return
 
     progress.log("加载模型…")
@@ -173,6 +186,8 @@ def run_aesthetic(
     progress.phase = "running"
     progress.message = f"共 {len(items)} 张"
     progress.log(f"模型就绪 ({device})")
+    if on_update:
+        on_update()
 
     results: list[dict] = []
     score_map = load_scores(root)
@@ -185,11 +200,15 @@ def run_aesthetic(
             progress.log(progress.message)
             if results:
                 save_scores(root, score_map)
+            if on_update:
+                on_update()
             return
 
         rel = f"{parent.name}/{src.name}" if parent != root else src.name
         progress.current = rel
         progress.message = f"[{i + 1}/{len(items)}] {rel}"
+        if on_update:
+            on_update()
 
         try:
             img = Image.open(src)
@@ -210,7 +229,8 @@ def run_aesthetic(
             progress.failed += 1
             progress.done += 1
             progress.log(f"[{i + 1}/{len(items)}] 失败: {rel} — {e}")
-            continue
+        if on_update:
+            on_update()
 
     save_scores(root, score_map)
     progress.log(f"分数: {scores_path(root)}")
@@ -243,6 +263,8 @@ def run_aesthetic(
     progress.current = ""
     progress.message = f"完成 {progress.ok} 张，均值 {progress.summary['mean']}"
     progress.log(progress.message)
+    if on_update:
+        on_update()
 
 
 __all__ = [

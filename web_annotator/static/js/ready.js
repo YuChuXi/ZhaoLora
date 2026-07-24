@@ -29,7 +29,7 @@
       toast('num_repeats 无效');
       return;
     }
-    var data = await api('/api/ready/toml', {
+    var data = await api(API.apiPath('/ready/toml'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ dirs: null, num_repeats: repeats })

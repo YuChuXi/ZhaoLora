@@ -17,6 +17,15 @@ var DirPicker = (function () {
   var _open = false;
 
   /**
+   * 按数据集区分本地存储键。引用：nav.js boot。
+   * @param {string} key
+   */
+  function setStorageKey(key) {
+    if (!key) throw new Error('存储键为空');
+    KEY = key;
+  }
+
+  /**
    * 从 localStorage 读取已选目录名列表。
    * @returns {string[]}
    */
@@ -308,6 +317,7 @@ var DirPicker = (function () {
 
   return {
     KEY: KEY,
+    setStorageKey: setStorageKey,
     loadSaved: loadSaved,
     save: save,
     getDir: getDir,

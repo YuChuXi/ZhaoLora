@@ -56,7 +56,8 @@
 
   async function api(path, opts) {
     opts = opts || {};
-    var res = await fetch(path, {
+    var url = path.indexOf('/api/') === 0 ? API.apiPath(path.slice(4)) : path;
+    var res = await fetch(url, {
       headers: opts.headers || {},
       method: opts.method || 'GET',
       body: opts.body || undefined,

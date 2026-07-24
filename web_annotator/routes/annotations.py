@@ -8,18 +8,19 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Request
 
+from routes.deps import get_runtime
 from services.scanner import scan_images
 from services.work_dir import parse_dir_names, resolve_subdir, resolve_subdirs
 
-router = APIRouter(prefix="/api", tags=["annotations"])
+router = APIRouter(tags=["annotations"])
 
 
 def _root(request: Request):
-    return request.app.state.dataset_root
+    return get_runtime(request).root
 
 
 def _state(request: Request):
-    return request.app.state.state_manager
+    return get_runtime(request).state_manager
 
 
 @router.post("/toggle")
@@ -87,7 +88,7 @@ def apply_delete(request: Request):
         state_mgr._write(state)
         moved += len(already_gone)
 
-    idx = getattr(request.app.state, "color_index", None)
+    idx = get_runtime(request).color_index
     if idx is not None:
         idx.clear()
 
@@ -111,7 +112,7 @@ async def restore(request: Request):
         return {"restored": 0}
 
     restored = state_mgr.restore(to_restore)
-    idx = getattr(request.app.state, "color_index", None)
+    idx = get_runtime(request).color_index
     if idx is not None:
         idx.clear()
     return {"restored": restored}

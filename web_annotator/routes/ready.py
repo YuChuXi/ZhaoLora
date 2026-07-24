@@ -5,10 +5,11 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
+from routes.deps import get_runtime
 from services.ready_toml import build_ready_toml
 from services.work_dir import list_work_dirs
 
-router = APIRouter(prefix="/api/ready", tags=["ready"])
+router = APIRouter(prefix="/ready", tags=["ready"])
 
 
 class ReadyBody(BaseModel):
@@ -18,13 +19,13 @@ class ReadyBody(BaseModel):
 
 @router.get("/dirs")
 def ready_dirs(request: Request):
-    root = request.app.state.dataset_root
+    root = get_runtime(request).root
     return {"root": str(root), "dirs": list_work_dirs(root)}
 
 
 @router.post("/toml")
 def ready_toml(request: Request, body: ReadyBody):
-    root = request.app.state.dataset_root
+    root = get_runtime(request).root
     result = build_ready_toml(root, dirs=body.dirs, num_repeats=body.num_repeats)
     if not result["subsets"]:
         raise HTTPException(400, "没有可导出的图片目录")

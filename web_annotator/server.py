@@ -6,41 +6,47 @@
   datasets/xxx/
     main/     # 源图
     mask/     # alpha mask
-    head/     # 部位裁剪（选区命名为 head 时写入；整图即部位时同）
-    foot/     # 其它部位同理
-    crops/    # 未命名选区兜底
+    head/     # 部位裁剪
+    foot/
+    crops/
 
 用法:
   python web_annotator/server.py --data-dir datasets/guo582
-  python web_annotator/server.py --data-dir datasets/guo582 --port 8080
+  python web_annotator/server.py --data-dir datasets/a --data-dir datasets/b
 """
 
 from __future__ import annotations
 
 import argparse
+import re
 import sys
+import threading
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import APIRouter, FastAPI, HTTPException, Request
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import HTMLResponse, RedirectResponse
 import uvicorn
 
-from services.scanner import scan_images
-from services.thumbnailer import Thumbnailer, default_workers
-from services.state_manager import StateManager
-from services.dataset_layout import resolve_dataset_layout
-from routes.images import router as images_router
-from routes.annotations import router as annotations_router
 from routes.alpha_paint import router as paint_router
+from routes.annotations import router as annotations_router
+from routes.aesthetic import router as aesthetic_router
+from routes.booru import router as booru_router
 from routes.crop import router as crop_router
+from routes.dedupe import router as dedupe_router
+from routes.docs import router as docs_router
+from routes.images import router as images_router
+from routes.meta import datasets_router, jobs_router
+from routes.ready import router as ready_router
 from routes.tag_stats import router as tag_stats_router
 from routes.tagging import router as tagging_router
-from routes.aesthetic import router as aesthetic_router
-from routes.dedupe import router as dedupe_router
-from routes.ready import router as ready_router
-from routes.docs import router as docs_router
-from routes.booru import router as booru_router
+from services.dataset_layout import resolve_dataset_layout
+from services.dataset_runtime import DatasetRegistry, DatasetRuntime
+from services.jobs import JobManager
+from services.scanner import scan_images
+from services.state_manager import StateManager
+from services.thumbnailer import Thumbnailer, default_workers
+from services.work_dir import list_work_dirs
 
 
 class _DevStaticFiles(StaticFiles):
@@ -52,7 +58,30 @@ class _DevStaticFiles(StaticFiles):
         return resp
 
 
-app = FastAPI(title="Image Annotator", version="2.2.0")
+app = FastAPI(title="Image Annotator", version="3.0.0")
+
+_PAGE_SLUGS = (
+    "filter",
+    "aesthetic",
+    "dedupe",
+    "crop",
+    "paint",
+    "tags",
+    "tag-clean",
+    "ready",
+)
+_PAGE_TEMPLATES = {
+    "filter": "index.html",
+    "aesthetic": "aesthetic.html",
+    "dedupe": "dedupe.html",
+    "crop": "crop.html",
+    "paint": "paint.html",
+    "tags": "tags.html",
+    "tag-clean": "tag_clean.html",
+    "ready": "ready.html",
+}
+
+_DS_PATH_RE = re.compile(r"^/(?:api/)?d/([^/]+)(?:/|$)")
 
 
 def _migrate_meta_to_root(main_dir: Path, root: Path) -> None:
@@ -71,7 +100,6 @@ def _migrate_meta_to_root(main_dir: Path, root: Path) -> None:
             shutil.move(str(old), str(new))
             print(f"已迁移: {old.name} → {root}/")
             continue
-        # 目标已有：合并目录内容后删除旧目录
         if old.is_dir() and new.is_dir():
             for child in old.iterdir():
                 dest = new / child.name
@@ -80,11 +108,9 @@ def _migrate_meta_to_root(main_dir: Path, root: Path) -> None:
             shutil.rmtree(old, ignore_errors=True)
             print(f"已合并迁移: {old.name} → {root}/")
         elif old.is_file() and new.is_file():
-            # 保留根目录已有状态，删除 main 下旧文件避免双份
             old.unlink(missing_ok=True)
             print(f"已清理重复: {old}")
 
-    # 旧版套层目录 → 根目录单文件
     for nested in (main_dir / "aesthetic_report", root / "aesthetic_report"):
         html = nested / "aesthetic_report.html"
         dest = root / "aesthetic_report.html"
@@ -94,99 +120,128 @@ def _migrate_meta_to_root(main_dir: Path, root: Path) -> None:
         if nested.is_dir():
             shutil.rmtree(nested, ignore_errors=True)
 
+
+def _read_template(name: str) -> HTMLResponse:
+    template = Path(__file__).parent / "templates" / name
+    if not template.exists():
+        return HTMLResponse(f"<h1>{name} not found</h1>", status_code=404)
+    return HTMLResponse(template.read_text(encoding="utf-8"))
+
+
+@app.middleware("http")
+async def bind_dataset_middleware(request: Request, call_next):
+    """
+    从路径解析数据集名并写入 request.state.runtime。
+
+    匹配 ``/api/d/{name}/...`` 与 ``/d/{name}/...``。
+    引用：routes/deps.get_runtime。
+    """
+    m = _DS_PATH_RE.match(request.url.path)
+    if m:
+        name = m.group(1)
+        reg: DatasetRegistry = request.app.state.datasets
+        rt = reg.get(name)
+        if rt is None:
+            return JSONResponse({"detail": f"未知数据集: {name}"}, status_code=404)
+        request.state.runtime = rt
+    return await call_next(request)
+
+
 static_dir = Path(__file__).parent / "static"
 if static_dir.is_dir():
     app.mount("/static", _DevStaticFiles(directory=str(static_dir)), name="static")
 
-app.include_router(images_router)
-app.include_router(annotations_router)
-app.include_router(paint_router)
-app.include_router(crop_router)
-app.include_router(aesthetic_router)
-app.include_router(tagging_router)
-app.include_router(tag_stats_router)
-app.include_router(dedupe_router)
-app.include_router(ready_router)
+dataset_api = APIRouter(prefix="/api/d/{dataset}")
+dataset_api.include_router(images_router)
+dataset_api.include_router(annotations_router)
+dataset_api.include_router(paint_router)
+dataset_api.include_router(crop_router)
+dataset_api.include_router(aesthetic_router)
+dataset_api.include_router(tagging_router)
+dataset_api.include_router(tag_stats_router)
+dataset_api.include_router(dedupe_router)
+dataset_api.include_router(ready_router)
+dataset_api.include_router(booru_router)
+
+app.include_router(dataset_api)
+app.include_router(datasets_router)
+app.include_router(jobs_router)
 app.include_router(docs_router)
-app.include_router(booru_router)
 
 
 @app.get("/")
 def home_page():
-    template = Path(__file__).parent / "templates" / "home.html"
-    if template.exists():
-        return HTMLResponse(template.read_text(encoding="utf-8"))
-    return HTMLResponse("<h1>home.html not found</h1>", status_code=404)
+    """数据集入口页。引用：浏览器打开根路径。"""
+    return _read_template("home.html")
 
 
-@app.get("/filter")
-def filter_page():
-    template = Path(__file__).parent / "templates" / "index.html"
-    if template.exists():
-        return HTMLResponse(template.read_text(encoding="utf-8"))
-    return HTMLResponse("<h1>index.html not found</h1>", status_code=404)
+@app.get("/d/{dataset}")
+def dataset_root_redirect(dataset: str):
+    return RedirectResponse(url=f"/d/{dataset}/filter", status_code=302)
 
 
-@app.get("/paint")
-def paint_page():
-    template = Path(__file__).parent / "templates" / "paint.html"
-    if template.exists():
-        return HTMLResponse(template.read_text(encoding="utf-8"))
-    return HTMLResponse("<h1>paint.html not found</h1>", status_code=404)
+@app.get("/d/{dataset}/{page}")
+def dataset_page(dataset: str, page: str):
+    """
+    业务页面。路径中的 dataset 由中间件绑定。
+
+    引用：nav.js 功能标签。
+    """
+    if page == "tagging":
+        return RedirectResponse(url=f"/d/{dataset}/tags", status_code=302)
+    tpl = _PAGE_TEMPLATES.get(page)
+    if tpl is None:
+        raise HTTPException(404, f"未知页面: {page}")
+    return _read_template(tpl)
 
 
-@app.get("/crop")
-def crop_page():
-    template = Path(__file__).parent / "templates" / "crop.html"
-    if template.exists():
-        return HTMLResponse(template.read_text(encoding="utf-8"))
-    return HTMLResponse("<h1>crop.html not found</h1>", status_code=404)
+@app.get("/d/{dataset}/thumb/{filename}")
+def dataset_thumb(request: Request, dataset: str, filename: str):
+    """
+    缩略图文件。
+
+    引用：前端 thumbnailUrl。
+    """
+    rt = request.app.state.datasets.get(dataset)
+    if rt is None:
+        raise HTTPException(404, f"未知数据集: {dataset}")
+    if "/" in filename or "\\" in filename or ".." in filename:
+        raise HTTPException(400, "非法文件名")
+    path = rt.thumbnailer.thumb_dir / filename
+    if not path.is_file():
+        raise HTTPException(404, "缩略图不存在")
+    return FileResponse(path, media_type="image/avif", headers={"Cache-Control": "no-store"})
 
 
-@app.get("/aesthetic")
-def aesthetic_page():
-    template = Path(__file__).parent / "templates" / "aesthetic.html"
-    if template.exists():
-        return HTMLResponse(template.read_text(encoding="utf-8"))
-    return HTMLResponse("<h1>aesthetic.html not found</h1>", status_code=404)
+def _build_runtime(data_dir: Path, thumbnail_size: int, mask_dir_arg: str) -> DatasetRuntime:
+    layout = resolve_dataset_layout(data_dir)
+    _migrate_meta_to_root(layout.main_dir, layout.root)
+    name = layout.root.name
+    thumbnailer = Thumbnailer(layout.root, size=thumbnail_size, meta_dir=layout.root)
+    state_manager = StateManager(layout.root, meta_dir=layout.root)
+    n_mig = state_manager.migrate_flat_main_keys()
+    if n_mig:
+        print(f"[{name}] 已迁移旧路径键/回收站: {n_mig}")
+    mask_dir = Path(mask_dir_arg).resolve() if mask_dir_arg else layout.mask_dir
+    mask_dir.mkdir(parents=True, exist_ok=True)
+    return DatasetRuntime(
+        name=name,
+        layout=layout,
+        thumbnailer=thumbnailer,
+        state_manager=state_manager,
+        mask_dir=mask_dir,
+    )
 
 
-@app.get("/tagging")
-def tagging_page():
-    """兼容旧入口：打标已并入标签页「自动生成」对话框。"""
-    return RedirectResponse(url="/tags", status_code=302)
+def _prewarm(rt: DatasetRuntime, images: list[dict]) -> None:
+    from services.color_similarity import ColorIndex
 
-
-@app.get("/tags")
-def tags_page():
-    template = Path(__file__).parent / "templates" / "tags.html"
-    if template.exists():
-        return HTMLResponse(template.read_text(encoding="utf-8"))
-    return HTMLResponse("<h1>tags.html not found</h1>", status_code=404)
-
-
-@app.get("/tag-clean")
-def tag_clean_page():
-    template = Path(__file__).parent / "templates" / "tag_clean.html"
-    if template.exists():
-        return HTMLResponse(template.read_text(encoding="utf-8"))
-    return HTMLResponse("<h1>tag_clean.html not found</h1>", status_code=404)
-
-
-@app.get("/ready")
-def ready_page():
-    template = Path(__file__).parent / "templates" / "ready.html"
-    if template.exists():
-        return HTMLResponse(template.read_text(encoding="utf-8"))
-    return HTMLResponse("<h1>ready.html not found</h1>", status_code=404)
-
-
-@app.get("/dedupe")
-def dedupe_page():
-    template = Path(__file__).parent / "templates" / "dedupe.html"
-    if template.exists():
-        return HTMLResponse(template.read_text(encoding="utf-8"))
-    return HTMLResponse("<h1>dedupe.html not found</h1>", status_code=404)
+    idx = ColorIndex(rt.thumbnailer.thumb_dir)
+    rt.color_index = idx
+    rels = [img["path"] for img in images]
+    thumbs = {r: rt.thumbnailer.get_path(r) for r in rels}
+    idx.ensure_many(rt.root, rels, thumbs)
+    print(f"[{rt.name}] 色调索引就绪: {len(rels)} 张")
 
 
 def main() -> int:
@@ -194,8 +249,9 @@ def main() -> int:
     parser.add_argument(
         "--data-dir",
         type=str,
+        action="append",
         required=True,
-        help="数据集根目录 datasets/xxx（图像在 xxx/main，mask/部位为同级目录）",
+        help="数据集根目录 datasets/xxx（可重复传入以挂载多个）",
     )
     parser.add_argument("--host", type=str, default="0.0.0.0", help="监听地址")
     parser.add_argument("--port", type=int, default=8765, help="监听端口")
@@ -205,7 +261,7 @@ def main() -> int:
         "--mask-dir",
         type=str,
         default="",
-        help="Alpha mask 目录（默认 data-dir/mask）",
+        help="Alpha mask 目录（仅当只传入一个 --data-dir 时生效；默认各集 root/mask）",
     )
     parser.add_argument(
         "--default-crop",
@@ -222,39 +278,25 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    try:
-        layout = resolve_dataset_layout(Path(args.data_dir))
-    except (FileNotFoundError, ValueError) as e:
-        print(f"错误: {e}")
-        return 1
+    registry = DatasetRegistry()
+    for i, raw in enumerate(args.data_dir):
+        mask_arg = args.mask_dir if (args.mask_dir and len(args.data_dir) == 1) else ""
+        try:
+            rt = _build_runtime(Path(raw), args.thumbnail_size, mask_arg)
+            registry.add(rt)
+        except (FileNotFoundError, ValueError) as e:
+            print(f"错误: {e}")
+            return 1
 
-    # data_dir = main（裁剪/蒙版）；dataset_root = 根（筛选路径 / 缩略图 / 回收站）
-    _migrate_meta_to_root(layout.main_dir, layout.root)
-
-    app.state.layout = layout
-    app.state.dataset_root = layout.root
-    app.state.data_dir = layout.main_dir
-    app.state.thumbnailer = Thumbnailer(
-        layout.root,
-        size=args.thumbnail_size,
-        meta_dir=layout.root,
-    )
-    app.state.state_manager = StateManager(layout.root, meta_dir=layout.root)
-    n_mig = app.state.state_manager.migrate_flat_main_keys()
-    if n_mig:
-        print(f"已迁移旧路径键/回收站: {n_mig}")
-
-    mask_dir = Path(args.mask_dir).resolve() if args.mask_dir else layout.mask_dir
-    mask_dir.mkdir(parents=True, exist_ok=True)
-    app.state.mask_dir = mask_dir
+    app.state.datasets = registry
+    app.state.jobs = JobManager()
     app.state.booru_proxy = (args.booru_proxy or "").strip() or None
-
     app.state.crop_default_tw = None
     app.state.crop_default_th = None
     app.state.crop_default_zoom = None
-    if args.default_crop:
-        import re
+    app.state.paint_default_alpha = 255
 
+    if args.default_crop:
         s = args.default_crop.strip().lower().rstrip("x")
         m = re.match(r"^(\d+)\s*x\s*(\d+)\s*@\s*([\d.]+)\s*x?$", s)
         if not m:
@@ -264,55 +306,43 @@ def main() -> int:
         app.state.crop_default_th = int(m.group(2))
         app.state.crop_default_zoom = float(m.group(3))
 
-    thumb_dir = app.state.thumbnailer.thumb_dir
-    app.mount("/thumb", StaticFiles(directory=str(thumb_dir)), name="thumbs")
+    for name in registry.names():
+        rt = registry.get(name)
+        images = []
+        for d in list_work_dirs(rt.root):
+            images.extend(scan_images(rt.root / d["name"], path_prefix=d["name"]))
+        state = rt.state_manager.get()
 
-    from services.work_dir import list_work_dirs
+        if not args.skip_thumbnails:
+            missing = [img["path"] for img in images if not rt.thumbnailer.exists(img["path"])]
+            if missing:
+                workers = default_workers()
+                print(f"[{name}] 预生成缩略图: {len(missing)} 张（并行 {workers}）...")
 
-    images = []
-    for d in list_work_dirs(layout.root):
-        images.extend(scan_images(layout.root / d["name"], path_prefix=d["name"]))
-    state = app.state.state_manager.get()
+                def _thumb_progress(done: int, total: int, _n=name) -> None:
+                    if done % 50 == 0 or done == total:
+                        print(f"  [{_n}] {done}/{total}")
 
-    if not args.skip_thumbnails:
-        missing = [img["path"] for img in images if not app.state.thumbnailer.exists(img["path"])]
-        if missing:
-            workers = default_workers()
-            print(f"预生成缩略图: {len(missing)} 张（并行 {workers}）...")
+                rt.thumbnailer.generate_many(
+                    missing, workers=workers, on_progress=_thumb_progress
+                )
+            else:
+                print(f"[{name}] 缩略图已就绪")
 
-            def _thumb_progress(done: int, total: int) -> None:
-                if done % 50 == 0 or done == total:
-                    print(f"  {done}/{total}")
+        threading.Thread(target=_prewarm, args=(rt, images), daemon=True).start()
 
-            app.state.thumbnailer.generate_many(
-                missing, workers=workers, on_progress=_thumb_progress
-            )
-        else:
-            print("缩略图已就绪")
+        part_names = [p.name for p in rt.layout.list_part_dirs()]
+        print(f"数据集   : {name}")
+        print(f"  根目录 : {rt.root}")
+        print(f"  源图   : {rt.main_dir}")
+        print(f"  Mask   : {rt.mask_dir}")
+        print(f"  部位   : {', '.join(part_names) if part_names else '(无)'}")
+        print(f"  图片   : {len(images)}")
+        print(f"  已选   : {len(state.get('selected', {}))}")
+        print(f"  回收站 : {len(state.get('trashed', {}))}")
 
-    # 后台预热色调索引（用缩略图，不挡启动）
-    def _prewarm_color():
-        from services.color_similarity import ColorIndex
-        idx = ColorIndex(app.state.thumbnailer.thumb_dir)
-        app.state.color_index = idx
-        rels = [img["path"] for img in images]
-        thumbs = {r: app.state.thumbnailer.get_path(r) for r in rels}
-        idx.ensure_many(layout.root, rels, thumbs)
-        print(f"色调索引就绪: {len(rels)} 张")
-
-    import threading
-    threading.Thread(target=_prewarm_color, daemon=True).start()
-
-    part_names = [p.name for p in layout.list_part_dirs()]
-    print(f"数据集根 : {layout.root}")
-    print(f"源图目录 : {layout.main_dir}")
-    print(f"Mask目录 : {mask_dir}")
-    print(f"部位目录 : {', '.join(part_names) if part_names else '(无)'}")
-    print(f"图片总数 : {len(images)}")
-    print(f"已选待删 : {len(state.get('selected', {}))}")
-    print(f"回收站内 : {len(state.get('trashed', {}))}")
     print(f"服务地址 : http://{args.host}:{args.port}")
-    print("  首页 · 美学 · 筛选 · 去重 · 裁剪 · 蒙版 · 标签 · 清洗 · 就绪")
+    print("  首页选择数据集 → /d/{名称}/筛选|美学|去重|…")
 
     uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
     return 0

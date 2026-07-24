@@ -10,21 +10,22 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import Response
 from PIL import Image
 
+from routes.deps import get_runtime
 from services.scanner import scan_images
 from services.crop_match import clamp_target_size, match_config
 from services.dataset_layout import RESERVED_DIR_NAMES, DatasetLayout
 
-router = APIRouter(prefix="/api/crop", tags=["crop"])
+router = APIRouter(prefix="/crop", tags=["crop"])
 
 _SAFE_NAME = re.compile(r"^[\w\-]{1,64}$", re.UNICODE)
 
 
 def _layout(request: Request) -> DatasetLayout:
-    return request.app.state.layout
+    return get_runtime(request).layout
 
 
 def _main_dir(request: Request) -> Path:
-    return request.app.state.data_dir
+    return get_runtime(request).main_dir
 
 
 def _safe_resolve(base: Path, rel: str) -> Path:

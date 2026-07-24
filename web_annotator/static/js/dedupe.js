@@ -34,8 +34,8 @@
     return DirPicker.getDirs();
   }
 
-  function thumbUrl(h) { return '/thumb/' + h + '.avif'; }
-  function imageUrl(p) { return '/api/image?path=' + encodeURIComponent(p); }
+  function thumbUrl(h) { return API.thumbnailUrl(h); }
+  function imageUrl(p) { return API.imageUrl(p); }
 
   function selectedCount() {
     var n = 0;
@@ -224,13 +224,32 @@
     main.innerHTML = '<div class="dedupe-empty">扫描中…</div>';
     document.getElementById('btn-scan').disabled = true;
     try {
-      var data = await api('/api/dedupe/scan', {
+      var submitted = await api(API.apiPath('/dedupe/scan'), {
         method: 'POST',
         body: JSON.stringify({
           dirs: dirs,
           mse_threshold: mse,
           similar_res_ratio: ratio
         }),
+      });
+      var data = await new Promise(function (resolve, reject) {
+        API.watchJob(submitted.job_id, function (s) {
+          if (s.status === 'queued') {
+            main.innerHTML = '<div class="dedupe-empty">等待执行…</div>';
+            return;
+          }
+          if (s.status === 'running') {
+            main.innerHTML = '<div class="dedupe-empty">' + (s.message || '扫描中…') + '</div>';
+            return;
+          }
+          if (s.status === 'done') {
+            resolve(s.result || {});
+            return;
+          }
+          if (s.status === 'error' || s.status === 'cancelled') {
+            reject(new Error(s.message || s.status));
+          }
+        });
       });
       _groups = data.groups || [];
       _selected = {};
@@ -268,7 +287,7 @@
     if (!confirm('删除 ' + paths.length + ' 张到回收站？')) return;
     hidePreview();
     try {
-      var res = await api('/api/dedupe/apply', {
+      var res = await api(API.apiPath('/dedupe/apply'), {
         method: 'POST',
         body: JSON.stringify({ paths: paths, dirs: getDirs() }),
       });

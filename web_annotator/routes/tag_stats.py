@@ -1,4 +1,4 @@
-"""Tag 频率统计与清洗 API。"""
+"""Tag 频率统计与清洗 API（数据集作用域）。"""
 
 from __future__ import annotations
 
@@ -7,20 +7,16 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
+from routes.deps import get_runtime, jobs
 from services.aesthetic import load_scores
-from services.dataset_layout import DatasetLayout
 from services.tag_clean import clean_txt_dirs
 from services.tag_stats import count_tags, list_txt_subdirs, load_translation_map, resolve_selected_dirs
 
-router = APIRouter(prefix="/api/tags", tags=["tags"])
-
-
-def _layout(request: Request) -> DatasetLayout:
-    return request.app.state.layout
+router = APIRouter(prefix="/tags", tags=["tags"])
 
 
 def _root(request: Request) -> Path:
-    return _layout(request).root
+    return get_runtime(request).root
 
 
 class StatsBody(BaseModel):
@@ -82,27 +78,52 @@ def tag_stats(request: Request, body: StatsBody):
 
 
 @router.post("/clean")
-def tag_clean(request: Request, body: CleanBody):
-    """按 clean_dataset_tags 规则清洗所选目录的 .txt。"""
-    root = _root(request)
+async def tag_clean(request: Request, body: CleanBody):
+    """
+    提交标签清洗长任务。
+
+    返回 job_id；结束事件的 result 为清洗结果。
+    引用：tag_clean.js。
+    """
+    rt = get_runtime(request)
+    root = rt.root
     selected = resolve_selected_dirs(root, body.dirs)
     if not selected:
         raise HTTPException(400, "请选择目录")
 
     scores = load_scores(root) if body.inject_pony_score else {}
-    result = clean_txt_dirs(
-        selected,
-        drop=body.drop,
-        drop_contains=body.drop_contains,
-        promote=body.promote,
-        prepend=body.prepend,
-        promote_separator=body.promote_separator,
-        inject_pony_score=body.inject_pony_score,
-        dataset_root=root,
-        aesthetic_scores=scores,
-        dry_run=body.dry_run,
-        sample_limit=body.sample_limit,
-    )
-    result["dirs"] = [p.name if p != root else "." for p in selected]
-    result["root"] = str(root)
-    return result
+    payload = body
+
+    def run(emit) -> dict:
+        emit({
+            "status": "running",
+            "phase": "cleaning",
+            "message": "预览中…" if payload.dry_run else "写入中…",
+            "pct": 0,
+        })
+        result = clean_txt_dirs(
+            selected,
+            drop=payload.drop,
+            drop_contains=payload.drop_contains,
+            promote=payload.promote,
+            prepend=payload.prepend,
+            promote_separator=payload.promote_separator,
+            inject_pony_score=payload.inject_pony_score,
+            dataset_root=root,
+            aesthetic_scores=scores,
+            dry_run=payload.dry_run,
+            sample_limit=payload.sample_limit,
+        )
+        result["dirs"] = [p.name if p != root else "." for p in selected]
+        result["root"] = str(root)
+        emit({
+            "status": "done",
+            "phase": "done",
+            "message": "完成",
+            "pct": 100,
+            "result": result,
+        })
+        return result
+
+    job_id = jobs(request).submit(kind="tag_clean", dataset=rt.name, run=run)
+    return {"ok": True, "job_id": job_id}

@@ -18,9 +18,10 @@ from services.booru_client import (
     remove_download,
     search_posts,
 )
+from routes.deps import get_runtime
 from services.work_dir import resolve_subdir
 
-router = APIRouter(prefix="/api/booru", tags=["booru"])
+router = APIRouter(prefix="/booru", tags=["booru"])
 
 
 def _proxy(request: Request) -> str | None:
@@ -63,7 +64,7 @@ async def booru_search(request: Request, body: SearchBody):
     query = build_search_query(
         source, body.tags, order=order, extra=body.extra or ""
     )
-    root = request.app.state.dataset_root
+    root = get_runtime(request).root
     try:
         _, out_dir = resolve_subdir(root, body.dir)
     except ValueError as e:
@@ -155,7 +156,7 @@ async def booru_download(request: Request, body: DownloadBody):
     source = body.source.strip().lower()
     if source not in SOURCES:
         raise HTTPException(400, f"不支持的源: {body.source}")
-    root = request.app.state.dataset_root
+    root = get_runtime(request).root
     try:
         name, out_dir = resolve_subdir(root, body.dir)
     except ValueError as e:
@@ -174,7 +175,7 @@ async def booru_download(request: Request, body: DownloadBody):
     except Exception as e:
         raise HTTPException(502, f"下载失败: {e}") from e
     rel = local_rel_path(root, result["path"])
-    thumb = request.app.state.thumbnailer
+    thumb = get_runtime(request).thumbnailer
     thumb.ensure(rel)
     return {
         **result,
@@ -190,7 +191,7 @@ def booru_undownload(request: Request, body: DownloadBody):
     source = body.source.strip().lower()
     if source not in SOURCES:
         raise HTTPException(400, f"不支持的源: {body.source}")
-    root = request.app.state.dataset_root
+    root = get_runtime(request).root
     try:
         name, out_dir = resolve_subdir(root, body.dir)
     except ValueError as e:
@@ -202,7 +203,7 @@ def booru_undownload(request: Request, body: DownloadBody):
         raise HTTPException(400, str(e)) from e
 
     # 清缩略图缓存（新名 g/d 前缀 + 旧纯 id）
-    thumb = request.app.state.thumbnailer
+    thumb = get_runtime(request).thumbnailer
     stems = [file_stem(source, body.id.strip()), body.id.strip()]
     for stem in stems:
         for ext in (".jpg", ".jpeg", ".png", ".webp", ".gif"):

@@ -1,10 +1,11 @@
 /**
- * aesthetic.js —— 美学评分（内嵌报告）
+ * aesthetic.js —— 美学评分（Server-Sent Events 进度）
  */
 (function () {
   'use strict';
 
-  var _pollTimer = null;
+  var _watch = null;
+  var _jobId = null;
   var _toastTimer = null;
   var _lastReportMtime = null;
 
@@ -14,15 +15,6 @@
     el.classList.add('show');
     clearTimeout(_toastTimer);
     _toastTimer = setTimeout(function () { el.classList.remove('show'); }, 2200);
-  }
-
-  async function api(url, opts) {
-    var res = await fetch(url, opts);
-    if (!res.ok) {
-      var t = await res.text();
-      throw new Error(t || res.statusText);
-    }
-    return res.json();
   }
 
   function currentDirs() {
@@ -62,17 +54,18 @@
     var done = s.done || 0;
     var pct = (typeof s.pct === 'number') ? s.pct : (total > 0 ? (done / total) * 100 : 0);
     var fill = document.getElementById('progress-fill');
-    var loading = s.status === 'running' && s.phase === 'loading';
-    fill.classList.toggle('indeterminate', loading);
-    if (!loading) {
+    var loading = (s.status === 'running' || s.status === 'queued') && s.phase === 'loading';
+    var waiting = s.status === 'queued';
+    fill.classList.toggle('indeterminate', loading || waiting);
+    if (!loading && !waiting) {
       fill.style.width = Math.min(100, pct) + '%';
     }
-    document.getElementById('progress-pct').textContent = loading
+    document.getElementById('progress-pct').textContent = (loading || waiting)
       ? '…'
       : (Math.min(100, Math.round(pct)) + '%');
-    document.getElementById('progress-meta-line').textContent = s.current
-      ? s.current
-      : (s.message || '待命');
+    document.getElementById('progress-meta-line').textContent = waiting
+      ? '等待执行'
+      : (s.current ? s.current : (s.message || '待命'));
 
     document.getElementById('m-done').textContent = String(done);
     document.getElementById('m-total').textContent = String(total);
@@ -84,6 +77,7 @@
 
     var label = {
       idle: '就绪',
+      queued: '等待执行',
       running: '运行中',
       done: '已完成',
       error: '失败',
@@ -92,45 +86,42 @@
     document.getElementById('stat-status').textContent = label + (s.message ? ' · ' + s.message : '');
 
     if ((s.status === 'done' || s.status === 'idle') && s.report_ready) {
-      showReport(s.report_url || '/api/aesthetic/report', s.report_mtime);
+      showReport(s.report_url || API.apiPath('/aesthetic/report'), s.report_mtime);
     }
 
-    setRunningUi(s.status === 'running');
+    setRunningUi(s.status === 'running' || s.status === 'queued');
   }
 
-  function stopPoll() {
-    if (_pollTimer) {
-      clearInterval(_pollTimer);
-      _pollTimer = null;
+  function stopWatch() {
+    if (_watch) {
+      _watch.close();
+      _watch = null;
     }
   }
 
-  function startPoll() {
-    stopPoll();
-    _pollTimer = setInterval(async function () {
-      var s = await api('/api/aesthetic/status');
+  function startWatch(jobId) {
+    stopWatch();
+    _jobId = jobId;
+    _watch = API.watchJob(jobId, function (s) {
       applyStatus(s);
-      if (s.status !== 'running') {
-        stopPoll();
-        if (s.status === 'done') {
-          _lastReportMtime = null;
-          showReport(s.report_url || '/api/aesthetic/report', s.report_mtime || Date.now());
-          toast('评分完成');
-        }
-        if (s.status === 'cancelled') toast('已取消');
-        if (s.status === 'error') toast('评分失败');
+      if (s.status === 'done') {
+        _lastReportMtime = null;
+        showReport(s.report_url || API.apiPath('/aesthetic/report'), s.report_mtime || Date.now());
+        toast('评分完成');
       }
-    }, 300);
+      if (s.status === 'cancelled') toast('已取消');
+      if (s.status === 'error') toast('评分失败');
+    });
   }
 
   async function initDevice() {
-    var data = await api('/api/aesthetic/dirs');
+    var data = await API.request(API.apiPath('/aesthetic/dirs'));
     var sel = document.getElementById('device');
     sel.value = 'cpu';
     var cudaOpt = sel.querySelector('option[value="cuda"]');
     if (cudaOpt) cudaOpt.disabled = !data.cuda;
     if (data.report_ready) {
-      showReport(data.report_url || '/api/aesthetic/report', Date.now());
+      showReport(data.report_url || API.apiPath('/aesthetic/report'), Date.now());
     }
   }
 
@@ -145,18 +136,18 @@
       device: document.getElementById('device').value,
       write_report: true
     };
-    var data = await api('/api/aesthetic/start', {
+    var data = await API.request(API.apiPath('/aesthetic/start'), {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body)
     });
-    applyStatus(data.status || { status: 'running' });
-    toast('已开始');
-    startPoll();
+    applyStatus({ status: 'queued', message: '等待执行' });
+    toast('已提交');
+    startWatch(data.job_id);
   }
 
   async function cancelJob() {
-    await api('/api/aesthetic/cancel', { method: 'POST' });
+    if (!_jobId) return;
+    await API.cancelJob(_jobId);
     toast('正在取消…');
   }
 
@@ -167,11 +158,5 @@
     cancelJob().catch(function (e) { toast(String(e.message || e)); });
   });
 
-  initDevice()
-    .then(function () { return api('/api/aesthetic/status'); })
-    .then(function (s) {
-      applyStatus(s);
-      if (s.status === 'running') startPoll();
-    })
-    .catch(function (e) { toast(String(e.message || e)); });
+  initDevice().catch(function (e) { toast(String(e.message || e)); });
 })();

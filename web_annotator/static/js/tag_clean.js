@@ -1,5 +1,5 @@
 /**
- * tag_clean.js —— 标签清洗页
+ * tag_clean.js —— 标签清洗页（长任务 + SSE）
  */
 (function () {
   'use strict';
@@ -15,20 +15,6 @@
     el.classList.add('show');
     clearTimeout(_toastTimer);
     _toastTimer = setTimeout(function () { el.classList.remove('show'); }, 2200);
-  }
-
-  /**
-   * @param {string} url
-   * @param {RequestInit} [opts]
-   * @returns {Promise<object>}
-   */
-  async function api(url, opts) {
-    var res = await fetch(url, opts);
-    if (!res.ok) {
-      var t = await res.text();
-      throw new Error(t || res.statusText);
-    }
-    return res.json();
   }
 
   /**
@@ -68,7 +54,7 @@
   }
 
   /**
-   * 调用清洗 API。
+   * 提交清洗任务并等待结束事件。
    * @param {boolean} dryRun
    * @returns {Promise<void>}
    */
@@ -94,13 +80,38 @@
       sample_limit: 60,
     };
     document.getElementById('clean-summary').textContent = dryRun ? '预览中…' : '写入中…';
-    var data = await api('/api/tags/clean', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
-    showCleanResult(data);
-    toast((dryRun ? '预览完成' : '写入完成') + ' · 已变更 ' + data.changed);
+    document.getElementById('btn-clean-preview').disabled = true;
+    document.getElementById('btn-clean-apply').disabled = true;
+    try {
+      var submitted = await API.request(API.apiPath('/tags/clean'), {
+        method: 'POST',
+        body: JSON.stringify(body),
+      });
+      var data = await new Promise(function (resolve, reject) {
+        API.watchJob(submitted.job_id, function (s) {
+          if (s.status === 'queued') {
+            document.getElementById('clean-summary').textContent = '等待执行…';
+            return;
+          }
+          if (s.status === 'running') {
+            document.getElementById('clean-summary').textContent = s.message || (dryRun ? '预览中…' : '写入中…');
+            return;
+          }
+          if (s.status === 'done') {
+            resolve(s.result || {});
+            return;
+          }
+          if (s.status === 'error' || s.status === 'cancelled') {
+            reject(new Error(s.message || s.status));
+          }
+        });
+      });
+      showCleanResult(data);
+      toast((dryRun ? '预览完成' : '写入完成') + ' · 已变更 ' + data.changed);
+    } finally {
+      document.getElementById('btn-clean-preview').disabled = false;
+      document.getElementById('btn-clean-apply').disabled = false;
+    }
   }
 
   document.getElementById('btn-clean-preview').addEventListener('click', function () {

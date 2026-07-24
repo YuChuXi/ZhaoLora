@@ -1,13 +1,11 @@
-"""WD14 批量打标 API。"""
+"""WD14 批量打标 API（数据集作用域）。"""
 
 from __future__ import annotations
-
-import threading
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from services.dataset_layout import DatasetLayout
+from routes.deps import get_runtime, jobs
 from services.wd14_batch import (
     DEFAULT_THRESHOLD,
     TaggingProgress,
@@ -17,21 +15,7 @@ from services.wd14_batch import (
     run_batch,
 )
 
-router = APIRouter(prefix="/api/tagging", tags=["tagging"])
-
-_JOB_LOCK = threading.Lock()
-
-
-def _layout(request: Request) -> DatasetLayout:
-    return request.app.state.layout
-
-
-def _progress(request: Request) -> TaggingProgress:
-    prog = getattr(request.app.state, "tagging_progress", None)
-    if prog is None:
-        prog = TaggingProgress()
-        request.app.state.tagging_progress = prog
-    return prog
+router = APIRouter(prefix="/tagging", tags=["tagging"])
 
 
 class StartBody(BaseModel):
@@ -43,7 +27,8 @@ class StartBody(BaseModel):
 
 @router.get("/dirs")
 def tagging_dirs(request: Request):
-    root = _layout(request).root
+    rt = get_runtime(request)
+    root = rt.root
     ok, model_path = model_ready()
     return {
         "root": str(root),
@@ -54,14 +39,16 @@ def tagging_dirs(request: Request):
     }
 
 
-@router.get("/status")
-def tagging_status(request: Request):
-    return _progress(request).snapshot()
-
-
 @router.post("/start")
-def tagging_start(request: Request, body: StartBody):
-    root = _layout(request).root
+async def tagging_start(request: Request, body: StartBody):
+    """
+    提交打标长任务。
+
+    返回 job_id；进度见 GET /api/jobs/{id}/events。
+    引用：tagging.js。
+    """
+    rt = get_runtime(request)
+    root = rt.root
     ok, msg = model_ready()
     if not ok:
         raise HTTPException(400, msg)
@@ -70,44 +57,33 @@ def tagging_start(request: Request, body: StartBody):
     if not selected:
         raise HTTPException(400, "请选择目录")
 
-    with _JOB_LOCK:
-        prog = _progress(request)
-        if prog.status == "running":
-            raise HTTPException(409, "已有任务在运行")
-        prog = TaggingProgress()
-        request.app.state.tagging_progress = prog
+    prog = TaggingProgress()
 
-        def worker():
-            try:
-                run_batch(
-                    selected,
-                    threshold=body.threshold,
-                    disable_orig_tags=body.disable_orig_tags,
-                    force=body.force,
-                    progress=prog,
-                )
-            except Exception as e:
-                prog.status = "error"
-                prog.phase = "done"
-                prog.message = str(e)
-                prog.log(f"任务异常: {e}")
+    def run(emit) -> None:
+        def on_update() -> None:
+            emit(prog.snapshot())
 
-        threading.Thread(target=worker, daemon=True).start()
+        run_batch(
+            selected,
+            threshold=body.threshold,
+            disable_orig_tags=body.disable_orig_tags,
+            force=body.force,
+            progress=prog,
+            on_update=on_update,
+        )
+        on_update()
 
+    job_id = jobs(request).submit(
+        kind="tagging",
+        dataset=rt.name,
+        run=run,
+        cancel_fn=lambda: setattr(prog, "cancel_requested", True),
+    )
     return {
         "ok": True,
+        "job_id": job_id,
         "dirs": [p.name if p != root else "." for p in selected],
         "threshold": body.threshold,
         "disable_orig_tags": body.disable_orig_tags,
         "force": body.force,
-        "status": prog.snapshot(),
     }
-
-
-@router.post("/cancel")
-def tagging_cancel(request: Request):
-    prog = _progress(request)
-    if prog.status != "running":
-        raise HTTPException(400, "当前无运行中的任务")
-    prog.cancel_requested = True
-    return {"ok": True, "status": prog.snapshot()}
