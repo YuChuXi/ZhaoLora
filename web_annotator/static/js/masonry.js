@@ -56,8 +56,11 @@ var Masonry = (function() {
     }
 
     var gap = 8, pad = 8;
-    var cw = Math.max(100, (_container.clientWidth - pad * 2 - gap * (_columns - 1)) / _columns);
-    var heights = new Array(_columns).fill(0);
+    var cols = Math.max(1, _columns);
+    var avail = Math.max(0, _container.clientWidth - pad * 2);
+    var cw = (avail - gap * (cols - 1)) / cols;
+    if (!(cw > 0)) cw = 1;
+    var heights = new Array(cols).fill(0);
 
     for (var i = 0; i < images.length; i++) {
       var img = images[i];
@@ -65,7 +68,7 @@ var Masonry = (function() {
       var ih = cw * (img.height || 1) / (img.width || 1) + 22; // 22px for info bar
       var col = _shortestCol(heights);
       card.style.position = 'absolute';
-      card.style.left = (col * (cw + gap)) + 'px';
+      card.style.left = (pad + col * (cw + gap)) + 'px';
       card.style.top = heights[col] + 'px';
       card.style.width = cw + 'px';
       heights[col] += ih + gap;

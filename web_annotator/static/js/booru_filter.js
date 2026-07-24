@@ -30,6 +30,7 @@ var BooruFilter = (function () {
   var _minY = 0;
   var _cw = 0;
   var _gap = 8;
+  var _pad = 8;
   var _pendingScrollY = null;
   var _scrollSaveTimer = null;
   var _scrollRaf = null;
@@ -175,8 +176,8 @@ var BooruFilter = (function () {
     if (!btn) return;
     var ex = getExtra();
     btn.classList.toggle('has-extra', !!ex);
-    btn.textContent = ex ? '筛选·' : '筛选';
-    btn.title = ex || '评分 / 分辨率 / 分数等';
+    btn.textContent = ex ? '条件·' : '条件';
+    btn.title = ex || '评级、分数、分辨率等';
   }
 
   function parseExtra(raw) {
@@ -460,7 +461,7 @@ var BooruFilter = (function () {
     var trashedStat = document.getElementById('stat-trashed-wrap');
     if (trashedStat) {
       var label = trashedStat.querySelector('.stat-label');
-      if (label) label.textContent = isRemote() ? '已下' : '回收站';
+      if (label) label.textContent = isRemote() ? '已下载' : '回收站';
     }
   }
 
@@ -687,7 +688,7 @@ var BooruFilter = (function () {
     }
     card.dataset.worldY = String(y);
     card.style.position = 'absolute';
-    card.style.left = (c * (_cw + _gap)) + 'px';
+    card.style.left = (_pad + c * (_cw + _gap)) + 'px';
     card.style.top = (y - _minY) + 'px';
     card.style.width = _cw + 'px';
   }
@@ -755,10 +756,12 @@ var BooruFilter = (function () {
       return;
     }
 
-    var pad = 8;
     var cols = resolveCols();
     _gap = 8;
-    _cw = Math.max(100, (container.clientWidth - pad * 2 - _gap * (cols - 1)) / cols);
+    _pad = 8;
+    var avail = Math.max(0, container.clientWidth - _pad * 2);
+    _cw = (avail - _gap * (cols - 1)) / cols;
+    if (!(_cw > 0)) _cw = 1;
 
     stopLazy();
     container.innerHTML = '';

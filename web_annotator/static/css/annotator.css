@@ -235,6 +235,7 @@ body {
 .masonry {
   padding: 8px;
   position: relative;
+  overflow-x: hidden;
 }
 
 /* ---- card ---- */

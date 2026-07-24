@@ -158,7 +158,7 @@
         <option value="id_asc">ID 旧→新</option>
       </select>
     </label>
-    <button type="button" class="btn" id="btn-booru-extra" title="评分 / 分辨率 / 分数等">筛选</button>
+    <button type="button" class="btn" id="btn-booru-extra" title="评级、分数、分辨率等">条件</button>
     <input type="hidden" id="booru-extra" value="">
     <label style="font-size:12px;color:var(--text-dim);display:flex;align-items:center;gap:4px;" title="当前页；两侧可加载上/下一页">
       页
@@ -200,7 +200,7 @@
   </div>
 
   <label style="font-size:12px;color:var(--text-dim);display:flex;align-items:center;gap:4px;">
-    列数 <input type="range" id="cols-slider" min="0" max="8" value="0" step="1" style="width:60px;">
+    列数 <input type="range" id="cols-slider" min="0" max="16" value="0" step="1" style="width:90px;">
     <span id="cols-label">自动</span>
   </label>
 </div>
@@ -226,14 +226,14 @@
 
 <div class="booru-extra-dlg" id="booru-extra-dlg" aria-hidden="true">
   <div class="booru-extra-panel" role="dialog" aria-labelledby="booru-extra-title">
-    <h3 id="booru-extra-title">筛选条件</h3>
+    <h3 id="booru-extra-title">附加条件</h3>
     <div class="booru-extra-row">
-      <span class="label">分级</span>
-      <button type="button" class="booru-rate-chip on" data-rate="">不限</button>
-      <button type="button" class="booru-rate-chip" data-rate="g">G</button>
-      <button type="button" class="booru-rate-chip" data-rate="s">S</button>
-      <button type="button" class="booru-rate-chip" data-rate="q">Q</button>
-      <button type="button" class="booru-rate-chip" data-rate="e">E</button>
+      <span class="label">评级</span>
+      <button type="button" class="booru-rate-chip on" data-rate="" title="不限制评级">不限</button>
+      <button type="button" class="booru-rate-chip" data-rate="g" title="General 全年龄">G</button>
+      <button type="button" class="booru-rate-chip" data-rate="s" title="Sensitive 敏感">S</button>
+      <button type="button" class="booru-rate-chip" data-rate="q" title="Questionable 可疑">Q</button>
+      <button type="button" class="booru-rate-chip" data-rate="e" title="Explicit 露骨">E</button>
     </div>
     <div class="booru-extra-row">
       <span class="label">分数</span>
@@ -249,13 +249,13 @@
       <input type="text" id="booru-ex-user" placeholder="上传者" spellcheck="false">
     </div>
     <div class="booru-extra-row">
-      <span class="label">其它</span>
-      <input type="text" id="booru-ex-more" placeholder="自由元标签" spellcheck="false">
+      <span class="label">附加</span>
+      <input type="text" id="booru-ex-more" placeholder="其它元标签，空格分隔" spellcheck="false">
     </div>
     <div class="booru-extra-actions">
       <button type="button" class="btn" id="booru-extra-clear">清空</button>
       <button type="button" class="btn" id="booru-extra-cancel">取消</button>
-      <button type="button" class="btn green" id="booru-extra-apply">应用</button>
+      <button type="button" class="btn green" id="booru-extra-apply">确定</button>
     </div>
   </div>
 </div>
