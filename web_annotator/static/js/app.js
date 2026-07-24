@@ -80,6 +80,53 @@
 
   function init() {
     Masonry.init('masonry');
+
+    var colsSlider = document.getElementById('cols-slider');
+    var colsLabel = document.getElementById('cols-label');
+    var COLS_KEY = 'zhao_filter_cols';
+    var _manualCols = 0;
+
+    function _autoColumns() {
+      var w = window.innerWidth;
+      var c = w >= 1600 ? 6 : w >= 1280 ? 5 : w >= 960 ? 4 : w >= 640 ? 3 : 2;
+      if (typeof BooruFilter !== 'undefined' && BooruFilter.isRemote()) BooruFilter.render();
+      else Masonry.setColumns(c);
+    }
+
+    function applyCols(v) {
+      _manualCols = v;
+      if (colsSlider) colsSlider.value = String(v);
+      if (v === 0) {
+        if (colsLabel) colsLabel.textContent = '自动';
+        _autoColumns();
+      } else {
+        if (colsLabel) colsLabel.textContent = String(v);
+        if (typeof BooruFilter !== 'undefined' && BooruFilter.isRemote()) BooruFilter.render();
+        else if (typeof Masonry !== 'undefined') Masonry.setColumns(v);
+      }
+    }
+
+    var savedCols = 0;
+    try { savedCols = parseInt(localStorage.getItem(COLS_KEY), 10); } catch (e) { savedCols = 0; }
+    if (!(savedCols >= 0 && savedCols <= 16)) savedCols = 0;
+    if (colsSlider) colsSlider.value = String(savedCols);
+    _manualCols = savedCols;
+    if (colsLabel) colsLabel.textContent = savedCols === 0 ? '自动' : String(savedCols);
+    if (savedCols > 0) Masonry.setColumns(savedCols);
+    else _autoColumns();
+
+    if (colsSlider) {
+      colsSlider.addEventListener('input', function() {
+        var v = parseInt(this.value, 10);
+        if (isNaN(v) || v < 0) v = 0;
+        try { localStorage.setItem(COLS_KEY, String(v)); } catch (e) {}
+        applyCols(v);
+      });
+    }
+    window.addEventListener('resize', function() {
+      if (_manualCols === 0) _autoColumns();
+    });
+
     if (typeof BooruFilter !== 'undefined') BooruFilter.init();
 
     Store.onChange(function(st) {
@@ -121,32 +168,6 @@
         refreshView();
       }).catch(function (e) { toast('加载失败: ' + e.message); });
     });
-
-    var colsSlider = document.getElementById('cols-slider');
-    var colsLabel = document.getElementById('cols-label');
-    var _manualCols = 0;
-    colsSlider.addEventListener('input', function() {
-      var v = parseInt(this.value);
-      _manualCols = v;
-      if (v === 0) {
-        colsLabel.textContent = '自动';
-        _autoColumns();
-      } else {
-        colsLabel.textContent = v;
-        if (typeof BooruFilter !== 'undefined' && BooruFilter.isRemote()) BooruFilter.render();
-        else Masonry.setColumns(v);
-      }
-    });
-    window.addEventListener('resize', function() {
-      if (_manualCols === 0) _autoColumns();
-    });
-    function _autoColumns() {
-      var w = window.innerWidth;
-      var c = w >= 1600 ? 6 : w >= 1280 ? 5 : w >= 960 ? 4 : w >= 640 ? 3 : 2;
-      if (typeof BooruFilter !== 'undefined' && BooruFilter.isRemote()) BooruFilter.render();
-      else Masonry.setColumns(c);
-    }
-    _autoColumns();
 
     document.addEventListener('keydown', onKeyDown);
 

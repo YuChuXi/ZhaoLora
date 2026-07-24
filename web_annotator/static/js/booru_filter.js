@@ -9,19 +9,16 @@ var BooruFilter = (function () {
   var PROXY_KEY = 'zhao_booru_proxy_media';
 
   var _posts = [];
-  var _page = 1;       // 最近一次请求的页（与输入框同步）
-  var _pageLo = 1;     // 已加载最小页
-  var _pageHi = 1;     // 已加载最大页
-  var _tags = '';
-  var _extra = '';
-  var _order = '';
+  var _page = 1;
+  var _pageLo = 1;
+  var _pageHi = 1;
   var _source = 'gelbooru';
   var _loading = false;
-  var _hasMore = false; // 还有更大页
-  var _hasPrev = false; // 还有更小页
-  var _dupSkip = 0; // 整页重复时自动翻页次数
+  var _hasMore = false;
+  var _hasPrev = false;
+  var _dupSkip = 0;
   var _selected = {};
-  var _status = {}; // key → idle|downloading|done|error
+  var _status = {};
   var _io = null;
   var _pageIo = null;
   var _toastTimer = null;
@@ -34,6 +31,7 @@ var BooruFilter = (function () {
   var _pendingScrollY = null;
   var _scrollSaveTimer = null;
   var _scrollRaf = null;
+  var _EX_KEYS = ['score', 'width', 'height', 'id'];
 
   function toast(msg) {
     var el = document.getElementById('toast');
@@ -160,37 +158,32 @@ var BooruFilter = (function () {
     _minY = 0;
   }
 
-  function getExtra() {
-    var el = document.getElementById('booru-extra');
-    return el ? el.value.trim() : '';
-  }
-
-  function setExtra(v) {
-    var el = document.getElementById('booru-extra');
-    if (el) el.value = v || '';
-    syncExtraBtn();
-  }
-
   function syncExtraBtn() {
     var btn = document.getElementById('btn-booru-extra');
-    if (!btn) return;
-    var ex = getExtra();
+    var el = document.getElementById('booru-extra');
+    if (!btn || !el) return;
+    var ex = el.value.trim();
     btn.classList.toggle('has-extra', !!ex);
     btn.textContent = ex ? '条件·' : '条件';
     btn.title = ex || '评级、分数、分辨率等';
   }
 
   function parseExtra(raw) {
-    var out = { rating: '', score: '', width: '', height: '', user: '', more: [] };
+    var out = { rating: '', user: '', more: [] };
+    for (var i = 0; i < _EX_KEYS.length; i++) {
+      out[_EX_KEYS[i] + 'Lo'] = '';
+      out[_EX_KEYS[i] + 'Hi'] = '';
+    }
     var tokens = String(raw || '').split(/\s+/).filter(Boolean);
-    for (var i = 0; i < tokens.length; i++) {
-      var t = tokens[i];
-      var m;
+    for (var j = 0; j < tokens.length; j++) {
+      var t = tokens[j], m;
       if ((m = /^rating:([gsqe])$/i.exec(t))) out.rating = m[1].toLowerCase();
-      else if ((m = /^score:>=?(\d+)$/i.exec(t))) out.score = m[1];
-      else if ((m = /^width:>=?(\d+)$/i.exec(t))) out.width = m[1];
-      else if ((m = /^height:>=?(\d+)$/i.exec(t))) out.height = m[1];
-      else if ((m = /^user:(.+)$/i.exec(t))) out.user = m[1];
+      else if ((m = /^(score|width|height|id):(>=|>|<=|<)?(-?\d+)$/i.exec(t))) {
+        var k = m[1].toLowerCase(), op = m[2] || '=', v = m[3];
+        if (op === '<=' || op === '<') out[k + 'Hi'] = v;
+        else if (op === '=') { out[k + 'Lo'] = v; out[k + 'Hi'] = v; }
+        else out[k + 'Lo'] = v;
+      } else if ((m = /^user:(.+)$/i.exec(t))) out.user = m[1];
       else out.more.push(t);
     }
     return out;
@@ -199,85 +192,71 @@ var BooruFilter = (function () {
   function buildExtra(f) {
     var parts = [];
     if (f.rating) parts.push('rating:' + f.rating);
-    if (f.score) parts.push('score:>=' + f.score);
-    if (f.width) parts.push('width:>=' + f.width);
-    if (f.height) parts.push('height:>=' + f.height);
+    for (var i = 0; i < _EX_KEYS.length; i++) {
+      var k = _EX_KEYS[i], lo = f[k + 'Lo'] || '', hi = f[k + 'Hi'] || '';
+      if (lo && hi && lo === hi) parts.push(k + ':' + lo);
+      else {
+        if (lo) parts.push(k + ':>=' + lo);
+        if (hi) parts.push(k + ':<=' + hi);
+      }
+    }
     if (f.user) parts.push('user:' + f.user);
     if (f.more) parts.push(f.more);
     return parts.join(' ').trim();
   }
 
+  function readExtraDlg() {
+    var f = parseExtra('');
+    var on = document.querySelector('#booru-extra-dlg .booru-rate-chip.on');
+    f.rating = on ? (on.dataset.rate || '') : '';
+    f.more = '';
+    var fields = document.querySelectorAll('#booru-extra-dlg [data-ex]');
+    for (var i = 0; i < fields.length; i++) {
+      var el = fields[i], key = el.dataset.ex, raw = el.value.trim();
+      if (key === 'user' || key === 'more') { f[key] = raw; continue; }
+      if (!raw) { f[key] = ''; continue; }
+      var n = parseInt(raw, 10);
+      f[key] = isNaN(n) ? '' : String(n);
+    }
+    return f;
+  }
+
   function fillExtraDlg() {
-    var f = parseExtra(getExtra());
+    var f = parseExtra((document.getElementById('booru-extra') || {}).value || '');
     var chips = document.querySelectorAll('#booru-extra-dlg .booru-rate-chip');
     for (var i = 0; i < chips.length; i++) {
       chips[i].classList.toggle('on', (chips[i].dataset.rate || '') === f.rating);
     }
-    var score = document.getElementById('booru-ex-score');
-    var w = document.getElementById('booru-ex-w');
-    var h = document.getElementById('booru-ex-h');
-    var user = document.getElementById('booru-ex-user');
-    var more = document.getElementById('booru-ex-more');
-    if (score) score.value = f.score;
-    if (w) w.value = f.width;
-    if (h) h.value = f.height;
-    if (user) user.value = f.user;
-    if (more) more.value = f.more.join(' ');
-  }
-
-  function readExtraDlg() {
-    var rating = '';
-    var on = document.querySelector('#booru-extra-dlg .booru-rate-chip.on');
-    if (on) rating = on.dataset.rate || '';
-    function num(id) {
-      var el = document.getElementById(id);
-      var n = el ? parseInt(el.value, 10) : NaN;
-      return n > 0 ? String(n) : '';
+    var fields = document.querySelectorAll('#booru-extra-dlg [data-ex]');
+    for (var j = 0; j < fields.length; j++) {
+      var el = fields[j], key = el.dataset.ex;
+      el.value = key === 'more' ? (f.more || []).join(' ') : (f[key] || '');
     }
-    var user = document.getElementById('booru-ex-user');
-    var more = document.getElementById('booru-ex-more');
-    return {
-      rating: rating,
-      score: num('booru-ex-score'),
-      width: num('booru-ex-w'),
-      height: num('booru-ex-h'),
-      user: user ? user.value.trim() : '',
-      more: more ? more.value.trim() : '',
-    };
   }
 
-  function openExtraDlg() {
-    fillExtraDlg();
+  function setExtraDlg(show) {
+    if (show) fillExtraDlg();
     var dlg = document.getElementById('booru-extra-dlg');
-    if (dlg) {
-      dlg.classList.add('show');
-      dlg.setAttribute('aria-hidden', 'false');
-    }
-  }
-
-  function closeExtraDlg() {
-    var dlg = document.getElementById('booru-extra-dlg');
-    if (dlg) {
-      dlg.classList.remove('show');
-      dlg.setAttribute('aria-hidden', 'true');
-    }
-  }
-
-  function applyExtraDlg() {
-    setExtra(buildExtra(readExtraDlg()));
-    closeExtraDlg();
-    saveUiState();
+    if (!dlg) return;
+    dlg.classList.toggle('show', !!show);
+    dlg.setAttribute('aria-hidden', show ? 'false' : 'true');
   }
 
   function clearExtraDlg() {
     var chips = document.querySelectorAll('#booru-extra-dlg .booru-rate-chip');
     for (var i = 0; i < chips.length; i++) {
-      chips[i].classList.toggle('on', !(chips[i].dataset.rate));
+      chips[i].classList.toggle('on', !chips[i].dataset.rate);
     }
-    ['booru-ex-score', 'booru-ex-w', 'booru-ex-h', 'booru-ex-user', 'booru-ex-more'].forEach(function (id) {
-      var el = document.getElementById(id);
-      if (el) el.value = '';
-    });
+    var fields = document.querySelectorAll('#booru-extra-dlg [data-ex]');
+    for (var j = 0; j < fields.length; j++) fields[j].value = '';
+  }
+
+  function applyExtraDlg() {
+    var el = document.getElementById('booru-extra');
+    if (el) el.value = buildExtra(readExtraDlg());
+    syncExtraBtn();
+    setExtraDlg(false);
+    saveUiState();
   }
 
   function updatePageStatus() {
@@ -298,7 +277,7 @@ var BooruFilter = (function () {
     }
   }
 
-  /** 按视口中靠上的卡片刷新当前页 */
+  /** 视口靠上卡片 → 当前页 */
   function syncPageFromScroll() {
     if (!isRemote() || !_posts.length) return;
     var start = document.getElementById('booru-start-page');
@@ -900,9 +879,6 @@ var BooruFilter = (function () {
     }
     var fetchPage = isUp ? _pageLo : _pageHi;
     _page = fetchPage;
-    _tags = tags;
-    _extra = extra;
-    _order = order;
     saveUiState();
     _loading = true;
     updatePageStatus();
@@ -1116,29 +1092,23 @@ var BooruFilter = (function () {
       tagsInput.addEventListener('change', saveUiState);
     }
     var extraBtn = document.getElementById('btn-booru-extra');
-    if (extraBtn) extraBtn.addEventListener('click', openExtraDlg);
+    if (extraBtn) extraBtn.addEventListener('click', function () { setExtraDlg(true); });
     var extraDlg = document.getElementById('booru-extra-dlg');
     if (extraDlg) {
       extraDlg.addEventListener('click', function (e) {
-        if (e.target === extraDlg) closeExtraDlg();
-      });
-    }
-    var chips = document.querySelectorAll('#booru-extra-dlg .booru-rate-chip');
-    for (var ci = 0; ci < chips.length; ci++) {
-      chips[ci].addEventListener('click', function () {
-        var all = document.querySelectorAll('#booru-extra-dlg .booru-rate-chip');
-        for (var j = 0; j < all.length; j++) all[j].classList.remove('on');
-        this.classList.add('on');
-      });
-    }
-    var exClear = document.getElementById('booru-extra-clear');
-    if (exClear) exClear.addEventListener('click', clearExtraDlg);
-    var exCancel = document.getElementById('booru-extra-cancel');
-    if (exCancel) exCancel.addEventListener('click', closeExtraDlg);
-    var exApply = document.getElementById('booru-extra-apply');
-    if (exApply) {
-      exApply.addEventListener('click', function () {
-        applyExtraDlg();
+        if (e.target === extraDlg) { setExtraDlg(false); return; }
+        var chip = e.target.closest('.booru-rate-chip');
+        if (chip) {
+          var all = extraDlg.querySelectorAll('.booru-rate-chip');
+          for (var j = 0; j < all.length; j++) all[j].classList.remove('on');
+          chip.classList.add('on');
+          return;
+        }
+        var act = e.target.closest('[data-ex-act]');
+        if (!act) return;
+        if (act.dataset.exAct === 'clear') clearExtraDlg();
+        else if (act.dataset.exAct === 'cancel') setExtraDlg(false);
+        else if (act.dataset.exAct === 'apply') applyExtraDlg();
       });
     }
     syncExtraBtn();
@@ -1169,7 +1139,7 @@ var BooruFilter = (function () {
       if (e.key !== 'Escape') return;
       var extraDlg = document.getElementById('booru-extra-dlg');
       if (extraDlg && extraDlg.classList.contains('show')) {
-        closeExtraDlg();
+        setExtraDlg(false);
         return;
       }
       if (document.getElementById('booru-preview') &&

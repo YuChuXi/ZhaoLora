@@ -229,33 +229,48 @@
     <h3 id="booru-extra-title">附加条件</h3>
     <div class="booru-extra-row">
       <span class="label">评级</span>
-      <button type="button" class="booru-rate-chip on" data-rate="" title="不限制评级">不限</button>
-      <button type="button" class="booru-rate-chip" data-rate="g" title="General 全年龄">G</button>
-      <button type="button" class="booru-rate-chip" data-rate="s" title="Sensitive 敏感">S</button>
-      <button type="button" class="booru-rate-chip" data-rate="q" title="Questionable 可疑">Q</button>
-      <button type="button" class="booru-rate-chip" data-rate="e" title="Explicit 露骨">E</button>
+      <button type="button" class="booru-rate-chip on" data-rate="">不限</button>
+      <button type="button" class="booru-rate-chip" data-rate="g" title="General">全年龄</button>
+      <button type="button" class="booru-rate-chip" data-rate="s" title="Sensitive">敏感</button>
+      <button type="button" class="booru-rate-chip" data-rate="q" title="Questionable">可疑</button>
+      <button type="button" class="booru-rate-chip" data-rate="e" title="Explicit">露骨</button>
     </div>
     <div class="booru-extra-row">
       <span class="label">分数</span>
-      ≥ <input type="number" id="booru-ex-score" min="0" step="1" placeholder="不限">
+      <input type="number" data-ex="scoreLo" step="1" placeholder="下限">
+      <span>≤ 分数 ≤</span>
+      <input type="number" data-ex="scoreHi" step="1" placeholder="上限">
     </div>
     <div class="booru-extra-row">
-      <span class="label">尺寸</span>
-      宽 ≥ <input type="number" id="booru-ex-w" min="0" step="1" placeholder="不限">
-      高 ≥ <input type="number" id="booru-ex-h" min="0" step="1" placeholder="不限">
+      <span class="label">宽度</span>
+      <input type="number" data-ex="widthLo" min="0" step="1" placeholder="下限">
+      <span>≤ 宽 ≤</span>
+      <input type="number" data-ex="widthHi" min="0" step="1" placeholder="上限">
+    </div>
+    <div class="booru-extra-row">
+      <span class="label">高度</span>
+      <input type="number" data-ex="heightLo" min="0" step="1" placeholder="下限">
+      <span>≤ 高 ≤</span>
+      <input type="number" data-ex="heightHi" min="0" step="1" placeholder="上限">
+    </div>
+    <div class="booru-extra-row">
+      <span class="label">ID</span>
+      <input type="number" data-ex="idLo" min="1" step="1" placeholder="下限">
+      <span>≤ ID ≤</span>
+      <input type="number" data-ex="idHi" min="1" step="1" placeholder="上限">
     </div>
     <div class="booru-extra-row">
       <span class="label">用户</span>
-      <input type="text" id="booru-ex-user" placeholder="上传者" spellcheck="false">
+      <input type="text" data-ex="user" placeholder="上传者" spellcheck="false">
     </div>
     <div class="booru-extra-row">
       <span class="label">附加</span>
-      <input type="text" id="booru-ex-more" placeholder="其它元标签，空格分隔" spellcheck="false">
+      <input type="text" data-ex="more" placeholder="其它元标签，空格分隔" spellcheck="false">
     </div>
     <div class="booru-extra-actions">
-      <button type="button" class="btn" id="booru-extra-clear">清空</button>
-      <button type="button" class="btn" id="booru-extra-cancel">取消</button>
-      <button type="button" class="btn green" id="booru-extra-apply">确定</button>
+      <button type="button" class="btn" data-ex-act="clear">清空</button>
+      <button type="button" class="btn" data-ex-act="cancel">取消</button>
+      <button type="button" class="btn green" data-ex-act="apply">确定</button>
     </div>
   </div>
 </div>
