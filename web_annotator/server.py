@@ -60,16 +60,6 @@ class _DevStaticFiles(StaticFiles):
 
 app = FastAPI(title="Image Annotator", version="3.0.0")
 
-_PAGE_SLUGS = (
-    "filter",
-    "aesthetic",
-    "dedupe",
-    "crop",
-    "paint",
-    "tags",
-    "tag-clean",
-    "ready",
-)
 _PAGE_TEMPLATES = {
     "filter": "index.html",
     "aesthetic": "aesthetic.html",
@@ -180,21 +170,6 @@ def dataset_root_redirect(dataset: str):
     return RedirectResponse(url=f"/d/{dataset}/filter", status_code=302)
 
 
-@app.get("/d/{dataset}/{page}")
-def dataset_page(dataset: str, page: str):
-    """
-    业务页面。路径中的 dataset 由中间件绑定。
-
-    引用：nav.js 功能标签。
-    """
-    if page == "tagging":
-        return RedirectResponse(url=f"/d/{dataset}/tags", status_code=302)
-    tpl = _PAGE_TEMPLATES.get(page)
-    if tpl is None:
-        raise HTTPException(404, f"未知页面: {page}")
-    return _read_template(tpl)
-
-
 @app.get("/d/{dataset}/thumb/{filename}")
 def dataset_thumb(request: Request, dataset: str, filename: str):
     """
@@ -212,6 +187,20 @@ def dataset_thumb(request: Request, dataset: str, filename: str):
         raise HTTPException(404, "缩略图不存在")
     return FileResponse(path, media_type="image/avif", headers={"Cache-Control": "no-store"})
 
+
+@app.get("/d/{dataset}/{page}")
+def dataset_page(dataset: str, page: str):
+    """
+    业务页面。路径中的 dataset 由中间件绑定。
+
+    引用：nav.js 功能标签。
+    """
+    if page == "tagging":
+        return RedirectResponse(url=f"/d/{dataset}/tags", status_code=302)
+    tpl = _PAGE_TEMPLATES.get(page)
+    if tpl is None:
+        raise HTTPException(404, f"未知页面: {page}")
+    return _read_template(tpl)
 
 def _build_runtime(data_dir: Path, thumbnail_size: int, mask_dir_arg: str) -> DatasetRuntime:
     layout = resolve_dataset_layout(data_dir)

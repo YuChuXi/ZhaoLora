@@ -251,7 +251,7 @@ var DirPicker = (function () {
    * @returns {Promise<object>}
    */
   async function load(apiUrl) {
-    var res = await fetch(apiUrl || '/api/dirs');
+    var res = await fetch(apiUrl || (typeof API !== 'undefined' ? API.apiPath('/dirs') : '/api/dirs'));
     if (!res.ok) throw new Error(await res.text() || res.statusText);
     var data = await res.json();
     fill(data.dirs || []);

@@ -58,7 +58,7 @@
     copyText().catch(function (e) { toast(String(e.message || e)); });
   });
 
-  api('/api/ready/dirs')
+  api(API.apiPath('/ready/dirs'))
     .then(function (data) {
       document.getElementById('root-path').textContent = data.root || '';
       return generate();

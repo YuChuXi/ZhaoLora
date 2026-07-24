@@ -142,7 +142,7 @@
       per_sample: document.getElementById('opt-per-sample').checked,
       min_count: Math.max(1, parseInt(document.getElementById('opt-min').value, 10) || 1),
     };
-    var data = await api('/api/tags/stats', {
+    var data = await api(API.apiPath('/tags/stats'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),

@@ -77,7 +77,7 @@ var BooruFilter = (function () {
   }
 
   function proxyApiUrl(kind, post) {
-    return '/api/booru/' + kind +
+    return API.apiPath('/booru/' + kind) +
       '?source=' + encodeURIComponent(post.source) +
       '&id=' + encodeURIComponent(post.id);
   }
@@ -808,7 +808,7 @@ var BooruFilter = (function () {
   async function downloadOne(post) {
     _status[post.key] = 'downloading';
     updateCard(post.key);
-    var res = await fetch('/api/booru/download', {
+    var res = await fetch(API.apiPath('/booru/download'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -833,7 +833,7 @@ var BooruFilter = (function () {
   }
 
   async function undownloadOne(post) {
-    var res = await fetch('/api/booru/undownload', {
+    var res = await fetch(API.apiPath('/booru/undownload'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -924,7 +924,7 @@ var BooruFilter = (function () {
     var autoNext = false;
     var autoPrev = false;
     try {
-      var res = await fetch('/api/booru/search', {
+      var res = await fetch(API.apiPath('/booru/search'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
