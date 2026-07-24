@@ -1,11 +1,11 @@
-"""数据集列表与长任务 SSE / 取消。"""
+"""任务列表别名与长任务 SSE / 取消。"""
 
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
-from routes.deps import jobs, registry
+from routes.deps import jobs
 
 datasets_router = APIRouter(tags=["datasets"])
 jobs_router = APIRouter(prefix="/api/jobs", tags=["jobs"])
@@ -14,17 +14,16 @@ jobs_router = APIRouter(prefix="/api/jobs", tags=["jobs"])
 @datasets_router.get("/api/datasets")
 def list_datasets(request: Request):
     """
-    列出已配置数据集。
+    返回清单中未完成的任务名，供业务页路径校验。
 
-    引用：首页、nav.js / api.js 启动校验。
+    引用：nav.js boot。
     """
-    reg = registry(request)
+    store = request.app.state.task_store
     items = []
-    for name in reg.names():
-        rt = reg.get(name)
+    for name in store.active_names():
         items.append({
             "name": name,
-            "root": str(rt.root),
+            "root": str(store.root / name),
         })
     return {"datasets": items}
 

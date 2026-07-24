@@ -2,17 +2,11 @@
 """
 网页图片标注工具。
 
-目录约定（--data-dir = datasets/xxx）:
-  datasets/xxx/
-    main/     # 源图
-    mask/     # alpha mask
-    head/     # 部位裁剪
-    foot/
-    crops/
+--data-dir 指向任务根（如 datasets/）。任务须在界面手动加入清单
+（datasets/.annotator_tasks.json），不会因磁盘子目录自动出现。
 
 用法:
-  python web_annotator/server.py --data-dir datasets/guo582
-  python web_annotator/server.py --data-dir datasets/a --data-dir datasets/b
+  python web_annotator/server.py --data-dir datasets
 """
 
 from __future__ import annotations
@@ -20,7 +14,6 @@ from __future__ import annotations
 import argparse
 import re
 import sys
-import threading
 from pathlib import Path
 
 from fastapi import APIRouter, FastAPI, HTTPException, Request
@@ -40,13 +33,10 @@ from routes.meta import datasets_router, jobs_router
 from routes.ready import router as ready_router
 from routes.tag_stats import router as tag_stats_router
 from routes.tagging import router as tagging_router
-from services.dataset_layout import resolve_dataset_layout
-from services.dataset_runtime import DatasetRegistry, DatasetRuntime
+from routes.tasks import router as tasks_router
+from services.dataset_runtime import DatasetRegistry
 from services.jobs import JobManager
-from services.scanner import scan_images
-from services.state_manager import StateManager
-from services.thumbnailer import Thumbnailer, default_workers
-from services.work_dir import list_work_dirs
+from services.task_store import TaskStore
 
 
 class _DevStaticFiles(StaticFiles):
@@ -58,7 +48,7 @@ class _DevStaticFiles(StaticFiles):
         return resp
 
 
-app = FastAPI(title="Image Annotator", version="3.0.0")
+app = FastAPI(title="Image Annotator", version="3.1.0")
 
 _PAGE_TEMPLATES = {
     "filter": "index.html",
@@ -75,7 +65,7 @@ _DS_PATH_RE = re.compile(r"^/(?:api/)?d/([^/]+)(?:/|$)")
 
 
 def _migrate_meta_to_root(main_dir: Path, root: Path) -> None:
-    """将误放在 main/ 下的元数据迁到数据集根。"""
+    """将误放在 main/ 下的元数据迁到任务目录根。引用：DatasetRegistry.ensure。"""
     import shutil
 
     pairs = [
@@ -121,19 +111,18 @@ def _read_template(name: str) -> HTMLResponse:
 @app.middleware("http")
 async def bind_dataset_middleware(request: Request, call_next):
     """
-    从路径解析数据集名并写入 request.state.runtime。
+    从路径解析任务名；须在清单中，再按需加载运行时。
 
-    匹配 ``/api/d/{name}/...`` 与 ``/d/{name}/...``。
     引用：routes/deps.get_runtime。
     """
     m = _DS_PATH_RE.match(request.url.path)
     if m:
         name = m.group(1)
+        store: TaskStore = request.app.state.task_store
+        if not store.contains(name):
+            return JSONResponse({"detail": f"未知任务: {name}"}, status_code=404)
         reg: DatasetRegistry = request.app.state.datasets
-        rt = reg.get(name)
-        if rt is None:
-            return JSONResponse({"detail": f"未知数据集: {name}"}, status_code=404)
-        request.state.runtime = rt
+        request.state.runtime = reg.ensure(name)
     return await call_next(request)
 
 
@@ -154,6 +143,7 @@ dataset_api.include_router(ready_router)
 dataset_api.include_router(booru_router)
 
 app.include_router(dataset_api)
+app.include_router(tasks_router)
 app.include_router(datasets_router)
 app.include_router(jobs_router)
 app.include_router(docs_router)
@@ -161,7 +151,7 @@ app.include_router(docs_router)
 
 @app.get("/")
 def home_page():
-    """数据集入口页。引用：浏览器打开根路径。"""
+    """任务与文档首页。引用：浏览器打开根路径。"""
     return _read_template("home.html")
 
 
@@ -175,13 +165,14 @@ def dataset_thumb(request: Request, dataset: str, filename: str):
     """
     缩略图文件。
 
-    引用：前端 thumbnailUrl。
+    引用：前端 thumbnailUrl、任务卡片预览。
     """
-    rt = request.app.state.datasets.get(dataset)
-    if rt is None:
-        raise HTTPException(404, f"未知数据集: {dataset}")
+    store: TaskStore = request.app.state.task_store
+    if not store.contains(dataset):
+        raise HTTPException(404, f"未知任务: {dataset}")
     if "/" in filename or "\\" in filename or ".." in filename:
         raise HTTPException(400, "非法文件名")
+    rt = request.app.state.datasets.ensure(dataset)
     path = rt.thumbnailer.thumb_dir / filename
     if not path.is_file():
         raise HTTPException(404, "缩略图不存在")
@@ -191,7 +182,7 @@ def dataset_thumb(request: Request, dataset: str, filename: str):
 @app.get("/d/{dataset}/{page}")
 def dataset_page(dataset: str, page: str):
     """
-    业务页面。路径中的 dataset 由中间件绑定。
+    业务页面。任务名须已在清单中（中间件校验）。
 
     引用：nav.js 功能标签。
     """
@@ -202,63 +193,18 @@ def dataset_page(dataset: str, page: str):
         raise HTTPException(404, f"未知页面: {page}")
     return _read_template(tpl)
 
-def _build_runtime(data_dir: Path, thumbnail_size: int, mask_dir_arg: str) -> DatasetRuntime:
-    layout = resolve_dataset_layout(data_dir)
-    _migrate_meta_to_root(layout.main_dir, layout.root)
-    name = layout.root.name
-    thumbnailer = Thumbnailer(layout.root, size=thumbnail_size, meta_dir=layout.root)
-    state_manager = StateManager(layout.root, meta_dir=layout.root)
-    n_mig = state_manager.migrate_flat_main_keys()
-    if n_mig:
-        print(f"[{name}] 已迁移旧路径键/回收站: {n_mig}")
-    mask_dir = Path(mask_dir_arg).resolve() if mask_dir_arg else layout.mask_dir
-    mask_dir.mkdir(parents=True, exist_ok=True)
-    return DatasetRuntime(
-        name=name,
-        layout=layout,
-        thumbnailer=thumbnailer,
-        state_manager=state_manager,
-        mask_dir=mask_dir,
-    )
-
-
-def _prewarm(rt: DatasetRuntime, images: list[dict]) -> None:
-    from services.color_similarity import ColorIndex
-
-    idx = ColorIndex(rt.thumbnailer.thumb_dir)
-    rt.color_index = idx
-    rels = [img["path"] for img in images]
-    thumbs = {r: rt.thumbnailer.get_path(r) for r in rels}
-    idx.ensure_many(rt.root, rels, thumbs)
-    print(f"[{rt.name}] 色调索引就绪: {len(rels)} 张")
-
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="网页图片标注工具")
     parser.add_argument(
         "--data-dir",
         type=str,
-        action="append",
         required=True,
-        help="数据集根目录 datasets/xxx（可重复传入以挂载多个）",
+        help="任务根目录，例如 datasets/（任务须手动加入清单）",
     )
     parser.add_argument("--host", type=str, default="0.0.0.0", help="监听地址")
     parser.add_argument("--port", type=int, default=8765, help="监听端口")
     parser.add_argument("--thumbnail-size", type=int, default=2560, help="缩略图长边像素")
-    parser.add_argument("--skip-thumbnails", action="store_true", help="跳过缩略图预生成")
-    parser.add_argument(
-        "--mask-dir",
-        type=str,
-        default="",
-        help="Alpha mask 目录（仅当只传入一个 --data-dir 时生效；默认各集 root/mask）",
-    )
-    parser.add_argument(
-        "--default-crop",
-        type=str,
-        default="",
-        metavar="WxH@Z",
-        help="打开每张图时的默认裁切匹配，如 1152x1152@1.0",
-    )
     parser.add_argument(
         "--booru-proxy",
         type=str,
@@ -267,71 +213,28 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    registry = DatasetRegistry()
-    for i, raw in enumerate(args.data_dir):
-        mask_arg = args.mask_dir if (args.mask_dir and len(args.data_dir) == 1) else ""
-        try:
-            rt = _build_runtime(Path(raw), args.thumbnail_size, mask_arg)
-            registry.add(rt)
-        except (FileNotFoundError, ValueError) as e:
-            print(f"错误: {e}")
-            return 1
+    task_root = Path(args.data_dir).resolve()
+    if not task_root.is_dir():
+        print(f"错误: 目录不存在: {task_root}")
+        return 1
 
+    store = TaskStore(task_root)
+    registry = DatasetRegistry(
+        task_root=task_root,
+        thumbnail_size=args.thumbnail_size,
+        _migrate=_migrate_meta_to_root,
+    )
+
+    app.state.task_store = store
     app.state.datasets = registry
     app.state.jobs = JobManager()
     app.state.booru_proxy = (args.booru_proxy or "").strip() or None
-    app.state.crop_default_tw = None
-    app.state.crop_default_th = None
-    app.state.crop_default_zoom = None
     app.state.paint_default_alpha = 255
 
-    if args.default_crop:
-        s = args.default_crop.strip().lower().rstrip("x")
-        m = re.match(r"^(\d+)\s*x\s*(\d+)\s*@\s*([\d.]+)\s*x?$", s)
-        if not m:
-            print(f"错误: 无效 --default-crop 格式: {args.default_crop}")
-            return 1
-        app.state.crop_default_tw = int(m.group(1))
-        app.state.crop_default_th = int(m.group(2))
-        app.state.crop_default_zoom = float(m.group(3))
-
-    for name in registry.names():
-        rt = registry.get(name)
-        images = []
-        for d in list_work_dirs(rt.root):
-            images.extend(scan_images(rt.root / d["name"], path_prefix=d["name"]))
-        state = rt.state_manager.get()
-
-        if not args.skip_thumbnails:
-            missing = [img["path"] for img in images if not rt.thumbnailer.exists(img["path"])]
-            if missing:
-                workers = default_workers()
-                print(f"[{name}] 预生成缩略图: {len(missing)} 张（并行 {workers}）...")
-
-                def _thumb_progress(done: int, total: int, _n=name) -> None:
-                    if done % 50 == 0 or done == total:
-                        print(f"  [{_n}] {done}/{total}")
-
-                rt.thumbnailer.generate_many(
-                    missing, workers=workers, on_progress=_thumb_progress
-                )
-            else:
-                print(f"[{name}] 缩略图已就绪")
-
-        threading.Thread(target=_prewarm, args=(rt, images), daemon=True).start()
-
-        part_names = [p.name for p in rt.layout.list_part_dirs()]
-        print(f"数据集   : {name}")
-        print(f"  根目录 : {rt.root}")
-        print(f"  源图   : {rt.main_dir}")
-        print(f"  Mask   : {rt.mask_dir}")
-        print(f"  部位   : {', '.join(part_names) if part_names else '(无)'}")
-        print(f"  图片   : {len(images)}")
-        print(f"  已选   : {len(state.get('selected', {}))}")
-        print(f"  回收站 : {len(state.get('trashed', {}))}")
-
+    n = len(store.list_entries())
+    print(f"任务根   : {task_root}")
+    print(f"清单任务 : {n}（启动不扫描子目录；请在首页添加）")
     print(f"服务地址 : http://{args.host}:{args.port}")
-    print("  首页选择数据集 → /d/{名称}/筛选|美学|去重|…")
 
     uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
     return 0

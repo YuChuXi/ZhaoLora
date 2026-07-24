@@ -340,6 +340,34 @@ var BooruFilter = (function () {
     if (start) start.value = String(p);
   }
 
+  /**
+   * 滚动到指定页的第一张卡片。引用：app.js 更改列数后恢复页位。
+   * @param {number} page
+   */
+  function scrollToPage(page) {
+    var p = parseInt(page, 10);
+    if (!(p > 0)) return;
+    _page = p;
+    var startEl = document.getElementById('booru-start-page');
+    if (startEl) startEl.value = String(p);
+    var cards = document.querySelectorAll('#masonry .card[data-page="' + p + '"]');
+    if (!cards.length) return;
+    var y = cards[0].getBoundingClientRect().top + window.scrollY - 80;
+    window.scrollTo(0, Math.max(0, y));
+  }
+
+  /**
+   * @returns {number}
+   */
+  function currentPage() {
+    var start = document.getElementById('booru-start-page');
+    if (start) {
+      var v = parseInt(start.value, 10);
+      if (v > 0) return v;
+    }
+    return _page > 0 ? _page : 1;
+  }
+
   function stopPageObserve() {
     if (_pageIo) {
       _pageIo.disconnect();
@@ -437,18 +465,25 @@ var BooruFilter = (function () {
     }
   }
 
+  /**
+   * 同步本地/远程工具栏显隐与统计段标签。
+   * 段位：1 总计 · 2 已选/已保存 · 6 回收站（仅本地）。
+   * 引用：mode 切换、init。
+   */
   function syncToolbar() {
     var remote = isRemote();
     var localBar = document.getElementById('toolbar-local');
     var booruBar = document.getElementById('toolbar-booru');
     if (localBar) localBar.classList.toggle('is-off', remote);
     if (booruBar) booruBar.classList.toggle('is-off', !remote);
-    var selWrap = document.getElementById('stat-selected-wrap');
-    if (selWrap) selWrap.style.display = remote ? 'none' : '';
+    var selLabel = document.getElementById('stat-selected-label');
+    if (selLabel) selLabel.textContent = remote ? '已保存' : '已选';
+    var trashedWrap = document.getElementById('stat-trashed-wrap');
+    if (trashedWrap) trashedWrap.hidden = remote;
     var hint = document.getElementById('filter-hint');
     if (hint) {
       hint.textContent = remote
-        ? '左键选中下载 · 右键大图 · 上滑上一页 · 下滑下一页'
+        ? '左键选中写入目录 · 右键大图 · 上滑上一页 · 下滑下一页'
         : '点击选中 · 右键相似 · Delete 删除';
     }
     if (!remote) {
@@ -457,39 +492,34 @@ var BooruFilter = (function () {
       _hasPrev = false;
       updatePageStatus();
     }
+    updateStats();
   }
 
+  /**
+   * 刷新筛选统计。远程「已保存」= 结果集中已写入工作目录的条目数。
+   * 引用：render、下载/移除完成、syncToolbar。
+   */
   function updateStats() {
     var total = _posts.length;
     var done = 0;
-    Object.keys(_status).forEach(function (k) {
-      if (_status[k] === 'done') done += 1;
+    _posts.forEach(function (p) {
+      if (p.downloaded || _status[p.key] === 'done') done += 1;
     });
     var t = document.getElementById('stat-total');
     var s = document.getElementById('stat-selected');
-    var tr = document.getElementById('stat-trashed');
     if (t) t.textContent = String(total);
-    if (isRemote()) {
-      if (tr) tr.textContent = String(done);
-    } else if (s) {
-      s.textContent = String(Object.keys(_selected).length);
-    }
-    var trashedStat = document.getElementById('stat-trashed-wrap');
-    if (trashedStat) {
-      var label = trashedStat.querySelector('.stat-label');
-      if (label) label.textContent = isRemote() ? '已下载' : '回收站';
-    }
+    if (s) s.textContent = String(isRemote() ? done : Object.keys(_selected).length);
   }
 
   function cardLabel(post) {
     var st = _status[post.key] || '';
-    var stLabel = st === 'downloading' ? '下载中…'
-      : st === 'done' ? '已下载'
+    var stLabel = st === 'downloading' ? '保存中…'
+      : (st === 'done' || post.downloaded) ? '已保存'
       : st === 'error' ? '失败'
-      : '';
+      : '未保存';
     var res = (post.width && post.height) ? (post.width + '×' + post.height + ' ') : '';
     var stem = post.stem || ((post.source === 'danbooru' ? 'd' : 'g') + post.id);
-    return (stLabel ? stLabel + ' · ' : '') + res + stem;
+    return stLabel + ' · ' + res + stem;
   }
 
   function findCard(key) {
@@ -634,7 +664,7 @@ var BooruFilter = (function () {
     img.src = sample;
 
     var res = (post.width && post.height) ? (post.width + '×' + post.height) : '-';
-    var st = _status[post.key] === 'done' || post.downloaded ? '已下载' : '未下载';
+    var st = _status[post.key] === 'done' || post.downloaded ? '已保存' : '未保存';
     meta.innerHTML =
       '<div><b>' + (post.source === 'danbooru' ? 'Danbooru' : 'Gelbooru') + '</b> · ' +
       (post.stem || post.id) + '</div>' +
@@ -643,7 +673,7 @@ var BooruFilter = (function () {
       '<div>状态 <b>' + st + '</b></div>';
 
     if (open) open.href = postPageUrl(post);
-    if (dl) dl.textContent = (post.downloaded || _status[post.key] === 'done') ? '取消下载' : '下载';
+    if (dl) dl.textContent = (post.downloaded || _status[post.key] === 'done') ? '移除' : '下载';
 
     tagsEl.innerHTML = '';
     var tags = parseTags(post.tags);
@@ -856,29 +886,29 @@ var BooruFilter = (function () {
     var isOn = !!_selected[post.key] || post.downloaded || _status[post.key] === 'done';
     if (isOn) {
       if (_status[post.key] === 'downloading') {
-        toast('正在下载，稍后再取消');
+        toast('正在保存，稍后再移除');
         return;
       }
       delete _selected[post.key];
       updateCard(post.key);
       undownloadOne(post).then(function (data) {
-        toast(data.count ? ('已删除 ' + (post.stem || post.id)) : ('目录无文件 ' + (post.stem || post.id)));
+        toast(data.count ? ('已移除 ' + (post.stem || post.id)) : ('目录无文件 ' + (post.stem || post.id)));
       }).catch(function (e) {
           _selected[post.key] = true;
         if (post.downloaded) _status[post.key] = 'done';
         updateCard(post.key);
-        toast('删除失败: ' + (e.message || e));
+        toast('移除失败: ' + (e.message || e));
       });
       return;
     }
     _selected[post.key] = true;
     updateCard(post.key);
     downloadOne(post).then(function (data) {
-      toast(data.skipped ? ('已存在 ' + (data.stem || post.id)) : ('已下载 ' + (data.stem || post.id) + '.png'));
+      toast(data.skipped ? ('已存在 ' + (data.stem || post.id)) : ('已保存 ' + (data.stem || post.id) + '.png'));
     }).catch(function (e) {
       delete _selected[post.key];
       updateCard(post.key);
-      toast('下载失败: ' + (e.message || e));
+      toast('保存失败: ' + (e.message || e));
     });
   }
 
@@ -1203,5 +1233,7 @@ var BooruFilter = (function () {
     isRemote: isRemote,
     render: render,
     mode: mode,
+    currentPage: currentPage,
+    scrollToPage: scrollToPage,
   };
 })();

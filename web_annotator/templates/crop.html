@@ -21,9 +21,7 @@
   .crop-side h3 {
     font-size: 13px; padding: 10px 12px 6px; color: var(--text-dim); font-weight: 600;
   }
-  .crop-list {
-    flex: 1; overflow-y: auto; padding: 0 8px 8px;
-  }
+  .crop-list { flex: 1; overflow-y: auto; padding: 0 8px 8px; }
   .crop-item {
     display: flex; align-items: flex-start; gap: 8px;
     padding: 8px 10px; margin-bottom: 6px; border-radius: var(--radius);
@@ -31,9 +29,7 @@
     cursor: pointer; font-size: 12px;
   }
   .crop-item:hover { border-color: #4a6a9a; }
-  .crop-item.active {
-    border-color: #00ffff; box-shadow: 0 0 0 1px #00ffff;
-  }
+  .crop-item.active { border-color: #00ffff; box-shadow: 0 0 0 1px #00ffff; }
   .crop-item .body { flex: 1; min-width: 0; }
   .crop-item .meta { color: var(--text-dim); margin-top: 4px; font-size: 11px; }
   .crop-item input[type="text"] {
@@ -41,9 +37,7 @@
     background: #0a1a30; color: var(--text); border: 1px solid var(--border);
     border-radius: 4px; font-size: 12px;
   }
-  .crop-item-actions {
-    flex-shrink: 0; display: flex; flex-direction: column; gap: 4px;
-  }
+  .crop-item-actions { flex-shrink: 0; display: flex; flex-direction: column; gap: 4px; }
   .crop-item .btn-del {
     padding: 2px 8px; font-size: 11px;
     border: 1px solid var(--border); background: transparent;
@@ -51,9 +45,7 @@
   }
   .crop-item .btn-del:hover { color: #fff; border-color: var(--accent); background: var(--accent); }
   .crop-item .btn-del-perm:hover { border-color: #c44; background: #c44; }
-  .part-add-row {
-    display: flex; gap: 6px; padding: 0 8px 8px;
-  }
+  .part-add-row { display: flex; gap: 6px; padding: 0 8px 8px; }
   .part-add-row input {
     flex: 1; padding: 4px 6px; background: #0a1a30; color: var(--text);
     border: 1px solid var(--border); border-radius: 4px; font-size: 12px;
@@ -62,34 +54,21 @@
     padding: 8px 12px; border-top: 1px solid var(--border);
     display: flex; flex-direction: column; gap: 6px;
   }
-  .crop-info {
-    padding: 4px 12px; font-size: 12px; color: var(--text-dim);
-    background: var(--surface); border-top: 1px solid var(--border);
-    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  .part-defaults {
+    padding: 8px 12px; border-top: 1px solid var(--border); font-size: 11px; color: var(--text-dim);
   }
-  .crop-info .live { color: #5eb8ff; }
-  .toolbar .stat.filename {
-    max-width: min(200px, 18vw);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    flex-shrink: 1;
-    min-width: 0;
+  .part-defaults label { display: flex; align-items: center; gap: 6px; margin-top: 6px; }
+  .part-defaults input {
+    width: 110px; padding: 2px 6px; background: #0a1a30; color: var(--text);
+    border: 1px solid var(--border); border-radius: 4px; font-size: 11px;
   }
-  .toolbar {
-    flex-wrap: nowrap;
-  }
-  .toolbar .btn,
-  .toolbar label {
-    flex-shrink: 0;
-  }
+  .status-bar .live { color: #5eb8ff; margin-left: 6px; }
+  .toolbar { flex-wrap: nowrap; }
 </style>
 </head>
 <body>
 <nav class="app-tabs" id="app-tabs"></nav>
 <div class="toolbar">
-  <span class="stat" id="crop-progress">0/0</span>
-  <span class="stat filename" id="crop-filename" title="-">-</span>
-  <span class="sep"></span>
   <button class="btn" id="btn-prev" title="←">上一张</button>
   <button class="btn" id="btn-next" title="→">下一张</button>
   <button class="btn" id="btn-skip" title="空格">跳过</button>
@@ -118,6 +97,13 @@
       <button class="btn" id="btn-add-part" type="button">添加</button>
     </div>
     <div class="crop-list" id="crop-list"></div>
+    <div class="part-defaults">
+      <div>默认裁切（本地）</div>
+      <label>全局
+        <input type="text" id="crop-default-global" placeholder="1536x1536@1.0" spellcheck="false">
+      </label>
+      <div id="crop-default-parts"></div>
+    </div>
     <div class="side-actions">
       <div id="layout-hint" style="font-size:11px;color:var(--text-dim);line-height:1.4;margin-bottom:6px;"></div>
       <div style="font-size:11px;color:var(--text-dim);line-height:1.45;">
@@ -127,9 +113,13 @@
   </aside>
 </div>
 
-<div class="crop-info">
-  <span id="info-text">加载中...</span>
-  <span class="live" id="live-match"></span>
+<div class="status-bar" id="crop-status">
+  <span class="status-seg" id="seg-pos">0/0</span>
+  <span class="status-seg" id="seg-done">已裁 0</span>
+  <span class="status-seg" id="seg-name">-</span>
+  <span class="status-seg" id="seg-obj">-</span>
+  <span class="status-seg" id="seg-metric">-</span>
+  <span class="status-seg" id="seg-extra">选区 0<span class="live" id="live-match"></span></span>
 </div>
 <div class="toast" id="toast"></div>
 

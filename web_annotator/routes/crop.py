@@ -100,20 +100,17 @@ def get_candidates():
 
 @router.get("/config")
 def get_config(request: Request):
+    """
+    裁剪页配置。默认裁切由前端 localStorage 管理，不再下发服务端默认。
+
+    引用：crop.js。
+    """
     layout = _layout(request)
-    tw = getattr(request.app.state, "crop_default_tw", None)
-    th = getattr(request.app.state, "crop_default_th", None)
-    z = getattr(request.app.state, "crop_default_zoom", None)
     return {
         "root": str(layout.root),
         "main_dir": str(layout.main_dir),
         "mask_dir": str(layout.mask_dir),
         "parts": [p.name for p in layout.list_part_dirs()],
-        "default_crop": (
-            {"target_w": tw, "target_h": th, "zoom": z}
-            if tw and th and z
-            else None
-        ),
     }
 
 

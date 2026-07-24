@@ -94,6 +94,10 @@
     }
 
     function applyCols(v) {
+      var keepPage = null;
+      if (typeof BooruFilter !== 'undefined' && BooruFilter.isRemote()) {
+        keepPage = BooruFilter.currentPage();
+      }
       _manualCols = v;
       if (colsSlider) colsSlider.value = String(v);
       if (v === 0) {
@@ -103,6 +107,11 @@
         if (colsLabel) colsLabel.textContent = String(v);
         if (typeof BooruFilter !== 'undefined' && BooruFilter.isRemote()) BooruFilter.render();
         else if (typeof Masonry !== 'undefined') Masonry.setColumns(v);
+      }
+      if (keepPage != null && typeof BooruFilter !== 'undefined') {
+        requestAnimationFrame(function () {
+          BooruFilter.scrollToPage(keepPage);
+        });
       }
     }
 

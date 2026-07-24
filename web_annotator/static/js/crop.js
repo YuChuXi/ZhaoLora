@@ -22,7 +22,6 @@
   var _offsetY = 0;
   var _crops = []; // {x1,y1,x2,y2,target_w,target_h,zoom,name}
   var _selected = -1;
-  var _defaultCrop = null;
   var _datasetRoot = '';
   var _autoParts = []; // 已添加的部位名，后续每张图自动生成选区
   var _deniedParts = []; // 永久删除的部位，刷新后也不再自动纳入
@@ -47,7 +46,7 @@
   }
 
   function errshow(msg) {
-    document.getElementById('info-text').textContent = '⚠ ' + msg;
+    toast('⚠ ' + msg);
   }
   window.addEventListener('error', function (e) { errshow(e.message); });
   window.addEventListener('unhandledrejection', function (e) {
@@ -191,20 +190,32 @@
     };
   }
 
-  function resolveDefaultCand() {
+  /**
+   * 按部位解析默认匹配候选。空部位名使用全局默认。
+   * 引用：makeDefaultSizedCrop。
+   * @param {string} [name]
+   * @returns {object|null}
+   */
+  function resolveDefaultCand(name) {
     if (!_origW || !_origH) return null;
-    if (_defaultCrop) {
+    var pref = getPartDefault(name || '');
+    if (pref) {
       var fixed = findByTargetZoom(
         _origW, _origH,
-        _defaultCrop.target_w, _defaultCrop.target_h, _defaultCrop.zoom
+        pref.target_w, pref.target_h, pref.zoom
       );
       if (fixed) return fixed;
     }
     return chooseBest(_origW, _origH, _origW, _origH);
   }
 
+  /**
+   * 按默认参数生成选区。引用：initDefaultCrop、addCrop、addPart。
+   * @param {string} name
+   * @param {number} index
+   */
   function makeDefaultSizedCrop(name, index) {
-    var init = resolveDefaultCand();
+    var init = resolveDefaultCand(name);
     if (!init) return makeCrop(0, 0, _origW, _origH, null, name || '');
     var cw = init.crop_w, ch = init.crop_h;
     var shift = (index || 0) * 40;
@@ -213,6 +224,123 @@
     x1 = Math.max(0, Math.min(_origW - cw, x1));
     y1 = Math.max(0, Math.min(_origH - ch, y1));
     return makeCrop(x1, y1, x1 + cw, y1 + ch, init, name || '');
+  }
+
+  /**
+   * localStorage 键：crop_part_defaults:{任务名}。
+   * 引用：loadPartDefaults / savePartDefaults。
+   * @returns {string}
+   */
+  function defaultsStorageKey() {
+    return 'crop_part_defaults:' + API.dataset();
+  }
+
+  /**
+   * @returns {Object.<string, {target_w:number, target_h:number, zoom:number}>}
+   */
+  function loadPartDefaults() {
+    var raw = localStorage.getItem(defaultsStorageKey());
+    if (!raw) return {};
+    var data = JSON.parse(raw);
+    if (!data || typeof data !== 'object' || Array.isArray(data)) return {};
+    return data;
+  }
+
+  /**
+   * @param {Object} map
+   */
+  function savePartDefaults(map) {
+    localStorage.setItem(defaultsStorageKey(), JSON.stringify(map));
+  }
+
+  /**
+   * 解析「宽x高@缩放」文本。引用：侧栏默认裁切输入。
+   * @param {string} text
+   * @returns {{target_w:number, target_h:number, zoom:number}|null}
+   */
+  function parseDefaultSpec(text) {
+    var m = String(text || '').trim().match(/^(\d+)\s*[x×]\s*(\d+)\s*@\s*([\d.]+)\s*x?$/i);
+    if (!m) return null;
+    var tw = parseInt(m[1], 10);
+    var th = parseInt(m[2], 10);
+    var z = parseFloat(m[3]);
+    if (!(tw > 0 && th > 0 && z > 0)) return null;
+    return { target_w: tw, target_h: th, zoom: z };
+  }
+
+  /**
+   * @param {{target_w:number, target_h:number, zoom:number}|null} d
+   * @returns {string}
+   */
+  function formatDefaultSpec(d) {
+    if (!d) return '';
+    return d.target_w + 'x' + d.target_h + '@' + Number(d.zoom).toFixed(1);
+  }
+
+  /**
+   * 读取部位默认；无部位项时回退全局（空键）。
+   * @param {string} name
+   * @returns {{target_w:number, target_h:number, zoom:number}|null}
+   */
+  function getPartDefault(name) {
+    var map = loadPartDefaults();
+    var key = name || '';
+    if (map[key] && typeof map[key] === 'object') return map[key];
+    if (key && map[''] && typeof map[''] === 'object') return map[''];
+    return null;
+  }
+
+  /**
+   * 写入某一部位（或全局）默认。引用：侧栏 change。
+   * @param {string} part
+   * @param {string} text
+   */
+  function commitPartDefault(part, text) {
+    var map = loadPartDefaults();
+    var trimmed = String(text || '').trim();
+    if (!trimmed) {
+      delete map[part];
+      savePartDefaults(map);
+      toast('已清除默认裁切');
+      return;
+    }
+    var spec = parseDefaultSpec(trimmed);
+    if (!spec) {
+      toast('格式：宽x高@缩放，如 1536x1536@1.0');
+      syncDefaultsUi();
+      return;
+    }
+    map[part] = spec;
+    savePartDefaults(map);
+    toast('已保存默认裁切');
+  }
+
+  /**
+   * 刷新侧栏默认裁切输入。引用：loadParts、addPart、init。
+   */
+  function syncDefaultsUi() {
+    var map = loadPartDefaults();
+    var globalEl = document.getElementById('crop-default-global');
+    if (globalEl) globalEl.value = formatDefaultSpec(map[''] || null);
+    var host = document.getElementById('crop-default-parts');
+    if (!host) return;
+    host.innerHTML = '';
+    for (var i = 0; i < _autoParts.length; i++) {
+      var name = _autoParts[i];
+      var label = document.createElement('label');
+      label.appendChild(document.createTextNode(name + ' '));
+      var input = document.createElement('input');
+      input.type = 'text';
+      input.placeholder = '1536x1536@1.0';
+      input.spellcheck = false;
+      input.value = formatDefaultSpec(map[name] || null);
+      input.dataset.part = name;
+      input.addEventListener('change', function (e) {
+        commitPartDefault(e.target.dataset.part, e.target.value);
+      });
+      label.appendChild(input);
+      host.appendChild(label);
+    }
   }
 
   function partsStorageKey() {
@@ -249,6 +377,7 @@
     if (Array.isArray(serverParts)) {
       for (var k = 0; k < serverParts.length; k++) pushName(serverParts[k]);
     }
+    syncDefaultsUi();
   }
 
   function saveParts() {
@@ -315,6 +444,7 @@
     }
     registerAutoPart(name);
     input.value = '';
+    syncDefaultsUi();
     if (!_noCrop && _origW) {
       ensurePartCrop(name);
       redraw();
@@ -544,26 +674,43 @@
     }
   }
 
+  /**
+   * 底栏六段：位置、完成量、文件名、对象状态、分辨率、附加。
+   * 引用：换图、保存、选区变更。
+   */
   function updateNav() {
     var img = _images[_index];
     var done = 0;
     for (var i = 0; i < _images.length; i++) if (_images[i].done) done++;
-    document.getElementById('crop-progress').textContent =
-      (_index + 1) + '/' + _images.length + ' · 已裁 ' + done;
-    var nameEl = document.getElementById('crop-filename');
+    document.getElementById('seg-pos').textContent =
+      (_images.length ? (_index + 1) : 0) + '/' + _images.length;
+    document.getElementById('seg-done').textContent = '已裁 ' + done;
+    var live = document.getElementById('live-match');
+    var extra = document.getElementById('seg-extra');
+    function setExtraPrefix(text) {
+      while (extra.firstChild && extra.firstChild !== live) {
+        extra.removeChild(extra.firstChild);
+      }
+      extra.insertBefore(document.createTextNode(text), live);
+    }
     if (!img) {
-      nameEl.textContent = '-';
-      nameEl.title = '';
-      document.getElementById('info-text').textContent = '无图片';
+      document.getElementById('seg-name').textContent = '-';
+      document.getElementById('seg-name').title = '';
+      document.getElementById('seg-obj').textContent = '-';
+      document.getElementById('seg-metric').textContent = '-';
+      setExtraPrefix('选区 0');
+      if (live) live.textContent = '';
       return;
     }
-    var status = img.done ? '已裁剪' : '未裁剪';
     var base = img.path.split(/[/\\]/).pop() || img.path;
-    nameEl.textContent = base + ' · ' + status;
-    nameEl.title = img.path + ' · ' + status;
-    document.getElementById('info-text').textContent =
-      img.path + ' · ' + _origW + '×' + _origH + ' · 选区 ' + _crops.length +
-      (_autoParts.length ? ' · 自动 ' + _autoParts.join(', ') : '');
+    document.getElementById('seg-name').textContent = base;
+    document.getElementById('seg-name').title = img.path;
+    document.getElementById('seg-obj').textContent = img.done ? '已裁剪' : '未裁剪';
+    document.getElementById('seg-metric').textContent = _origW + '×' + _origH;
+    var prefix = '选区 ' + _crops.length;
+    if (_autoParts.length) prefix += ' · 自动：' + _autoParts.join(', ');
+    setExtraPrefix(prefix);
+    updateLive(_selected >= 0 ? _crops[_selected] : null);
   }
 
   // ---- hit test（原图像素坐标）----

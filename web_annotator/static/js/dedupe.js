@@ -313,7 +313,7 @@
     scan().catch(function (e) { toast(String(e.message || e)); });
   });
   document.getElementById('btn-suggest').addEventListener('click', suggestAll);
-  document.getElementById('btn-clear').addEventListener('click', clearSel);
+  document.getElementById('btn-deselect').addEventListener('click', clearSel);
   document.getElementById('btn-apply').addEventListener('click', function () {
     applyDelete().catch(function (e) { toast(String(e.message || e)); });
   });

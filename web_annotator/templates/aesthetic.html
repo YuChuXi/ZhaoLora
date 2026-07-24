@@ -24,10 +24,6 @@
     background: #0a1a30; color: var(--text);
     border: 1px solid var(--border); border-radius: 4px; padding: 2px 6px; font-size: 12px;
   }
-  .toolbar.compact .meta-inline {
-    font-size: 12px; color: var(--text-dim); white-space: nowrap;
-  }
-  .toolbar.compact .meta-inline b { color: var(--text); font-weight: 600; }
 </style>
 </head>
 <body>
@@ -42,25 +38,27 @@
       <option value="cuda">CUDA</option>
     </select>
   </label>
-  <span class="sep"></span>
-  <span class="stat" id="stat-status">就绪</span>
-  <span class="meta-inline">进度 <b id="m-done">0</b>/<b id="m-total">0</b></span>
-  <span class="meta-inline">完成 <b id="m-ok">0</b></span>
-  <span class="meta-inline">失败 <b id="m-fail">0</b></span>
-  <span class="meta-inline" id="m-current" style="flex:1;min-width:80px;overflow:hidden;text-overflow:ellipsis;"></span>
 </div>
 
-<div class="job-progress compact" id="job-progress">
+<div class="job-progress compact" id="job-progress" hidden>
   <div class="job-progress-track">
     <div class="job-progress-fill aes" id="progress-fill"></div>
   </div>
   <span class="job-progress-pct" id="progress-pct">0%</span>
-  <span class="job-progress-meta" id="progress-meta-line">待命</span>
 </div>
 
 <div class="aes-main">
   <div class="report-empty" id="report-empty">暂无报告</div>
   <iframe class="report-frame" id="report-frame" title="美学报告" hidden></iframe>
+</div>
+
+<div class="status-bar" id="aes-status">
+  <span class="status-seg" id="seg-pos">就绪</span>
+  <span class="status-seg" id="seg-done">完成 0</span>
+  <span class="status-seg" id="seg-name" hidden></span>
+  <span class="status-seg" id="seg-obj" hidden></span>
+  <span class="status-seg" id="seg-metric">进度 0/0</span>
+  <span class="status-seg" id="seg-extra">失败 0</span>
 </div>
 <div class="toast" id="toast"></div>
 <script src="/static/js/api.js"></script>
