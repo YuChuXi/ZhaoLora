@@ -5,7 +5,9 @@ from __future__ import annotations
 import html
 from pathlib import Path
 
-_IMAGE_EXTS = (".png", ".jpg", ".jpeg", ".webp")
+from services.models import TagCleanResult, TagCleanSample
+from services.scanner import IMAGE_EXTS
+
 # 与 tag_key 一致：score_9 → "score 9"
 SCORE_TAG_KEYS = frozenset(f"score {i}" for i in range(10))
 
@@ -35,7 +37,7 @@ def rel_image_for_txt(txt: Path, root: Path) -> str | None:
     root_r = root.resolve()
     parent = txt.parent
     stem = txt.stem
-    for ext in _IMAGE_EXTS:
+    for ext in IMAGE_EXTS:
         img = parent / f"{stem}{ext}"
         if img.is_file():
             return str(img.resolve().relative_to(root_r)).replace("\\", "/")
@@ -206,7 +208,7 @@ def clean_txt_dirs(
     aesthetic_scores: dict[str, float] | None = None,
     dry_run: bool = True,
     sample_limit: int = 40,
-) -> dict:
+) -> TagCleanResult:
     """
     对若干目录内的 *.txt 执行清洗。
 
@@ -224,6 +226,9 @@ def clean_txt_dirs(
 
     Returns:
         统计与可选样本对比。
+
+    引用:
+        ``routes.tag_stats.tag_clean``。
     """
     user_drop_exact = frozenset(tag_key(t) for t in expand_cli_list(drop or []))
     user_drop_contains = tuple(
@@ -244,7 +249,7 @@ def clean_txt_dirs(
     failed = 0
     pony_injected = 0
     pony_missing = 0
-    samples: list[dict] = []
+    samples: list[TagCleanSample] = []
 
     for path in files:
         try:
@@ -279,27 +284,29 @@ def clean_txt_dirs(
             continue
         changed += 1
         if len(samples) < sample_limit:
-            samples.append({
-                "path": str(path),
-                "name": path.name,
-                "before": raw.strip()[:500],
-                "after": new[:500],
-            })
+            samples.append(
+                TagCleanSample(
+                    path=str(path),
+                    name=path.name,
+                    before=raw.strip()[:500],
+                    after=new[:500],
+                )
+            )
         if not dry_run:
             path.write_text(new + "\n", encoding="utf-8")
 
-    return {
-        "dry_run": dry_run,
-        "file_count": len(files),
-        "changed": changed,
-        "unchanged": unchanged,
-        "failed": failed,
-        "samples": samples,
-        "drop_exact_count": len(user_drop_exact),
-        "drop_contains": list(user_drop_contains),
-        "promote": list(promote_tags),
-        "prepend": list(prepend_tags),
-        "inject_pony_score": inject_pony_score,
-        "pony_injected": pony_injected,
-        "pony_missing": pony_missing,
-    }
+    return TagCleanResult(
+        dry_run=dry_run,
+        file_count=len(files),
+        changed=changed,
+        unchanged=unchanged,
+        failed=failed,
+        samples=samples,
+        drop_exact_count=len(user_drop_exact),
+        drop_contains=list(user_drop_contains),
+        promote=list(promote_tags),
+        prepend=list(prepend_tags),
+        inject_pony_score=inject_pony_score,
+        pony_injected=pony_injected,
+        pony_missing=pony_missing,
+    )

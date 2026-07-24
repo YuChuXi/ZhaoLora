@@ -9,17 +9,29 @@ from pydantic import BaseModel, Field
 
 from routes.deps import get_runtime, jobs
 from services.aesthetic import load_scores
+from services.jobs import EmitFn
+from services.models import JobSnapshot, JobSubmitResponse, TagCleanResult, TagStatsResult, TxtDirInfo
 from services.tag_clean import clean_txt_dirs
 from services.tag_stats import count_tags, list_txt_subdirs, load_translation_map, resolve_selected_dirs
 
 router = APIRouter(prefix="/tags", tags=["tags"])
 
 
+class TagDirsResponse(BaseModel):
+    """含 txt 的子目录列表。引用：``GET /tags/dirs``。"""
+
+    root: str
+    dirs: list[TxtDirInfo]
+
+
 def _root(request: Request) -> Path:
+    """引用：本模块各接口。"""
     return get_runtime(request).root
 
 
 class StatsBody(BaseModel):
+    """标签频率统计请求。引用：``POST /tags/stats``。"""
+
     dirs: list[str] | None = Field(default=None, description="子目录名，空/省略=全选")
     lower: bool = True
     underscores: bool = True
@@ -29,6 +41,8 @@ class StatsBody(BaseModel):
 
 
 class CleanBody(BaseModel):
+    """标签清洗请求。引用：``POST /tags/clean``。"""
+
     dirs: list[str] | None = Field(default=None, description="子目录名")
     drop: list[str] = Field(default_factory=list, description="整词精确删除")
     drop_contains: list[str] = Field(default_factory=list, description="子串删除")
@@ -43,17 +57,15 @@ class CleanBody(BaseModel):
 
 
 @router.get("/dirs")
-def tag_dirs(request: Request):
+def tag_dirs(request: Request) -> TagDirsResponse:
+    """列出含旁路 txt 的目录。引用：标签/清洗页。"""
     root = _root(request)
-    dirs = list_txt_subdirs(root)
-    return {
-        "root": str(root),
-        "dirs": dirs,
-    }
+    return TagDirsResponse(root=str(root), dirs=list_txt_subdirs(root))
 
 
 @router.post("/stats")
-def tag_stats(request: Request, body: StatsBody):
+def tag_stats(request: Request, body: StatsBody) -> TagStatsResult:
+    """统计标签频率。引用：标签页。"""
     root = _root(request)
     selected = resolve_selected_dirs(root, body.dirs)
     if not selected:
@@ -71,14 +83,17 @@ def tag_stats(request: Request, body: StatsBody):
         per_sample=body.per_sample,
         min_count=body.min_count,
     )
-    result["dirs"] = [p.name if p != root else "." for p in selected]
-    result["root"] = str(root)
-    result["zh_cache_size"] = len(zh_map)
-    return result
+    return result.model_copy(
+        update={
+            "dirs": [p.name if p != root else "." for p in selected],
+            "root": str(root),
+            "zh_cache_size": len(zh_map),
+        }
+    )
 
 
 @router.post("/clean")
-async def tag_clean(request: Request, body: CleanBody):
+async def tag_clean(request: Request, body: CleanBody) -> JobSubmitResponse:
     """
     提交标签清洗长任务。
 
@@ -94,13 +109,16 @@ async def tag_clean(request: Request, body: CleanBody):
     scores = load_scores(root) if body.inject_pony_score else {}
     payload = body
 
-    def run(emit) -> dict:
-        emit({
-            "status": "running",
-            "phase": "cleaning",
-            "message": "预览中…" if payload.dry_run else "写入中…",
-            "pct": 0,
-        })
+    def run(emit: EmitFn) -> TagCleanResult:
+        """工作线程：清洗旁路 txt。引用：``JobManager.submit``。"""
+        emit(
+            JobSnapshot(
+                status="running",
+                phase="cleaning",
+                message="预览中…" if payload.dry_run else "写入中…",
+                pct=0,
+            )
+        )
         result = clean_txt_dirs(
             selected,
             drop=payload.drop,
@@ -114,16 +132,22 @@ async def tag_clean(request: Request, body: CleanBody):
             dry_run=payload.dry_run,
             sample_limit=payload.sample_limit,
         )
-        result["dirs"] = [p.name if p != root else "." for p in selected]
-        result["root"] = str(root)
-        emit({
-            "status": "done",
-            "phase": "done",
-            "message": "完成",
-            "pct": 100,
-            "result": result,
-        })
+        result = result.model_copy(
+            update={
+                "dirs": [p.name if p != root else "." for p in selected],
+                "root": str(root),
+            }
+        )
+        emit(
+            JobSnapshot(
+                status="done",
+                phase="done",
+                message="完成",
+                pct=100,
+                result=result,
+            )
+        )
         return result
 
     job_id = jobs(request).submit(kind="tag_clean", dataset=rt.name, run=run)
-    return {"ok": True, "job_id": job_id}
+    return JobSubmitResponse(ok=True, job_id=job_id)

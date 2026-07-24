@@ -8,11 +8,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Callable
 
 from services.dataset_layout import DatasetLayout, resolve_dataset_layout
 from services.state_manager import StateManager
 from services.thumbnailer import Thumbnailer
+
+if TYPE_CHECKING:
+    from services.color_similarity import ColorIndex
 
 
 @dataclass
@@ -24,14 +27,16 @@ class DatasetRuntime:
     thumbnailer: Thumbnailer
     state_manager: StateManager
     mask_dir: Path
-    color_index: Any = None
+    color_index: ColorIndex | None = None
 
     @property
     def root(self) -> Path:
+        """``root``。引用：``DatasetRuntime``。"""
         return self.layout.root
 
     @property
     def main_dir(self) -> Path:
+        """``main_dir``。引用：``DatasetRuntime``。"""
         return self.layout.main_dir
 
 
@@ -49,9 +54,11 @@ class DatasetRegistry:
     _migrate: Callable[[Path, Path], None] | None = None
 
     def get(self, name: str) -> DatasetRuntime | None:
+        """``get``。引用：``DatasetRegistry``。"""
         return self.by_name.get(name)
 
     def names(self) -> list[str]:
+        """``names``。引用：``DatasetRegistry``。"""
         return sorted(self.by_name.keys())
 
     def ensure(self, name: str) -> DatasetRuntime:
@@ -70,7 +77,6 @@ class DatasetRegistry:
             layout.root, size=self.thumbnail_size, meta_dir=layout.root
         )
         state_manager = StateManager(layout.root, meta_dir=layout.root)
-        state_manager.migrate_flat_main_keys()
         mask_dir = layout.mask_dir
         mask_dir.mkdir(parents=True, exist_ok=True)
         rt = DatasetRuntime(

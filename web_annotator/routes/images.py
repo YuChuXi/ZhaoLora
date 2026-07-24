@@ -13,13 +13,21 @@ from PIL import Image
 from routes.deps import get_runtime, resolve_path
 from services.scanner import scan_images
 from services.color_similarity import ColorIndex, fingerprint_file
+from services.models import (
+    DirsResponse,
+    ImageListItem,
+    SimilarItem,
+    SimilarResponse,
+)
 from services.work_dir import list_work_dirs, parse_dir_names, resolve_subdir, resolve_subdirs
 from services.aesthetic import load_scores
+from services.thumbnailer import Thumbnailer
+from services.state_manager import StateManager
 
 router = APIRouter(tags=["images"])
 
 
-def _services(request: Request):
+def _services(request: Request) -> tuple[Path, Thumbnailer, StateManager]:
     """引用：本模块列表与相似接口。"""
     rt = get_runtime(request)
     return rt.root, rt.thumbnailer, rt.state_manager
@@ -49,9 +57,10 @@ def _resolve_image(root: Path, trash_dir: Path, rel: str) -> Path:
 
 
 @router.get("/dirs")
-def list_dirs(request: Request):
+def list_dirs(request: Request) -> DirsResponse:
+    """列出工作子目录。引用：筛选页 DirPicker。"""
     root = get_runtime(request).root
-    return {"root": str(root), "dirs": list_work_dirs(root), "default": "main"}
+    return DirsResponse(root=str(root), dirs=list_work_dirs(root), default="main")
 
 
 @router.get("/images")
@@ -60,7 +69,7 @@ def list_images(
     show_trash: bool = Query(False),
     dirs: str = Query(""),
     dir: str = Query("main"),
-):
+) -> list[ImageListItem]:
     """列出指定子目录图片（dirs=main,head 或 dir=main）。路径相对数据集根。"""
     root, thumbnailer, state_mgr = _services(request)
     names = parse_dir_names(dirs, dir)
@@ -70,29 +79,32 @@ def list_images(
         raise HTTPException(400, str(e)) from e
 
     state = state_mgr.get()
-    selected = set(state.get("selected", {}).keys())
-    trashed_state = set(state.get("trashed", {}).keys())
+    selected = set(state.selected.keys())
+    trashed_state = set(state.trashed.keys())
     scores = load_scores(root)
-    result = []
-    seen = set()
+    result: list[ImageListItem] = []
+    seen: set[str] = set()
 
     for sub, work in pairs:
         prefix = sub + "/"
         for img in scan_images(work, path_prefix=sub):
-            rel = img["path"]
+            rel = img.path
             if rel in trashed_state or rel in seen:
                 continue
             seen.add(rel)
             w, h = _image_size(root / rel)
-            result.append({
-                **img,
-                "width": w, "height": h,
-                "selected": rel in selected,
-                "trashed": False,
-                "thumbnail_hash": thumbnailer.hash_for(rel),
-                "dir": sub,
-                "aesthetic": scores.get(rel),
-            })
+            result.append(
+                ImageListItem(
+                    **img.model_dump(),
+                    width=w,
+                    height=h,
+                    selected=rel in selected,
+                    trashed=False,
+                    thumbnail_hash=thumbnailer.hash_for(rel),
+                    dir=sub,
+                    aesthetic=scores.get(rel),
+                )
+            )
 
         if not show_trash:
             continue
@@ -101,20 +113,23 @@ def list_images(
         trash_work = trash_dir / sub
         if trash_work.is_dir():
             for img in scan_images(trash_work, path_prefix=sub):
-                if img["path"] in seen:
+                if img.path in seen:
                     continue
-                seen.add(img["path"])
-                tp = trash_dir / img["path"]
+                seen.add(img.path)
+                tp = trash_dir / img.path
                 w, h = _image_size(tp)
-                result.append({
-                    **img,
-                    "width": w, "height": h,
-                    "selected": img["path"] in selected,
-                    "trashed": True,
-                    "thumbnail_hash": thumbnailer.hash_for(img["path"]),
-                    "dir": sub,
-                    "aesthetic": scores.get(img["path"]),
-                })
+                result.append(
+                    ImageListItem(
+                        **img.model_dump(),
+                        width=w,
+                        height=h,
+                        selected=img.path in selected,
+                        trashed=True,
+                        thumbnail_hash=thumbnailer.hash_for(img.path),
+                        dir=sub,
+                        aesthetic=scores.get(img.path),
+                    )
+                )
         else:
             for rel in trashed_state:
                 if not rel.startswith(prefix) or rel in seen:
@@ -124,25 +139,28 @@ def list_images(
                     continue
                 seen.add(rel)
                 w, h = _image_size(tp)
-                result.append({
-                    "path": rel,
-                    "stem": Path(rel).stem,
-                    "suffix": Path(rel).suffix.lower(),
-                    "size": tp.stat().st_size,
-                    "siblings": [],
-                    "width": w, "height": h,
-                    "selected": rel in selected,
-                    "trashed": True,
-                    "thumbnail_hash": thumbnailer.hash_for(rel),
-                    "dir": sub,
-                    "aesthetic": scores.get(rel),
-                })
+                result.append(
+                    ImageListItem(
+                        path=rel,
+                        stem=Path(rel).stem,
+                        suffix=Path(rel).suffix.lower(),
+                        size=tp.stat().st_size,
+                        siblings=[],
+                        width=w,
+                        height=h,
+                        selected=rel in selected,
+                        trashed=True,
+                        thumbnail_hash=thumbnailer.hash_for(rel),
+                        dir=sub,
+                        aesthetic=scores.get(rel),
+                    )
+                )
 
     return result
 
 
 @router.get("/image")
-def get_image(request: Request, path: str = Query(...)):
+def get_image(request: Request, path: str = Query(...)) -> FileResponse:
     """返回原图文件（预览用）。"""
     root, _, state_mgr = _services(request)
     file_path = _resolve_image(root, state_mgr.trash_dir, path)
@@ -154,7 +172,7 @@ def similar_images(
     request: Request,
     path: str = Query(...),
     limit: int = Query(8, ge=1, le=24),
-):
+) -> SimilarResponse:
     """按色调相似度返回若干张图（不含自身，候选为同目录未删图）。"""
     root, thumbnailer, state_mgr = _services(request)
     rel = path.replace("\\", "/").lstrip("/")
@@ -168,11 +186,11 @@ def similar_images(
         raise HTTPException(400, str(e)) from e
 
     state = state_mgr.get()
-    selected = set(state.get("selected", {}).keys())
-    trashed_state = set(state.get("trashed", {}).keys())
+    selected = set(state.selected.keys())
+    trashed_state = set(state.trashed.keys())
     candidates = [
-        img["path"] for img in scan_images(work, path_prefix=sub)
-        if img["path"] not in trashed_state
+        img.path for img in scan_images(work, path_prefix=sub)
+        if img.path not in trashed_state
     ]
 
     idx = _color_index(request)
@@ -187,7 +205,7 @@ def similar_images(
     else:
         q = fingerprint_file(query_file)
     if q is None:
-        return {"path": rel, "similar": []}
+        return SimilarResponse(path=rel, similar=[])
 
     main_q = root / rel
     if main_q.is_file():
@@ -195,33 +213,45 @@ def similar_images(
 
     hits = idx.similar_matrix(q, candidates, exclude=rel, limit=limit)
 
-    out = []
+    out: list[SimilarItem] = []
     for sim_rel, dist in hits:
         thumbnailer.ensure(sim_rel)
         w, h = _image_size(root / sim_rel)
-        out.append({
-            "path": sim_rel,
-            "stem": Path(sim_rel).stem,
-            "width": w,
-            "height": h,
-            "selected": sim_rel in selected,
-            "trashed": sim_rel in trashed_state,
-            "thumbnail_hash": thumbnailer.hash_for(sim_rel),
-            "distance": round(dist, 6),
-        })
-    return {"path": rel, "similar": out}
+        out.append(
+            SimilarItem(
+                path=sim_rel,
+                stem=Path(sim_rel).stem,
+                width=w,
+                height=h,
+                selected=sim_rel in selected,
+                trashed=sim_rel in trashed_state,
+                thumbnail_hash=thumbnailer.hash_for(sim_rel),
+                distance=round(dist, 6),
+            )
+        )
+    return SimilarResponse(path=rel, similar=out)
 
 
 _size_cache: dict[str, tuple[float, int, int]] = {}
 
 
 def _image_size(path: Path) -> tuple[int, int]:
-    """读取图片宽高（仅文件头）；按路径 + mtime 缓存。"""
+    """读取图片宽高（仅打开文件头），按路径与 ``mtime`` 缓存。
+
+    Args:
+        path: 图片绝对路径。
+
+    Returns:
+        ``(width, height)``。
+
+    Raises:
+        OSError: 无法 ``stat`` 或打开文件。
+
+    引用:
+        ``list_images`` / ``similar_images``。
+    """
     key = str(path)
-    try:
-        mtime = path.stat().st_mtime
-    except OSError:
-        return (0, 0)
+    mtime = path.stat().st_mtime
     cached = _size_cache.get(key)
     if cached is not None and cached[0] == mtime:
         return cached[1], cached[2]

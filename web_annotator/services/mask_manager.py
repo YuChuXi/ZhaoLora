@@ -8,7 +8,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import numpy as np
-from PIL import Image, UnidentifiedImageError
+from PIL import Image
 
 from services.work_dir import resolve_under
 
@@ -21,7 +21,7 @@ def mask_out_path(out_dir: Path, src_path: str) -> Path:
         src_path: 相对原图路径（与 main 下一致）。
 
     Returns:
-        落在 ``out_dir`` 下的绝对路径。
+        位于 ``out_dir`` 下的绝对路径。
 
     Raises:
         ValueError: 路径越界。
@@ -45,8 +45,17 @@ def has_mask(out_dir: Path, src_path: str) -> bool:
 def load_mask(out_dir: Path, src_path: str, size: tuple[int, int]) -> np.ndarray | None:
     """加载已保存的 alpha mask。
 
-    尺寸与 ``size`` 不一致时返回 ``None``。
-    文件损坏无法识别时返回 ``None``。
+    Args:
+        out_dir: mask 根目录。
+        src_path: 相对原图路径。
+        size: 期望 ``(width, height)``；不一致时返回 ``None``。
+
+    Returns:
+        ``uint8`` 单通道数组；文件不存在或尺寸不符时为 ``None``。
+
+    Raises:
+        OSError: 无法读取文件。
+        UnidentifiedImageError: 文件不是可识别图像。
 
     引用:
         ``routes.alpha_paint.get_existing_mask``。
@@ -54,10 +63,7 @@ def load_mask(out_dir: Path, src_path: str, size: tuple[int, int]) -> np.ndarray
     p = mask_out_path(out_dir, src_path)
     if not p.is_file():
         return None
-    try:
-        im = Image.open(p)
-    except (OSError, UnidentifiedImageError):
-        return None
+    im = Image.open(p)
     if im.size != size:
         return None
     if im.mode in ("L", "LA"):

@@ -8,11 +8,16 @@ from collections import Counter
 from pathlib import Path
 
 
+from services.models import TagStatRow, TagStatsResult, TxtDirInfo
+
+
 def split_tags_line(s: str) -> list[str]:
+    """按逗号拆分标签行。引用：``count_tags`` / ``tag_clean``。"""
     return [x.strip() for x in s.replace("\n", ",").replace("|||", ",").split(",") if x.strip()]
 
 
 def normalize_tag(tag: str, *, lower: bool, underscores: bool) -> str:
+    """规范化单个标签。引用：``count_tags``。"""
     t = tag.strip()
     if underscores:
         t = " ".join(t.replace("_", " ").split())
@@ -21,38 +26,49 @@ def normalize_tag(tag: str, *, lower: bool, underscores: bool) -> str:
     return t
 
 
-def list_txt_subdirs(root: Path) -> list[dict]:
-    """列出根下含 .txt 的一级子目录（main 置顶；及根目录自身若有 .txt）。"""
+def list_txt_subdirs(root: Path) -> list[TxtDirInfo]:
+    """列出根下含 ``.txt`` 的一级子目录（``main`` 置顶）。
+
+    引用:
+        ``resolve_selected_dirs``；``routes.tag_stats``。
+    """
     root = root.resolve()
-    out: list[dict] = []
+    out: list[TxtDirInfo] = []
     if not root.is_dir():
         return out
 
     root_txt = sorted(root.glob("*.txt"))
     if root_txt:
-        out.append({"name": ".", "label": "(根目录)", "txt_count": len(root_txt)})
+        out.append(TxtDirInfo(name=".", label="(根目录)", txt_count=len(root_txt)))
 
     for p in sorted(root.iterdir()):
         if not p.is_dir() or p.name.startswith("."):
             continue
         n = sum(1 for _ in p.glob("*.txt"))
         if n > 0 or p.name == "main":
-            out.append({"name": p.name, "label": p.name, "txt_count": n})
+            out.append(TxtDirInfo(name=p.name, label=p.name, txt_count=n))
 
-    root_item = [d for d in out if d["name"] == "."]
-    rest = [d for d in out if d["name"] != "."]
-    main = [d for d in rest if d["name"] == "main"]
-    others = [d for d in rest if d["name"] != "main"]
+    root_item = [d for d in out if d.name == "."]
+    rest = [d for d in out if d.name != "."]
+    main = [d for d in rest if d.name == "main"]
+    others = [d for d in rest if d.name != "main"]
     if not main and (root / "main").is_dir():
         n = sum(1 for _ in (root / "main").glob("*.txt"))
-        main = [{"name": "main", "label": "main", "txt_count": n}]
+        main = [TxtDirInfo(name="main", label="main", txt_count=n)]
     return root_item + main + others
 
 
 def resolve_selected_dirs(root: Path, names: list[str] | None) -> list[Path]:
-    """names 为空或 None → 全选有 txt 的子目录。"""
+    """将选中的 txt 子目录名解析为路径；空则全选。
+
+    引用:
+        ``routes.tag_stats``。
+    """
     root = root.resolve()
-    available = {d["name"]: root if d["name"] == "." else root / d["name"] for d in list_txt_subdirs(root)}
+    available = {
+        d.name: root if d.name == "." else root / d.name
+        for d in list_txt_subdirs(root)
+    }
     if not names:
         return [available[k] for k in available]
     dirs: list[Path] = []
@@ -95,6 +111,7 @@ def load_translation_map(root: Path) -> dict[str, str]:
 
 
 def lookup_zh(tag: str, zh_map: dict[str, str]) -> str:
+    """``lookup_zh``。引用：本模块调用方。"""
     if tag in zh_map:
         return zh_map[tag]
     nk = " ".join(tag.replace("_", " ").split()).lower()
@@ -112,7 +129,12 @@ def count_tags(
     html_unescape: bool = True,
     per_sample: bool = True,
     min_count: int = 1,
-) -> dict:
+) -> TagStatsResult:
+    """统计若干目录内旁路 ``.txt`` 的标签频率。
+
+    引用:
+        ``routes.tag_stats.tag_stats``。
+    """
     zh_map = zh_map or {}
     counter: Counter[str] = Counter()
     total_tag_occurrences = 0
@@ -146,26 +168,28 @@ def count_tags(
 
     n_files = len(files) - failed
     denom = n_files if per_sample else total_tag_occurrences
-    rows = []
+    rows: list[TagStatRow] = []
     for tag, c in counter.items():
         if c < min_count:
             continue
         pct = 100.0 * c / denom if denom else 0.0
         zh = lookup_zh(tag, zh_map)
-        rows.append({
-            "tag": tag,
-            "zh": zh,
-            "count": c,
-            "pct": round(pct, 4),
-        })
-    rows.sort(key=lambda x: (-x["pct"], -x["count"], x["tag"]))
+        rows.append(
+            TagStatRow(
+                tag=tag,
+                zh=zh,
+                count=c,
+                pct=round(pct, 4),
+            )
+        )
+    rows.sort(key=lambda x: (-x.pct, -x.count, x.tag))
 
-    return {
-        "sample_count": n_files,
-        "failed": failed,
-        "file_count": len(files),
-        "tag_count": len(rows),
-        "total_occurrences": total_tag_occurrences,
-        "per_sample": per_sample,
-        "tags": rows,
-    }
+    return TagStatsResult(
+        sample_count=n_files,
+        failed=failed,
+        file_count=len(files),
+        tag_count=len(rows),
+        total_occurrences=total_tag_occurrences,
+        per_sample=per_sample,
+        tags=rows,
+    )

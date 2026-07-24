@@ -5,6 +5,8 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
+import httpx
+from curl_cffi.requests.exceptions import RequestException
 
 from services.booru_client import (
     SOURCES,
@@ -19,16 +21,27 @@ from services.booru_client import (
     search_posts,
 )
 from routes.deps import get_runtime
+from services.models import (
+    BooruDownloadResult,
+    BooruSearchResult,
+    BooruSourcesResponse,
+    BooruUndownloadResult,
+)
 from services.work_dir import resolve_subdir
 
 router = APIRouter(prefix="/booru", tags=["booru"])
 
+_NETWORK_ERRORS = (RuntimeError, OSError, httpx.HTTPError, RequestException)
+
 
 def _proxy(request: Request) -> str | None:
+    """读取进程级 Booru 代理配置。引用：本模块各网络接口。"""
     return getattr(request.app.state, "booru_proxy", None)
 
 
 class SearchBody(BaseModel):
+    """Booru 搜索请求体。引用：``POST /booru/search``。"""
+
     source: str = Field(..., description="gelbooru | danbooru")
     tags: str = ""
     page: int = Field(1, ge=1, le=10000)
@@ -39,6 +52,8 @@ class SearchBody(BaseModel):
 
 
 class DownloadBody(BaseModel):
+    """Booru 下载 / 取消下载请求体。引用：``POST /booru/download|undownload``。"""
+
     source: str
     id: str = Field(..., min_length=1)
     dir: str = Field("main", description="数据集根下的工作子目录")
@@ -46,15 +61,17 @@ class DownloadBody(BaseModel):
 
 
 @router.get("/sources")
-def booru_sources(request: Request):
-    return {
-        "sources": sorted(SOURCES),
-        "proxy": _proxy(request) or "",
-    }
+def booru_sources(request: Request) -> BooruSourcesResponse:
+    """列出可用图站与代理。引用：``booru_filter.js``。"""
+    return BooruSourcesResponse(
+        sources=sorted(SOURCES),
+        proxy=_proxy(request) or "",
+    )
 
 
 @router.post("/search")
-async def booru_search(request: Request, body: SearchBody):
+async def booru_search(request: Request, body: SearchBody) -> BooruSearchResult:
+    """搜索图站并标记本地下载状态。引用：``booru_filter.js``。"""
     source = body.source.strip().lower()
     if source not in SOURCES:
         raise HTTPException(400, f"不支持的源: {body.source}")
@@ -82,25 +99,24 @@ async def booru_search(request: Request, body: SearchBody):
         )
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
-    except Exception as e:
+    except _NETWORK_ERRORS as e:
         raise HTTPException(502, f"搜索失败: {e}") from e
     for p in posts:
-        p["downloaded"] = is_downloaded(out_dir, source, p["id"])
-        p["stem"] = file_stem(source, p["id"])
-        # thumb/sample 由前端按「代理模式」开关选择直链或 /api/booru/* 代理
-    return {
-        "source": source,
-        "tags": body.tags.strip(),
-        "extra": (body.extra or "").strip(),
-        "order": order,
-        "query": query,
-        "dir": body.dir,
-        "page": body.page,
-        "limit": body.limit,
-        "count": len(posts),
-        "has_more": has_more,
-        "posts": posts,
-    }
+        p.downloaded = is_downloaded(out_dir, source, p.id)
+        p.stem = file_stem(source, p.id)
+    return BooruSearchResult(
+        source=source,
+        tags=body.tags.strip(),
+        extra=(body.extra or "").strip(),
+        order=order,
+        query=query,
+        dir=body.dir,
+        page=body.page,
+        limit=body.limit,
+        count=len(posts),
+        has_more=has_more,
+        posts=posts,
+    )
 
 
 @router.get("/thumb")
@@ -108,7 +124,8 @@ async def booru_thumb(
     request: Request,
     source: str = Query(...),
     id: str = Query(..., min_length=1),
-):
+) -> Response:
+    """代理预览缩略图。引用：``booru_filter.js``。"""
     source = source.strip().lower()
     if source not in SOURCES:
         raise HTTPException(400, f"不支持的源: {source}")
@@ -118,7 +135,7 @@ async def booru_thumb(
         )
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
-    except Exception as e:
+    except _NETWORK_ERRORS as e:
         raise HTTPException(502, f"预览失败: {e}") from e
     return Response(
         content=data,
@@ -132,7 +149,8 @@ async def booru_sample(
     request: Request,
     source: str = Query(...),
     id: str = Query(..., min_length=1),
-):
+) -> Response:
+    """代理大图预览。引用：``booru_filter.js``。"""
     source = source.strip().lower()
     if source not in SOURCES:
         raise HTTPException(400, f"不支持的源: {source}")
@@ -142,7 +160,7 @@ async def booru_sample(
         )
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
-    except Exception as e:
+    except _NETWORK_ERRORS as e:
         raise HTTPException(502, f"大图失败: {e}") from e
     return Response(
         content=data,
@@ -152,7 +170,8 @@ async def booru_sample(
 
 
 @router.post("/download")
-async def booru_download(request: Request, body: DownloadBody):
+async def booru_download(request: Request, body: DownloadBody) -> BooruDownloadResult:
+    """下载帖子到工作目录。引用：``booru_filter.js``。"""
     source = body.source.strip().lower()
     if source not in SOURCES:
         raise HTTPException(400, f"不支持的源: {body.source}")
@@ -172,22 +191,23 @@ async def booru_download(request: Request, body: DownloadBody):
         )
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
-    except Exception as e:
+    except _NETWORK_ERRORS as e:
         raise HTTPException(502, f"下载失败: {e}") from e
-    rel = local_rel_path(root, result["path"])
+    rel = local_rel_path(root, result.path)
     thumb = get_runtime(request).thumbnailer
     thumb.ensure(rel)
-    return {
-        **result,
-        "dir": name,
-        "rel_path": rel,
-        "thumbnail_hash": thumb.hash_for(rel),
-    }
+    return result.model_copy(
+        update={
+            "dir": name,
+            "rel_path": rel,
+            "thumbnail_hash": thumb.hash_for(rel),
+        }
+    )
 
 
 @router.post("/undownload")
-def booru_undownload(request: Request, body: DownloadBody):
-    """取消选中：删除工作目录中该帖已下载文件。"""
+def booru_undownload(request: Request, body: DownloadBody) -> BooruUndownloadResult:
+    """删除工作目录中该帖已下载文件。引用：``booru_filter.js``。"""
     source = body.source.strip().lower()
     if source not in SOURCES:
         raise HTTPException(400, f"不支持的源: {body.source}")
@@ -202,7 +222,6 @@ def booru_undownload(request: Request, body: DownloadBody):
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
 
-    # 清缩略图缓存（新名 g/d 前缀 + 旧纯 id）
     thumb = get_runtime(request).thumbnailer
     stems = [file_stem(source, body.id.strip()), body.id.strip()]
     for stem in stems:
@@ -210,6 +229,6 @@ def booru_undownload(request: Request, body: DownloadBody):
             rel = f"{name}/{stem}{ext}"
             path = thumb.get_path(rel)
             if path.is_file():
-                path.unlink(missing_ok=True)
+                path.unlink()
 
-    return {**result, "dir": name}
+    return result.model_copy(update={"dir": name})

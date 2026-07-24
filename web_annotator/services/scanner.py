@@ -1,10 +1,9 @@
-"""
-图片扫描器 —— 在数据目录中发现图片及其关联文件。
+"""图片扫描器：在数据目录中发现图片及其旁路文件。
 
-设计约束：
-  - 不递归子目录（数据集目录内是扁平结构）
-  - 识别图片后缀: .png .jpg .jpeg .webp .bmp .gif
-  - 发现同 stem 的关联文件 (.txt, .npz 等) 作为 siblings
+约束：
+  - 不递归子目录（目录内扁平）
+  - 识别 ``IMAGE_EXTS``
+  - 同 stem 的非图像文件记入 ``siblings``
 """
 
 from __future__ import annotations
@@ -12,21 +11,35 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from services.models import ScannedImage
+
 IMAGE_EXTS = frozenset({".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif"})
 
 
 def _natural_key(s: str) -> tuple:
-    """自然排序键: 'img2_abc10' → ('img', 2, '_abc', 10)."""
+    """自然排序键：``img2_abc10`` → ``('img', 2, '_abc', 10)``。
+
+    引用:
+        ``scan_images``。
+    """
     parts = re.split(r"(\d+)", s)
     return tuple(int(p) if p.isdigit() else p.lower() for p in parts)
 
 
-def scan_images(data_dir: Path, *, path_prefix: str = "") -> list[dict]:
-    """
-    扫描 data_dir 下所有图片文件及其关联文件。
+def scan_images(data_dir: Path, *, path_prefix: str = "") -> list[ScannedImage]:
+    """扫描 ``data_dir`` 下图片及同 stem 旁路文件。
 
-    path_prefix 非空时，返回的 path / siblings 会加上此前缀（相对数据集根），
-    例如 path_prefix=\"main\" → path=\"main/foo.png\"。
+    Args:
+        data_dir: 待扫描目录。
+        path_prefix: 非空时加在 ``path`` / ``siblings`` 前（相对数据集根），
+            例如 ``main`` → ``main/foo.png``。
+
+    Returns:
+        按自然序排列的 ``ScannedImage`` 列表。
+
+    引用:
+        ``routes.images`` / ``annotations`` / ``crop`` / ``alpha_paint`` /
+        ``dedupe`` / ``tasks``；``ready_toml``。
     """
     prefix = (path_prefix or "").replace("\\", "/").strip("/")
     stem_map: dict[str, list[Path]] = {}
@@ -38,7 +51,7 @@ def scan_images(data_dir: Path, *, path_prefix: str = "") -> list[dict]:
             continue
         stem_map.setdefault(f.stem, []).append(f)
 
-    result: list[dict] = []
+    result: list[ScannedImage] = []
     for stem, files in sorted(stem_map.items(), key=lambda x: _natural_key(x[0])):
         img_file = None
         siblings: list[str] = []
@@ -54,12 +67,14 @@ def scan_images(data_dir: Path, *, path_prefix: str = "") -> list[dict]:
 
         name = img_file.name
         rel = f"{prefix}/{name}" if prefix else name
-        result.append({
-            "path": rel,
-            "stem": img_file.stem,
-            "suffix": img_file.suffix.lower(),
-            "size": img_file.stat().st_size,
-            "siblings": sorted(siblings),
-        })
+        result.append(
+            ScannedImage(
+                path=rel,
+                stem=img_file.stem,
+                suffix=img_file.suffix.lower(),
+                size=img_file.stat().st_size,
+                siblings=sorted(siblings),
+            )
+        )
 
     return result

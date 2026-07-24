@@ -10,6 +10,8 @@ import json
 import re
 from pathlib import Path
 
+from services.models import TaskEntry, TaskInfo, TaskListFile
+
 TASKS_FILE = ".annotator_tasks.json"
 _NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
 
@@ -18,7 +20,11 @@ def validate_task_name(name: str) -> str:
     """
     校验任务目录名。
 
-    引用：routes/tasks.py 添加任务。
+    Raises:
+        ValueError: 名称非法。
+
+    引用：
+        ``routes.tasks`` 添加任务与候选过滤。
     """
     name = (name or "").strip()
     if not name or not _NAME_RE.match(name):
@@ -36,61 +42,56 @@ class TaskStore:
     """
 
     def __init__(self, root: Path) -> None:
+        """绑定任务根目录。引用：``server.main``。"""
         self.root = root.resolve()
         self.path = self.root / TASKS_FILE
 
-    def _read(self) -> dict:
+    def _read(self) -> TaskListFile:
+        """读取并校验任务清单文件。引用：本类公开方法。"""
         if not self.path.is_file():
-            return {"tasks": {}}
+            return TaskListFile()
         data = json.loads(self.path.read_text(encoding="utf-8"))
-        if not isinstance(data, dict):
-            raise ValueError(f"任务清单格式错误: {self.path}")
-        tasks = data.get("tasks")
-        if tasks is None:
-            tasks = {}
-        if not isinstance(tasks, dict):
-            raise ValueError(f"任务清单 tasks 须为对象: {self.path}")
-        return {"tasks": tasks}
+        return TaskListFile.model_validate(data)
 
-    def _write(self, data: dict) -> None:
+    def _write(self, data: TaskListFile) -> None:
+        """原子写入任务清单。引用：``add`` / ``set_completed``。"""
         self.root.mkdir(parents=True, exist_ok=True)
-        text = json.dumps(data, ensure_ascii=False, indent=2) + "\n"
+        text = data.model_dump_json(indent=2) + "\n"
         self.path.write_text(text, encoding="utf-8")
 
-    def list_entries(self) -> list[dict]:
+    def list_entries(self) -> list[TaskInfo]:
         """
         返回清单条目列表。
 
-        每项：name, completed。
         引用：GET /api/tasks、GET /api/datasets。
         """
-        tasks = self._read()["tasks"]
-        out = []
+        tasks = self._read().tasks
+        out: list[TaskInfo] = []
         for name in sorted(tasks.keys()):
-            meta = tasks[name] if isinstance(tasks[name], dict) else {}
-            out.append({
-                "name": name,
-                "completed": bool(meta.get("completed", False)),
-            })
+            meta = tasks[name]
+            out.append(TaskInfo(name=name, completed=meta.completed))
         return out
 
     def contains(self, name: str) -> bool:
         """引用：中间件、缩略图路由。"""
-        return name in self._read()["tasks"]
+        return name in self._read().tasks
 
     def active_names(self) -> list[str]:
         """未完成任务名。引用：GET /api/datasets。"""
-        return [e["name"] for e in self.list_entries() if not e["completed"]]
+        return [e.name for e in self.list_entries() if not e.completed]
 
-    def add(self, name: str) -> dict:
+    def add(self, name: str) -> TaskInfo:
         """
         登记任务；必要时创建 main/ 与 mask/。
+
+        Raises:
+            ValueError: 名称非法或任务已存在。
 
         引用：POST /api/tasks。
         """
         name = validate_task_name(name)
         data = self._read()
-        if name in data["tasks"]:
+        if name in data.tasks:
             raise ValueError(f"任务已存在: {name}")
         task_root = self.root / name
         main = task_root / "main"
@@ -99,19 +100,16 @@ class TaskStore:
             main.mkdir(parents=True, exist_ok=True)
         if not mask.is_dir():
             mask.mkdir(parents=True, exist_ok=True)
-        data["tasks"][name] = {"completed": False}
+        data.tasks[name] = TaskEntry(completed=False)
         self._write(data)
-        return {"name": name, "completed": False, "root": str(task_root)}
+        return TaskInfo(name=name, completed=False, root=str(task_root))
 
-    def set_completed(self, name: str, completed: bool) -> dict:
-        """引用：complete / reopen。"""
+    def set_completed(self, name: str, completed: bool) -> TaskInfo:
+        """标记完成 / 重新打开。引用：complete / reopen。"""
         data = self._read()
-        if name not in data["tasks"]:
+        if name not in data.tasks:
             raise KeyError(name)
-        meta = data["tasks"][name]
-        if not isinstance(meta, dict):
-            meta = {}
-        meta["completed"] = bool(completed)
-        data["tasks"][name] = meta
+        entry = data.tasks[name].model_copy(update={"completed": bool(completed)})
+        data.tasks[name] = entry
         self._write(data)
-        return {"name": name, "completed": bool(completed)}
+        return TaskInfo(name=name, completed=bool(completed))

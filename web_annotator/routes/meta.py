@@ -6,30 +6,29 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
 from routes.deps import jobs
+from services.models import DatasetItem, DatasetsResponse, JobCancelResponse
 
 datasets_router = APIRouter(tags=["datasets"])
 jobs_router = APIRouter(prefix="/api/jobs", tags=["jobs"])
 
 
 @datasets_router.get("/api/datasets")
-def list_datasets(request: Request):
+def list_datasets(request: Request) -> DatasetsResponse:
     """
     返回清单中未完成的任务名，供业务页路径校验。
 
     引用：nav.js boot。
     """
     store = request.app.state.task_store
-    items = []
-    for name in store.active_names():
-        items.append({
-            "name": name,
-            "root": str(store.root / name),
-        })
-    return {"datasets": items}
+    items = [
+        DatasetItem(name=name, root=str(store.root / name))
+        for name in store.active_names()
+    ]
+    return DatasetsResponse(datasets=items)
 
 
 @jobs_router.get("/{job_id}/events")
-async def job_events(request: Request, job_id: str):
+async def job_events(request: Request, job_id: str) -> StreamingResponse:
     """
     Server-Sent Events：推送任务进度直至结束。
 
@@ -51,7 +50,7 @@ async def job_events(request: Request, job_id: str):
 
 
 @jobs_router.post("/{job_id}/cancel")
-def job_cancel(request: Request, job_id: str):
+def job_cancel(request: Request, job_id: str) -> JobCancelResponse:
     """
     请求协作取消长任务。
 
@@ -62,4 +61,4 @@ def job_cancel(request: Request, job_id: str):
         snap = mgr.cancel(job_id)
     except KeyError:
         raise HTTPException(404, "任务不存在") from None
-    return {"ok": True, "status": snap}
+    return JobCancelResponse(ok=True, status=snap)

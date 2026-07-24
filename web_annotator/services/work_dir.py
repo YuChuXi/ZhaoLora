@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from services.models import WorkDirInfo
 from services.scanner import IMAGE_EXTS
 from services.wd14_batch import list_image_subdirs
 
@@ -111,39 +112,35 @@ def parse_dir_names(dirs: str | None = None, dir: str | None = None) -> list[str
 
 
 def _count_images(d: Path) -> int:
+    """统计目录内图像文件数。引用：``pin_main``。"""
     if not d.is_dir():
         return 0
     return sum(1 for p in d.iterdir() if p.is_file() and p.suffix.lower() in IMAGE_EXTS)
 
 
-def pin_main(root: Path, dirs: list[dict]) -> list[dict]:
+def pin_main(root: Path, dirs: list[WorkDirInfo]) -> list[WorkDirInfo]:
     """将 ``main`` 置顶；磁盘有 ``main/`` 但列表缺失时补上。
 
     引用:
         ``list_work_dirs``。
     """
-    by_name = {d["name"]: dict(d) for d in dirs if d.get("name") and d["name"] != "."}
-    out: list[dict] = []
+    by_name = {d.name: d for d in dirs if d.name and d.name != "."}
+    out: list[WorkDirInfo] = []
     main_path = root / "main"
     if "main" in by_name:
         out.append(by_name.pop("main"))
     elif main_path.is_dir():
-        out.append({
-            "name": "main",
-            "label": "main",
-            "image_count": _count_images(main_path),
-        })
+        out.append(WorkDirInfo(name="main", label="main", image_count=_count_images(main_path)))
     for name in sorted(by_name):
         out.append(by_name[name])
     return out
 
 
-def list_work_dirs(root: Path) -> list[dict]:
+def list_work_dirs(root: Path) -> list[WorkDirInfo]:
     """可选工作目录列表（``main`` 置顶）。
 
     引用:
         ``routes.images`` / ``ready`` / ``dedupe``。
     """
-    dirs = list_image_subdirs(root)
-    out = [d for d in dirs if d["name"] != "."]
-    return pin_main(root, out)
+    dirs = [d for d in list_image_subdirs(root) if d.name != "."]
+    return pin_main(root, dirs)

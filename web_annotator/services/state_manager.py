@@ -1,19 +1,16 @@
-"""
-状态管理器 —— 读写 .annotator_state.json，管理选中/回收站状态。
+"""标注状态与回收站文件移动。
 
-隔离设计：
-  - 状态与回收站放在数据集根（meta_dir），不污染 main/
-  - 删除操作将文件移入 .trash/（物理隔离）
-  - 状态为 {selected: {path: timestamp}, trashed: {path: timestamp}}
+状态文件与 ``.trash`` 位于数据集根（``meta_dir``）。
 """
 
 from __future__ import annotations
 
-import json
 import shutil
 import time
 from pathlib import Path
 
+from services.models import AnnotatorState
+from services.scanner import IMAGE_EXTS
 from services.work_dir import resolve_under
 
 STATE_FILENAME = ".annotator_state.json"
@@ -21,203 +18,214 @@ TRASH_DIRNAME = ".trash"
 
 
 class StateManager:
-    """管理标注状态和回收站操作。"""
+    """管理选中状态，并将文件在数据目录与回收站之间移动。"""
 
     def __init__(self, data_dir: Path, *, meta_dir: Path | None = None) -> None:
+        """绑定数据集根目录。
+
+        Args:
+            data_dir: 数据集根（相对路径相对此目录）。
+            meta_dir: 状态文件与回收站所在目录；默认与 ``data_dir`` 相同。
+
+        引用:
+            ``services.dataset_runtime.DatasetRegistry.ensure``。
+        """
         self.data_dir = data_dir
         meta = meta_dir or data_dir
         self.meta_dir = meta
         self.state_path = meta / STATE_FILENAME
         self.trash_dir = meta / TRASH_DIRNAME
 
-    # ---- state file I/O ----
+    def _read(self) -> AnnotatorState:
+        """读取状态文件。
 
-    def _read(self) -> dict:
-        """读取状态文件；损坏或缺失时返回空字典。
+        Returns:
+            ``AnnotatorState``；文件不存在时为空状态。
+
+        Raises:
+            ValidationError: JSON 结构不符合模型。
+            json.JSONDecodeError: 文件不是合法 JSON。
+            OSError: 读取失败。
 
         引用:
             ``get``。
         """
         if not self.state_path.exists():
-            return {}
-        try:
-            return json.loads(self.state_path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
-            return {}
+            return AnnotatorState()
+        return AnnotatorState.model_validate_json(self.state_path.read_text(encoding="utf-8"))
 
-    def _write(self, state: dict) -> None:
+    def _write(self, state: AnnotatorState) -> None:
+        """将状态写入 JSON 文件。
+
+        引用:
+            ``toggle`` / ``select_all`` / ``deselect_all`` / ``apply_delete`` / ``restore``。
+        """
         self.state_path.write_text(
-            json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8"
+            state.model_dump_json(indent=2),
+            encoding="utf-8",
         )
 
-    def get(self) -> dict:
-        """获取完整状态，确保必要字段存在。"""
-        s = self._read()
-        s.setdefault("selected", {})
-        s.setdefault("trashed", {})
-        return s
+    def get(self) -> AnnotatorState:
+        """返回当前标注状态。
 
-    # ---- selection ----
+        引用:
+            ``routes.annotations``；本类各写操作。
+        """
+        return self._read()
 
     def toggle(self, path: str) -> bool:
-        """切换单张图片选中状态，返回新状态。"""
+        """切换单张图片选中状态。
+
+        Args:
+            path: 相对数据集根的路径。
+
+        Returns:
+            切换后是否选中。
+
+        引用:
+            ``routes.annotations.toggle``。
+        """
         state = self.get()
-        sel = state["selected"]
-        if path in sel:
-            del sel[path]
+        if path in state.selected:
+            del state.selected[path]
             result = False
         else:
-            sel[path] = int(time.time())
+            state.selected[path] = int(time.time())
             result = True
         self._write(state)
         return result
 
     def select_all(self, paths: list[str]) -> int:
-        """全选给定路径列表。"""
+        """将给定路径全部标为选中。
+
+        Args:
+            paths: 相对路径列表。
+
+        Returns:
+            选中表当前条目数。
+
+        引用:
+            ``routes.annotations.select_all``。
+        """
         state = self.get()
-        sel = state["selected"]
         now = int(time.time())
         for p in paths:
-            sel.setdefault(p, now)
+            state.selected.setdefault(p, now)
         self._write(state)
-        return len(sel)
+        return len(state.selected)
 
     def deselect_all(self) -> None:
-        """取消全选。"""
+        """清空选中表。
+
+        引用:
+            ``routes.annotations.deselect_all``。
+        """
         state = self.get()
-        state["selected"] = {}
+        state.selected = {}
         self._write(state)
 
-    # ---- trash operations ----
-
     def apply_delete(self, paths: list[str]) -> int:
-        """
-        将选中的图片（及关联文件）移入 .trash/。
-        返回成功移动的数量。
+        """将指定图片及其同 stem 旁路文件移入 ``.trash/``。
+
+        Args:
+            paths: 相对数据集根、且文件当前存在的路径。
+
+        Returns:
+            成功移动的图片数量。
+
+        Raises:
+            ValueError: 路径越界。
+            FileNotFoundError: 源文件不存在。
+            OSError: 移动失败。
+
+        引用:
+            ``routes.annotations.apply_delete``；``routes.dedupe``。
         """
         state = self.get()
-        trashed = state["trashed"]
         self.trash_dir.mkdir(parents=True, exist_ok=True)
+        data_root = self.data_dir.resolve()
+        trash_root = self.trash_dir.resolve()
 
         moved = 0
         for rel_path in paths:
             src = resolve_under(self.data_dir, rel_path)
-            rel_path = src.relative_to(self.data_dir.resolve()).as_posix()
+            rel_path = src.relative_to(data_root).as_posix()
             dst = resolve_under(self.trash_dir, rel_path)
-
-            if not src.exists():
-                trashed[rel_path] = int(time.time())
-                moved += 1
-                continue
-
+            if not src.is_file():
+                raise FileNotFoundError(rel_path)
             dst.parent.mkdir(parents=True, exist_ok=True)
-            try:
-                shutil.move(str(src), str(dst))
-                trashed[rel_path] = int(time.time())
-                moved += 1
-            except OSError:
-                continue
+            shutil.move(str(src), str(dst))
+            state.trashed[rel_path] = int(time.time())
+            moved += 1
+            self._move_sidecar_files(src.parent, rel_path, trash_root)
 
-            # 移动关联文件（同目录同 stem）
-            src_path = Path(src)
-            parent = src_path.parent
-            stem = src_path.stem
-            img_name = src_path.name
-            rel_parent = str(Path(rel_path).parent)
-            for sib in list(parent.iterdir()):
-                if not sib.is_file() or sib.name == img_name:
-                    continue
-                if sib.stem != stem:
-                    continue
-                if sib.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif"}:
-                    continue
-                sib_rel = f"{rel_parent}/{sib.name}" if rel_parent not in ("", ".") else sib.name
-                sib_dst = self.trash_dir / sib_rel
-                try:
-                    shutil.move(str(sib), str(sib_dst))
-                except OSError:
-                    pass
-
-        # 清空选中
-        state["selected"] = {}
+        state.selected = {}
         self._write(state)
         return moved
 
     def restore(self, paths: list[str]) -> int:
-        """
-        从 .trash/ 恢复指定图片（及关联文件）到数据目录。
-        返回成功恢复的数量。
+        """从 ``.trash/`` 恢复指定图片及其同 stem 旁路文件。
+
+        Args:
+            paths: 回收站状态中的相对路径。
+
+        Returns:
+            成功恢复的图片数量。
+
+        Raises:
+            ValueError: 路径越界。
+            OSError: 移动失败。
+
+        引用:
+            ``routes.annotations.restore``。
         """
         state = self.get()
-        trashed = state["trashed"]
+        data_root = self.data_dir.resolve()
 
         restored = 0
         for rel_path in paths:
-            if rel_path not in trashed:
+            if rel_path not in state.trashed:
                 continue
-
             src = resolve_under(self.trash_dir, rel_path)
             rel_path = src.relative_to(self.trash_dir.resolve()).as_posix()
             dst = resolve_under(self.data_dir, rel_path)
-
-            if not src.exists():
-                del trashed[rel_path]
+            if not src.is_file():
+                del state.trashed[rel_path]
                 restored += 1
                 continue
-
             dst.parent.mkdir(parents=True, exist_ok=True)
-            try:
-                shutil.move(str(src), str(dst))
-                del trashed[rel_path]
-                restored += 1
-            except OSError:
-                continue
-
-            # 恢复关联文件
-            trash_parent = src.parent
-            stem = Path(rel_path).stem
-            rel_parent = str(Path(rel_path).parent)
-            if trash_parent.is_dir():
-                for sib in list(trash_parent.iterdir()):
-                    if not sib.is_file() or sib.stem != stem:
-                        continue
-                    if sib.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif"}:
-                        continue
-                    sib_rel = f"{rel_parent}/{sib.name}" if rel_parent not in ("", ".") else sib.name
-                    sib_dst = self.data_dir / sib_rel
-                    try:
-                        shutil.move(str(sib), str(sib_dst))
-                    except OSError:
-                        pass
+            shutil.move(str(src), str(dst))
+            del state.trashed[rel_path]
+            restored += 1
+            self._move_sidecar_files(src.parent, rel_path, data_root)
 
         self._write(state)
         return restored
 
-    def migrate_flat_main_keys(self) -> int:
-        """旧版无目录前缀的路径 → main/xxx；扁平回收站文件 → .trash/main/。"""
-        state = self.get()
-        changed = 0
-        for key in ("selected", "trashed"):
-            mapping = state.get(key) or {}
-            new_map: dict = {}
-            for p, v in mapping.items():
-                p2 = p.replace("\\", "/")
-                if p2 and "/" not in p2:
-                    p2 = f"main/{p2}"
-                    changed += 1
-                new_map[p2] = v
-            state[key] = new_map
-        if changed:
-            self._write(state)
+    def _move_sidecar_files(self, parent: Path, rel_path: str, dest_root: Path) -> None:
+        """移动与图片同 stem、非图像后缀的旁路文件。
 
-        trash = self.trash_dir
-        if trash.is_dir():
-            main_trash = trash / "main"
-            for f in list(trash.iterdir()):
-                if f.is_file():
-                    main_trash.mkdir(parents=True, exist_ok=True)
-                    dest = main_trash / f.name
-                    if not dest.exists():
-                        f.rename(dest)
-                        changed += 1
-        return changed
+        Args:
+            parent: 源文件所在目录。
+            rel_path: 图片相对路径（用于拼旁路相对路径）。
+            dest_root: 目标根目录（数据集根或回收站根）。
+
+        引用:
+            ``apply_delete`` / ``restore``。
+        """
+        if not parent.is_dir():
+            return
+        stem = Path(rel_path).stem
+        img_name = Path(rel_path).name
+        rel_parent = str(Path(rel_path).parent)
+        for sib in list(parent.iterdir()):
+            if not sib.is_file() or sib.name == img_name:
+                continue
+            if sib.stem != stem:
+                continue
+            if sib.suffix.lower() in IMAGE_EXTS:
+                continue
+            sib_rel = f"{rel_parent}/{sib.name}" if rel_parent not in ("", ".") else sib.name
+            sib_dst = resolve_under(dest_root, sib_rel)
+            sib_dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(sib), str(sib_dst))

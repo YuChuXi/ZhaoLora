@@ -8,6 +8,8 @@ from pathlib import Path
 import markdown
 from fastapi import APIRouter, HTTPException
 
+from services.models import DocContentResponse, DocNavItem, DocsListResponse
+
 router = APIRouter(tags=["docs"])
 
 _DOCS_DIR = Path(__file__).resolve().parent.parent / "docs"
@@ -43,9 +45,9 @@ _NAV: list[tuple[str, str]] = [
 _MD_LINK = re.compile(r"\]\(([\w\-]+)\.md(#[^)]*)?\)")
 
 
-def docs_nav() -> list[dict[str, str]]:
+def docs_nav() -> list[DocNavItem]:
     """引用：GET /api/docs；home.js。"""
-    return [{"slug": s, "label": lab} for s, lab in _NAV]
+    return [DocNavItem(slug=s, label=lab) for s, lab in _NAV]
 
 
 def resolve_doc(slug: str) -> Path:
@@ -76,20 +78,20 @@ def render_markdown(text: str) -> str:
 
 
 @router.get("/api/docs")
-def list_docs():
+def list_docs() -> DocsListResponse:
     """引用：home.js。"""
-    return {"nav": docs_nav()}
+    return DocsListResponse(nav=docs_nav())
 
 
 @router.get("/api/docs/{slug}")
-def get_doc(slug: str = "readme"):
+def get_doc(slug: str = "readme") -> DocContentResponse:
     """引用：home.js。"""
     path = resolve_doc(slug)
     out_slug = "readme" if slug in ("readme", "index", "") else slug
     raw = path.read_text(encoding="utf-8")
-    return {
-        "slug": out_slug,
-        "file": path.name,
-        "title": path.stem,
-        "html": render_markdown(raw),
-    }
+    return DocContentResponse(
+        slug=out_slug,
+        file=path.name,
+        title=path.stem,
+        html=render_markdown(raw),
+    )

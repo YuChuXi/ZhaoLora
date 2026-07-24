@@ -5,12 +5,16 @@ from __future__ import annotations
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, Iterable
+from typing import TYPE_CHECKING, Callable, Iterable
 
 import numpy as np
 from PIL import Image
 
+from services.models import JobSnapshot, WorkDirInfo
 from services.scanner import IMAGE_EXTS
+
+if TYPE_CHECKING:
+    from onnxruntime import InferenceSession
 
 DEFAULT_THRESHOLD = 0.1
 
@@ -19,7 +23,7 @@ WD14_MODEL_DIR = _REPO_ROOT / "wd14_tagger_model" / "SmilingWolf_wd-vit-large-ta
 WD14_ONNX_PATH = WD14_MODEL_DIR / "model.onnx"
 WD14_CSV_PATH = WD14_MODEL_DIR / "selected_tags.csv"
 
-_WD14_SESSION = None
+_WD14_SESSION: InferenceSession | None = None
 _WD14_LABELS: list[str] = []
 _WD14_LOCK = threading.Lock()
 
@@ -27,22 +31,27 @@ _WD14_LOCK = threading.Lock()
 class Tags:
     @staticmethod
     def split_caption(caption: str) -> list[str]:
+        """``split_caption``。引用：``Tags``。"""
         return [x.strip() for x in caption.replace("\n", ",").split(",") if x.strip()]
 
     @staticmethod
     def join_caption(tags: Iterable[str]) -> str:
+        """``join_caption``。引用：``Tags``。"""
         return ", ".join([t.strip() for t in tags if t.strip()])
 
     @staticmethod
     def equivalence_key(tag: str) -> str:
+        """``equivalence_key``。引用：``Tags``。"""
         return " ".join(tag.strip().lower().replace("_", " ").split())
 
     @staticmethod
     def _canonical_spacing(tag: str) -> str:
+        """``_canonical_spacing``。引用：``Tags``。"""
         return " ".join(tag.strip().replace("_", " ").split())
 
     @staticmethod
     def merge_for_disk_by_confidence(base: list[str], wd_scored: list[tuple[str, float]]) -> str:
+        """``merge_for_disk_by_confidence``。引用：``Tags``。"""
         score_by_key: dict[str, float] = {}
         canonical_by_key: dict[str, str] = {}
         for tag, score in wd_scored:
@@ -70,41 +79,50 @@ _SKIP_TAG_DIRS = frozenset({
 })
 
 
-def list_image_subdirs(root: Path) -> list[dict]:
-    """列出根下含图片的一级子目录。"""
+def list_image_subdirs(root: Path) -> list[WorkDirInfo]:
+    """列出根下含图片的一级子目录。
+
+    引用:
+        ``work_dir.list_work_dirs``；``resolve_image_dirs``；打标 / 美学目录选择。
+    """
     root = root.resolve()
-    out: list[dict] = []
+    out: list[WorkDirInfo] = []
     if not root.is_dir():
         return out
 
     def count_images(d: Path) -> int:
+        """统计目录内图像数。引用：``list_image_subdirs``。"""
         return sum(1 for p in d.iterdir() if p.is_file() and p.suffix.lower() in IMAGE_EXTS)
 
     n_root = count_images(root)
     if n_root:
-        out.append({"name": ".", "label": "(根目录)", "image_count": n_root})
+        out.append(WorkDirInfo(name=".", label="(根目录)", image_count=n_root))
 
     for p in sorted(root.iterdir()):
         if not p.is_dir() or p.name.startswith(".") or p.name in _SKIP_TAG_DIRS:
             continue
         n = count_images(p)
         if n > 0 or p.name == "main":
-            out.append({"name": p.name, "label": p.name, "image_count": n})
+            out.append(WorkDirInfo(name=p.name, label=p.name, image_count=n))
 
-    # main 置顶（根目录项「.」仍在最前）
-    root_item = [d for d in out if d["name"] == "."]
-    rest = [d for d in out if d["name"] != "."]
-    main = [d for d in rest if d["name"] == "main"]
-    others = [d for d in rest if d["name"] != "main"]
+    root_item = [d for d in out if d.name == "."]
+    rest = [d for d in out if d.name != "."]
+    main = [d for d in rest if d.name == "main"]
+    others = [d for d in rest if d.name != "main"]
     if not main and (root / "main").is_dir():
-        main = [{"name": "main", "label": "main", "image_count": count_images(root / "main")}]
+        main = [WorkDirInfo(name="main", label="main", image_count=count_images(root / "main"))]
     return root_item + main + others
 
 
 def resolve_image_dirs(root: Path, names: list[str] | None) -> list[Path]:
+    """将子目录名解析为绝对路径；未知名跳过。
+
+    引用:
+        打标 / 美学启动任务。
+    """
     root = root.resolve()
     available = {
-        d["name"]: root if d["name"] == "." else root / d["name"]
+        d.name: root if d.name == "." else root / d.name
         for d in list_image_subdirs(root)
     }
     if not names:
@@ -118,12 +136,14 @@ def resolve_image_dirs(root: Path, names: list[str] | None) -> list[Path]:
 
 
 def model_ready() -> tuple[bool, str]:
+    """``model_ready``。引用：本模块调用方。"""
     if WD14_ONNX_PATH.is_file() and WD14_CSV_PATH.is_file():
         return True, str(WD14_MODEL_DIR)
     return False, f"找不到本地 WD14 模型: {WD14_MODEL_DIR}"
 
 
-def _get_wd14():
+def _get_wd14() -> tuple[InferenceSession, list[str]]:
+    """加载或复用 WD14 ONNX 会话。引用：``run_wd14_on_image_scored``。"""
     global _WD14_SESSION, _WD14_LABELS
     with _WD14_LOCK:
         if _WD14_SESSION is not None:
@@ -147,6 +167,7 @@ def _get_wd14():
 
 
 def run_wd14_on_image_scored(img: Image.Image, threshold: float) -> list[tuple[str, float]]:
+    """``run_wd14_on_image_scored``。引用：本模块调用方。"""
     session, labels = _get_wd14()
     if img.mode == "RGBA":
         rgb = Image.new("RGB", img.size, (255, 255, 255))
@@ -176,6 +197,7 @@ def run_wd14_on_image_scored(img: Image.Image, threshold: float) -> list[tuple[s
 
 
 def _load_text(path: Path) -> str:
+    """``_load_text``。引用：本模块调用方。"""
     if not path.is_file():
         return ""
     return path.read_text(encoding="utf-8")
@@ -195,28 +217,30 @@ class TaggingProgress:
     logs: list[str] = field(default_factory=list)
     cancel_requested: bool = False
 
-    def snapshot(self) -> dict:
+    def snapshot(self) -> JobSnapshot:
+        """导出进度快照。引用：``routes.tagging`` 长任务 emit。"""
         total = self.total
         done = self.done
         pct = round(100.0 * done / total, 1) if total > 0 else 0.0
         if self.status == "done" and total > 0:
             pct = 100.0
-        return {
-            "status": self.status,
-            "phase": self.phase,
-            "total": total,
-            "done": done,
-            "pct": pct,
-            "skipped": self.skipped,
-            "ok": self.ok,
-            "failed": self.failed,
-            "current": self.current,
-            "message": self.message,
-            "logs": list(self.logs[-80:]),
-            "cancel_requested": self.cancel_requested,
-        }
+        return JobSnapshot(
+            status=self.status,
+            phase=self.phase,
+            total=total,
+            done=done,
+            pct=pct,
+            skipped=self.skipped,
+            ok=self.ok,
+            failed=self.failed,
+            current=self.current,
+            message=self.message,
+            logs=list(self.logs[-80:]),
+            cancel_requested=self.cancel_requested,
+        )
 
     def log(self, line: str) -> None:
+        """``log``。引用：``TaggingProgress``。"""
         self.logs.append(line)
         if len(self.logs) > 400:
             self.logs = self.logs[-300:]
@@ -265,6 +289,7 @@ def run_batch(
     progress: TaggingProgress,
     on_update: Callable[[], None] | None = None,
 ) -> None:
+    """``run_batch``。引用：本模块调用方。"""
     items = collect_jobs(dirs)
     progress.total = len(items)
     progress.done = 0

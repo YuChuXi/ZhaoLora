@@ -35,6 +35,7 @@ class Thumbnailer:
         *,
         meta_dir: Path | None = None,
     ) -> None:
+        """``__init__``。引用：``Thumbnailer``。"""
         self.data_dir = data_dir
         self.thumb_dir = (meta_dir or data_dir) / THUMB_DIRNAME
         self.size = int(size)
@@ -124,6 +125,7 @@ class Thumbnailer:
         done = 0
 
         def _one(rel: str) -> bool:
+            """生成单张缩略图。引用：``generate_many``。"""
             return self.generate(rel)
 
         with ThreadPoolExecutor(max_workers=workers) as pool:

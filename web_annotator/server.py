@@ -16,8 +16,10 @@ import re
 import sys
 from pathlib import Path
 
+from collections.abc import Awaitable, Callable
+
 from fastapi import APIRouter, FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 import uvicorn
 
@@ -42,7 +44,8 @@ from services.task_store import TaskStore
 class _DevStaticFiles(StaticFiles):
     """开发期静态资源不缓存，避免改 JS 后浏览器仍用旧文件。"""
 
-    def file_response(self, *args, **kwargs):
+    def file_response(self, *args, **kwargs) -> Response:
+        """关闭静态资源缓存。引用：开发期改 JS 后立即生效。"""
         resp = super().file_response(*args, **kwargs)
         resp.headers["Cache-Control"] = "no-store"
         return resp
@@ -102,6 +105,7 @@ def _migrate_meta_to_root(main_dir: Path, root: Path) -> None:
 
 
 def _read_template(name: str) -> HTMLResponse:
+    """``_read_template``。引用：本模块调用方。"""
     template = Path(__file__).parent / "templates" / name
     if not template.exists():
         return HTMLResponse(f"<h1>{name} not found</h1>", status_code=404)
@@ -109,7 +113,10 @@ def _read_template(name: str) -> HTMLResponse:
 
 
 @app.middleware("http")
-async def bind_dataset_middleware(request: Request, call_next):
+async def bind_dataset_middleware(
+    request: Request,
+    call_next: Callable[[Request], Awaitable[Response]],
+) -> Response:
     """
     从路径解析任务名；须在清单中，再按需加载运行时。
 
@@ -150,18 +157,19 @@ app.include_router(docs_router)
 
 
 @app.get("/")
-def home_page():
+def home_page() -> HTMLResponse:
     """任务与文档首页。引用：浏览器打开根路径。"""
     return _read_template("home.html")
 
 
 @app.get("/d/{dataset}")
-def dataset_root_redirect(dataset: str):
+def dataset_root_redirect(dataset: str) -> RedirectResponse:
+    """任务根路径重定向到筛选页。引用：浏览器打开 ``/d/{name}``。"""
     return RedirectResponse(url=f"/d/{dataset}/filter", status_code=302)
 
 
 @app.get("/d/{dataset}/thumb/{filename}")
-def dataset_thumb(request: Request, dataset: str, filename: str):
+def dataset_thumb(request: Request, dataset: str, filename: str) -> FileResponse:
     """
     缩略图文件。
 
@@ -179,8 +187,8 @@ def dataset_thumb(request: Request, dataset: str, filename: str):
     return FileResponse(path, media_type="image/avif", headers={"Cache-Control": "no-store"})
 
 
-@app.get("/d/{dataset}/{page}")
-def dataset_page(dataset: str, page: str):
+@app.get("/d/{dataset}/{page}", response_model=None)
+def dataset_page(dataset: str, page: str) -> HTMLResponse | RedirectResponse:
     """
     业务页面。任务名须已在清单中（中间件校验）。
 
@@ -195,6 +203,7 @@ def dataset_page(dataset: str, page: str):
 
 
 def main() -> int:
+    """启动 uvicorn。引用：``python web_annotator/server.py``。"""
     parser = argparse.ArgumentParser(description="网页图片标注工具")
     parser.add_argument(
         "--data-dir",

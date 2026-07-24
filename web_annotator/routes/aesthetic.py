@@ -19,6 +19,9 @@ from services.aesthetic import (
     resolve_image_dirs,
     run_aesthetic,
 )
+from services.models import AestheticDirsResponse, AestheticStartResponse
+from services.thumbnailer import Thumbnailer
+from services.jobs import EmitFn
 
 router = APIRouter(prefix="/aesthetic", tags=["aesthetic"])
 
@@ -26,6 +29,7 @@ _REPORT_NAME = "aesthetic_report.html"
 
 
 def _report_path(root: Path) -> Path:
+    """美学报告 HTML 路径。引用：本模块各接口。"""
     return root / _REPORT_NAME
 
 
@@ -48,7 +52,7 @@ def _normalize_report_img_path(url: str) -> str | None:
     return "/".join(parts) if parts else None
 
 
-def rewrite_report_html(html: str, thumbnailer, dataset: str) -> str:
+def rewrite_report_html(html: str, thumbnailer: Thumbnailer, dataset: str) -> str:
     """
     报告卡片用缩略图；灯箱仍用原图。
 
@@ -56,6 +60,7 @@ def rewrite_report_html(html: str, thumbnailer, dataset: str) -> str:
     """
 
     def fix_src(m: re.Match) -> str:
+        """把卡片 ``src`` 换成缩略图 URL。引用：``rewrite_report_html``。"""
         url = m.group(1)
         rel = _normalize_report_img_path(url)
         if rel is None:
@@ -65,6 +70,7 @@ def rewrite_report_html(html: str, thumbnailer, dataset: str) -> str:
         return f'src="/d/{quote(dataset, safe="")}/thumb/{h}.avif"'
 
     def fix_lightbox(m: re.Match) -> str:
+        """把灯箱链接换成原图 API。引用：``rewrite_report_html``。"""
         url = m.group(1)
         rel = _normalize_report_img_path(url)
         if rel is None:
@@ -80,28 +86,32 @@ def rewrite_report_html(html: str, thumbnailer, dataset: str) -> str:
 
 
 class StartBody(BaseModel):
+    """美学评分启动请求。引用：``POST /aesthetic/start``。"""
+
     dirs: list[str] = Field(default_factory=list)
     device: str = Field(default="cpu")
     write_report: bool = True
 
 
 @router.get("/dirs")
-def aesthetic_dirs(request: Request):
+def aesthetic_dirs(request: Request) -> AestheticDirsResponse:
+    """列出可评分目录与报告状态。引用：``aesthetic.js``。"""
     rt = get_runtime(request)
     root = rt.root
     report = _report_path(root)
-    return {
-        "root": str(root),
-        "dirs": list_image_subdirs(root),
-        "cuda": cuda_available(),
-        "default_device": default_device(),
-        "report_ready": report.is_file(),
-        "report_url": f"/api/d/{rt.name}/aesthetic/report" if report.is_file() else None,
-    }
+    return AestheticDirsResponse(
+        root=str(root),
+        dirs=list_image_subdirs(root),
+        cuda=cuda_available(),
+        default_device=default_device(),
+        report_ready=report.is_file(),
+        report_url=f"/api/d/{rt.name}/aesthetic/report" if report.is_file() else None,
+    )
 
 
 @router.get("/report")
-def aesthetic_report(request: Request):
+def aesthetic_report(request: Request) -> HTMLResponse:
+    """返回改写后的美学报告 HTML。引用：``aesthetic.js``。"""
     rt = get_runtime(request)
     path = _report_path(rt.root)
     if not path.is_file():
@@ -111,7 +121,7 @@ def aesthetic_report(request: Request):
 
 
 @router.post("/start")
-async def aesthetic_start(request: Request, body: StartBody):
+async def aesthetic_start(request: Request, body: StartBody) -> AestheticStartResponse:
     """
     提交美学评分长任务。
 
@@ -133,14 +143,19 @@ async def aesthetic_start(request: Request, body: StartBody):
     prog = AestheticProgress()
     report_url = f"/api/d/{rt.name}/aesthetic/report"
 
-    def run(emit) -> None:
+    def run(emit: EmitFn) -> None:
+        """工作线程入口。引用：``JobManager.submit``。"""
         def on_update() -> None:
-            snap = prog.snapshot()
+            """推送美学进度快照。引用：``run_aesthetic``。"""
             report = _report_path(root)
-            snap["report_ready"] = report.is_file()
-            snap["report_url"] = report_url if report.is_file() else None
-            if report.is_file():
-                snap["report_mtime"] = report.stat().st_mtime
+            ready = report.is_file()
+            snap = prog.snapshot().model_copy(
+                update={
+                    "report_ready": ready,
+                    "report_url": report_url if ready else None,
+                    "report_mtime": report.stat().st_mtime if ready else None,
+                }
+            )
             emit(snap)
 
         run_aesthetic(
@@ -159,9 +174,9 @@ async def aesthetic_start(request: Request, body: StartBody):
         run=run,
         cancel_fn=lambda: setattr(prog, "cancel_requested", True),
     )
-    return {
-        "ok": True,
-        "job_id": job_id,
-        "dirs": [p.name if p != root else "." for p in selected],
-        "device": device,
-    }
+    return AestheticStartResponse(
+        ok=True,
+        job_id=job_id,
+        dirs=[p.name if p != root else "." for p in selected],
+        device=device,
+    )

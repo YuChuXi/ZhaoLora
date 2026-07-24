@@ -15,6 +15,13 @@ from routes.deps import get_runtime, resolve_path
 from services.scanner import scan_images
 from services.crop_match import clamp_target_size, match_config
 from services.dataset_layout import RESERVED_DIR_NAMES, DatasetLayout
+from services.models import (
+    CropImageItem,
+    CropMatchConfig,
+    CropPageConfig,
+    CropSaveResponse,
+    CropSavedItem,
+)
 
 router = APIRouter(prefix="/crop", tags=["crop"])
 
@@ -54,6 +61,14 @@ def _main_dir(request: Request) -> Path:
 
 
 def _require_part_name(name: str) -> str:
+    """校验部位目录名。
+
+    Raises:
+        HTTPException: 名称非法或为保留名。
+
+    引用:
+        ``save_crops``。
+    """
     name = (name or "").strip()
     if not name or not _SAFE_NAME.match(name):
         raise HTTPException(400, "需要合法部位名（如 head / foot）")
@@ -63,9 +78,13 @@ def _require_part_name(name: str) -> str:
 
 
 def _resolve_out_path(layout: DatasetLayout, stem: str, part_name: str, index: int, total: int) -> Path:
-    """
-    part_name 非空且合法 → root/{part}/{stem}.png
-    否则 → root/crops/{stem}.png 或 {stem}_001.png
+    """计算裁剪输出路径。
+
+    有合法 ``part_name`` 时写入 ``root/{part}/{stem}.png``；
+    否则写入 ``root/crops/``。
+
+    引用:
+        ``save_crops``。
     """
     if part_name and _SAFE_NAME.match(part_name):
         if part_name.lower() in RESERVED_DIR_NAMES:
@@ -81,23 +100,29 @@ def _resolve_out_path(layout: DatasetLayout, stem: str, part_name: str, index: i
 
 
 @router.get("/images")
-def list_crop_images(request: Request):
-    """列出 main 下图片及是否已有部位/裁剪输出。"""
+def list_crop_images(request: Request) -> list[CropImageItem]:
+    """列出 main 下图片及是否已有部位或裁剪输出。
+
+    引用:
+        ``crop.js``。
+    """
     layout = _layout(request)
     images = scan_images(layout.main_dir)
-    result = []
+    result: list[CropImageItem] = []
     for img in images:
-        result.append({
-            "path": img["path"],
-            "stem": img["stem"],
-            "done": layout.stem_has_part_output(img["stem"]),
-        })
-    result.sort(key=lambda x: (1 if x["done"] else 0, x["path"]))
+        result.append(
+            CropImageItem(
+                path=img.path,
+                stem=img.stem,
+                done=layout.stem_has_part_output(img.stem),
+            )
+        )
+    result.sort(key=lambda x: (1 if x.done else 0, x.path))
     return result
 
 
 @router.get("/image")
-def serve_original_image(request: Request, path: str = Query(...)):
+def serve_original_image(request: Request, path: str = Query(...)) -> Response:
     """提供原图像素尺寸的 AVIF 预览（仅供框选；保存时仍读磁盘原图）。
 
     引用:
@@ -115,29 +140,33 @@ def serve_original_image(request: Request, path: str = Query(...)):
 
 
 @router.get("/candidates")
-def get_candidates():
-    """返回边长网格配置（不再下发全量候选表）。"""
+def get_candidates() -> CropMatchConfig:
+    """返回边长网格配置。
+
+    引用:
+        ``crop.js``。
+    """
     return match_config()
 
 
 @router.get("/config")
-def get_config(request: Request):
+def get_config(request: Request) -> CropPageConfig:
     """
     裁剪页配置。默认裁切由前端 localStorage 管理，不再下发服务端默认。
 
     引用：crop.js。
     """
     layout = _layout(request)
-    return {
-        "root": str(layout.root),
-        "main_dir": str(layout.main_dir),
-        "mask_dir": str(layout.mask_dir),
-        "parts": [p.name for p in layout.list_part_dirs()],
-    }
+    return CropPageConfig(
+        root=str(layout.root),
+        main_dir=str(layout.main_dir),
+        mask_dir=str(layout.mask_dir),
+        parts=[p.name for p in layout.list_part_dirs()],
+    )
 
 
 @router.post("/save")
-def save_crops(request: Request, body: SaveCropsBody):
+def save_crops(request: Request, body: SaveCropsBody) -> CropSaveResponse:
     """按框裁切并写入部位目录或 ``crops/``。
 
     引用:
@@ -156,7 +185,7 @@ def save_crops(request: Request, body: SaveCropsBody):
     img = Image.open(src).convert("RGBA")
     iw, ih = img.size
     stem = Path(rel).stem
-    saved = []
+    saved: list[CropSavedItem] = []
 
     if body.no_crop_resize:
         part = _require_part_name(
@@ -168,12 +197,14 @@ def save_crops(request: Request, body: SaveCropsBody):
         out_dir.mkdir(parents=True, exist_ok=True)
         out_path = out_dir / f"{stem}.png"
         img.save(out_path, format="PNG")
-        saved.append({
-            "file": str(out_path.relative_to(layout.root)),
-            "size": [iw, ih],
-            "name": part,
-        })
-        return {"saved": saved, "count": len(saved)}
+        saved.append(
+            CropSavedItem(
+                file=str(out_path.relative_to(layout.root)),
+                size=[iw, ih],
+                name=part,
+            )
+        )
+        return CropSaveResponse(saved=saved, count=len(saved))
 
     used_keys: set[str] = set()
     for i, c in enumerate(body.crops):
@@ -207,11 +238,13 @@ def save_crops(request: Request, body: SaveCropsBody):
         used_keys.add(key)
         out_path.parent.mkdir(parents=True, exist_ok=True)
         out_img.save(out_path, format="PNG")
-        saved.append({
-            "file": str(out_path.relative_to(layout.root)),
-            "crop": [x1, y1, x2, y2],
-            "size": [tw, th],
-            "name": raw_name or out_path.parent.name,
-        })
+        saved.append(
+            CropSavedItem(
+                file=str(out_path.relative_to(layout.root)),
+                crop=[x1, y1, x2, y2],
+                size=[tw, th],
+                name=raw_name or out_path.parent.name,
+            )
+        )
 
-    return {"saved": saved, "count": len(saved)}
+    return CropSaveResponse(saved=saved, count=len(saved))

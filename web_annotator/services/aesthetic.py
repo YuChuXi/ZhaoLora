@@ -8,23 +8,27 @@ import threading
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
+from types import ModuleType
 
 import numpy as np
 import torch
+import torch.nn as nn
 from PIL import Image, UnidentifiedImageError
 
+from services.models import AestheticSummary, JobSnapshot
 from services.wd14_batch import IMAGE_EXTS, list_image_subdirs, resolve_image_dirs
 
 _REPO_ROOT = Path(__file__).resolve().parents[1].parent
 _SCRIPT = _REPO_ROOT / "aesthetic_score_dataset_pony.py"
 SCORES_NAME = ".aesthetic_scores.json"
 
-_MOD = None
-_MODELS: dict[str, tuple] = {}
+_MOD: ModuleType | None = None
+_MODELS: dict[str, tuple[nn.Module, Callable[[Image.Image], torch.Tensor], nn.Module, str]] = {}
 _MODEL_LOCK = threading.Lock()
 
 
-def _pony():
+def _pony() -> ModuleType:
+    """加载美学评分脚本模块。引用：``get_models`` / ``run_aesthetic``。"""
     global _MOD
     if _MOD is not None:
         return _MOD
@@ -32,28 +36,38 @@ def _pony():
         raise RuntimeError(f"找不到脚本: {_SCRIPT}")
     spec = importlib.util.spec_from_file_location("aesthetic_score_dataset_pony", _SCRIPT)
     mod = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
     spec.loader.exec_module(mod)
     _MOD = mod
     return _MOD
 
 
 def cuda_available() -> bool:
+    """当前环境是否有 CUDA。引用：``routes.aesthetic``。"""
     return bool(torch.cuda.is_available())
 
 
 def default_device() -> str:
+    """默认推理设备。引用：``routes.aesthetic.aesthetic_dirs``。"""
     return "cuda" if cuda_available() else "cpu"
 
 
-def get_models(device: str):
+def get_models(device: str) -> tuple[nn.Module, Callable[[Image.Image], torch.Tensor], nn.Module, str]:
+    """加载或复用 CLIP / 美学头。引用：``run_aesthetic``。"""
     device = "cuda" if device == "cuda" and cuda_available() else "cpu"
     with _MODEL_LOCK:
         cached = _MODELS.get(device)
         if cached is not None:
             return cached
         clip_model, preprocess, aesthetic_model = _pony().load_models(device)
-        _MODELS[device] = (clip_model, preprocess, aesthetic_model, device)
-        return _MODELS[device]
+        packed: tuple[nn.Module, Callable[[Image.Image], torch.Tensor], nn.Module, str] = (
+            clip_model,
+            preprocess,
+            aesthetic_model,
+            device,
+        )
+        _MODELS[device] = packed
+        return packed
 
 
 @dataclass
@@ -69,47 +83,60 @@ class AestheticProgress:
     message: str = ""
     logs: list[str] = field(default_factory=list)
     cancel_requested: bool = False
-    summary: dict = field(default_factory=dict)
+    summary: AestheticSummary = field(default_factory=AestheticSummary)
 
-    def snapshot(self) -> dict:
+    def snapshot(self) -> JobSnapshot:
+        """导出进度快照。引用：``routes.aesthetic`` 长任务 emit。"""
         total = self.total
         done = self.done
         pct = round(100.0 * done / total, 1) if total > 0 else 0.0
         if self.status == "done" and total > 0:
             pct = 100.0
-        return {
-            "status": self.status,
-            "phase": self.phase,
-            "total": total,
-            "done": done,
-            "pct": pct,
-            "ok": self.ok,
-            "skipped": self.skipped,
-            "failed": self.failed,
-            "current": self.current,
-            "message": self.message,
-            "logs": list(self.logs[-80:]),
-            "cancel_requested": self.cancel_requested,
-            "summary": dict(self.summary),
-        }
+        return JobSnapshot(
+            status=self.status,
+            phase=self.phase,
+            total=total,
+            done=done,
+            pct=pct,
+            ok=self.ok,
+            skipped=self.skipped,
+            failed=self.failed,
+            current=self.current,
+            message=self.message,
+            logs=list(self.logs[-80:]),
+            cancel_requested=self.cancel_requested,
+            summary=self.summary.model_copy(),
+        )
 
     def log(self, line: str) -> None:
+        """``log``。引用：``AestheticProgress``。"""
         self.logs.append(line)
         if len(self.logs) > 400:
             self.logs = self.logs[-300:]
 
 
 def scores_path(root: Path) -> Path:
+    """``scores_path``。引用：本模块调用方。"""
     return root.resolve() / SCORES_NAME
 
 
 def load_scores(root: Path) -> dict[str, float]:
+    """读取美学分数表。
+
+    Raises:
+        json.JSONDecodeError: 文件不是合法 JSON。
+        TypeError: 根节点不是对象。
+        ValueError: 分值无法转为 float。
+
+    引用:
+        ``routes.images``；``run_aesthetic``。
+    """
     path = scores_path(root)
     if not path.is_file():
         return {}
     data = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(data, dict):
-        return {}
+        raise TypeError(f"美学分数文件根节点必须是对象: {path}")
     out: dict[str, float] = {}
     for k, v in data.items():
         key = str(k).replace("\\", "/").lstrip("/")
@@ -118,6 +145,7 @@ def load_scores(root: Path) -> dict[str, float]:
 
 
 def save_scores(root: Path, scores: dict[str, float]) -> None:
+    """``save_scores``。引用：本模块调用方。"""
     path = scores_path(root)
     clean = {
         str(k).replace("\\", "/").lstrip("/"): round(float(v), 6)
@@ -130,6 +158,7 @@ def save_scores(root: Path, scores: dict[str, float]) -> None:
 
 
 def _collect(dirs: list[Path]) -> list[tuple[Path, Path]]:
+    """``_collect``。引用：本模块调用方。"""
     items: list[tuple[Path, Path]] = []
     for d in dirs:
         if not d.is_dir():
@@ -163,7 +192,7 @@ def run_aesthetic(
     progress.ok = 0
     progress.skipped = 0
     progress.failed = 0
-    progress.summary = {}
+    progress.summary = AestheticSummary()
     progress.status = "running"
     progress.phase = "loading"
     progress.message = f"共 {len(items)} 张，加载模型…"
@@ -239,7 +268,7 @@ def run_aesthetic(
         html_path = root / "aesthetic_report.html"
         mod.generate_html(results, root.name, str(html_path), str(root))
         progress.log(f"报告: {html_path}")
-        progress.summary["report"] = str(html_path)
+        progress.summary.report = str(html_path)
 
     scores = [r["raw"] for r in results]
     pony_counts = [0] * 10
@@ -247,21 +276,22 @@ def run_aesthetic(
         pony_counts[r["pony"]] += 1
 
     mean_v = float(np.mean(scores)) if scores else 0.0
-    progress.summary = {
-        **progress.summary,
-        "count": len(results),
-        "mean": round(mean_v, 4),
-        "median": round(float(np.median(scores)), 4) if scores else 0.0,
-        "std": round(float(np.std(scores)), 4) if scores else 0.0,
-        "min": round(float(np.min(scores)), 4) if scores else 0.0,
-        "max": round(float(np.max(scores)), 4) if scores else 0.0,
-        "pony_counts": pony_counts,
-        "scores_file": str(scores_path(root)),
-    }
+    progress.summary = progress.summary.model_copy(
+        update={
+            "count": len(results),
+            "mean": round(mean_v, 4),
+            "median": round(float(np.median(scores)), 4) if scores else 0.0,
+            "std": round(float(np.std(scores)), 4) if scores else 0.0,
+            "min": round(float(np.min(scores)), 4) if scores else 0.0,
+            "max": round(float(np.max(scores)), 4) if scores else 0.0,
+            "pony_counts": pony_counts,
+            "scores_file": str(scores_path(root)),
+        }
+    )
     progress.status = "done"
     progress.phase = "done"
     progress.current = ""
-    progress.message = f"完成 {progress.ok} 张，均值 {progress.summary['mean']}"
+    progress.message = f"完成 {progress.ok} 张，均值 {progress.summary.mean}"
     progress.log(progress.message)
     if on_update:
         on_update()

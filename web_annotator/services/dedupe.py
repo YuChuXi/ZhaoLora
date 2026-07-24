@@ -11,10 +11,11 @@ import cv2
 import numpy as np
 from PIL import Image, ImageFile
 
+from services.scanner import IMAGE_EXTS
+
 Image.MAX_IMAGE_PIXELS = None
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 
-IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp"}
 COMPARE_SIZE = 128
 
 
@@ -30,21 +31,25 @@ class ImageRecord:
 
 class UnionFind:
     def __init__(self, n: int) -> None:
+        """``__init__``。引用：``UnionFind``。"""
         self.p = list(range(n))
 
     def find(self, x: int) -> int:
+        """``find``。引用：``UnionFind``。"""
         while self.p[x] != x:
             self.p[x] = self.p[self.p[x]]
             x = self.p[x]
         return x
 
     def union(self, a: int, b: int) -> None:
+        """``union``。引用：``UnionFind``。"""
         ra, rb = self.find(a), self.find(b)
         if ra != rb:
             self.p[rb] = ra
 
 
 def _blockiness(gray: np.ndarray) -> float:
+    """``_blockiness``。引用：本模块调用方。"""
     if gray is None or gray.ndim != 2 or gray.shape[0] < 16 or gray.shape[1] < 16:
         return 0.0
     g = gray.astype(np.float32)
@@ -64,6 +69,7 @@ def _blockiness(gray: np.ndarray) -> float:
 
 
 def _load_one(path: Path) -> ImageRecord | None:
+    """``_load_one``。引用：本模块调用方。"""
     gray = cv2.imread(str(path), cv2.IMREAD_GRAYSCALE)
     blockiness = _blockiness(gray)
     try:
@@ -79,6 +85,7 @@ def _load_one(path: Path) -> ImageRecord | None:
 
 
 def collect_paths(data_dir: Path) -> list[Path]:
+    """``collect_paths``。引用：本模块调用方。"""
     data_dir = data_dir.resolve()
     out = []
     for p in sorted(data_dir.iterdir()):
@@ -88,6 +95,7 @@ def collect_paths(data_dir: Path) -> list[Path]:
 
 
 def load_records(data_dir: Path, workers: int | None = None) -> list[ImageRecord]:
+    """``load_records``。引用：本模块调用方。"""
     paths = collect_paths(data_dir)
     if not paths:
         return []
@@ -104,6 +112,7 @@ def load_records(data_dir: Path, workers: int | None = None) -> list[ImageRecord
 
 
 def _compare_edges(fp_flat: np.ndarray, sq: np.ndarray, thresh: float, j_chunk: int = 2048) -> list[tuple[int, int]]:
+    """``_compare_edges``。引用：本模块调用方。"""
     n, d = fp_flat.shape
     edges: list[tuple[int, int]] = []
     inv_d = np.float32(1.0 / float(d))
@@ -121,6 +130,7 @@ def _compare_edges(fp_flat: np.ndarray, sq: np.ndarray, thresh: float, j_chunk: 
 
 
 def suggest_keep_index(records: list[ImageRecord], idxs: list[int], similar_res_ratio: float) -> int:
+    """``suggest_keep_index``。引用：本模块调用方。"""
     areas = [records[k].width * records[k].height for k in idxs]
     amax = max(areas)
     amin = min(areas)
@@ -140,14 +150,21 @@ def suggest_keep_index(records: list[ImageRecord], idxs: list[int], similar_res_
     )
 
 
+from services.models import DedupeGroup, DedupeMember
+
+
 def find_duplicate_groups(
     records: list[ImageRecord],
     *,
     mse_threshold: float = 1e-4,
     similar_res_ratio: float = 1.05,
     j_chunk: int = 2048,
-) -> list[dict]:
-    """返回仅含重复的组；每组含 members / keep_rel / suggested_remove。"""
+) -> list[DedupeGroup]:
+    """返回仅含重复的组；每组含 members / keep / suggested_remove。
+
+    引用:
+        ``routes.dedupe``。
+    """
     n = len(records)
     if n < 2:
         return []
@@ -165,30 +182,34 @@ def find_duplicate_groups(
     for i in range(n):
         buckets.setdefault(uf.find(i), []).append(i)
 
-    groups: list[dict] = []
+    groups: list[DedupeGroup] = []
     for idxs in buckets.values():
         if len(idxs) < 2:
             continue
         keep = suggest_keep_index(records, idxs, similar_res_ratio)
-        members = []
+        members: list[DedupeMember] = []
         for k in sorted(idxs, key=lambda x: records[x].rel):
             r = records[k]
-            members.append({
-                "path": r.rel,
-                "stem": Path(r.rel).stem,
-                "width": r.width,
-                "height": r.height,
-                "blockiness": round(r.blockiness, 4),
-                "area": r.width * r.height,
-                "is_keep": k == keep,
-            })
-        suggested_remove = [m["path"] for m in members if not m["is_keep"]]
-        groups.append({
-            "keep": records[keep].rel,
-            "size": len(members),
-            "members": members,
-            "suggested_remove": suggested_remove,
-        })
+            members.append(
+                DedupeMember(
+                    path=r.rel,
+                    stem=Path(r.rel).stem,
+                    width=r.width,
+                    height=r.height,
+                    blockiness=round(r.blockiness, 4),
+                    area=r.width * r.height,
+                    is_keep=k == keep,
+                )
+            )
+        suggested_remove = [m.path for m in members if not m.is_keep]
+        groups.append(
+            DedupeGroup(
+                keep=records[keep].rel,
+                size=len(members),
+                members=members,
+                suggested_remove=suggested_remove,
+            )
+        )
 
-    groups.sort(key=lambda g: (-g["size"], g["keep"]))
+    groups.sort(key=lambda g: (-g.size, g.keep))
     return groups
