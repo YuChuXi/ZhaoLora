@@ -49,13 +49,18 @@ def docs_nav() -> list[dict[str, str]]:
 
 
 def resolve_doc(slug: str) -> Path:
-    """引用：get_doc。"""
+    """按白名单解析文档文件路径。
+
+    引用:
+        ``get_doc``。
+    """
     key = (slug or "").strip().lower().lstrip("/")
     name = _DOC_MAP.get(key)
     if not name:
         raise HTTPException(404, f"文档不存在: {slug}")
-    path = (_DOCS_DIR / name).resolve()
-    if not str(path).startswith(str(_DOCS_DIR.resolve())) or not path.is_file():
+    base = _DOCS_DIR.resolve()
+    path = (base / name).resolve()
+    if not path.is_relative_to(base) or not path.is_file():
         raise HTTPException(404, f"文档不存在: {slug}")
     return path
 

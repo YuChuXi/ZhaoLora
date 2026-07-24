@@ -10,7 +10,8 @@ from typing import Callable, Iterable
 import numpy as np
 from PIL import Image
 
-IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp"}
+from services.scanner import IMAGE_EXTS
+
 DEFAULT_THRESHOLD = 0.1
 
 _REPO_ROOT = Path(__file__).resolve().parents[1].parent

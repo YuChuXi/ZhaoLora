@@ -14,6 +14,8 @@ import shutil
 import time
 from pathlib import Path
 
+from services.work_dir import resolve_under
+
 STATE_FILENAME = ".annotator_state.json"
 TRASH_DIRNAME = ".trash"
 
@@ -31,12 +33,17 @@ class StateManager:
     # ---- state file I/O ----
 
     def _read(self) -> dict:
-        if self.state_path.exists():
-            try:
-                return json.loads(self.state_path.read_text(encoding="utf-8"))
-            except (json.JSONDecodeError, OSError):
-                pass
-        return {}
+        """读取状态文件；损坏或缺失时返回空字典。
+
+        引用:
+            ``get``。
+        """
+        if not self.state_path.exists():
+            return {}
+        try:
+            return json.loads(self.state_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            return {}
 
     def _write(self, state: dict) -> None:
         self.state_path.write_text(
@@ -94,11 +101,11 @@ class StateManager:
 
         moved = 0
         for rel_path in paths:
-            src = self.data_dir / rel_path
-            dst = self.trash_dir / rel_path
+            src = resolve_under(self.data_dir, rel_path)
+            rel_path = src.relative_to(self.data_dir.resolve()).as_posix()
+            dst = resolve_under(self.trash_dir, rel_path)
 
             if not src.exists():
-                # 已被外部删除，仅更新状态
                 trashed[rel_path] = int(time.time())
                 moved += 1
                 continue
@@ -149,8 +156,9 @@ class StateManager:
             if rel_path not in trashed:
                 continue
 
-            src = self.trash_dir / rel_path
-            dst = self.data_dir / rel_path
+            src = resolve_under(self.trash_dir, rel_path)
+            rel_path = src.relative_to(self.trash_dir.resolve()).as_posix()
+            dst = resolve_under(self.data_dir, rel_path)
 
             if not src.exists():
                 del trashed[rel_path]

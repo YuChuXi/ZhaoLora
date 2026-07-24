@@ -1,4 +1,4 @@
-"""工作子目录解析（筛选 / 去重等）。"""
+"""工作子目录与相对路径解析（筛选 / 去重 / 图片读写等）。"""
 
 from __future__ import annotations
 
@@ -18,25 +18,71 @@ _BLOCKED = frozenset({
 })
 
 
-def resolve_subdir(root: Path, name: str | None) -> tuple[str, Path]:
-    """
-    解析一级子目录名，默认 main。
-    返回 (name, abs_path)。
+def resolve_under(root: Path, rel: str) -> Path:
+    """将相对路径解析到 ``root`` 下的绝对路径。
+
+    两端均 ``resolve()`` 后再用 ``is_relative_to`` 判定。
+    ``is_relative_to`` 不消除 ``..``，必须先 ``resolve``（Python pathlib 文档）。
+
+    Args:
+        root: 允许访问的根目录。
+        rel: 相对路径字符串。
+
+    Returns:
+        规范化绝对路径。
+
+    Raises:
+        ValueError: 空路径，或解析结果不在 ``root`` 之下。
+
+    引用:
+        ``routes.deps.resolve_path``；``mask_manager``；``state_manager``。
     """
     root = root.resolve()
+    raw = (rel or "").replace("\\", "/")
+    if not raw or raw.startswith("/"):
+        raise ValueError(f"非法路径: {rel!r}")
+    text = raw.strip("/")
+    if not text:
+        raise ValueError(f"非法路径: {rel!r}")
+    path = (root / text).resolve()
+    if not path.is_relative_to(root):
+        raise ValueError(f"路径越界: {rel}")
+    return path
+
+
+def resolve_subdir(root: Path, name: str | None) -> tuple[str, Path]:
+    """解析一级子目录名，默认 ``main``。
+
+    Args:
+        root: 数据集根目录。
+        name: 子目录名；空则 ``main``。
+
+    Returns:
+        ``(name, abs_path)``。
+
+    Raises:
+        ValueError: 名称非法或目录不存在。
+
+    引用:
+        ``resolve_subdirs``；``routes.booru`` / ``images`` / ``dedupe``。
+    """
     raw = (name or "main").strip().replace("\\", "/").strip("/")
     if not raw or raw == ".":
         raw = "main"
-    if "/" in raw or ".." in raw or raw.startswith(".") or raw in _BLOCKED:
+    if "/" in raw or raw.startswith(".") or raw in _BLOCKED:
         raise ValueError(f"非法目录: {name}")
-    path = (root / raw).resolve()
-    if not path.is_relative_to(root) or not path.is_dir():
+    path = resolve_under(root, raw)
+    if not path.is_dir():
         raise ValueError(f"目录不存在: {raw}")
     return raw, path
 
 
 def resolve_subdirs(root: Path, names: list[str] | None) -> list[tuple[str, Path]]:
-    """解析多个子目录；空则默认 main。"""
+    """解析多个子目录；空则默认 ``main``。
+
+    引用:
+        ``routes.annotations`` / ``images`` / ``dedupe``。
+    """
     raw = [n for n in (names or []) if (n or "").strip()]
     if not raw:
         raw = ["main"]
@@ -52,7 +98,11 @@ def resolve_subdirs(root: Path, names: list[str] | None) -> list[tuple[str, Path
 
 
 def parse_dir_names(dirs: str | None = None, dir: str | None = None) -> list[str]:
-    """从 dirs=a,b 或 dir=a 解析目录名列表。"""
+    """从 ``dirs=a,b`` 或 ``dir=a`` 解析目录名列表。
+
+    引用:
+        ``routes.annotations`` / ``images``。
+    """
     if dirs and dirs.strip():
         return [x.strip() for x in dirs.split(",") if x.strip()]
     if dir and dir.strip():
@@ -67,7 +117,11 @@ def _count_images(d: Path) -> int:
 
 
 def pin_main(root: Path, dirs: list[dict]) -> list[dict]:
-    """main 置顶；若不存在于列表但磁盘有 main/ 则补上。"""
+    """将 ``main`` 置顶；磁盘有 ``main/`` 但列表缺失时补上。
+
+    引用:
+        ``list_work_dirs``。
+    """
     by_name = {d["name"]: dict(d) for d in dirs if d.get("name") and d["name"] != "."}
     out: list[dict] = []
     main_path = root / "main"
@@ -85,7 +139,11 @@ def pin_main(root: Path, dirs: list[dict]) -> list[dict]:
 
 
 def list_work_dirs(root: Path) -> list[dict]:
-    """可选工作目录列表（main 置顶）。"""
+    """可选工作目录列表（``main`` 置顶）。
+
+    引用:
+        ``routes.images`` / ``ready`` / ``dedupe``。
+    """
     dirs = list_image_subdirs(root)
     out = [d for d in dirs if d["name"] != "."]
     return pin_main(root, out)

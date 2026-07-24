@@ -8,9 +8,10 @@ from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import Response
+from pydantic import BaseModel, Field
 from PIL import Image
 
-from routes.deps import get_runtime
+from routes.deps import get_runtime, resolve_path
 from services.scanner import scan_images
 from services.crop_match import clamp_target_size, match_config
 from services.dataset_layout import RESERVED_DIR_NAMES, DatasetLayout
@@ -20,23 +21,36 @@ router = APIRouter(prefix="/crop", tags=["crop"])
 _SAFE_NAME = re.compile(r"^[\w\-]{1,64}$", re.UNICODE)
 
 
+class CropRect(BaseModel):
+    """单个裁剪框。引用：``SaveCropsBody``。"""
+
+    x1: int
+    y1: int
+    x2: int
+    y2: int
+    target_w: int | None = None
+    target_h: int | None = None
+    zoom: float | None = None
+    name: str = ""
+
+
+class SaveCropsBody(BaseModel):
+    """裁剪保存请求体。引用：``POST /crop/save``、``crop.js``。"""
+
+    path: str = Field(..., min_length=1)
+    no_crop_resize: bool = False
+    part_name: str = ""
+    crops: list[CropRect] = Field(default_factory=list)
+
+
 def _layout(request: Request) -> DatasetLayout:
+    """引用：本模块各接口。"""
     return get_runtime(request).layout
 
 
 def _main_dir(request: Request) -> Path:
+    """引用：``serve_original_image`` / ``save_crops``。"""
     return get_runtime(request).main_dir
-
-
-def _safe_resolve(base: Path, rel: str) -> Path:
-    base = base.resolve()
-    text = (rel or "").replace("\\", "/").strip("/")
-    if not text or ".." in text.split("/"):
-        raise HTTPException(400, "非法路径")
-    src = (base / text).resolve()
-    if not src.is_relative_to(base):
-        raise HTTPException(400, "非法路径")
-    return src
 
 
 def _require_part_name(name: str) -> str:
@@ -84,9 +98,13 @@ def list_crop_images(request: Request):
 
 @router.get("/image")
 def serve_original_image(request: Request, path: str = Query(...)):
-    """提供原图像素尺寸的 AVIF 预览（仅供框选；保存时仍读磁盘原图）。"""
-    src = _safe_resolve(_main_dir(request), path)
-    if not src.exists():
+    """提供原图像素尺寸的 AVIF 预览（仅供框选；保存时仍读磁盘原图）。
+
+    引用:
+        ``crop.js``。
+    """
+    src = resolve_path(_main_dir(request), path)
+    if not src.is_file():
         raise HTTPException(404, f"Image not found: {path}")
 
     img = Image.open(src).convert("RGBA")
@@ -119,29 +137,20 @@ def get_config(request: Request):
 
 
 @router.post("/save")
-async def save_crops(request: Request):
-    """
-    body: {
-      path: str,                 # 相对 main 的路径
-      no_crop_resize: bool,      # 整图即某部位：原尺寸写入部位目录
-      part_name: str,            # no_crop 时必填部位名
-      crops: [{x1,y1,x2,y2,target_w,target_h,zoom,name?}, ...]
-    }
+def save_crops(request: Request, body: SaveCropsBody):
+    """按框裁切并写入部位目录或 ``crops/``。
+
+    引用:
+        ``crop.js``。
     """
     layout = _layout(request)
     main_dir = layout.main_dir
-    body = await request.json()
-    rel = body.get("path", "")
-    if not rel:
-        raise HTTPException(400, "Missing path")
-
-    src = _safe_resolve(main_dir, rel)
-    if not src.exists():
+    rel = body.path
+    src = resolve_path(main_dir, rel)
+    if not src.is_file():
         raise HTTPException(404, f"Image not found: {rel}")
 
-    no_crop = bool(body.get("no_crop_resize", False))
-    crops = body.get("crops") or []
-    if not no_crop and not crops:
+    if not body.no_crop_resize and not body.crops:
         raise HTTPException(400, "没有裁剪区域")
 
     img = Image.open(src).convert("RGBA")
@@ -149,11 +158,10 @@ async def save_crops(request: Request):
     stem = Path(rel).stem
     saved = []
 
-    if no_crop:
-        # 整图本身就是某个部位：原尺寸写入 xxx/{部位}/{stem}.png
+    if body.no_crop_resize:
         part = _require_part_name(
-            body.get("part_name")
-            or (crops[0].get("name") if crops else "")
+            body.part_name
+            or (body.crops[0].name if body.crops else "")
             or ""
         )
         out_dir = layout.part_dir(part)
@@ -168,26 +176,21 @@ async def save_crops(request: Request):
         return {"saved": saved, "count": len(saved)}
 
     used_keys: set[str] = set()
-    for i, c in enumerate(crops):
-        x1 = int(c["x1"])
-        y1 = int(c["y1"])
-        x2 = int(c["x2"])
-        y2 = int(c["y2"])
-        x1 = max(0, min(iw - 1, x1))
-        y1 = max(0, min(ih - 1, y1))
-        x2 = max(x1 + 1, min(iw, x2))
-        y2 = max(y1 + 1, min(ih, y2))
+    for i, c in enumerate(body.crops):
+        x1 = max(0, min(iw - 1, c.x1))
+        y1 = max(0, min(ih - 1, c.y1))
+        x2 = max(x1 + 1, min(iw, c.x2))
+        y2 = max(y1 + 1, min(ih, c.y2))
         cw, ch = x2 - x1, y2 - y1
-        # 吸附结果以前端为准，后端只裁切 + 缩放到声明的 target
-        tw = int(c.get("target_w") or cw)
-        th = int(c.get("target_h") or ch)
+        tw = int(c.target_w or cw)
+        th = int(c.target_h or ch)
         tw, th = clamp_target_size(tw, th)
 
         crop = img.crop((x1, y1, x2, y2))
         out_img = crop.resize((tw, th), Image.Resampling.LANCZOS)
 
-        raw_name = (c.get("name") or "").strip()
-        out_path = _resolve_out_path(layout, stem, raw_name, i, len(crops))
+        raw_name = (c.name or "").strip()
+        out_path = _resolve_out_path(layout, stem, raw_name, i, len(body.crops))
 
         key = str(out_path)
         n = 1

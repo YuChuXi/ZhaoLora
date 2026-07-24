@@ -10,7 +10,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import FileResponse
 from PIL import Image
 
-from routes.deps import get_runtime
+from routes.deps import get_runtime, resolve_path
 from services.scanner import scan_images
 from services.color_similarity import ColorIndex, fingerprint_file
 from services.work_dir import list_work_dirs, parse_dir_names, resolve_subdir, resolve_subdirs
@@ -20,11 +20,13 @@ router = APIRouter(tags=["images"])
 
 
 def _services(request: Request):
+    """引用：本模块列表与相似接口。"""
     rt = get_runtime(request)
     return rt.root, rt.thumbnailer, rt.state_manager
 
 
 def _color_index(request: Request) -> ColorIndex:
+    """引用：``similar_images``。"""
     rt = get_runtime(request)
     if rt.color_index is None:
         rt.color_index = ColorIndex()
@@ -32,16 +34,16 @@ def _color_index(request: Request) -> ColorIndex:
 
 
 def _resolve_image(root: Path, trash_dir: Path, rel: str) -> Path:
-    root = root.resolve()
-    trash_dir = trash_dir.resolve()
-    text = (rel or "").replace("\\", "/").strip("/")
-    if not text or ".." in text.split("/"):
-        raise HTTPException(400, "非法路径")
-    main = (root / text).resolve()
-    if main.is_relative_to(root) and main.is_file():
+    """在数据集根或回收站中解析图片路径。
+
+    引用:
+        ``get_image`` / ``similar_images``。
+    """
+    main = resolve_path(root, rel)
+    if main.is_file():
         return main
-    trash = (trash_dir / text).resolve()
-    if trash.is_relative_to(trash_dir) and trash.is_file():
+    trash = resolve_path(trash_dir, rel)
+    if trash.is_file():
         return trash
     raise HTTPException(404, "文件不存在")
 

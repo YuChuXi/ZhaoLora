@@ -3,31 +3,41 @@
 from __future__ import annotations
 
 import io
-from pathlib import Path
 
 import numpy as np
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import Response
+from pydantic import BaseModel, Field
 from PIL import Image
 
-from routes.deps import get_runtime
+from routes.deps import get_runtime, resolve_path
 from services.scanner import scan_images
 from services.mask_manager import has_mask, load_mask, save_mask
 
 router = APIRouter(prefix="/paint", tags=["paint"])
 
 
+class PaintConfigBody(BaseModel):
+    """蒙版页内存配置。引用：``POST /paint/config``。"""
+
+    default_alpha: int = Field(255, ge=0, le=255)
+
+
 def _services(request: Request):
+    """返回 ``(main_dir, mask_dir)``。引用：本模块各接口。"""
     rt = get_runtime(request)
     return rt.main_dir, rt.mask_dir
 
 
 @router.get("/images")
 def list_paint_images(request: Request):
-    """列出所有图片及 mask 状态。"""
+    """列出 main 下图片及 mask 是否存在。
+
+    引用:
+        ``paint.js``。
+    """
     data_dir, mask_dir = _services(request)
     images = scan_images(data_dir)
-
     result = []
     for img in images:
         rel = img["path"]
@@ -42,15 +52,18 @@ def list_paint_images(request: Request):
 
 @router.get("/image")
 def serve_original_image(request: Request, path: str = Query(...)):
-    """
-    提供原始尺寸的 AVIF 图片。
-    前端通过 ?path=xxx 指定相对于 data_dir 的路径。
+    """提供原图 AVIF 预览。
+
+    Args:
+        path: 相对 ``main`` 的路径。
+
+    引用:
+        ``paint.js``。
     """
     data_dir, _ = _services(request)
-    src = data_dir / path
-    if not src.exists():
+    src = resolve_path(data_dir, path)
+    if not src.is_file():
         raise HTTPException(404, f"Image not found: {path}")
-
     img = Image.open(src).convert("RGB")
     buf = io.BytesIO()
     img.save(buf, format="AVIF", quality=85)
@@ -60,15 +73,15 @@ def serve_original_image(request: Request, path: str = Query(...)):
 
 @router.get("/mask")
 def get_existing_mask(request: Request, path: str = Query(...)):
-    """
-    获取已保存的 mask PNG（灰度图）。
-    返回 PNG 二进制，无 mask 则 404。
+    """返回已保存的灰度 mask PNG；不存在则 404。
+
+    引用:
+        ``paint.js``。
     """
     data_dir, mask_dir = _services(request)
-    src = data_dir / path
-    if not src.exists():
+    src = resolve_path(data_dir, path)
+    if not src.is_file():
         raise HTTPException(404, "Image not found")
-
     rgb = Image.open(src)
     alpha = load_mask(mask_dir, path, rgb.size)
     if alpha is None:
@@ -80,42 +93,42 @@ def get_existing_mask(request: Request, path: str = Query(...)):
 
 
 @router.post("/upload-mask")
-async def upload_mask(request: Request):
-    """
-    前端 POST 原始 PNG 二进制（灰度 alpha），Content-Type: image/png。
-    Query: ?path=图片相对路径
+async def upload_mask(
+    request: Request,
+    path: str = Query(...),
+    format: str = Query("alpha_bw"),
+):
+    """接收灰度 PNG 并写入 mask 目录。
+
+    Args:
+        path: 相对 ``main`` 的原图路径。
+        format: ``alpha_bw`` 或 ``rgba``。
+
+    引用:
+        ``paint.js``。
     """
     data_dir, mask_dir = _services(request)
-    path = request.query_params.get("path", "")
-    if not path:
-        raise HTTPException(400, "Missing 'path' query param")
-
-    src = data_dir / path
-    if not src.exists():
+    src = resolve_path(data_dir, path)
+    if not src.is_file():
         raise HTTPException(404, f"Image not found: {path}")
-
     body = await request.body()
     mask_img = Image.open(io.BytesIO(body))
-    if mask_img.mode not in ("L",):
+    if mask_img.mode != "L":
         mask_img = mask_img.convert("L")
     alpha = np.array(mask_img, dtype=np.uint8)
-    fmt = request.query_params.get("format", "alpha_bw")
-    dest = save_mask(mask_dir, path, alpha, src, save_format=fmt)
+    dest = save_mask(mask_dir, path, alpha, src, save_format=format)
     return {"saved": str(dest), "size": list(Image.open(src).size)}
 
 
-# ---- 配置（服务器内存记忆） ----
 @router.get("/config")
 def get_config(request: Request):
-    """获取 paint 配置（default_alpha 等）。"""
-    da = getattr(request.app.state, 'paint_default_alpha', 255)
+    """读取蒙版页配置。引用：``paint.js``。"""
+    da = getattr(request.app.state, "paint_default_alpha", 255)
     return {"default_alpha": da}
 
 
 @router.post("/config")
-async def set_config(request: Request):
-    """保存 paint 配置。"""
-    body = await request.json()
-    da = body.get("default_alpha", 255)
-    request.app.state.paint_default_alpha = max(0, min(255, int(da)))
-    return {"default_alpha": request.app.state.paint_default_alpha}
+def set_config(request: Request, body: PaintConfigBody):
+    """写入蒙版页配置。引用：``paint.js``。"""
+    request.app.state.paint_default_alpha = body.default_alpha
+    return {"default_alpha": body.default_alpha}

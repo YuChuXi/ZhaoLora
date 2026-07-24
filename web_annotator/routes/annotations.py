@@ -1,47 +1,72 @@
-"""
-标注操作 API 路由 —— 选中、全选、取消全选、删除、恢复。
-
-服务实例通过 Request.app.state 注入。
-"""
+"""标注操作 API：选中、全选、删除到回收站、恢复。"""
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Request
+from pathlib import Path
 
-from routes.deps import get_runtime
+from fastapi import APIRouter, HTTPException, Request
+from pydantic import BaseModel, Field
+
+from routes.deps import get_runtime, resolve_path
 from services.scanner import scan_images
-from services.work_dir import parse_dir_names, resolve_subdir, resolve_subdirs
+from services.work_dir import parse_dir_names, resolve_subdirs
 
 router = APIRouter(tags=["annotations"])
 
 
-def _root(request: Request):
+class ToggleBody(BaseModel):
+    """单图选中切换。引用：``store.js`` / ``POST /toggle``。"""
+
+    path: str = Field(..., min_length=1)
+
+
+class SelectAllBody(BaseModel):
+    """全选指定工作子目录。引用：``store.js`` / ``POST /select-all``。"""
+
+    dirs: list[str] | None = None
+    dir: str | None = None
+
+
+class RestoreBody(BaseModel):
+    """从回收站恢复。引用：``store.js`` / ``POST /restore``。"""
+
+    paths: list[str] = Field(default_factory=list)
+
+
+def _root(request: Request) -> Path:
+    """引用：本模块各接口。"""
     return get_runtime(request).root
 
 
 def _state(request: Request):
+    """引用：本模块各接口。"""
     return get_runtime(request).state_manager
 
 
-@router.post("/toggle")
-async def toggle(request: Request):
-    """切换单张图片的选中状态。"""
-    body = await request.json()
-    path = body.get("path", "")
-    if not path:
-        return {"error": "Missing 'path'"}
+def _rel_under(root: Path, rel: str) -> str:
+    """校验相对路径并返回 posix 相对路径。
 
+    引用:
+        ``toggle`` / ``apply_delete`` / ``restore``。
+    """
+    path = resolve_path(root, rel)
+    return path.relative_to(root.resolve()).as_posix()
+
+
+@router.post("/toggle")
+def toggle(request: Request, body: ToggleBody):
+    """切换单张图片的选中状态。引用：``store.js``。"""
+    path = _rel_under(_root(request), body.path)
     selected = _state(request).toggle(path)
     return {"path": path, "selected": selected}
 
 
 @router.post("/select-all")
-async def select_all(request: Request):
-    """全选当前选中子目录中未被删除的图片。"""
-    body = await request.json()
+def select_all(request: Request, body: SelectAllBody):
+    """全选当前子目录中未被删除的图片。引用：``store.js``。"""
     root = _root(request)
     state_mgr = _state(request)
-    names = body.get("dirs") or parse_dir_names(None, body.get("dir"))
+    names = body.dirs or parse_dir_names(None, body.dir)
     try:
         pairs = resolve_subdirs(root, names)
     except ValueError as e:
@@ -60,25 +85,23 @@ async def select_all(request: Request):
 
 @router.post("/deselect-all")
 def deselect_all(request: Request):
-    """取消全选。"""
+    """取消全选。引用：``store.js``。"""
     _state(request).deselect_all()
     return {"selected": 0}
 
 
 @router.post("/apply")
 def apply_delete(request: Request):
-    """将选中的图片移入回收站。"""
+    """将选中的图片移入回收站。引用：``store.js``。"""
     root = _root(request)
     state_mgr = _state(request)
     state = state_mgr.get()
-    selected = list(state.get("selected", {}).keys())
-
+    selected = [_rel_under(root, p) for p in state.get("selected", {})]
     if not selected:
         return {"moved": 0}
 
     existing = [p for p in selected if (root / p).exists()]
     already_gone = [p for p in selected if not (root / p).exists()]
-
     moved = state_mgr.apply_delete(existing)
 
     if already_gone:
@@ -91,26 +114,21 @@ def apply_delete(request: Request):
     idx = get_runtime(request).color_index
     if idx is not None:
         idx.clear()
-
     return {"moved": moved}
 
 
 @router.post("/restore")
-async def restore(request: Request):
-    """从回收站恢复图片。"""
+def restore(request: Request, body: RestoreBody):
+    """从回收站恢复图片。引用：``store.js``。"""
+    root = _root(request)
     state_mgr = _state(request)
-    body = await request.json()
-    paths: list[str] = body.get("paths", [])
-
     trashed = state_mgr.get().get("trashed", {})
-    if paths:
-        to_restore = [p for p in paths if p in trashed]
+    if body.paths:
+        to_restore = [_rel_under(root, p) for p in body.paths if p in trashed]
     else:
-        to_restore = list(trashed.keys())
-
+        to_restore = [_rel_under(root, p) for p in trashed]
     if not to_restore:
         return {"restored": 0}
-
     restored = state_mgr.restore(to_restore)
     idx = get_runtime(request).color_index
     if idx is not None:
@@ -120,7 +138,7 @@ async def restore(request: Request):
 
 @router.get("/state")
 def get_state(request: Request, dirs: str = "", dir: str = "main"):
-    """获取当前状态快照（含统计）。"""
+    """获取当前状态快照（含统计）。引用：``store.js``。"""
     root = _root(request)
     state_mgr = _state(request)
     names = parse_dir_names(dirs, dir)
