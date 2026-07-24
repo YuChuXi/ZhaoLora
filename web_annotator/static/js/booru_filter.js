@@ -158,14 +158,30 @@ var BooruFilter = (function () {
     _minY = 0;
   }
 
+  function countExtra(f) {
+    var n = 0;
+    if (f.rating) n += 1;
+    for (var i = 0; i < _EX_KEYS.length; i++) {
+      var k = _EX_KEYS[i];
+      if (f[k + 'Lo'] || f[k + 'Hi']) n += 1;
+    }
+    if (f.user) n += 1;
+    var more = f.more;
+    if (Array.isArray(more)) n += more.length;
+    else if (more) n += String(more).split(/\s+/).filter(Boolean).length;
+    return n;
+  }
+
   function syncExtraBtn() {
     var btn = document.getElementById('btn-booru-extra');
     var el = document.getElementById('booru-extra');
     if (!btn || !el) return;
-    var ex = el.value.trim();
-    btn.classList.toggle('has-extra', !!ex);
-    btn.textContent = ex ? '条件·' : '条件';
-    btn.title = ex || '评级、分数、分辨率等';
+    var raw = el.value.trim();
+    var n = countExtra(parseExtra(raw));
+    btn.classList.toggle('has-extra', n > 0);
+    btn.title = n > 0 ? raw : '评级、分数、分辨率等';
+    var badge = btn.querySelector('.booru-extra-badge');
+    if (badge) badge.textContent = n > 0 ? String(n) : '';
   }
 
   function parseExtra(raw) {
