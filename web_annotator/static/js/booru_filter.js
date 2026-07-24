@@ -516,26 +516,60 @@ var BooruFilter = (function () {
   }
 
   /**
-   * 同步本地/远程工具栏显隐与统计段标签。
-   * 本地：总计 · 已选 · 回收站；远程：总计 · 已保存 · 未保存。
+   * 远程「已收录」= 工作目录磁盘张数。
+   * 引用：syncToolbar、目录切换、下载/移除。
+   * @returns {Promise<void>}
+   */
+  async function refreshDiskCount() {
+    if (!isRemote()) return;
+    var keptEl = document.getElementById('stat-kept');
+    var res = await fetch(API.apiPath('/dirs'));
+    if (!res.ok) throw new Error('无法读取目录统计');
+    var data = await res.json();
+    var name = destDir();
+    var hit = null;
+    var dirs = data.dirs || [];
+    for (var i = 0; i < dirs.length; i++) {
+      if (dirs[i].name === name) {
+        hit = dirs[i];
+        break;
+      }
+    }
+    if (keptEl) keptEl.textContent = String(hit && hit.image_count != null ? hit.image_count : 0);
+  }
+
+  /**
+   * 远程「已加载」= 当前搜索结果条数。
+   * 引用：render、addPosts。
+   */
+  function paintRemoteCounts() {
+    if (!isRemote()) return;
+    var loadedEl = document.getElementById('stat-loaded');
+    if (loadedEl) loadedEl.textContent = String(_posts.length);
+  }
+
+  /**
+   * 同步本地/远程工具栏。
+   * 本地：已收录 · 已选择 · 回收站
+   * 远程：已收录 · 已加载
    * 引用：mode 切换、init。
    */
   function syncToolbar() {
     var remote = isRemote();
     var localBar = document.getElementById('toolbar-local');
     var booruBar = document.getElementById('toolbar-booru');
+    var loadedWrap = document.getElementById('stat-loaded-wrap');
+    var selWrap = document.getElementById('stat-selected-wrap');
+    var trashWrap = document.getElementById('stat-trashed-wrap');
     if (localBar) localBar.classList.toggle('is-off', remote);
     if (booruBar) booruBar.classList.toggle('is-off', !remote);
-    var selLabel = document.getElementById('stat-selected-label');
-    if (selLabel) selLabel.textContent = remote ? '已保存' : '已选';
-    var unsavedWrap = document.getElementById('stat-unsaved-wrap');
-    if (unsavedWrap) unsavedWrap.hidden = !remote;
-    var trashedWrap = document.getElementById('stat-trashed-wrap');
-    if (trashedWrap) trashedWrap.hidden = remote;
+    if (loadedWrap) loadedWrap.hidden = !remote;
+    if (selWrap) selWrap.hidden = remote;
+    if (trashWrap) trashWrap.hidden = remote;
     var hint = document.getElementById('filter-hint');
     if (hint) {
       hint.textContent = remote
-        ? '左键选中写入目录 · 右键大图 · 上滑上一页 · 下滑下一页'
+        ? '左键写入目录 · 右键大图 · 上滑上一页 · 下滑下一页'
         : '点击选中 · 右键相似 · Delete 删除';
     }
     if (!remote) {
@@ -543,30 +577,9 @@ var BooruFilter = (function () {
       _hasMore = false;
       _hasPrev = false;
       updatePageStatus();
+      return;
     }
-    updateStats();
-  }
-
-  /**
-   * 刷新筛选统计。远程「已保存/未保存」与卡片状态一致。
-   * 引用：render、下载/移除完成、syncToolbar。
-   */
-  function updateStats() {
-    var total = _posts.length;
-    var done = 0;
-    _posts.forEach(function (p) {
-      if (p.downloaded || _status[p.key] === 'done') done += 1;
-    });
-    var t = document.getElementById('stat-total');
-    var s = document.getElementById('stat-selected');
-    var u = document.getElementById('stat-unsaved');
-    if (t) t.textContent = String(total);
-    if (isRemote()) {
-      if (s) s.textContent = String(done);
-      if (u) u.textContent = String(Math.max(0, total - done));
-    } else if (s) {
-      s.textContent = String(Object.keys(_selected).length);
-    }
+    refreshDiskCount().catch(function (e) { toast(String(e.message || e)); });
   }
 
   function cardLabel(post) {
@@ -604,7 +617,6 @@ var BooruFilter = (function () {
     var name = card.querySelector('.info .name');
     var post = postByKey(key);
     if (name && post) name.textContent = cardLabel(post);
-    updateStats();
   }
 
   function stopLazy() {
@@ -840,7 +852,7 @@ var BooruFilter = (function () {
       container.style.height = (Math.max.apply(null, _colHi) - _minY) + 'px';
     }
     observeNew(container);
-    updateStats();
+    paintRemoteCounts();
     syncLoadTrigger();
     syncPageFromScroll();
   }
@@ -855,7 +867,7 @@ var BooruFilter = (function () {
         '<div style="padding:60px;text-align:center;color:var(--text-dim);">无结果，输入 tag 后搜索</div>';
       container.style.height = '';
       resetLayout();
-      updateStats();
+      paintRemoteCounts();
       syncLoadTrigger();
       return;
     }
@@ -880,7 +892,7 @@ var BooruFilter = (function () {
     }
     container.style.height = (Math.max.apply(null, _colHi) - _minY) + 'px';
     observeNew(container);
-    updateStats();
+    paintRemoteCounts();
     syncLoadTrigger();
     syncPageFromScroll();
     if (_pendingScrollY != null) {
@@ -917,6 +929,7 @@ var BooruFilter = (function () {
     post.downloaded = true;
     if (data.stem) post.stem = data.stem;
     updateCard(post.key);
+    await refreshDiskCount();
     return data;
   }
 
@@ -937,6 +950,7 @@ var BooruFilter = (function () {
     delete _status[post.key];
     post.downloaded = false;
     updateCard(post.key);
+    await refreshDiskCount();
     return res.json();
   }
 
@@ -1293,5 +1307,6 @@ var BooruFilter = (function () {
     mode: mode,
     currentPage: currentPage,
     scrollToPage: scrollToPage,
+    refreshDiskCount: refreshDiskCount,
   };
 })();

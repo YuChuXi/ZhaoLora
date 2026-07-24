@@ -16,10 +16,10 @@
 
   function updateStats(st) {
     st = st || Store.stats();
-    document.getElementById('stat-total').textContent    = st.total;
+    document.getElementById('stat-kept').textContent = st.total;
     document.getElementById('stat-selected').textContent = st.selected;
-    document.getElementById('stat-trashed').textContent  = st.trashed;
-    document.getElementById('btn-apply').disabled   = st.selNotTrashed === 0;
+    document.getElementById('stat-trashed').textContent = st.trashed;
+    document.getElementById('btn-apply').disabled = st.selNotTrashed === 0;
     document.getElementById('btn-restore').disabled = st.trashed === 0;
   }
 
@@ -171,7 +171,12 @@
     }
 
     DirPicker.onChange(function () {
-      if (typeof BooruFilter !== 'undefined' && BooruFilter.isRemote()) return;
+      if (typeof BooruFilter !== 'undefined' && BooruFilter.isRemote()) {
+        BooruFilter.refreshDiskCount().catch(function (e) {
+          toast(String(e.message || e));
+        });
+        return;
+      }
       Store.load().then(function () {
         updateStats();
         refreshView();

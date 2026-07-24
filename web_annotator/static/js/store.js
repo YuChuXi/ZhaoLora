@@ -109,7 +109,7 @@ var Store = (function() {
   }
 
   /**
-   * 统计当前列表：总计不含回收站。
+   * 统计当前列表：已收录不含回收站。
    * @returns {{total: number, selected: number, trashed: number, selNotTrashed: number}}
    */
   function stats() {

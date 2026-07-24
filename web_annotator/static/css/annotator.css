@@ -377,8 +377,8 @@ body {
   max-width: none;
 }
 
-/* ---- 任务进度条（打标 / 美学） ---- */
-.job-progress {
+/* ---- 任务进度条（打标 / 美学）：仅未 hidden 时占位，避免 display:flex 顶掉 hidden ---- */
+.job-progress:not([hidden]) {
   display: flex;
   align-items: center;
   gap: 12px;
@@ -387,7 +387,7 @@ body {
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
 }
-.job-progress.compact {
+.job-progress.compact:not([hidden]) {
   gap: 8px;
   padding: 4px 12px;
 }
