@@ -577,6 +577,7 @@
 
   function updateLive(box) {
     var live = document.getElementById('live-match');
+    if (!live) return;
     if (_noCrop) {
       live.textContent = ' | 整图输出 · ' + _origW + '×' + _origH;
       return;
@@ -689,6 +690,10 @@
     var live = document.getElementById('live-match');
     var extra = document.getElementById('seg-extra');
     function setExtraPrefix(text) {
+      if (!extra || !live) {
+        if (extra) extra.textContent = text;
+        return;
+      }
       while (extra.firstChild && extra.firstChild !== live) {
         extra.removeChild(extra.firstChild);
       }
