@@ -349,13 +349,15 @@ def _build_caption(post: Mapping[str, object], *, anima_format: bool = False, in
         if low not in used and low not in meta_set:
             used.add(low)
             captions.append(f"@{_norm(t)}")
-    # general 剩余部分
+
+    # general 剩余部分用 ||| 分隔
+    general_tail: list[str] = []
     for t in rest:
         if t.lower() not in used:
             used.add(t.lower())
-            captions.append(_norm(t))
+            general_tail.append(_norm(t))
 
-    return ", ".join(captions)
+    return ", ".join(captions) + " ||| " + ", ".join(general_tail)
 
 
 def build_caption_from_meta(post: Mapping[str, object], *, anima_format: bool = True, include_meta_tags: bool = False, keep_underscores: bool = False) -> str:

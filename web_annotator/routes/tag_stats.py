@@ -11,7 +11,7 @@ from routes.deps import get_runtime, jobs
 from services.aesthetic import load_scores
 from services.jobs import EmitFn
 from services.models import JobSnapshot, JobSubmitResponse, TagCleanResult, TagStatsResult, TxtDirInfo
-from services.tag_clean import clean_txt_dirs
+from services.tag_clean import batch_edit_tags, clean_txt_dirs
 from services.tag_stats import count_tags, list_txt_subdirs, load_translation_map, resolve_selected_dirs
 
 router = APIRouter(prefix="/tags", tags=["tags"])
@@ -150,4 +150,88 @@ async def tag_clean(request: Request, body: CleanBody) -> JobSubmitResponse:
         return result
 
     job_id = jobs(request).submit(kind="tag_clean", group="compute", dataset=rt.name, run=run)
+    return JobSubmitResponse(ok=True, job_id=job_id)
+
+
+class BatchEditBody(BaseModel):
+    """批量编辑标签请求。引用：``POST /tags/batch-edit``。"""
+
+    dirs: list[str] | None = Field(default=None, description="子目录名")
+    delete_tags: list[str] = Field(default_factory=list, description="要删除的标签")
+    add_tags: list[str] = Field(default_factory=list, description="要添加的标签")
+    position: str = Field("after", description="放在 ||| 前(before) 或 后(after)")
+    insert_mode: str = Field("bottom", description="置顶(top) / 置底(bottom) / 随机(random)")
+    conditional: bool = Field(False, description="仅当已有同名标签时才插入")
+    keep_duplicates: bool = Field(False, description="不删除已有重复标签")
+    inject_pony_score: bool = Field(False, description="注入 Pony 美学档位，永远置于最前")
+    dry_run: bool = True
+    sample_limit: int = Field(default=40, ge=0, le=200)
+
+
+@router.post("/batch-edit")
+def tag_batch_edit(request: Request, body: BatchEditBody) -> JobSubmitResponse:
+    """
+    批量删除/添加标签。
+
+    返回 job_id；结束事件的 result 为清洗结果。
+    引用：tag_clean.js。
+    """
+    rt = get_runtime(request)
+    root = rt.root
+    selected = resolve_selected_dirs(root, body.dirs)
+    if not selected:
+        raise HTTPException(400, "请选择目录")
+    if not body.delete_tags and not body.add_tags:
+        raise HTTPException(400, "请指定要删除或添加的标签")
+
+    if body.position not in ("before", "after"):
+        raise HTTPException(400, "position 须为 before 或 after")
+    if body.insert_mode not in ("top", "bottom", "random"):
+        raise HTTPException(400, "insert_mode 须为 top / bottom / random")
+
+    scores = load_scores(root) if body.inject_pony_score else {}
+    payload = body
+
+    def run(emit: EmitFn) -> TagCleanResult:
+        """工作线程：批量编辑旁路 txt。引用：``JobManager.submit``。"""
+        emit(
+            JobSnapshot(
+                status="running",
+                phase="editing",
+                message="预览中…" if payload.dry_run else "写入中…",
+                pct=0,
+            )
+        )
+        result = batch_edit_tags(
+            selected,
+            delete_tags=payload.delete_tags,
+            add_tags=payload.add_tags,
+            position=payload.position,
+            insert_mode=payload.insert_mode,
+            conditional=payload.conditional,
+            keep_duplicates=payload.keep_duplicates,
+            inject_pony_score=payload.inject_pony_score,
+            dataset_root=root,
+            aesthetic_scores=scores,
+            dry_run=payload.dry_run,
+            sample_limit=payload.sample_limit,
+        )
+        result = result.model_copy(
+            update={
+                "dirs": [p.name if p != root else "." for p in selected],
+                "root": str(root),
+            }
+        )
+        emit(
+            JobSnapshot(
+                status="done",
+                phase="done",
+                message="完成",
+                pct=100,
+                result=result,
+            )
+        )
+        return result
+
+    job_id = jobs(request).submit(kind="tag_batch_edit", group="compute", dataset=rt.name, run=run)
     return JobSubmitResponse(ok=True, job_id=job_id)

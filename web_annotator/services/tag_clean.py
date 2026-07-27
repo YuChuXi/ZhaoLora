@@ -310,3 +310,171 @@ def clean_txt_dirs(
         pony_injected=pony_injected,
         pony_missing=pony_missing,
     )
+
+
+def batch_edit_tags(
+    dirs: list[Path],
+    *,
+    delete_tags: list[str] | None = None,
+    add_tags: list[str] | None = None,
+    position: str = "after",
+    insert_mode: str = "bottom",
+    conditional: bool = False,
+    keep_duplicates: bool = False,
+    dry_run: bool = True,
+    sample_limit: int = 40,
+) -> TagCleanResult:
+    """
+    批量删除/添加标签。
+
+    Args:
+        dirs: 绝对路径目录列表（不递归）。
+        delete_tags: 要删除的标签列表（tag_key 精确匹配）。
+        add_tags: 要添加的标签列表。
+        position: ``"before"`` 放置在 ``|||`` 之前，``"after"`` 之后。
+        insert_mode: ``"top"`` 置顶 / ``"bottom"`` 置底 / ``"random"`` 随机插入。
+        conditional: 仅当文件中已有同名 tag 时才插入。
+        keep_duplicates: 不删除已有重复标签。
+        dry_run: True 仅预览。
+        sample_limit: 返回样本上限。
+
+    Returns:
+        统计与可选样本对比。
+
+    引用：``routes.tag_stats.tag_batch_edit``。
+    """
+    import random as _random
+
+    del_keys: set[str] = set()
+    for t in expand_cli_list(delete_tags or []):
+        k = tag_key(t)
+        if k:
+            del_keys.add(k)
+
+    add_list = expand_cli_list(add_tags or [])
+    scores = aesthetic_scores or {}
+    root = dataset_root.resolve() if dataset_root is not None else None
+
+    files: list[Path] = []
+    for d in dirs:
+        if d.is_dir():
+            files.extend(sorted(d.glob("*.txt")))
+
+    changed = 0
+    unchanged = 0
+    failed = 0
+    pony_injected = 0
+    pony_missing = 0
+    samples: list[TagCleanSample] = []
+
+    for path in files:
+        try:
+            raw = path.read_text(encoding="utf-8")
+        except OSError:
+            failed += 1
+            continue
+
+        raw_stripped = raw.strip()
+
+        # Pony 美学档位：注入到最前，并移除既有 score_0…score_9
+        score_tag: str | None = None
+        if inject_pony_score and root is not None:
+            rel = rel_image_for_txt(path, root)
+            if rel is not None and rel in scores:
+                score_tag = format_pony_score_tag(scores[rel])
+                pony_injected += 1
+            else:
+                pony_missing += 1
+
+        # 按 ||| 拆分
+        raw_stripped = raw.strip()
+        if "|||" in raw_stripped:
+            parts = raw_stripped.split("|||", 1)
+            header_str = parts[0].strip()
+            body_str = parts[1].strip()
+        else:
+            header_str = raw_stripped
+            body_str = ""
+
+        header = split_tags_line(header_str)
+        body = split_tags_line(body_str)
+
+        # 移除既有 score_0…score_9
+        header = [t for t in header if tag_key(t) not in SCORE_TAG_KEYS]
+        body = [t for t in body if tag_key(t) not in SCORE_TAG_KEYS]
+
+        # 删除
+        if del_keys:
+            header = [t for t in header if tag_key(t) not in del_keys]
+            body = [t for t in body if tag_key(t) not in del_keys]
+
+        # 添加
+        to_add: list[str] = []
+        for t in add_list:
+            k = tag_key(t)
+            if conditional:
+                # 检查文件中是否已有同名 tag
+                existing_keys = {tag_key(x) for x in header + body}
+                if k not in existing_keys:
+                    continue
+            if not keep_duplicates:
+                # 删除已有重复
+                header = [x for x in header if tag_key(x) != k]
+                body = [x for x in body if tag_key(x) != k]
+            to_add.append(t)
+
+        if to_add:
+            if position == "before":
+                if insert_mode == "top":
+                    header = to_add + header
+                elif insert_mode == "random":
+                    for t in to_add:
+                        idx = _random.randint(0, len(header)) if header else 0
+                        header.insert(idx, t)
+                else:  # bottom
+                    header = header + to_add
+            else:  # after
+                if insert_mode == "top":
+                    body = to_add + body
+                elif insert_mode == "random":
+                    for t in to_add:
+                        idx = _random.randint(0, len(body)) if body else 0
+                        body.insert(idx, t)
+                else:  # bottom
+                    body = body + to_add
+
+        # 重组：pony 评分永远在最前
+        if score_tag:
+            header = [score_tag] + header
+        if body:
+            new = ", ".join(header) + " ||| " + ", ".join(body)
+        else:
+            new = ", ".join(header)
+
+        if new == raw_stripped:
+            unchanged += 1
+            continue
+        changed += 1
+        if len(samples) < sample_limit:
+            samples.append(
+                TagCleanSample(
+                    path=str(path),
+                    name=path.name,
+                    before=raw_stripped[:500],
+                    after=new[:500],
+                )
+            )
+        if not dry_run:
+            path.write_text(new + "\n", encoding="utf-8")
+
+    return TagCleanResult(
+        dry_run=dry_run,
+        file_count=len(files),
+        changed=changed,
+        unchanged=unchanged,
+        failed=failed,
+        samples=samples,
+        inject_pony_score=inject_pony_score,
+        pony_injected=pony_injected,
+        pony_missing=pony_missing,
+    )
