@@ -270,6 +270,102 @@ def _tags_to_caption(tags: str) -> str:
     return ", ".join(parts)
 
 
+# Anima 格式中识别为性别/人数标签的关键词集合
+_GENDER_TAGS: frozenset[str] = frozenset({
+    "1girl", "2girls", "3girls", "4girls", "5girls", "6+girls", "multiple_girls",
+    "1boy", "2boys", "3boys", "4boys", "5boys", "6+boys", "multiple_boys",
+    "1other", "2others", "3others", "4others", "5others", "6+others", "multiple_others",
+    "solo", "no_humans",
+})
+
+
+def _build_caption(post: Mapping[str, object], *, anima_format: bool = False, include_meta_tags: bool = False, keep_underscores: bool = False) -> str:
+    """构建标签 caption。
+
+    Args:
+        post: booru API 返回的帖子数据。
+        anima_format: 按 Anima 格式输出 [性别][角色][系列][画师][通用标签]。
+        include_meta_tags: 若为 False（默认），剔除 tag_string_meta 中的元数据标签。
+        keep_underscores: 若为 True，保留下划线；默认转为空格。
+
+    引用：``download_post``。
+    """
+    def _norm(t: str) -> str:
+        return t if keep_underscores else t.replace("_", " ")
+
+    if not anima_format and include_meta_tags:
+        tags = str(post.get("tag_string") or post.get("tags") or "")
+        result = _tags_to_caption(tags)
+        return result if keep_underscores else result.replace("_", " ")
+
+    # 收集需要排除的 meta tag
+    meta_set: set[str] = set()
+    if not include_meta_tags:
+        meta_str = str(post.get("tag_string_meta") or "")
+        for t in meta_str.split():
+            t = t.strip()
+            if t:
+                meta_set.add(t.lower())
+
+    if not anima_format:
+        general_str = str(post.get("tag_string") or post.get("tags") or "")
+        general = [t.strip() for t in general_str.replace(",", " ").split() if t.strip()]
+        remaining = [_norm(t) for t in general if t.lower() not in meta_set]
+        return ", ".join(remaining)
+
+    # ---- Anima 格式 ----
+    def _split_tags(raw: str) -> list[str]:
+        return [t.strip() for t in raw.replace(",", " ").split() if t.strip()]
+
+    general = _split_tags(str(post.get("tag_string_general") or post.get("tag_string") or post.get("tags") or ""))
+    character = _split_tags(str(post.get("tag_string_character") or ""))
+    copyright_tags = _split_tags(str(post.get("tag_string_copyright") or ""))
+    artist = _split_tags(str(post.get("tag_string_artist") or ""))
+
+    # 从 general 中分离性别/人数标签
+    gender: list[str] = []
+    rest: list[str] = []
+    for t in general:
+        if t.lower() in _GENDER_TAGS:
+            gender.append(t)
+        elif t.lower() not in meta_set:
+            rest.append(t)
+
+    used: set[str] = {g.lower() for g in gender}
+    captions: list[str] = [_norm(g) for g in gender]
+
+    def _add_group(tags: list[str]) -> None:
+        for t in tags:
+            low = t.lower()
+            if low not in used and low not in meta_set:
+                used.add(low)
+                captions.append(_norm(t))
+
+    _add_group(character)
+    _add_group(copyright_tags)
+    # 画师加 @ 前缀
+    for t in artist:
+        low = t.lower()
+        if low not in used and low not in meta_set:
+            used.add(low)
+            captions.append(f"@{_norm(t)}")
+    # general 剩余部分
+    for t in rest:
+        if t.lower() not in used:
+            used.add(t.lower())
+            captions.append(_norm(t))
+
+    return ", ".join(captions)
+
+
+def build_caption_from_meta(post: Mapping[str, object], *, anima_format: bool = True, include_meta_tags: bool = False, keep_underscores: bool = False) -> str:
+    """从 booru 帖子数据构建 caption 的公开接口。
+
+    引用：``_build_caption``；``regenerate_captions``。
+    """
+    return _build_caption(post, anima_format=anima_format, include_meta_tags=include_meta_tags, keep_underscores=keep_underscores)
+
+
 def danbooru_preview_url(post: Mapping[str, object]) -> str:
     """优先 720x720（webp），避免默认 180x180 预览过小。"""
     ma = post.get("media_asset")

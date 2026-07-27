@@ -97,6 +97,9 @@ def run_booru_batch(
     progress: BooruBatchProgress,
     emit: EmitFn,
     thumbnailer: Any | None = None,
+    anima_format: bool = True,
+    include_meta_tags: bool = False,
+    keep_underscores: bool = False,
 ) -> None:
     """
     同步入口：在工作线程内 ``asyncio.run`` 执行批量下载。
@@ -118,6 +121,9 @@ def run_booru_batch(
                 progress=progress,
                 emit=emit,
                 thumbnailer=thumbnailer,
+                anima_format=anima_format,
+                include_meta_tags=include_meta_tags,
+                keep_underscores=keep_underscores,
             )
         )
     finally:
@@ -137,6 +143,9 @@ async def _run_async(
     progress: BooruBatchProgress,
     emit: EmitFn,
     thumbnailer: Any | None,
+    anima_format: bool = True,
+    include_meta_tags: bool = False,
+    keep_underscores: bool = False,
 ) -> None:
     """异步批量：翻页搜索 + 并发下载。引用：``run_booru_batch``。"""
 
@@ -253,6 +262,9 @@ async def _run_async(
                         out_dir,
                         proxy=proxy,
                         overwrite=False,
+                        anima_format=anima_format,
+                        include_meta_tags=include_meta_tags,
+                        keep_underscores=keep_underscores,
                     )
                     if result.skipped:
                         progress.skipped += 1

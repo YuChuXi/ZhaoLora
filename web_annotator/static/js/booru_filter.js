@@ -1150,6 +1150,9 @@ var BooruFilter = (function () {
       limit: params.limit,
       conn: params.conn,
       rate_rps: params.rateRps,
+      anima_format: !!document.getElementById('booru-batch-anima')?.checked,
+      include_meta_tags: !!document.getElementById('booru-batch-meta-tags')?.checked,
+      keep_underscores: !!document.getElementById('booru-batch-keep-underscores')?.checked,
     };
     setBatchProgress(0, params.limit, '提交中…');
     _batchRunning = true;
@@ -1162,6 +1165,24 @@ var BooruFilter = (function () {
     });
     toast('已提交批量下载');
     watchBatch(data.job_id);
+  }
+
+  /**
+   * 从 .danbooru_meta 批量重生成当前目录所有旁路 .txt。
+   * 引用：批量下载对话框「重生成 Caption」按钮。
+   */
+  async function regenerateCaptions() {
+    var body = {
+      dir: destDir(),
+      anima_format: !!document.getElementById('booru-batch-anima')?.checked,
+      include_meta_tags: !!document.getElementById('booru-batch-meta-tags')?.checked,
+      keep_underscores: !!document.getElementById('booru-batch-keep-underscores')?.checked,
+    };
+    var data = await API.request(API.apiPath('/booru/regenerate-captions'), {
+      method: 'POST',
+      body: JSON.stringify(body),
+    });
+    toast('已重生成 ' + (data.count || 0) + ' 个 caption');
   }
 
   /**
@@ -1490,6 +1511,12 @@ var BooruFilter = (function () {
     if (batchStop) {
       batchStop.addEventListener('click', function () {
         stopBatch().catch(function (e) { toast(String(e.message || e)); });
+      });
+    }
+    var batchRegen = document.getElementById('booru-batch-regenerate');
+    if (batchRegen) {
+      batchRegen.addEventListener('click', function () {
+        regenerateCaptions().catch(function (e) { toast(String(e.message || e)); });
       });
     }
     function onSearchKey(e) {

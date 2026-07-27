@@ -108,6 +108,9 @@ class BooruBatchStartBody(BaseModel):
     limit: int = Field(50, ge=1, le=5000)
     conn: int = Field(2, ge=1, le=8)
     rate_rps: float = Field(0, ge=0, le=60, description="次/秒，0=不限")
+    anima_format: bool = Field(True, description="Anima 格式：[性别][角色][系列][画师][通用标签]")
+    include_meta_tags: bool = Field(False, description="下载元数据标签（rating、分辨率等）")
+    keep_underscores: bool = Field(False, description="保留下划线，不转为空格")
 
 
 class BooruBatchParamsBody(BaseModel):

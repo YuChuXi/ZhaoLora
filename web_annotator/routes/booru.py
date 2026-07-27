@@ -17,6 +17,7 @@ from services.booru_client import (
     fetch_gelbooru_bytes,
     is_downloaded,
     local_rel_path,
+    regenerate_captions,
     remove_download,
     search_posts,
 )
@@ -287,6 +288,9 @@ async def booru_batch_start(
     extra = body.extra or ""
     start_page = body.page
     root = rt.root
+    anima_format = bool(body.anima_format)
+    include_meta_tags = bool(body.include_meta_tags)
+    keep_underscores = bool(body.keep_underscores)
     job_box: dict[str, str] = {"id": ""}
 
     def run(emit: EmitFn) -> None:
@@ -304,6 +308,9 @@ async def booru_batch_start(
             progress=prog,
             emit=emit,
             thumbnailer=thumb,
+            anima_format=anima_format,
+            include_meta_tags=include_meta_tags,
+            keep_underscores=keep_underscores,
         )
 
     job_id = mgr.submit(
@@ -335,3 +342,35 @@ def booru_batch_params(request: Request, body: BooruBatchParamsBody) -> JobSubmi
     if body.rate_rps is not None:
         prog.rate_rps = body.rate_rps
     return JobSubmitResponse(ok=True, job_id=job.id)
+
+
+class RegenerateCaptionsBody(BaseModel):
+    """批量重生成 caption 请求。引用：``POST /booru/regenerate-captions``。"""
+
+    dir: str = Field("main", description="工作子目录")
+    anima_format: bool = Field(True, description="Anima 格式")
+    include_meta_tags: bool = Field(False, description="包含元数据标签")
+    keep_underscores: bool = Field(False, description="保留下划线")
+
+
+@router.post("/regenerate-captions")
+def booru_regenerate_captions(request: Request, body: RegenerateCaptionsBody) -> dict:
+    """从 .danbooru_meta 批量重生成旁路 .txt。
+
+    引用：``booru_filter.js`` 批量重生成按钮。
+    """
+    from routes.booru import resolve_subdir
+
+    rt = get_runtime(request)
+    try:
+        _, out_dir = resolve_subdir(rt.root, body.dir)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+
+    count = regenerate_captions(
+        out_dir,
+        anima_format=body.anima_format,
+        include_meta_tags=body.include_meta_tags,
+        keep_underscores=body.keep_underscores,
+    )
+    return {"ok": True, "count": count}

@@ -32,6 +32,7 @@ from services.booru_client.common import (
     _stem_candidates,
     _tags_to_caption,
     _write_meta,
+    _build_caption,
     file_stem,
     find_downloaded,
     make_gelbooru,
@@ -245,8 +246,16 @@ async def download_post(
     *,
     proxy: str | None,
     overwrite: bool = False,
+    anima_format: bool = True,
+    include_meta_tags: bool = False,
+    keep_underscores: bool = False,
 ) -> BooruDownloadResult:
     """下载帖子原图为 PNG，并写旁路标签与 meta。
+
+    Args:
+        anima_format: 按 Anima 格式输出 [性别][角色][系列][画师][通用标签]。
+        include_meta_tags: 若为 True，保留元数据标签（rating、分辨率等）；默认不保留。
+        keep_underscores: 若为 True，保留下划线；默认转为空格。
 
     引用:
         ``routes.booru.booru_download``。
@@ -287,9 +296,9 @@ async def download_post(
                     p = out_dir / f"{old}{ext}"
                     if p.is_file() and p.resolve() != image_path.resolve():
                         p.unlink()
-        caption = _tags_to_caption(str(post.get("tags") or ""))
+        caption = _build_caption(post, anima_format=anima_format, include_meta_tags=include_meta_tags, keep_underscores=keep_underscores)
         tags_path.write_text(caption + "\n", encoding="utf-8")
-        # 旁路旧名 txt
+        # 旁路旧名 txt (Gelbooru)
         legacy_txt = out_dir / f"{pid}.txt"
         if legacy_txt.is_file() and legacy_txt.resolve() != tags_path.resolve():
             legacy_txt.unlink()
@@ -333,9 +342,9 @@ async def download_post(
             p = out_dir / f"{old}{ext}"
             if p.is_file() and p.resolve() != image_path.resolve():
                 p.unlink()
-    caption = _tags_to_caption(str(post.get("tag_string") or ""))
+    caption = _build_caption(post, anima_format=anima_format, include_meta_tags=include_meta_tags, keep_underscores=keep_underscores)
     tags_path.write_text(caption + "\n", encoding="utf-8")
-    legacy_txt = out_dir / f"{pid}.txt"
+    legacy_txt = out_dir / f"{pid}.txt"  # Danbooru
     if legacy_txt.is_file() and legacy_txt.resolve() != tags_path.resolve():
         legacy_txt.unlink()
     _write_meta(out_dir, source, pid, post)
@@ -353,3 +362,60 @@ def local_rel_path(root: Path, abs_path: str | Path) -> str:
     """绝对路径转数据集相对路径。引用：routes.booru.booru_download。"""
     p = Path(abs_path).resolve()
     return str(p.relative_to(root.resolve())).replace("\\", "/")
+
+
+def regenerate_captions(
+    out_dir: Path,
+    *,
+    anima_format: bool = True,
+    include_meta_tags: bool = False,
+    keep_underscores: bool = False,
+) -> int:
+    """从 .danbooru_meta 批量重生成旁路 .txt。
+
+    遍历 ``out_dir/.danbooru_meta/*.json``，读取帖子数据并用当前格式覆写
+    对应的 ``.txt`` 文件。
+
+    Args:
+        out_dir: 图片与元数据所在目录。
+        anima_format: Anima 格式输出。
+        include_meta_tags: 是否包含元数据标签。
+        keep_underscores: 是否保留下划线。
+
+    Returns:
+        成功重生成的 txt 数量。
+
+    引用：``routes.booru.booru_regenerate_captions``。
+    """
+    from services.booru_client.common import build_caption_from_meta, META_SUBDIR, file_stem
+
+    import json
+
+    meta_dir = out_dir / META_SUBDIR.get("danbooru", ".danbooru_meta")
+    if not meta_dir.is_dir():
+        return 0
+
+    count = 0
+    for meta_file in sorted(meta_dir.glob("*.json")):
+        try:
+            post = json.loads(meta_file.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            continue
+
+        pid = str(post.get("id") or meta_file.stem)
+        stem = file_stem("danbooru", pid)
+        txt_path = out_dir / f"{stem}.txt"
+
+        caption = build_caption_from_meta(
+            post, anima_format=anima_format, include_meta_tags=include_meta_tags, keep_underscores=keep_underscores
+        )
+        txt_path.write_text(caption + "\n", encoding="utf-8")
+
+        # 同时覆盖旧版纯 id 的 txt
+        legacy_txt = out_dir / f"{pid}.txt"
+        if legacy_txt.is_file() and legacy_txt.resolve() != txt_path.resolve():
+            legacy_txt.unlink()
+
+        count += 1
+
+    return count
