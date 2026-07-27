@@ -13,8 +13,7 @@ from services.booru_client import (
     build_search_query,
     download_post,
     file_stem,
-    fetch_preview_bytes,
-    fetch_sample_bytes,
+    fetch_gelbooru_bytes,
     is_downloaded,
     local_rel_path,
     remove_download,
@@ -122,16 +121,13 @@ async def booru_search(request: Request, body: SearchBody) -> BooruSearchResult:
 @router.get("/thumb")
 async def booru_thumb(
     request: Request,
-    source: str = Query(...),
     id: str = Query(..., min_length=1),
+    url: str = Query(..., min_length=8, description="搜索结果 preview_url"),
 ) -> Response:
-    """代理预览缩略图。引用：``booru_filter.js``。"""
-    source = source.strip().lower()
-    if source not in SOURCES:
-        raise HTTPException(400, f"不支持的源: {source}")
+    """代理 Gelbooru 缩略图。引用：``booru_filter.js``。"""
     try:
-        data, ctype = await fetch_preview_bytes(
-            source, id, proxy=_proxy(request)
+        data, ctype = await fetch_gelbooru_bytes(
+            "thumb", id, url=url, proxy=_proxy(request)
         )
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
@@ -147,16 +143,13 @@ async def booru_thumb(
 @router.get("/sample")
 async def booru_sample(
     request: Request,
-    source: str = Query(...),
     id: str = Query(..., min_length=1),
+    url: str = Query(..., min_length=8, description="搜索结果 sample_url"),
 ) -> Response:
-    """代理大图预览。引用：``booru_filter.js``。"""
-    source = source.strip().lower()
-    if source not in SOURCES:
-        raise HTTPException(400, f"不支持的源: {source}")
+    """代理 Gelbooru 大图。引用：``booru_filter.js``。"""
     try:
-        data, ctype = await fetch_sample_bytes(
-            source, id, proxy=_proxy(request)
+        data, ctype = await fetch_gelbooru_bytes(
+            "sample", id, url=url, proxy=_proxy(request)
         )
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
@@ -191,7 +184,11 @@ async def booru_download(request: Request, body: DownloadBody) -> BooruDownloadR
         )
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
-    except _NETWORK_ERRORS as e:
+    except RuntimeError as e:
+        msg = str(e)
+        code = 429 if "429" in msg else 502
+        raise HTTPException(code, f"下载失败: {e}") from e
+    except (OSError, httpx.HTTPError, RequestException) as e:
         raise HTTPException(502, f"下载失败: {e}") from e
     rel = local_rel_path(root, result.path)
     thumb = get_runtime(request).thumbnailer

@@ -62,12 +62,21 @@ def build_search_query(
     order: str = "",
     extra: str = "",
 ) -> str:
-    """拼标签 + 额外元标签（rating:/width:/score: 等）+ 排序。"""
+    """拼标签 + 额外元标签（rating:/width:/score: 等）+ 排序。
+
+    Gelbooru 忽略 ``date:`` 元标签（站内不支持）。
+
+    引用:
+        ``routes.booru.booru_search``；``search_posts``。
+    """
     parts: list[str] = []
     t = " ".join((tags or "").split())
     if t:
         parts.append(t)
-    e = " ".join((extra or "").split())
+    e_tokens = (extra or "").split()
+    if source == "gelbooru":
+        e_tokens = [x for x in e_tokens if not x.lower().startswith("date:")]
+    e = " ".join(e_tokens)
     if e:
         parts.append(e)
     key = (order or "").strip().lower()
@@ -79,13 +88,15 @@ def build_search_query(
 
 
 def _headers(*, referer: str | None = None) -> dict[str, str]:
-    """构造图片请求头。引用：fetch_preview_bytes / fetch_sample_bytes。"""
+    """构造图片请求头。引用：fetch_gelbooru_bytes。"""
     h = {
         "user-agent": _DEFAULT_UA,
         "accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
     }
     if referer:
         h["referer"] = referer
+        if "gelbooru.com" in referer:
+            h["cookie"] = "fringeBenefits=yup"
     return h
 
 

@@ -242,7 +242,7 @@ def main() -> int:
 
     n = len(store.list_entries())
     print(f"任务根   : {task_root}")
-    print(f"清单任务 : {n}（启动不扫描子目录；请在首页添加）")
+    print(f"清单任务 : {n}")
     print(f"服务地址 : http://{args.host}:{args.port}")
 
     uvicorn.run(app, host=args.host, port=args.port, log_level="warning")

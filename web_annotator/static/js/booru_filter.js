@@ -6,7 +6,6 @@ var BooruFilter = (function () {
   'use strict';
 
   var STATE_KEY = 'zhao_booru_filter_v1';
-  var PROXY_KEY = 'zhao_booru_proxy_media';
 
   var _posts = [];
   var _page = 1;
@@ -28,10 +27,11 @@ var BooruFilter = (function () {
   var _cw = 0;
   var _gap = 8;
   var _pad = 8;
-  var _pendingScrollY = null;
   var _scrollSaveTimer = null;
   var _scrollRaf = null;
   var _EX_KEYS = ['score', 'width', 'height', 'id'];
+  var _batchAbort = false;
+  var _batchRunning = false;
 
   function toast(msg) {
     var el = document.getElementById('toast');
@@ -59,37 +59,21 @@ var BooruFilter = (function () {
     return mode() === 'gelbooru' || mode() === 'danbooru';
   }
 
-  function isProxyMedia() {
-    var el = document.getElementById('booru-proxy');
-    return !!(el && el.checked);
-  }
-
-  function loadProxyPref() {
-    var el = document.getElementById('booru-proxy');
-    if (!el) return;
-    el.checked = localStorage.getItem(PROXY_KEY) === '1';
-  }
-
-  function saveProxyPref() {
-    var el = document.getElementById('booru-proxy');
-    if (!el) return;
-    localStorage.setItem(PROXY_KEY, el.checked ? '1' : '0');
-  }
-
-  function proxyApiUrl(kind, post) {
-    return API.apiPath('/booru/' + kind) +
-      '?source=' + encodeURIComponent(post.source) +
-      '&id=' + encodeURIComponent(post.id);
-  }
-
+  /** Gelbooru 防盗链走后端；其余直链。 */
   function thumbUrl(post) {
-    if (isProxyMedia()) return proxyApiUrl('thumb', post);
-    return post.preview_url || post.sample_url || proxyApiUrl('thumb', post);
+    var u = post.preview_url || post.sample_url || '';
+    if (post.source !== 'gelbooru') return u;
+    return API.apiPath('/booru/thumb')
+      + '?id=' + encodeURIComponent(post.id)
+      + '&url=' + encodeURIComponent(u);
   }
 
   function sampleUrl(post) {
-    if (isProxyMedia()) return proxyApiUrl('sample', post);
-    return post.sample_url || post.file_url || post.preview_url || proxyApiUrl('sample', post);
+    var u = post.sample_url || post.file_url || post.preview_url || '';
+    if (post.source !== 'gelbooru') return u;
+    return API.apiPath('/booru/sample')
+      + '?id=' + encodeURIComponent(post.id)
+      + '&url=' + encodeURIComponent(u);
   }
 
   function saveUiState() {
@@ -101,9 +85,6 @@ var BooruFilter = (function () {
       startPage: startPageFromInput(),
       source: _source,
       page: _page,
-      pageLo: _pageLo,
-      pageHi: _pageHi,
-      scrollY: isRemote() ? window.scrollY : 0,
     };
     try {
       sessionStorage.setItem(STATE_KEY, JSON.stringify(payload));
@@ -141,14 +122,6 @@ var BooruFilter = (function () {
     var pg = parseInt(st.page != null ? st.page : st.startPage, 10);
     if (!(pg > 0)) pg = 1;
     if (start) start.value = String(pg);
-    // 仅单页会话可还原绝对滚动；多页跨页高度刷新后对不上
-    var lo = parseInt(st.pageLo, 10);
-    var hi = parseInt(st.pageHi, 10);
-    if (typeof st.scrollY === 'number' && st.scrollY > 0 && lo === pg && hi === pg) {
-      _pendingScrollY = st.scrollY;
-    } else {
-      _pendingScrollY = null;
-    }
     syncExtraBtn();
   }
 
@@ -240,6 +213,7 @@ var BooruFilter = (function () {
       out[_EX_KEYS[i] + 'Lo'] = '';
       out[_EX_KEYS[i] + 'Hi'] = '';
     }
+    var dropDate = mode() === 'gelbooru';
     var tokens = String(raw || '').split(/\s+/).filter(Boolean);
     for (var j = 0; j < tokens.length; j++) {
       var t = tokens[j], m;
@@ -249,14 +223,17 @@ var BooruFilter = (function () {
         if (op === '<=' || op === '<') out[k + 'Hi'] = v;
         else if (op === '=') { out[k + 'Lo'] = v; out[k + 'Hi'] = v; }
         else out[k + 'Lo'] = v;
-      } else if ((m = /^date:(\d{4}-\d{2}-\d{2})\.\.(\d{4}-\d{2}-\d{2})$/i.exec(t))) {
-        out.dateLo = m[1];
-        out.dateHi = m[2];
-      } else if ((m = /^date:(>=|>|<=|<)?(\d{4}-\d{2}-\d{2})$/i.exec(t))) {
-        var dop = m[1] || '=', dv = m[2];
-        if (dop === '<=' || dop === '<') out.dateHi = dv;
-        else if (dop === '=') { out.dateLo = dv; out.dateHi = dv; }
-        else out.dateLo = dv;
+      } else if (/^date:/i.test(t)) {
+        if (dropDate) continue;
+        if ((m = /^date:(\d{4}-\d{2}-\d{2})\.\.(\d{4}-\d{2}-\d{2})$/i.exec(t))) {
+          out.dateLo = m[1];
+          out.dateHi = m[2];
+        } else if ((m = /^date:(>=|>|<=|<)?(\d{4}-\d{2}-\d{2})$/i.exec(t))) {
+          var dop = m[1] || '=', dv = m[2];
+          if (dop === '<=' || dop === '<') out.dateHi = dv;
+          else if (dop === '=') { out.dateLo = dv; out.dateHi = dv; }
+          else out.dateLo = dv;
+        } else out.more.push(t);
       } else if ((m = /^user:(.+)$/i.exec(t))) out.user = m[1];
       else out.more.push(t);
     }
@@ -274,11 +251,13 @@ var BooruFilter = (function () {
         if (hi) parts.push(k + ':<=' + hi);
       }
     }
-    var dLo = f.dateLo || '', dHi = f.dateHi || '';
-    if (dLo && dHi && dLo === dHi) parts.push('date:' + dLo);
-    else {
-      if (dLo) parts.push('date:>=' + dLo);
-      if (dHi) parts.push('date:<=' + dHi);
+    if (mode() !== 'gelbooru') {
+      var dLo = f.dateLo || '', dHi = f.dateHi || '';
+      if (dLo && dHi && dLo === dHi) parts.push('date:' + dLo);
+      else {
+        if (dLo) parts.push('date:>=' + dLo);
+        if (dHi) parts.push('date:<=' + dHi);
+      }
     }
     if (f.user) parts.push('user:' + f.user);
     if (Array.isArray(f.more) && f.more.length) parts.push(f.more.join(' '));
@@ -895,14 +874,6 @@ var BooruFilter = (function () {
     paintRemoteCounts();
     syncLoadTrigger();
     syncPageFromScroll();
-    if (_pendingScrollY != null) {
-      var y = _pendingScrollY;
-      _pendingScrollY = null;
-      requestAnimationFrame(function () {
-        window.scrollTo(0, y);
-        syncPageFromScroll();
-      });
-    }
   }
 
   async function downloadOne(post) {
@@ -919,10 +890,13 @@ var BooruFilter = (function () {
       }),
     });
     if (!res.ok) {
+      var t = await res.text();
+      var err = new Error(t || res.statusText);
+      err.status = res.status;
+      err.retryAfter = parseInt(res.headers.get('Retry-After') || '', 10) || 0;
       _status[post.key] = 'error';
       updateCard(post.key);
-      var t = await res.text();
-      throw new Error(t || res.statusText);
+      throw err;
     }
     var data = await res.json();
     _status[post.key] = 'done';
@@ -931,6 +905,327 @@ var BooruFilter = (function () {
     updateCard(post.key);
     await refreshDiskCount();
     return data;
+  }
+
+  function sleep(ms) {
+    return new Promise(function (resolve) { setTimeout(resolve, ms); });
+  }
+
+  function setBatchDlg(show) {
+    var dlg = document.getElementById('booru-batch-dlg');
+    if (!dlg) return;
+    dlg.classList.toggle('show', !!show);
+    dlg.setAttribute('aria-hidden', show ? 'false' : 'true');
+    if (!show && !_batchRunning) setBatchProgress(null);
+    syncBatchCloseBtn();
+  }
+
+  /** 空闲显示「关闭」，运行中显示「停止」。引用：setBatchDlg、runBatch。 */
+  function syncBatchCloseBtn() {
+    var btn = document.getElementById('booru-batch-close');
+    if (!btn) return;
+    btn.textContent = _batchRunning ? '停止' : '关闭';
+  }
+
+  /**
+   * 同步对话框内与顶栏两处批量进度。
+   * @param {number|null} done 已完成数；null 表示隐藏顶栏并重置对话框进度
+   * @param {number} [limit=0] 目标数量
+   * @param {string} [note=''] 附加说明（如 429 退避、已完成）
+   * 引用：runBatch。
+   */
+  function setBatchProgress(done, limit, note) {
+    var dlgWrap = document.getElementById('booru-batch-progress');
+    var dlgFill = document.getElementById('booru-batch-fill');
+    var dlgPct = document.getElementById('booru-batch-pct');
+    var dlgText = document.getElementById('booru-batch-progress-text');
+    var bar = document.getElementById('booru-batch-bar');
+    var barFill = document.getElementById('booru-batch-bar-fill');
+    var barPct = document.getElementById('booru-batch-bar-pct');
+    var barText = document.getElementById('booru-batch-bar-text');
+
+    function paint(fill, pctEl, textEl, wrap, hideWrap) {
+      if (done == null) {
+        if (wrap && hideWrap) wrap.hidden = true;
+        if (fill) {
+          fill.style.width = '0%';
+          fill.classList.remove('indeterminate');
+        }
+        if (pctEl) pctEl.textContent = '0%';
+        if (textEl) textEl.textContent = '-';
+        return;
+      }
+      if (wrap) wrap.hidden = false;
+      var total = limit > 0 ? limit : 0;
+      var pct = total > 0 ? Math.min(100, Math.round((done / total) * 100)) : 0;
+      if (fill) {
+        fill.classList.toggle('indeterminate', total <= 0 && done === 0);
+        fill.style.width = (total > 0 ? pct : 32) + '%';
+      }
+      if (pctEl) pctEl.textContent = total > 0 ? (pct + '%') : '…';
+      var line = total > 0 ? ('已完成 ' + done + '/' + total) : '准备中…';
+      if (note) line += ' · ' + note;
+      if (textEl) textEl.textContent = line;
+    }
+
+    paint(dlgFill, dlgPct, dlgText, dlgWrap, true);
+    paint(barFill, barPct, barText, bar, true);
+  }
+
+  /** 批量进度说明：失败 / 跳过重复。引用：runBatch。 */
+  function batchProgressNote(fail, skipped) {
+    var bits = [];
+    if (skipped > 0) bits.push('跳过重复 ' + skipped);
+    if (fail > 0) bits.push('失败 ' + fail);
+    return bits.join(' · ');
+  }
+
+  function stopBatch() {
+    _batchAbort = true;
+  }
+
+  /**
+   * 从对话框读取并校正批量参数。
+   * @returns {{limit:number, conn:number, rateRps:number}}
+   * 引用：runBatch、运行中 input 事件。
+   */
+  function readBatchParams() {
+    var limitEl = document.getElementById('booru-batch-limit');
+    var connEl = document.getElementById('booru-batch-conn');
+    var rateEl = document.getElementById('booru-batch-rate');
+    var limit = limitEl ? parseInt(limitEl.value, 10) : 50;
+    var conn = connEl ? parseInt(connEl.value, 10) : 2;
+    var rateRps = rateEl ? parseFloat(rateEl.value) : 0;
+    if (!(limit > 0)) limit = 50;
+    if (limit > 5000) limit = 5000;
+    if (!(conn > 0)) conn = 1;
+    if (conn > 8) conn = 8;
+    if (!(rateRps > 0)) rateRps = 0;
+    if (rateRps > 60) rateRps = 60;
+    if (limitEl) limitEl.value = String(limit);
+    if (connEl) connEl.value = String(conn);
+    if (rateEl) rateEl.value = String(rateRps);
+    return { limit: limit, conn: conn, rateRps: rateRps };
+  }
+
+  /**
+   * 按当前搜索结果批量下载；运行中可改数量 / 连接 / 限速。
+   * 引用：工具栏「批量下载」。
+   */
+  async function runBatch() {
+    if (_batchRunning) {
+      toast('批量下载进行中');
+      return;
+    }
+    if (!isRemote()) {
+      toast('请先切换到图站模式');
+      return;
+    }
+
+    var params = readBatchParams();
+    var rateBudget = 0;
+    var rateLast = Date.now();
+    var rateChain = Promise.resolve();
+
+    function takeRate() {
+      if (!(params.rateRps > 0)) return Promise.resolve();
+      rateChain = rateChain.then(function () {
+        var now = Date.now();
+        rateBudget += ((now - rateLast) / 1000) * params.rateRps;
+        rateLast = now;
+        if (rateBudget > params.rateRps * 2) rateBudget = params.rateRps * 2;
+        rateBudget -= 1;
+        if (rateBudget >= 0) return;
+        var wait = (-rateBudget / params.rateRps) * 1000;
+        rateBudget = 0;
+        return sleep(Math.min(120000, Math.max(0, wait)));
+      });
+      return rateChain;
+    }
+
+    _batchAbort = false;
+    _batchRunning = true;
+    syncBatchCloseBtn();
+    var startBtn = document.getElementById('booru-batch-start');
+    if (startBtn) {
+      startBtn.disabled = true;
+      startBtn.textContent = '运行中';
+    }
+    setBatchProgress(0, params.limit);
+
+    var done = 0;
+    var fail = 0;
+    var skipped = 0;
+    var inflight = 0;
+    var cursor = 0;
+    var emptyPages = 0;
+    var exhausted = false;
+    var gate = Promise.resolve();
+
+    function locked(fn) {
+      var run = gate.then(fn);
+      gate = run.then(function () {}, function () {});
+      return run;
+    }
+
+    function applyLiveParams() {
+      params = readBatchParams();
+      setBatchProgress(done, params.limit, batchProgressNote(fail, skipped));
+    }
+
+    function onParamInput() {
+      if (!_batchRunning) return;
+      applyLiveParams();
+    }
+
+    var paramIds = ['booru-batch-limit', 'booru-batch-conn', 'booru-batch-rate'];
+    for (var pi = 0; pi < paramIds.length; pi++) {
+      var pel = document.getElementById(paramIds[pi]);
+      if (pel) {
+        pel.addEventListener('input', onParamInput);
+        pel.addEventListener('change', onParamInput);
+      }
+    }
+
+    function nextCandidate() {
+      while (cursor < _posts.length) {
+        var p = _posts[cursor++];
+        if (p.downloaded || _status[p.key] === 'done') {
+          skipped += 1;
+          continue;
+        }
+        if (_status[p.key] === 'downloading') continue;
+        return p;
+      }
+      return null;
+    }
+
+    function hasPendingCandidate() {
+      for (var i = cursor; i < _posts.length; i++) {
+        var p = _posts[i];
+        if (p.downloaded || _status[p.key] === 'done' || _status[p.key] === 'downloading') continue;
+        return true;
+      }
+      return false;
+    }
+
+    function ensureCandidates() {
+      return locked(async function () {
+        while (!_batchAbort) {
+          if (done + inflight >= params.limit) return null;
+          var skipBefore = skipped;
+          var p = nextCandidate();
+          if (skipped !== skipBefore) {
+            setBatchProgress(done, params.limit, batchProgressNote(fail, skipped));
+          }
+          if (p) {
+            inflight += 1;
+            exhausted = false;
+            return p;
+          }
+          if (!_hasMore || emptyPages >= 8) {
+            exhausted = true;
+            return null;
+          }
+          var beforeLen = _posts.length;
+          await search('down');
+          if (_posts.length <= beforeLen) emptyPages += 1;
+          else emptyPages = 0;
+        }
+        return null;
+      });
+    }
+
+    async function downloadWithRetry(post) {
+      var attempt = 0;
+      while (!_batchAbort) {
+        try {
+          await takeRate();
+          return await downloadOne(post);
+        } catch (e) {
+          if (_batchAbort) throw e;
+          if (e && e.status === 429 && attempt < 10) {
+            var waitSec = e.retryAfter > 0 ? e.retryAfter : Math.min(120, Math.pow(2, attempt + 1));
+            setBatchProgress(
+              done,
+              params.limit,
+              '429 退避 ' + waitSec + 's · ' + batchProgressNote(fail, skipped)
+            );
+            await sleep(waitSec * 1000);
+            attempt += 1;
+            continue;
+          }
+          throw e;
+        }
+      }
+      throw new Error('已取消');
+    }
+
+    async function worker(slot) {
+      while (!_batchAbort) {
+        if (slot >= params.conn) {
+          await sleep(100);
+          continue;
+        }
+        if (done >= params.limit) {
+          await sleep(100);
+          continue;
+        }
+        var post = await ensureCandidates();
+        if (!post) {
+          await sleep(100);
+          continue;
+        }
+        _selected[post.key] = true;
+        try {
+          var data = await downloadWithRetry(post);
+          if (data && data.skipped) skipped += 1;
+          else done += 1;
+        } catch (e) {
+          fail += 1;
+          delete _selected[post.key];
+          if (!_batchAbort) toast('失败 ' + (post.stem || post.id) + ': ' + (e.message || e));
+        } finally {
+          inflight -= 1;
+        }
+        setBatchProgress(done, params.limit, batchProgressNote(fail, skipped));
+      }
+    }
+
+    var jobs = [];
+    for (var i = 0; i < 8; i++) jobs.push(worker(i));
+
+    try {
+      while (!_batchAbort) {
+        await sleep(120);
+        if (done >= params.limit) break;
+        if (exhausted && inflight === 0 && !hasPendingCandidate()) break;
+      }
+      var userAbort = _batchAbort;
+      _batchAbort = true;
+      await Promise.all(jobs);
+      var note = batchProgressNote(fail, skipped);
+      var endNote = (userAbort ? '已取消' : '已完成') + (note ? ' · ' + note : '');
+      setBatchProgress(done, params.limit, endNote);
+      if (userAbort) toast('批量已取消 · 完成 ' + done + (note ? ' · ' + note : ''));
+      else toast('批量完成 ' + done + (note ? ' · ' + note : ''));
+    } finally {
+      for (var pj = 0; pj < paramIds.length; pj++) {
+        var pel2 = document.getElementById(paramIds[pj]);
+        if (pel2) {
+          pel2.removeEventListener('input', onParamInput);
+          pel2.removeEventListener('change', onParamInput);
+        }
+      }
+      _batchRunning = false;
+      _batchAbort = false;
+      syncBatchCloseBtn();
+      if (startBtn) {
+        startBtn.disabled = false;
+        startBtn.textContent = '开始';
+      }
+      updatePageStatus();
+    }
   }
 
   async function undownloadOne(post) {
@@ -990,6 +1285,17 @@ var BooruFilter = (function () {
     a.href = mode() === 'danbooru'
       ? 'https://danbooru.donmai.us/wiki_pages/help:cheatsheet'
       : 'https://gelbooru.com/index.php?page=help&topic=cheatsheet';
+    var dateRow = document.getElementById('booru-extra-date-row');
+    if (dateRow) dateRow.hidden = mode() === 'gelbooru';
+    // 去掉已保存的 date:（Gelbooru 无效）
+    if (mode() === 'gelbooru') {
+      var el = document.getElementById('booru-extra');
+      if (el && el.value) {
+        var next = buildExtra(parseExtra(el.value));
+        if (next !== el.value) el.value = next;
+      }
+      syncExtraBtn();
+    }
   }
 
   async function search(dir) {
@@ -1015,6 +1321,7 @@ var BooruFilter = (function () {
       _hasPrev = start > 1;
       _dupSkip = 0;
       stopPageObserve();
+      window.scrollTo(0, 0);
     }
     var fetchPage = isUp ? _pageLo : _pageHi;
     _page = fetchPage;
@@ -1058,7 +1365,8 @@ var BooruFilter = (function () {
         render();
         _dupSkip = 0;
         _hasPrev = _pageLo > 1;
-        if (!list.length && _hasMore) { _dupSkip = 1; autoNext = true; }
+        // 首屏空结果停止；勿因 has_more 误报空转翻页
+        if (!list.length) _hasMore = false;
       } else if (isUp && !list.length) {
         _hasPrev = false;
         _pageLo += 1;
@@ -1077,7 +1385,9 @@ var BooruFilter = (function () {
           _dupSkip += 1;
           if (isUp) autoPrev = true; else autoNext = true;
         } else if (isUp) {
-          _hasPrev = _pageLo > 1;
+          _hasPrev = false;
+        } else {
+          _hasMore = false;
         }
       }
 
@@ -1150,6 +1460,7 @@ var BooruFilter = (function () {
   }
 
   function leaveRemote() {
+    stopBatch();
     hidePreview();
     syncToolbar();
     stopLazy();
@@ -1160,8 +1471,6 @@ var BooruFilter = (function () {
   function init() {
     var modeEl = document.getElementById('filter-mode');
     if (!modeEl) return;
-
-    loadProxyPref();
 
     var saved = loadUiState();
     if (saved && (saved.mode === 'gelbooru' || saved.mode === 'danbooru' || saved.mode === 'local')) {
@@ -1194,29 +1503,37 @@ var BooruFilter = (function () {
       saveUiState();
     });
 
-    var proxyEl = document.getElementById('booru-proxy');
-    if (proxyEl) {
-      proxyEl.addEventListener('change', function () {
-        saveProxyPref();
-        if (!isRemote() || !_posts.length) return;
-        var imgs = document.querySelectorAll('#masonry .card img');
-        for (var i = 0; i < imgs.length; i++) {
-          var card = imgs[i].closest('.card');
-          var post = card && postByKey(card.dataset.key);
-          if (!post) continue;
-          var url = thumbUrl(post);
-          if (imgs[i].dataset.src) imgs[i].dataset.src = url;
-          else imgs[i].src = url;
-        }
-        if (_previewPost) showPreview(_previewPost);
-        toast(isProxyMedia() ? '已开代理图（经后端）' : '已关代理图（直链）');
-      });
-    }
-
     var searchBtn = document.getElementById('btn-booru-search');
     if (searchBtn) {
       searchBtn.addEventListener('click', function () {
+        if (_batchRunning) stopBatch();
         search(true).catch(function (e) { toast(String(e.message || e)); });
+      });
+    }
+    var batchBtn = document.getElementById('btn-booru-batch');
+    if (batchBtn) {
+      batchBtn.addEventListener('click', function () {
+        if (!isRemote()) { toast('请先切换到图站模式'); return; }
+        setBatchDlg(true);
+      });
+    }
+    var batchDlg = document.getElementById('booru-batch-dlg');
+    if (batchDlg) {
+      batchDlg.addEventListener('click', function (e) {
+        if (e.target === batchDlg && !_batchRunning) setBatchDlg(false);
+      });
+    }
+    var batchStart = document.getElementById('booru-batch-start');
+    if (batchStart) {
+      batchStart.addEventListener('click', function () {
+        runBatch().catch(function (e) { toast(String(e.message || e)); });
+      });
+    }
+    var batchClose = document.getElementById('booru-batch-close');
+    if (batchClose) {
+      batchClose.addEventListener('click', function () {
+        if (_batchRunning) stopBatch();
+        else setBatchDlg(false);
       });
     }
     function onSearchKey(e) {
@@ -1271,11 +1588,19 @@ var BooruFilter = (function () {
     }
     var previewClose = document.getElementById('booru-preview-close');
     if (previewClose) previewClose.addEventListener('click', hidePreview);
+    var previewOpen = document.getElementById('booru-preview-open');
+    if (previewOpen) previewOpen.addEventListener('click', hidePreview);
     var previewDl = document.getElementById('booru-preview-dl');
     if (previewDl) previewDl.addEventListener('click', togglePreviewDownload);
 
     document.addEventListener('keydown', function (e) {
       if (e.key !== 'Escape') return;
+      var batchDlgEl = document.getElementById('booru-batch-dlg');
+      if (batchDlgEl && batchDlgEl.classList.contains('show')) {
+        if (_batchRunning) stopBatch();
+        else setBatchDlg(false);
+        return;
+      }
       var extraDlg = document.getElementById('booru-extra-dlg');
       if (extraDlg && extraDlg.classList.contains('show')) {
         setExtraDlg(false);

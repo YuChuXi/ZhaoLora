@@ -1,4 +1,5 @@
 import re
+import asyncio
 import httpx
 import json
 import random
@@ -7,9 +8,26 @@ from .Danbooru import Danbooru
 
 class Gelbooru(Danbooru):
 
+    # 站点内容确认（含受限标签检索）
+    _COOKIES = {"fringeBenefits": "yup"}
+
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
-        
+
+    async def get(self, url: str) -> httpx.Response:
+        """发起 Gelbooru HTTP GET，并附带 fringeBenefits cookie。
+
+        引用:
+            ``getJson`` / ``Danbooru.get`` 的 Gelbooru 覆盖。
+        """
+        print(url)
+        async with httpx.AsyncClient(
+            proxy=self.proxy,
+            cookies=self._COOKIES,
+            timeout=self.timeout,
+        ) as client:
+            return await client.get(url=url, headers=self.headers)
+
     async def getJson(self, args: str) -> dict:
         api_key = "***REMOVED***"
         user_id = "***REMOVED***"
@@ -70,21 +88,39 @@ class Gelbooru(Danbooru):
         return False
 
     async def getImage(self, ID: int, path: str) -> dict:
-        """下载原图并返回该次请求使用的完整 post 元数据（与 id= 接口一致）。"""
+        """下载原图；遇 HTTP 429 按 Retry-After / 指数退避重试。
+
+        引用: ``web_annotator.services.booru_client.media.download_post``。
+        """
         post = await self.getPost(ID)
         imageUrl = post["file_url"]
-        # 图片请求必须带 Referer，否则 Gelbooru 返回 403 HTML
         headers = {**self.headers, "referer": self._IMAGE_REFERER}
-        async with httpx.AsyncClient(proxy=self.proxy, timeout=self.timeout) as client:
-            resp = await client.get(imageUrl, headers=headers)
-        data = resp.content
-        if not self._is_image_content(data):
-            raise RuntimeError(
-                f"Image {ID} returned non-image data (e.g. 403 HTML), size={len(data)}"
-            )
-        with open(path, "wb") as f:
-            f.write(data)
-        return post
+        delay = 2.0
+        last_err = f"Image {ID} download failed"
+        async with httpx.AsyncClient(
+            proxy=self.proxy,
+            timeout=self.timeout,
+            cookies=self._COOKIES,
+        ) as client:
+            for attempt in range(10):
+                resp = await client.get(imageUrl, headers=headers)
+                if resp.status_code == 429:
+                    ra = (resp.headers.get("retry-after") or "").strip()
+                    wait = float(ra) if ra.isdigit() else delay
+                    delay = min(delay * 2.0, 120.0)
+                    last_err = f"Image {ID} HTTP 429 (attempt {attempt + 1})"
+                    await asyncio.sleep(wait)
+                    continue
+                data = resp.content
+                if not self._is_image_content(data):
+                    raise RuntimeError(
+                        f"Image {ID} returned non-image data "
+                        f"(HTTP {resp.status_code}), size={len(data)}"
+                    )
+                with open(path, "wb") as f:
+                    f.write(data)
+                return post
+        raise RuntimeError(last_err)
 
     async def getImageHD(self, ID: int, path: str) -> dict:
         return await self.getImage(ID, path)

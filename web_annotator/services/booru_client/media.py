@@ -5,8 +5,11 @@
 
 from __future__ import annotations
 
+import asyncio
+import tempfile
 from collections.abc import Mapping
 from pathlib import Path
+from urllib.parse import urlparse
 
 import httpx
 
@@ -18,7 +21,6 @@ from services.booru_client.common import (
     STEM_PREFIX,
     _UNSUPPORTED_FILE_EXT,
     _convert_path_to_png,
-    _curl_proxies,
     _danbooru_get,
     _ext_from_url,
     _find_existing,
@@ -30,11 +32,125 @@ from services.booru_client.common import (
     _stem_candidates,
     _tags_to_caption,
     _write_meta,
-    danbooru_preview_url,
     file_stem,
     find_downloaded,
     make_gelbooru,
 )
+
+_CACHE_ROOT = Path(tempfile.gettempdir()) / "zhao_booru_media"
+_clients: dict[str, httpx.AsyncClient] = {}
+_client_lock = asyncio.Lock()
+_inflight: dict[str, asyncio.Future[tuple[bytes, str]]] = {}
+_inflight_lock = asyncio.Lock()
+
+
+def _cache_files(kind: str, post_id: str) -> tuple[Path, Path]:
+    """磁盘缓存路径。引用：fetch_gelbooru_bytes。"""
+    base = _CACHE_ROOT / kind / post_id
+    return base.with_suffix(".bin"), base.with_suffix(".ctype")
+
+
+def _assert_gelbooru_url(url: str) -> str:
+    """校验 Gelbooru 图床。引用：fetch_gelbooru_bytes。"""
+    u = urlparse((url or "").strip())
+    if u.scheme not in ("http", "https") or not u.hostname:
+        raise ValueError("非法媒体地址")
+    host = u.hostname.lower()
+    if host != "gelbooru.com" and not host.endswith(".gelbooru.com"):
+        raise ValueError("非 Gelbooru 图床")
+    return url.strip()
+
+
+async def _shared_client(proxy: str | None) -> httpx.AsyncClient:
+    """按代理复用连接池。引用：fetch_gelbooru_bytes。"""
+    key = _proxy_or_none(proxy) or ""
+    c = _clients.get(key)
+    if c is not None and not c.is_closed:
+        return c
+    async with _client_lock:
+        c = _clients.get(key)
+        if c is not None and not c.is_closed:
+            return c
+        c = httpx.AsyncClient(
+            proxy=_proxy_or_none(proxy),
+            headers=_headers(referer="https://gelbooru.com/"),
+            limits=httpx.Limits(max_connections=32, max_keepalive_connections=16),
+            timeout=httpx.Timeout(45.0, connect=10.0),
+        )
+        _clients[key] = c
+        return c
+
+
+async def _download_gelbooru(
+    kind: str,
+    pid: str,
+    media_url: str,
+    *,
+    proxy: str | None,
+) -> tuple[bytes, str]:
+    """真正拉 CDN 并写缓存。引用：fetch_gelbooru_bytes。"""
+    timeout = 30.0 if kind == "thumb" else 45.0
+    client = await _shared_client(proxy)
+    resp = await client.get(media_url, timeout=timeout)
+    resp.raise_for_status()
+    ctype = (resp.headers.get("content-type") or "image/jpeg").split(";")[0].strip()
+    data = resp.content
+    bin_path, ctype_path = _cache_files(kind, pid)
+    bin_path.parent.mkdir(parents=True, exist_ok=True)
+    bin_path.write_bytes(data)
+    ctype_path.write_text(ctype, encoding="utf-8")
+    return data, ctype
+
+
+async def fetch_gelbooru_bytes(
+    kind: str,
+    post_id: str,
+    *,
+    url: str,
+    proxy: str | None,
+) -> tuple[bytes, str]:
+    """拉 Gelbooru thumb/sample：磁盘缓存 + 同图进行中合并。
+
+    引用:
+        ``routes.booru.booru_thumb`` / ``booru_sample``。
+    """
+    if kind not in ("thumb", "sample"):
+        raise ValueError(f"不支持的 kind: {kind}")
+    pid = str(post_id).strip()
+    if not pid or "/" in pid or "\\" in pid or ".." in pid:
+        raise ValueError("非法 id")
+    media_url = _assert_gelbooru_url(url)
+
+    bin_path, ctype_path = _cache_files(kind, pid)
+    if bin_path.is_file() and ctype_path.is_file():
+        return bin_path.read_bytes(), ctype_path.read_text(encoding="utf-8").strip()
+
+    flight_key = f"{kind}:{pid}"
+    async with _inflight_lock:
+        existing = _inflight.get(flight_key)
+        if existing is not None:
+            leader = False
+            fut = existing
+        else:
+            leader = True
+            fut = asyncio.get_running_loop().create_future()
+            _inflight[flight_key] = fut
+
+    if not leader:
+        return await fut
+
+    try:
+        result = await _download_gelbooru(kind, pid, media_url, proxy=proxy)
+        fut.set_result(result)
+        return result
+    except Exception as e:
+        fut.set_exception(e)
+        raise
+    finally:
+        async with _inflight_lock:
+            if _inflight.get(flight_key) is fut:
+                del _inflight[flight_key]
+
 
 async def _danbooru_fetch_image_bytes(
     post: Mapping[str, object],
@@ -121,115 +237,6 @@ def remove_download(
         count=len(removed),
     )
 
-async def fetch_preview_bytes(
-    source: str,
-    post_id: str,
-    *,
-    proxy: str | None,
-) -> tuple[bytes, str]:
-    """拉取预览图字节。引用：routes.booru.booru_thumb。"""
-    source = source.strip().lower()
-    if source == "gelbooru":
-        api = make_gelbooru(proxy)
-        post = await api.getPost(int(post_id))
-        url = str(post.get("preview_url") or post.get("sample_url") or post.get("file_url") or "")
-        if not url:
-            raise ValueError("无预览地址")
-        headers = _headers(referer="https://gelbooru.com/")
-        async with httpx.AsyncClient(
-            proxy=_proxy_or_none(proxy), timeout=30.0, headers=headers
-        ) as client:
-            resp = await client.get(url)
-            resp.raise_for_status()
-            ctype = resp.headers.get("content-type") or "image/jpeg"
-            return resp.content, ctype.split(";")[0].strip()
-
-    if source == "danbooru":
-        meta = await _danbooru_get(
-            f"https://danbooru.donmai.us/posts/{post_id}.json",
-            proxy=proxy,
-            accept="application/json, text/plain, */*",
-            timeout=30.0,
-        )
-        if meta.status_code != 200:
-            raise RuntimeError(f"Danbooru HTTP {meta.status_code}: {meta.text[:200]}")
-        post = meta.json()
-        preview = danbooru_preview_url(post)
-        if not preview:
-            raise ValueError("无预览地址")
-        img = await _danbooru_get(
-            preview,
-            proxy=proxy,
-            accept="image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
-            timeout=30.0,
-        )
-        if img.status_code != 200:
-            raise RuntimeError(f"预览 HTTP {img.status_code}")
-        ctype = img.headers.get("content-type") or "image/jpeg"
-        return img.content, ctype.split(";")[0].strip()
-
-    raise ValueError(f"不支持的源: {source}")
-
-
-async def fetch_sample_bytes(
-    source: str,
-    post_id: str,
-    *,
-    proxy: str | None,
-) -> tuple[bytes, str]:
-    """大图预览：优先 sample / large，再退回 file。"""
-    source = source.strip().lower()
-    if source == "gelbooru":
-        api = make_gelbooru(proxy)
-        post = await api.getPost(int(post_id))
-        url = str(
-            post.get("sample_url")
-            or post.get("file_url")
-            or post.get("preview_url")
-            or ""
-        )
-        if not url:
-            raise ValueError("无大图地址")
-        headers = _headers(referer="https://gelbooru.com/")
-        async with httpx.AsyncClient(
-            proxy=_proxy_or_none(proxy), timeout=45.0, headers=headers
-        ) as client:
-            resp = await client.get(url)
-            resp.raise_for_status()
-            ctype = resp.headers.get("content-type") or "image/jpeg"
-            return resp.content, ctype.split(";")[0].strip()
-
-    if source == "danbooru":
-        meta = await _danbooru_get(
-            f"https://danbooru.donmai.us/posts/{post_id}.json",
-            proxy=proxy,
-            accept="application/json, text/plain, */*",
-            timeout=30.0,
-        )
-        if meta.status_code != 200:
-            raise RuntimeError(f"Danbooru HTTP {meta.status_code}: {meta.text[:200]}")
-        post = meta.json()
-        url = str(
-            post.get("large_file_url")
-            or post.get("file_url")
-            or danbooru_preview_url(post)
-            or ""
-        )
-        if not url:
-            raise ValueError("无大图地址")
-        img = await _danbooru_get(
-            url,
-            proxy=proxy,
-            accept="image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
-            timeout=45.0,
-        )
-        if img.status_code != 200:
-            raise RuntimeError(f"大图 HTTP {img.status_code}")
-        ctype = img.headers.get("content-type") or "image/jpeg"
-        return img.content, ctype.split(";")[0].strip()
-
-    raise ValueError(f"不支持的源: {source}")
-
 
 async def download_post(
     source: str,
@@ -263,7 +270,7 @@ async def download_post(
                 tags_path=str(tags_path),
                 id=pid,
                 stem=stem,
-                source=source,
+                source=source
             )
         post = await api.getPost(int(pid))
         file_url = str(post.get("file_url") or "")
@@ -293,7 +300,7 @@ async def download_post(
             tags_path=str(tags_path),
             id=pid,
             stem=stem,
-            source=source,
+            source=source
         )
 
     meta = await _danbooru_get(
@@ -317,7 +324,7 @@ async def download_post(
             tags_path=str(tags_path),
             id=pid,
             stem=stem,
-            source=source,
+            source=source
         )
     data = await _danbooru_fetch_image_bytes(post, proxy=proxy)
     _save_image_as_png(data, image_path)
@@ -338,7 +345,7 @@ async def download_post(
         tags_path=str(tags_path),
         id=pid,
         stem=stem,
-        source=source,
+        source=source
     )
 
 
@@ -346,4 +353,3 @@ def local_rel_path(root: Path, abs_path: str | Path) -> str:
     """绝对路径转数据集相对路径。引用：routes.booru.booru_download。"""
     p = Path(abs_path).resolve()
     return str(p.relative_to(root.resolve())).replace("\\", "/")
-
