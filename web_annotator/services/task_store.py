@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from pathlib import Path
 
 from services.models import TaskEntry, TaskInfo, TaskListFile
@@ -61,15 +62,20 @@ class TaskStore:
 
     def list_entries(self) -> list[TaskInfo]:
         """
-        返回清单条目列表。
+        返回清单条目列表，按 sort_order 升序排列。
 
         引用：GET /api/tasks、GET /api/datasets。
         """
         tasks = self._read().tasks
         out: list[TaskInfo] = []
-        for name in sorted(tasks.keys()):
-            meta = tasks[name]
-            out.append(TaskInfo(name=name, completed=meta.completed, note=meta.note))
+        for name, meta in sorted(tasks.items(), key=lambda kv: (kv[1].sort_order, kv[0].lower())):
+            out.append(TaskInfo(
+                name=name,
+                completed=meta.completed,
+                note=meta.note,
+                created=meta.created,
+                sort_order=meta.sort_order,
+            ))
         return out
 
     def contains(self, name: str) -> bool:
@@ -100,9 +106,10 @@ class TaskStore:
             main.mkdir(parents=True, exist_ok=True)
         if not mask.is_dir():
             mask.mkdir(parents=True, exist_ok=True)
-        data.tasks[name] = TaskEntry(completed=False)
+        max_order = max((e.sort_order for e in data.tasks.values()), default=-1)
+        data.tasks[name] = TaskEntry(completed=False, created=int(time.time()), sort_order=max_order + 1)
         self._write(data)
-        return TaskInfo(name=name, completed=False, root=str(task_root), note="")
+        return TaskInfo(name=name, completed=False, root=str(task_root), note="", sort_order=max_order + 1)
 
     def set_completed(self, name: str, completed: bool) -> TaskInfo:
         """标记完成 / 重新打开。引用：complete / reopen。"""
@@ -123,3 +130,22 @@ class TaskStore:
         data.tasks[name] = entry
         self._write(data)
         return TaskInfo(name=name, completed=entry.completed, note=entry.note)
+
+    def reorder(self, ordered_names: list[str]) -> None:
+        """
+        按给定名称列表重排所有任务的 sort_order。
+
+        Raises:
+            KeyError: 存在未知的任务名。
+
+        引用：POST /api/tasks/reorder。
+        """
+        data = self._read()
+        existing = set(data.tasks.keys())
+        given = set(ordered_names)
+        unknown = given - existing
+        if unknown:
+            raise KeyError(f"未知任务: {', '.join(sorted(unknown))}")
+        for idx, name in enumerate(ordered_names):
+            data.tasks[name] = data.tasks[name].model_copy(update={"sort_order": idx})
+        self._write(data)

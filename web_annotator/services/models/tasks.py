@@ -17,6 +17,7 @@ class TaskEntry(BaseModel):
 
     completed: bool = False
     created: int = 0
+    sort_order: int = 0
     note: str = ""
 
 
@@ -41,6 +42,8 @@ class TaskInfo(BaseModel):
     completed: bool
     root: str | None = None
     note: str = ""
+    created: int = 0
+    sort_order: int = 0
 
 
 class TaskCard(BaseModel):
@@ -57,6 +60,8 @@ class TaskCard(BaseModel):
     preview_hashes: list[str] = Field(default_factory=list)
     report_ready: bool = False
     note: str = ""
+    created: int = 0
+    sort_order: int = 0
 
 
 class TaskListResponse(BaseModel):

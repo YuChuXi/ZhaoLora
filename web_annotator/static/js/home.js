@@ -10,6 +10,9 @@
   var _candidates = [];
   var _suggestIndex = -1;
   var _nav = [];
+  var _sortBy = 'sort_order';
+  var _sortOrder = 'asc';
+  var _dragSrcName = null;
 
   /**
    * @param {string} msg
@@ -185,11 +188,17 @@
   /**
    * @param {object} t
    * @param {boolean} completed
+   * @param {boolean} sortable
    * @returns {HTMLElement}
    */
-  function buildCard(t, completed) {
+  function buildCard(t, completed, sortable) {
     var card = document.createElement('div');
     card.className = 'task-card';
+    if (sortable) {
+      card.classList.add('sortable');
+      card.draggable = true;
+      card.dataset.taskName = t.name;
+    }
     var href = '/d/' + encodeURIComponent(t.name) + '/filter';
     var abs = location.origin + href;
 
@@ -275,11 +284,19 @@
     body.appendChild(actions);
     card.appendChild(previews);
     card.appendChild(body);
+
+    if (sortable) {
+      var handle = document.createElement('div');
+      handle.className = 'task-drag-handle';
+      handle.textContent = '⠿';
+      card.appendChild(handle);
+    }
     return card;
   }
 
   async function loadTasks() {
-    var res = await fetch('/api/tasks');
+    var url = '/api/tasks?sort_by=' + encodeURIComponent(_sortBy) + '&sort_order=' + encodeURIComponent(_sortOrder);
+    var res = await fetch(url);
     if (!res.ok) throw new Error('无法读取任务列表');
     var data = await res.json();
     var tasks = data.tasks || [];
@@ -289,13 +306,14 @@
     completedHost.innerHTML = '';
     var nActive = 0;
     var nDone = 0;
+    var isManual = _sortBy === 'sort_order';
     tasks.forEach(function (t) {
       if (t.completed) {
         nDone += 1;
-        completedHost.appendChild(buildCard(t, true));
+        completedHost.appendChild(buildCard(t, true, false));
       } else {
         nActive += 1;
-        active.appendChild(buildCard(t, false));
+        active.appendChild(buildCard(t, false, isManual));
       }
     });
     document.getElementById('task-empty').hidden = nActive > 0;
@@ -416,7 +434,104 @@
     if (!res.ok) throw new Error('无法读取文档目录');
     var data = await res.json();
     _nav = data.nav || [];
+
+    var sortGroup = document.getElementById('sort-group');
+    if (sortGroup) {
+      sortGroup.addEventListener('click', function (e) {
+        var btn = e.target.closest('.sort-btn');
+        if (!btn) return;
+        var newBy = btn.getAttribute('data-sort');
+        var newOrder = btn.getAttribute('data-order');
+        if (!newBy) return;
+
+        if (_sortBy === newBy) {
+          if (newBy === 'sort_order') return;
+          newOrder = newOrder === 'asc' ? 'desc' : 'asc';
+        }
+        _sortBy = newBy;
+        _sortOrder = newOrder || 'asc';
+
+        updateSortButtons();
+        loadTasks();
+      });
+    }
+
+    setupDragDrop();
     await Promise.all([loadDoc(currentSlug()), loadTasks(), loadCandidates()]);
+  }
+
+  function updateSortButtons() {
+    var group = document.getElementById('sort-group');
+    if (!group) return;
+    group.querySelectorAll('.sort-btn').forEach(function (b) {
+      b.classList.remove('active');
+      var s = b.getAttribute('data-sort');
+      var label = '';
+      if (s === 'sort_order') { label = '手动'; }
+      else if (s === 'name') { label = '名称'; }
+      else if (s === 'image_count') { label = '图像数'; }
+      else if (s === 'created') { label = '创建时间'; }
+      if (s === _sortBy) {
+        b.classList.add('active');
+        b.setAttribute('data-order', _sortOrder);
+        if (s !== 'sort_order') {
+          label += ' ' + (_sortOrder === 'asc' ? '↑' : '↓');
+        }
+      }
+      b.textContent = label;
+    });
+  }
+
+  function setupDragDrop() {
+    var activeGrid = document.getElementById('task-active');
+
+    activeGrid.addEventListener('dragstart', function (e) {
+      var card = e.target.closest('.task-card.sortable');
+      if (!card) { e.preventDefault(); return; }
+      _dragSrcName = card.dataset.taskName;
+      card.classList.add('dragging');
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', _dragSrcName);
+    });
+
+    activeGrid.addEventListener('dragend', function (e) {
+      var card = e.target.closest('.task-card.sortable');
+      if (card) card.classList.remove('dragging');
+      _dragSrcName = null;
+      activeGrid.querySelectorAll('.drag-over').forEach(function (c) { c.classList.remove('drag-over'); });
+    });
+
+    activeGrid.addEventListener('dragover', function (e) {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      var card = e.target.closest('.task-card.sortable');
+      if (!card || card.dataset.taskName === _dragSrcName) return;
+      activeGrid.querySelectorAll('.drag-over').forEach(function (c) { c.classList.remove('drag-over'); });
+      card.classList.add('drag-over');
+    });
+
+    activeGrid.addEventListener('dragleave', function (e) {
+      var card = e.target.closest('.task-card.sortable');
+      if (card) card.classList.remove('drag-over');
+    });
+
+    activeGrid.addEventListener('drop', function (e) {
+      e.preventDefault();
+      var target = e.target.closest('.task-card.sortable');
+      if (!target || !_dragSrcName || target.dataset.taskName === _dragSrcName) return;
+      target.classList.remove('drag-over');
+
+      var cards = Array.from(activeGrid.querySelectorAll('.task-card.sortable'));
+      var ordered = cards.map(function (c) { return c.dataset.taskName; });
+      var srcIdx = ordered.indexOf(_dragSrcName);
+      var dstIdx = ordered.indexOf(target.dataset.taskName);
+      ordered.splice(srcIdx, 1);
+      ordered.splice(dstIdx, 0, _dragSrcName);
+
+      postJson('/api/tasks/reorder', { order: ordered }).then(function () {
+        return loadTasks();
+      });
+    });
   }
 
   init().catch(function (err) {

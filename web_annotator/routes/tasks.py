@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import random
 from pathlib import Path
+from typing import Literal
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from routes.deps import registry
@@ -21,6 +22,8 @@ from services.scanner import scan_images
 from services.task_store import TaskStore, validate_task_name
 
 router = APIRouter(prefix="/api/tasks", tags=["tasks"])
+SortField = Literal["sort_order", "name", "image_count", "created"]
+SortOrder = Literal["asc", "desc"]
 
 
 class AddTaskBody(BaseModel):
@@ -56,7 +59,11 @@ def _preview_hashes(rt: DatasetRuntime, limit: int = 4) -> list[str]:
 
 
 @router.get("")
-def list_tasks(request: Request) -> TaskListResponse:
+def list_tasks(
+    request: Request,
+    sort_by: SortField = Query("sort_order", description="排序字段"),
+    sort_order: SortOrder = Query("asc", description="排序方向"),
+) -> TaskListResponse:
     """
     列出清单内全部任务及概况。
 
@@ -85,8 +92,21 @@ def list_tasks(request: Request) -> TaskListResponse:
                 preview_hashes=previews,
                 report_ready=report_ready,
                 note=entry.note,
+                created=entry.created,
+                sort_order=entry.sort_order,
             )
         )
+
+    reverse = sort_order == "desc"
+    if sort_by == "sort_order":
+        items.sort(key=lambda t: t.sort_order, reverse=reverse)
+    elif sort_by == "name":
+        items.sort(key=lambda t: t.name.lower(), reverse=reverse)
+    elif sort_by == "image_count":
+        items.sort(key=lambda t: t.image_count, reverse=reverse)
+    elif sort_by == "created":
+        items.sort(key=lambda t: t.created, reverse=reverse)
+
     return TaskListResponse(tasks=items, root=str(store.root))
 
 
@@ -168,3 +188,24 @@ def set_note(request: Request, name: str, body: SetNoteBody) -> TaskOkResponse:
     except KeyError:
         raise HTTPException(404, f"未知任务: {name}") from None
     return TaskOkResponse(ok=True, name=info.name, completed=info.completed, note=info.note)
+
+
+class ReorderBody(BaseModel):
+    """重排请求体。引用：``POST /api/tasks/reorder``。"""
+
+    order: list[str] = Field(..., min_length=1)
+
+
+@router.post("/reorder")
+def reorder_tasks(request: Request, body: ReorderBody) -> dict:
+    """
+    按指定名称顺序重设所有任务的 sort_order。
+
+    引用：home.js 拖拽回调。
+    """
+    store = _store(request)
+    try:
+        store.reorder(body.order)
+    except KeyError as e:
+        raise HTTPException(400, str(e)) from None
+    return {"ok": True}

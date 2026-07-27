@@ -64,12 +64,27 @@
   .task-card {
     background: var(--surface); border: 1px solid var(--border); border-radius: 14px;
     overflow: hidden; display: flex; flex-direction: column;
-    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease, opacity 0.15s ease;
+    position: relative;
   }
   .task-card:hover {
     border-color: #4a6a9a;
     box-shadow: 0 10px 28px rgba(0,0,0,0.28);
   }
+  .task-card.drag-over {
+    border-color: #e94560; box-shadow: 0 0 0 2px rgba(233,69,96,0.35);
+    transform: scale(1.015);
+  }
+  .task-card.dragging { opacity: 0.4; transform: scale(0.97); }
+  .task-card.sortable { cursor: grab; }
+  .task-card.sortable:active { cursor: grabbing; }
+  .task-drag-handle {
+    position: absolute; top: 8px; right: 8px; width: 24px; height: 24px;
+    display: flex; align-items: center; justify-content: center;
+    color: var(--text-dim); font-size: 16px; opacity: 0; transition: opacity 0.15s;
+    pointer-events: none;
+  }
+  .task-card.sortable:hover .task-drag-handle { opacity: 0.6; }
   .task-previews {
     display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr;
     gap: 2px; background: #060a12; aspect-ratio: 16 / 11;
@@ -94,6 +109,20 @@
     background: var(--bg); color: var(--text); border: 1px solid var(--border);
     border-radius: 6px; font-size: 13px; font-family: inherit; line-height: 1.5;
     resize: vertical; min-height: 32px;
+  }
+  .sort-bar {
+    display: flex; align-items: center; gap: 10px; margin-bottom: 24px;
+  }
+  .sort-label { font-size: 13px; color: var(--text-dim); }
+  .sort-group { display: flex; gap: 4px; }
+  .sort-btn {
+    padding: 6px 14px; border: 1px solid var(--border); border-radius: 7px;
+    background: var(--bg); color: var(--text-dim); font-size: 13px; cursor: pointer;
+    transition: background 0.15s, color 0.15s, border-color 0.15s;
+  }
+  .sort-btn:hover { background: rgba(255,255,255,0.06); color: var(--text); }
+  .sort-btn.active {
+    background: rgba(233,69,96,0.16); color: var(--text); border-color: transparent;
   }
   .task-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: auto; }
   .task-actions .btn { padding: 7px 14px; font-size: 13px; }
@@ -126,6 +155,15 @@
         </div>
         <button type="submit" class="btn green">添加任务</button>
       </form>
+      <div class="sort-bar">
+        <span class="sort-label">排序：</span>
+        <div class="sort-group" id="sort-group">
+          <button type="button" class="sort-btn active" data-sort="sort_order" data-order="asc">手动</button>
+          <button type="button" class="sort-btn" data-sort="name" data-order="asc">名称</button>
+          <button type="button" class="sort-btn" data-sort="image_count" data-order="desc">图像数</button>
+          <button type="button" class="sort-btn" data-sort="created" data-order="desc">创建时间</button>
+        </div>
+      </div>
       <div class="task-grid" id="task-active"></div>
       <p class="home-empty" id="task-empty" hidden>尚未添加任务</p>
       <details class="completed-block" id="completed-wrap" hidden>
