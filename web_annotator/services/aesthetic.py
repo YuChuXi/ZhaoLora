@@ -234,6 +234,16 @@ def run_aesthetic(
             return
 
         rel = f"{parent.name}/{src.name}" if parent != root else src.name
+        rel_to_root = str(src.resolve().relative_to(root)).replace("\\", "/")
+
+        if rel_to_root in score_map:
+            progress.skipped += 1
+            progress.done += 1
+            progress.log(f"[{i + 1}/{len(items)}] 跳过: {rel_to_root} (已有分数)")
+            if on_update:
+                on_update()
+            continue
+
         progress.current = rel
         progress.message = f"[{i + 1}/{len(items)}] {rel}"
         if on_update:
@@ -243,7 +253,6 @@ def run_aesthetic(
             img = Image.open(src)
             raw = float(mod.get_score(img, clip_model, preprocess, aesthetic_model, device))
             pony = int(mod.raw_to_pony(raw))
-            rel_to_root = str(src.resolve().relative_to(root)).replace("\\", "/")
             score_map[rel_to_root] = round(raw, 6)
             results.append({
                 "path": str(src),

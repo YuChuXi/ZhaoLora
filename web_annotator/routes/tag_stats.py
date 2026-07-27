@@ -149,5 +149,5 @@ async def tag_clean(request: Request, body: CleanBody) -> JobSubmitResponse:
         )
         return result
 
-    job_id = jobs(request).submit(kind="tag_clean", dataset=rt.name, run=run)
+    job_id = jobs(request).submit(kind="tag_clean", group="compute", dataset=rt.name, run=run)
     return JobSubmitResponse(ok=True, job_id=job_id)

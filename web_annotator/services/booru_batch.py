@@ -8,7 +8,7 @@ from __future__ import annotations
 import asyncio
 import time
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -83,14 +83,6 @@ def get_progress(job_id: str) -> BooruBatchProgress | None:
     return _ACTIVE.get(job_id)
 
 
-def find_progress_for_dataset(dataset: str) -> tuple[str, BooruBatchProgress] | None:
-    """找该数据集上仍登记的批量进度。引用：active 接口。"""
-    for jid, prog in _ACTIVE.items():
-        if prog.dataset == dataset and prog.status not in ("done", "error", "cancelled"):
-            return jid, prog
-    return None
-
-
 def run_booru_batch(
     *,
     job_id: str,
@@ -100,7 +92,6 @@ def run_booru_batch(
     order: str,
     out_dir: Path,
     root: Path,
-    dir_name: str,
     start_page: int,
     proxy: str | None,
     progress: BooruBatchProgress,
@@ -122,7 +113,6 @@ def run_booru_batch(
                 order=order,
                 out_dir=out_dir,
                 root=root,
-                dir_name=dir_name,
                 start_page=start_page,
                 proxy=proxy,
                 progress=progress,
@@ -142,7 +132,6 @@ async def _run_async(
     order: str,
     out_dir: Path,
     root: Path,
-    dir_name: str,
     start_page: int,
     proxy: str | None,
     progress: BooruBatchProgress,
@@ -151,9 +140,9 @@ async def _run_async(
 ) -> None:
     """异步批量：翻页搜索 + 并发下载。引用：``run_booru_batch``。"""
 
-    def push(msg: str = "") -> None:
+    def push(msg: str | None = None) -> None:
         """推送快照。引用：各阶段。"""
-        if msg:
+        if msg is not None:
             progress.message = msg
         emit(progress.snapshot())
 
@@ -163,7 +152,7 @@ async def _run_async(
 
     page = max(1, int(start_page))
     empty_streak = 0
-    exhausted = False
+    has_more_pages = True
     buffer: list[Any] = []
     buf_i = 0
     inflight = 0
@@ -194,11 +183,11 @@ async def _run_async(
                 rate_budget = 0.0
                 await asyncio.sleep(min(120.0, max(0.01, wait)))
 
-    async def fill_buffer() -> bool:
-        """向后翻页填充候选。返回是否还有可能更多。引用：``next_post``。"""
-        nonlocal page, empty_streak, exhausted, buffer, buf_i
-        if exhausted:
-            return False
+    async def fill_buffer() -> None:
+        """向后翻一页并加入未下载候选。引用：``next_post``。"""
+        nonlocal page, empty_streak, has_more_pages
+        if not has_more_pages:
+            return
         posts, has_more = await search_posts(
             source,
             tags,
@@ -209,41 +198,19 @@ async def _run_async(
             proxy=proxy,
         )
         page += 1
+        if not has_more:
+            has_more_pages = False
         if not posts:
             empty_streak += 1
-            if not has_more or empty_streak >= EMPTY_STREAK_MAX:
-                exhausted = True
-                return False
-            return True
+            if empty_streak >= EMPTY_STREAK_MAX:
+                has_more_pages = False
+            return
         empty_streak = 0
-        fresh = 0
         for p in posts:
             if is_downloaded(out_dir, source, p.id):
                 progress.skipped += 1
-                continue
-            buffer.append(p)
-            fresh += 1
-        if fresh == 0 and not has_more:
-            exhausted = True
-        elif not has_more and fresh == 0:
-            exhausted = True
-        elif not has_more:
-            # 本页有候选，但后面没有更多页；buffer 耗尽后结束
-            pass
-        if not has_more and fresh == 0 and not buffer[buf_i:]:
-            exhausted = True
-        if not has_more:
-            # 标记：当前 buffer 用完且无更多页
-            if fresh == 0:
-                exhausted = True
             else:
-                # 还有本页候选；设标志在 buffer 空时结束
-                exhausted = False
-                # 用空 streak 之外：记 no_more
-                fill_buffer.no_more = True  # type: ignore[attr-defined]
-        return True
-
-    fill_buffer.no_more = False  # type: ignore[attr-defined]
+                buffer.append(p)
 
     async def next_post() -> Any | None:
         """取下一个未下载帖。引用：``worker``。"""
@@ -259,19 +226,14 @@ async def _run_async(
                     buf_i += 1
                     if is_downloaded(out_dir, source, p.id):
                         progress.skipped += 1
-                        push()
+                        push("")
                         continue
                     inflight += 1
                     return p
-                if exhausted or getattr(fill_buffer, "no_more", False):
-                    if buf_i >= len(buffer):
-                        exhausted = True
-                        return None
-                before = len(buffer)
-                ok = await fill_buffer()
-                push()
-                if len(buffer) == before and (exhausted or not ok):
+                if not has_more_pages:
                     return None
+                await fill_buffer()
+                push("")
 
     async def download_one(post: Any) -> None:
         """单帖下载（含 429 退避）。引用：``worker``。"""
@@ -298,12 +260,8 @@ async def _run_async(
                         progress.done += 1
                         if thumbnailer is not None:
                             rel = local_rel_path(root, result.path)
-                            if not rel.startswith(dir_name + "/") and "/" not in rel:
-                                rel = f"{dir_name}/{Path(result.path).name}"
-                            elif not rel.startswith(dir_name):
-                                rel = local_rel_path(root, result.path)
                             thumbnailer.ensure(rel)
-                    push()
+                    push("")
                     return
                 except RuntimeError as e:
                     msg = str(e)
@@ -332,11 +290,13 @@ async def _run_async(
                 return
             post = await next_post()
             if post is None:
-                if exhausted and inflight <= 0:
+                if progress.cancel_requested:
+                    return
+                if progress.done >= progress.limit:
+                    return
+                if not has_more_pages and inflight <= 0:
                     return
                 await asyncio.sleep(0.12)
-                if exhausted and inflight <= 0:
-                    return
                 continue
             await download_one(post)
 
@@ -346,9 +306,6 @@ async def _run_async(
     if progress.cancel_requested:
         progress.status = "cancelled"
         progress.message = "已取消"
-    elif progress.failed and progress.done == 0 and exhausted:
-        progress.status = "done"
-        progress.message = "已完成（无新图或已耗尽）"
     else:
         progress.status = "done"
         progress.message = "已完成"

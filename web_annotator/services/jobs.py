@@ -29,6 +29,7 @@ class Job:
 
     id: str
     kind: str
+    group: str
     dataset: str
     latest: JobSnapshot = field(default_factory=lambda: JobSnapshot(status="queued"))
     event: asyncio.Event = field(default_factory=asyncio.Event)
@@ -40,23 +41,42 @@ class JobManager:
     """
     全局长任务管理器。
 
-    同一时刻仅一个任务持有锁执行；其余 Task 在锁上等待。
+    通过 ``group`` 参数实现互斥分组：同一组内任务串行，不同组之间可并行。
     引用：server.py 挂到 app.state.jobs；routes/meta.py。
     """
 
     def __init__(self) -> None:
         """初始化锁与任务表。引用：``server.main``。"""
-        self._lock = asyncio.Lock()
+        self._locks: dict[str, asyncio.Lock] = {}
         self._jobs: dict[str, Job] = {}
 
     def get(self, job_id: str) -> Job | None:
         """按 id 取任务。引用：``routes.meta``。"""
         return self._jobs.get(job_id)
 
+    def find_active(
+        self,
+        *,
+        dataset: str | None = None,
+        kind: str | None = None,
+    ) -> Job | None:
+        """找最近一个未结束任务（刷新后重连）。引用：``routes.booru``。"""
+        found: Job | None = None
+        for job in self._jobs.values():
+            if job.latest.status in TERMINAL:
+                continue
+            if dataset is not None and job.dataset != dataset:
+                continue
+            if kind is not None and job.kind != kind:
+                continue
+            found = job
+        return found
+
     def submit(
         self,
         *,
         kind: str,
+        group: str,
         dataset: str,
         run: RunFn,
         cancel_fn: Callable[[], None] | None = None,
@@ -66,6 +86,7 @@ class JobManager:
 
         Args:
             kind: 任务类型标识（aesthetic / tagging / dedupe_scan / tag_clean）。
+            group: 互斥分组名，同组内任务串行执行。
             dataset: 数据集名称。
             run: 同步可调用对象，签名 ``run(emit)``；``emit(JobSnapshot)`` 可从工作线程调用。
             cancel_fn: 协作取消回调。
@@ -77,6 +98,7 @@ class JobManager:
         job = Job(
             id=job_id,
             kind=kind,
+            group=group,
             dataset=dataset,
             latest=JobSnapshot(
                 status="queued",
@@ -139,7 +161,7 @@ class JobManager:
             """线程安全发布快照。引用：``run``。"""
             self._emit_from_thread(loop, job, snap)
 
-        async with self._lock:
+        async with self._locks.setdefault(job.group, asyncio.Lock()):
             if job.latest.cancel_requested and job.latest.status == "queued":
                 self._publish(
                     job,

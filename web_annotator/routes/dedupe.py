@@ -123,7 +123,7 @@ async def scan_duplicates(request: Request, body: ScanBody) -> JobSubmitResponse
         )
         return result
 
-    job_id = jobs(request).submit(kind="dedupe_scan", dataset=rt.name, run=run)
+    job_id = jobs(request).submit(kind="dedupe_scan", group="compute", dataset=rt.name, run=run)
     return JobSubmitResponse(ok=True, job_id=job_id)
 
 

@@ -30,8 +30,10 @@ var BooruFilter = (function () {
   var _scrollSaveTimer = null;
   var _scrollRaf = null;
   var _EX_KEYS = ['score', 'width', 'height', 'id'];
-  var _batchAbort = false;
   var _batchRunning = false;
+  var _batchJobId = null;
+  var _batchWatch = null;
+  var _batchParamTimer = null;
 
   function toast(msg) {
     var el = document.getElementById('toast');
@@ -907,10 +909,6 @@ var BooruFilter = (function () {
     return data;
   }
 
-  function sleep(ms) {
-    return new Promise(function (resolve) { setTimeout(resolve, ms); });
-  }
-
   function setBatchDlg(show) {
     var dlg = document.getElementById('booru-batch-dlg');
     if (!dlg) return;
@@ -918,13 +916,27 @@ var BooruFilter = (function () {
     dlg.setAttribute('aria-hidden', show ? 'false' : 'true');
     if (!show && !_batchRunning) setBatchProgress(null);
     syncBatchCloseBtn();
+    syncBatchStopBtn();
   }
 
-  /** 空闲显示「关闭」，运行中显示「停止」。引用：setBatchDlg、runBatch。 */
+  /** 空闲显示「关闭」，运行中显示「隐藏」。引用：setBatchDlg、applyBatchSnapshot。 */
   function syncBatchCloseBtn() {
     var btn = document.getElementById('booru-batch-close');
     if (!btn) return;
-    btn.textContent = _batchRunning ? '停止' : '关闭';
+    btn.textContent = _batchRunning ? '隐藏' : '关闭';
+  }
+
+  function syncBatchStopBtn() {
+    var btn = document.getElementById('booru-batch-stop');
+    if (!btn) return;
+    btn.hidden = !_batchRunning;
+  }
+
+  function syncBatchStartBtn() {
+    var startBtn = document.getElementById('booru-batch-start');
+    if (!startBtn) return;
+    startBtn.disabled = !!_batchRunning;
+    startBtn.textContent = _batchRunning ? '运行中' : '开始';
   }
 
   /**
@@ -932,7 +944,7 @@ var BooruFilter = (function () {
    * @param {number|null} done 已完成数；null 表示隐藏顶栏并重置对话框进度
    * @param {number} [limit=0] 目标数量
    * @param {string} [note=''] 附加说明（如 429 退避、已完成）
-   * 引用：runBatch。
+   * 引用：applyBatchSnapshot。
    */
   function setBatchProgress(done, limit, note) {
     var dlgWrap = document.getElementById('booru-batch-progress');
@@ -972,22 +984,91 @@ var BooruFilter = (function () {
     paint(barFill, barPct, barText, bar, true);
   }
 
-  /** 批量进度说明：失败 / 跳过重复。引用：runBatch。 */
-  function batchProgressNote(fail, skipped) {
-    var bits = [];
-    if (skipped > 0) bits.push('跳过重复 ' + skipped);
-    if (fail > 0) bits.push('失败 ' + fail);
-    return bits.join(' · ');
+  /**
+   * 应用服务端 JobSnapshot 到进度 UI。
+   * @param {object} s
+   * 引用：watchBatch、resumeBatch。
+   */
+  function applyBatchSnapshot(s) {
+    var running = s.status === 'running' || s.status === 'queued';
+    _batchRunning = running;
+    syncBatchCloseBtn();
+    syncBatchStopBtn();
+    syncBatchStartBtn();
+    var done = s.done || 0;
+    var total = s.total || 0;
+    var note = s.message || '';
+    if (s.status === 'queued') {
+      setBatchProgress(0, total, note || '等待执行');
+      return;
+    }
+    if (running || s.status === 'done' || s.status === 'cancelled' || s.status === 'error') {
+      setBatchProgress(done, total, note);
+    }
+    if (!running && s.status !== 'queued') {
+      updatePageStatus();
+    }
   }
 
-  function stopBatch() {
-    _batchAbort = true;
+  function stopBatchWatch() {
+    if (_batchWatch) {
+      _batchWatch.close();
+      _batchWatch = null;
+    }
+  }
+
+  /**
+   * 订阅批量任务 SSE。
+   * @param {string} jobId
+   * 引用：runBatch、resumeBatch。
+   */
+  function watchBatch(jobId) {
+    stopBatchWatch();
+    _batchJobId = jobId;
+    _batchRunning = true;
+    syncBatchCloseBtn();
+    syncBatchStopBtn();
+    syncBatchStartBtn();
+    bindBatchParamInputs(true);
+    _batchWatch = API.watchJob(jobId, function (s) {
+      applyBatchSnapshot(s);
+      if (s.status === 'done') {
+        toast('批量完成 ' + (s.done || 0) + (s.message ? ' · ' + s.message : ''));
+        finishBatchUi();
+      } else if (s.status === 'cancelled') {
+        toast('批量已取消 · 完成 ' + (s.done || 0));
+        finishBatchUi();
+      } else if (s.status === 'error') {
+        toast('批量失败' + (s.message ? ' · ' + s.message : ''));
+        finishBatchUi();
+      }
+    });
+  }
+
+  function finishBatchUi() {
+    stopBatchWatch();
+    _batchRunning = false;
+    _batchJobId = null;
+    bindBatchParamInputs(false);
+    syncBatchCloseBtn();
+    syncBatchStopBtn();
+    syncBatchStartBtn();
+    updatePageStatus();
+  }
+
+  async function stopBatch() {
+    if (!_batchJobId) {
+      finishBatchUi();
+      return;
+    }
+    await API.cancelJob(_batchJobId);
+    toast('正在停止…');
   }
 
   /**
    * 从对话框读取并校正批量参数。
    * @returns {{limit:number, conn:number, rateRps:number}}
-   * 引用：runBatch、运行中 input 事件。
+   * 引用：runBatch、pushBatchParams。
    */
   function readBatchParams() {
     var limitEl = document.getElementById('booru-batch-limit');
@@ -1008,8 +1089,41 @@ var BooruFilter = (function () {
     return { limit: limit, conn: conn, rateRps: rateRps };
   }
 
+  function pushBatchParams() {
+    if (!_batchRunning || !_batchJobId) return;
+    var p = readBatchParams();
+    API.request(API.apiPath('/booru/batch/params'), {
+      method: 'POST',
+      body: JSON.stringify({
+        limit: p.limit,
+        conn: p.conn,
+        rate_rps: p.rateRps,
+      }),
+    }).catch(function () {});
+  }
+
+  function onBatchParamInput() {
+    if (!_batchRunning) return;
+    clearTimeout(_batchParamTimer);
+    _batchParamTimer = setTimeout(pushBatchParams, 200);
+  }
+
+  function bindBatchParamInputs(on) {
+    var paramIds = ['booru-batch-limit', 'booru-batch-conn', 'booru-batch-rate'];
+    for (var i = 0; i < paramIds.length; i++) {
+      var el = document.getElementById(paramIds[i]);
+      if (!el) continue;
+      el.removeEventListener('input', onBatchParamInput);
+      el.removeEventListener('change', onBatchParamInput);
+      if (on) {
+        el.addEventListener('input', onBatchParamInput);
+        el.addEventListener('change', onBatchParamInput);
+      }
+    }
+  }
+
   /**
-   * 按当前搜索结果批量下载；运行中可改数量 / 连接 / 限速。
+   * 提交服务端批量下载并监听进度。
    * 引用：工具栏「批量下载」。
    */
   async function runBatch() {
@@ -1021,211 +1135,44 @@ var BooruFilter = (function () {
       toast('请先切换到图站模式');
       return;
     }
-
     var params = readBatchParams();
-    var rateBudget = 0;
-    var rateLast = Date.now();
-    var rateChain = Promise.resolve();
-
-    function takeRate() {
-      if (!(params.rateRps > 0)) return Promise.resolve();
-      rateChain = rateChain.then(function () {
-        var now = Date.now();
-        rateBudget += ((now - rateLast) / 1000) * params.rateRps;
-        rateLast = now;
-        if (rateBudget > params.rateRps * 2) rateBudget = params.rateRps * 2;
-        rateBudget -= 1;
-        if (rateBudget >= 0) return;
-        var wait = (-rateBudget / params.rateRps) * 1000;
-        rateBudget = 0;
-        return sleep(Math.min(120000, Math.max(0, wait)));
-      });
-      return rateChain;
-    }
-
-    _batchAbort = false;
+    var tagsEl = document.getElementById('booru-tags');
+    var extraEl = document.getElementById('booru-extra');
+    var orderEl = document.getElementById('booru-order');
+    var body = {
+      source: mode(),
+      tags: tagsEl ? tagsEl.value.trim() : '',
+      extra: extraEl ? extraEl.value.trim() : '',
+      order: orderEl ? orderEl.value : '',
+      dir: destDir(),
+      page: _pageLo > 0 ? _pageLo : 1,
+      limit: params.limit,
+      conn: params.conn,
+      rate_rps: params.rateRps,
+    };
+    setBatchProgress(0, params.limit, '提交中…');
     _batchRunning = true;
     syncBatchCloseBtn();
-    var startBtn = document.getElementById('booru-batch-start');
-    if (startBtn) {
-      startBtn.disabled = true;
-      startBtn.textContent = '运行中';
-    }
-    setBatchProgress(0, params.limit);
+    syncBatchStopBtn();
+    syncBatchStartBtn();
+    var data = await API.request(API.apiPath('/booru/batch/start'), {
+      method: 'POST',
+      body: JSON.stringify(body),
+    });
+    toast('已提交批量下载');
+    watchBatch(data.job_id);
+  }
 
-    var done = 0;
-    var fail = 0;
-    var skipped = 0;
-    var inflight = 0;
-    var cursor = 0;
-    var emptyPages = 0;
-    var exhausted = false;
-    var gate = Promise.resolve();
-
-    function locked(fn) {
-      var run = gate.then(fn);
-      gate = run.then(function () {}, function () {});
-      return run;
-    }
-
-    function applyLiveParams() {
-      params = readBatchParams();
-      setBatchProgress(done, params.limit, batchProgressNote(fail, skipped));
-    }
-
-    function onParamInput() {
-      if (!_batchRunning) return;
-      applyLiveParams();
-    }
-
-    var paramIds = ['booru-batch-limit', 'booru-batch-conn', 'booru-batch-rate'];
-    for (var pi = 0; pi < paramIds.length; pi++) {
-      var pel = document.getElementById(paramIds[pi]);
-      if (pel) {
-        pel.addEventListener('input', onParamInput);
-        pel.addEventListener('change', onParamInput);
-      }
-    }
-
-    function nextCandidate() {
-      while (cursor < _posts.length) {
-        var p = _posts[cursor++];
-        if (p.downloaded || _status[p.key] === 'done') {
-          skipped += 1;
-          continue;
-        }
-        if (_status[p.key] === 'downloading') continue;
-        return p;
-      }
-      return null;
-    }
-
-    function hasPendingCandidate() {
-      for (var i = cursor; i < _posts.length; i++) {
-        var p = _posts[i];
-        if (p.downloaded || _status[p.key] === 'done' || _status[p.key] === 'downloading') continue;
-        return true;
-      }
-      return false;
-    }
-
-    function ensureCandidates() {
-      return locked(async function () {
-        while (!_batchAbort) {
-          if (done + inflight >= params.limit) return null;
-          var skipBefore = skipped;
-          var p = nextCandidate();
-          if (skipped !== skipBefore) {
-            setBatchProgress(done, params.limit, batchProgressNote(fail, skipped));
-          }
-          if (p) {
-            inflight += 1;
-            exhausted = false;
-            return p;
-          }
-          if (!_hasMore || emptyPages >= 8) {
-            exhausted = true;
-            return null;
-          }
-          var beforeLen = _posts.length;
-          await search('down');
-          if (_posts.length <= beforeLen) emptyPages += 1;
-          else emptyPages = 0;
-        }
-        return null;
-      });
-    }
-
-    async function downloadWithRetry(post) {
-      var attempt = 0;
-      while (!_batchAbort) {
-        try {
-          await takeRate();
-          return await downloadOne(post);
-        } catch (e) {
-          if (_batchAbort) throw e;
-          if (e && e.status === 429 && attempt < 10) {
-            var waitSec = e.retryAfter > 0 ? e.retryAfter : Math.min(120, Math.pow(2, attempt + 1));
-            setBatchProgress(
-              done,
-              params.limit,
-              '429 退避 ' + waitSec + 's · ' + batchProgressNote(fail, skipped)
-            );
-            await sleep(waitSec * 1000);
-            attempt += 1;
-            continue;
-          }
-          throw e;
-        }
-      }
-      throw new Error('已取消');
-    }
-
-    async function worker(slot) {
-      while (!_batchAbort) {
-        if (slot >= params.conn) {
-          await sleep(100);
-          continue;
-        }
-        if (done >= params.limit) {
-          await sleep(100);
-          continue;
-        }
-        var post = await ensureCandidates();
-        if (!post) {
-          await sleep(100);
-          continue;
-        }
-        _selected[post.key] = true;
-        try {
-          var data = await downloadWithRetry(post);
-          if (data && data.skipped) skipped += 1;
-          else done += 1;
-        } catch (e) {
-          fail += 1;
-          delete _selected[post.key];
-          if (!_batchAbort) toast('失败 ' + (post.stem || post.id) + ': ' + (e.message || e));
-        } finally {
-          inflight -= 1;
-        }
-        setBatchProgress(done, params.limit, batchProgressNote(fail, skipped));
-      }
-    }
-
-    var jobs = [];
-    for (var i = 0; i < 8; i++) jobs.push(worker(i));
-
-    try {
-      while (!_batchAbort) {
-        await sleep(120);
-        if (done >= params.limit) break;
-        if (exhausted && inflight === 0 && !hasPendingCandidate()) break;
-      }
-      var userAbort = _batchAbort;
-      _batchAbort = true;
-      await Promise.all(jobs);
-      var note = batchProgressNote(fail, skipped);
-      var endNote = (userAbort ? '已取消' : '已完成') + (note ? ' · ' + note : '');
-      setBatchProgress(done, params.limit, endNote);
-      if (userAbort) toast('批量已取消 · 完成 ' + done + (note ? ' · ' + note : ''));
-      else toast('批量完成 ' + done + (note ? ' · ' + note : ''));
-    } finally {
-      for (var pj = 0; pj < paramIds.length; pj++) {
-        var pel2 = document.getElementById(paramIds[pj]);
-        if (pel2) {
-          pel2.removeEventListener('input', onParamInput);
-          pel2.removeEventListener('change', onParamInput);
-        }
-      }
-      _batchRunning = false;
-      _batchAbort = false;
-      syncBatchCloseBtn();
-      if (startBtn) {
-        startBtn.disabled = false;
-        startBtn.textContent = '开始';
-      }
-      updatePageStatus();
-    }
+  /**
+   * 刷新后查询并重连进行中的批量任务。
+   * 引用：init。
+   */
+  async function resumeBatch() {
+    var data = await API.request(API.apiPath('/booru/batch/active'));
+    if (!data || !data.job_id) return;
+    if (data.status) applyBatchSnapshot(data.status);
+    watchBatch(data.job_id);
+    toast('已恢复批量下载进度');
   }
 
   async function undownloadOne(post) {
@@ -1506,7 +1453,6 @@ var BooruFilter = (function () {
     var searchBtn = document.getElementById('btn-booru-search');
     if (searchBtn) {
       searchBtn.addEventListener('click', function () {
-        if (_batchRunning) stopBatch();
         search(true).catch(function (e) { toast(String(e.message || e)); });
       });
     }
@@ -1520,20 +1466,29 @@ var BooruFilter = (function () {
     var batchDlg = document.getElementById('booru-batch-dlg');
     if (batchDlg) {
       batchDlg.addEventListener('click', function (e) {
-        if (e.target === batchDlg && !_batchRunning) setBatchDlg(false);
+        if (e.target === batchDlg) setBatchDlg(false);
       });
     }
     var batchStart = document.getElementById('booru-batch-start');
     if (batchStart) {
       batchStart.addEventListener('click', function () {
-        runBatch().catch(function (e) { toast(String(e.message || e)); });
+        runBatch().catch(function (e) {
+          finishBatchUi();
+          setBatchProgress(null);
+          toast(String(e.message || e));
+        });
       });
     }
     var batchClose = document.getElementById('booru-batch-close');
     if (batchClose) {
       batchClose.addEventListener('click', function () {
-        if (_batchRunning) stopBatch();
-        else setBatchDlg(false);
+        setBatchDlg(false);
+      });
+    }
+    var batchStop = document.getElementById('booru-batch-stop');
+    if (batchStop) {
+      batchStop.addEventListener('click', function () {
+        stopBatch().catch(function (e) { toast(String(e.message || e)); });
       });
     }
     function onSearchKey(e) {
@@ -1597,8 +1552,7 @@ var BooruFilter = (function () {
       if (e.key !== 'Escape') return;
       var batchDlgEl = document.getElementById('booru-batch-dlg');
       if (batchDlgEl && batchDlgEl.classList.contains('show')) {
-        if (_batchRunning) stopBatch();
-        else setBatchDlg(false);
+        setBatchDlg(false);
         return;
       }
       var extraDlg = document.getElementById('booru-extra-dlg');
@@ -1623,6 +1577,8 @@ var BooruFilter = (function () {
       clearTimeout(_scrollSaveTimer);
       _scrollSaveTimer = setTimeout(saveUiState, 200);
     }, { passive: true });
+
+    resumeBatch().catch(function () {});
   }
 
   return {

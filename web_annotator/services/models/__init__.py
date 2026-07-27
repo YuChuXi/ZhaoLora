@@ -30,6 +30,9 @@ from services.models.booru import (
     BooruSourcesResponse,
     BooruDownloadResult,
     BooruUndownloadResult,
+    BooruBatchStartBody,
+    BooruBatchParamsBody,
+    BooruBatchActiveResponse,
 )
 from services.models.dedupe import (
     DedupeMember,
@@ -109,6 +112,9 @@ __all__ = [
     'BooruSourcesResponse',
     'BooruDownloadResult',
     'BooruUndownloadResult',
+    'BooruBatchStartBody',
+    'BooruBatchParamsBody',
+    'BooruBatchActiveResponse',
     'DedupeMember',
     'DedupeGroup',
     'DedupeScanResult',

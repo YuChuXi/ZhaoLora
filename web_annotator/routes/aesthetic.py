@@ -170,6 +170,7 @@ async def aesthetic_start(request: Request, body: StartBody) -> AestheticStartRe
 
     job_id = jobs(request).submit(
         kind="aesthetic",
+        group="compute",
         dataset=rt.name,
         run=run,
         cancel_fn=lambda: setattr(prog, "cancel_requested", True),

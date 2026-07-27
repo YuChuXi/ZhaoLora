@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 import httpx
 from curl_cffi.requests.exceptions import RequestException
 
+from services.booru_batch import BooruBatchProgress, get_progress, register_progress, run_booru_batch
 from services.booru_client import (
     SOURCES,
     build_search_query,
@@ -19,12 +20,17 @@ from services.booru_client import (
     remove_download,
     search_posts,
 )
-from routes.deps import get_runtime
+from routes.deps import get_runtime, jobs
+from services.jobs import EmitFn
 from services.models import (
+    BooruBatchActiveResponse,
+    BooruBatchParamsBody,
+    BooruBatchStartBody,
     BooruDownloadResult,
     BooruSearchResult,
     BooruSourcesResponse,
     BooruUndownloadResult,
+    JobSubmitResponse,
 )
 from services.work_dir import resolve_subdir
 
@@ -229,3 +235,103 @@ def booru_undownload(request: Request, body: DownloadBody) -> BooruUndownloadRes
                 path.unlink()
 
     return result.model_copy(update={"dir": name})
+
+
+@router.get("/batch/active")
+def booru_batch_active(request: Request) -> BooruBatchActiveResponse:
+    """查询本数据集未结束的批量下载任务。引用：``booru_filter.js`` 刷新重连。"""
+    rt = get_runtime(request)
+    job = jobs(request).find_active(dataset=rt.name, kind="booru_batch")
+    if job is None:
+        return BooruBatchActiveResponse(ok=True, job_id=None, status=None)
+    return BooruBatchActiveResponse(ok=True, job_id=job.id, status=job.latest)
+
+
+@router.post("/batch/start")
+async def booru_batch_start(
+    request: Request, body: BooruBatchStartBody
+) -> JobSubmitResponse:
+    """
+    提交批量下载长任务。
+
+    进度见 GET /api/jobs/{id}/events；刷新后用 GET /booru/batch/active 重连。
+    引用：``booru_filter.js``。
+    """
+    source = body.source.strip().lower()
+    if source not in SOURCES:
+        raise HTTPException(400, f"不支持的源: {body.source}")
+    order = (body.order or "").strip().lower()
+    if order and order not in ("score", "id", "id_asc"):
+        raise HTTPException(400, f"不支持的排序: {body.order}")
+
+    rt = get_runtime(request)
+    mgr = jobs(request)
+    existing = mgr.find_active(dataset=rt.name, kind="booru_batch")
+    if existing is not None:
+        raise HTTPException(409, "批量下载已在进行中")
+
+    try:
+        _, out_dir = resolve_subdir(rt.root, body.dir)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+
+    prog = BooruBatchProgress(
+        limit=body.limit,
+        conn=body.conn,
+        rate_rps=body.rate_rps,
+        dataset=rt.name,
+    )
+    proxy = _proxy(request)
+    thumb = rt.thumbnailer
+    tags = body.tags
+    extra = body.extra or ""
+    start_page = body.page
+    root = rt.root
+    job_box: dict[str, str] = {"id": ""}
+
+    def run(emit: EmitFn) -> None:
+        """工作线程入口。引用：``JobManager.submit``。"""
+        run_booru_batch(
+            job_id=job_box["id"],
+            source=source,
+            tags=tags,
+            extra=extra,
+            order=order,
+            out_dir=out_dir,
+            root=root,
+            start_page=start_page,
+            proxy=proxy,
+            progress=prog,
+            emit=emit,
+            thumbnailer=thumb,
+        )
+
+    job_id = mgr.submit(
+        kind="booru_batch",
+        group="network",
+        dataset=rt.name,
+        run=run,
+        cancel_fn=lambda: setattr(prog, "cancel_requested", True),
+    )
+    job_box["id"] = job_id
+    register_progress(job_id, prog)
+    return JobSubmitResponse(ok=True, job_id=job_id)
+
+
+@router.post("/batch/params")
+def booru_batch_params(request: Request, body: BooruBatchParamsBody) -> JobSubmitResponse:
+    """运行中更新数量 / 连接 / 限速。引用：``booru_filter.js``。"""
+    rt = get_runtime(request)
+    job = jobs(request).find_active(dataset=rt.name, kind="booru_batch")
+    if job is None:
+        raise HTTPException(404, "没有进行中的批量任务")
+    prog = get_progress(job.id)
+    if prog is None:
+        raise HTTPException(404, "没有进行中的批量任务")
+    if body.limit is not None:
+        prog.limit = body.limit
+    if body.conn is not None:
+        prog.conn = body.conn
+    if body.rate_rps is not None:
+        prog.rate_rps = body.rate_rps
+    return JobSubmitResponse(ok=True, job_id=job.id)

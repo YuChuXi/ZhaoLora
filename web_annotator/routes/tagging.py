@@ -82,6 +82,7 @@ async def tagging_start(request: Request, body: StartBody) -> TaggingStartRespon
 
     job_id = jobs(request).submit(
         kind="tagging",
+        group="compute",
         dataset=rt.name,
         run=run,
         cancel_fn=lambda: setattr(prog, "cancel_requested", True),

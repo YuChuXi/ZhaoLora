@@ -7,6 +7,8 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
+from services.models.jobs import JobSnapshot
+
 
 class BooruPost(BaseModel):
     """规范化后的图站帖子。
@@ -92,4 +94,34 @@ class BooruUndownloadResult(BaseModel):
     removed: list[str] = Field(default_factory=list)
     count: int = 0
     dir: str = ""
+
+
+class BooruBatchStartBody(BaseModel):
+    """批量下载启动请求。引用：``POST /booru/batch/start``。"""
+
+    source: str
+    tags: str = ""
+    extra: str = ""
+    order: str = ""
+    dir: str = Field("main", description="工作子目录")
+    page: int = Field(1, ge=1, le=10000, description="起始页（向后翻）")
+    limit: int = Field(50, ge=1, le=5000)
+    conn: int = Field(2, ge=1, le=8)
+    rate_rps: float = Field(0, ge=0, le=60, description="次/秒，0=不限")
+
+
+class BooruBatchParamsBody(BaseModel):
+    """批量下载运行中改参。引用：``POST /booru/batch/params``。"""
+
+    limit: int | None = Field(None, ge=1, le=5000)
+    conn: int | None = Field(None, ge=1, le=8)
+    rate_rps: float | None = Field(None, ge=0, le=60)
+
+
+class BooruBatchActiveResponse(BaseModel):
+    """当前数据集上未结束的批量任务。引用：``GET /booru/batch/active``。"""
+
+    ok: bool = True
+    job_id: str | None = None
+    status: JobSnapshot | None = None
 
