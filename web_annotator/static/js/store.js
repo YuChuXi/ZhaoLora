@@ -74,6 +74,25 @@ var Store = (function() {
     }
   }
 
+  /**
+   * 批量选中路径范围（Shift+点击）。
+   * @param {string[]} paths
+   */
+  async function selectRange(paths) {
+    await API.selectRange(paths);
+    var pathSet = {};
+    for (var i = 0; i < paths.length; i++) pathSet[paths[i]] = true;
+    for (var j = 0; j < _images.length; j++) {
+      if (pathSet[_images[j].path]) _images[j].selected = true;
+    }
+    _notify();
+    for (var k = 0; k < paths.length; k++) {
+      for (var m = 0; m < _toggleListeners.length; m++) {
+        _toggleListeners[m](paths[k], true);
+      }
+    }
+  }
+
   async function selectAll() {
     await API.selectAll();
     for (var i = 0; i < _images.length; i++) {
@@ -143,7 +162,7 @@ var Store = (function() {
 
   return {
     load: load, getAll: getAll, getVisible: getVisible,
-    toggle: toggle, selectAll: selectAll, deselectAll: deselectAll,
+    toggle: toggle, selectRange: selectRange, selectAll: selectAll, deselectAll: deselectAll,
     invert: invert, applyDelete: applyDelete, restore: restore,
     stats: stats, onChange: onChange, onToggle: onToggle,
     setSort: setSort, getSort: getSort,

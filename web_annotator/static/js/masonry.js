@@ -45,6 +45,8 @@ var Masonry = (function() {
     for (var j = 0; j < imgs.length; j++) _io.observe(imgs[j]);
   }
 
+  var _lastClickedPath = null;
+
   function render(images) {
     if (!_container) return;
     _stopLazy();
@@ -90,7 +92,34 @@ var Masonry = (function() {
     if (img.selected) card.classList.add('selected');
     if (img.trashed)  card.classList.add('trashed');
     card.dataset.path = img.path;
-    card.addEventListener('click', function() { Store.toggle(img.path); });
+    card.addEventListener('click', function(e) {
+      if (e.shiftKey && _lastClickedPath) {
+        var lastCard = _container.querySelector('.card[data-path="' + _lastClickedPath.replace(/"/g, '\\"') + '"]');
+        if (lastCard && card !== lastCard) {
+          var yA = parseFloat(lastCard.style.top) || 0;
+          var hA = lastCard.offsetHeight || 0;
+          var yB = parseFloat(card.style.top) || 0;
+          var hB = card.offsetHeight || 0;
+          var yLo = Math.min(yA, yB);
+          var yHi = Math.max(yA + hA, yB + hB);
+          var allCards = _container.querySelectorAll('.card');
+          var paths = [];
+          for (var ci = 0; ci < allCards.length; ci++) {
+            var c = allCards[ci];
+            var cy = parseFloat(c.style.top) || 0;
+            var ch = c.offsetHeight || 0;
+            // 卡片与 [yLo, yHi] 有交集即选中
+            if (cy + ch > yLo && cy < yHi) paths.push(c.dataset.path);
+          }
+          if (paths.length) Store.selectRange(paths);
+        } else {
+          Store.toggle(img.path);
+        }
+      } else {
+        Store.toggle(img.path);
+      }
+      _lastClickedPath = img.path;
+    });
     if (typeof SimilarHover !== 'undefined') SimilarHover.bindCard(card, img.path);
 
     var imgEl = document.createElement('img');

@@ -142,6 +142,9 @@ var API = (function () {
   function toggle(p) {
     return request(apiPath('/toggle'), { method: 'POST', body: JSON.stringify({ path: p }) });
   }
+  function selectRange(paths) {
+    return request(apiPath('/select-range'), { method: 'POST', body: JSON.stringify({ paths: paths }) });
+  }
 
   function selectAll() {
     return request(apiPath('/select-all'), {
@@ -214,6 +217,7 @@ var API = (function () {
     imageUrl: imageUrl,
     similarImages: similarImages,
     toggle: toggle,
+    selectRange: selectRange,
     selectAll: selectAll,
     deselectAll: deselectAll,
     applyDelete: applyDelete,

@@ -125,39 +125,6 @@
       <textarea id="clean-prepend" placeholder="@chen bin"></textarea>
     </label>
   </div>
-  <div class="batch-edit-section">
-    <h3>批量编辑</h3>
-    <div class="batch-edit-row">
-      <label style="flex-direction:column;align-items:flex-start;gap:2px;flex:1;min-width:160px;">
-        删除标签（逗号分隔）
-        <input type="text" id="batch-delete" placeholder="tag1, tag2" style="width:100%;box-sizing:border-box;">
-      </label>
-      <label style="flex-direction:column;align-items:flex-start;gap:2px;flex:1;min-width:160px;">
-        添加标签（逗号分隔）
-        <input type="text" id="batch-add" placeholder="tag1, tag2" style="width:100%;box-sizing:border-box;">
-      </label>
-    </div>
-    <div class="batch-edit-row">
-      <span>放在</span>
-      <select id="batch-position">
-        <option value="after">||| 之后</option>
-        <option value="before">||| 之前</option>
-      </select>
-      <span>插入方式</span>
-      <select id="batch-mode">
-        <option value="bottom">置底</option>
-        <option value="top">置顶</option>
-        <option value="random">随机</option>
-      </select>
-      <label><input type="checkbox" id="batch-conditional"> 仅当已有同名标签时</label>
-      <label><input type="checkbox" id="batch-keep-dup"> 不删除已有重复</label>
-      <label><input type="checkbox" id="batch-inject-pony"> 注入 Pony 美学档位（最前）</label>
-    </div>
-    <div class="batch-edit-row">
-      <button class="btn" type="button" id="btn-batch-preview">预览</button>
-      <button class="btn danger" type="button" id="btn-batch-apply">写入</button>
-    </div>
-  </div>
   <div class="clean-result" id="clean-result"></div>
 </div>
 <div class="toast" id="toast"></div>

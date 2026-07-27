@@ -97,6 +97,19 @@ def deselect_all(request: Request) -> CountResponse:
     return CountResponse(selected=0)
 
 
+class SelectRangeBody(BaseModel):
+    """范围选中请求。引用：``POST /select-range``。"""
+
+    paths: list[str] = Field(..., description="要选中的路径列表")
+
+
+@router.post("/select-range")
+def select_range(request: Request, body: SelectRangeBody) -> CountResponse:
+    """将给定路径全部标为选中。引用：``store.js`` Shift+点击范围选择。"""
+    count = _state(request).select_all(body.paths)
+    return CountResponse(selected=count)
+
+
 @router.post("/apply")
 def apply_delete(request: Request) -> CountResponse:
     """将选中的图片移入回收站。引用：``store.js``。"""
