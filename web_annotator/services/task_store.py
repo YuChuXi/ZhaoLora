@@ -134,6 +134,7 @@ class TaskStore:
     def reorder(self, ordered_names: list[str]) -> None:
         """
         按给定名称列表重排所有任务的 sort_order。
+        未出现在列表中的任务保持原有相对顺序并追加到末尾。
 
         Raises:
             KeyError: 存在未知的任务名。
@@ -146,6 +147,9 @@ class TaskStore:
         unknown = given - existing
         if unknown:
             raise KeyError(f"未知任务: {', '.join(sorted(unknown))}")
-        for idx, name in enumerate(ordered_names):
+        missing = [n for n, e in sorted(data.tasks.items(), key=lambda kv: (kv[1].sort_order, kv[0].lower()))
+                   if n not in given]
+        full_order = ordered_names + missing
+        for idx, name in enumerate(full_order):
             data.tasks[name] = data.tasks[name].model_copy(update={"sort_order": idx})
         self._write(data)
