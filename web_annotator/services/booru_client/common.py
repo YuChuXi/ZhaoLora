@@ -64,17 +64,13 @@ def build_search_query(
 ) -> str:
     """拼标签 + 额外元标签（rating:/width:/score: 等）+ 排序。
 
-    Danbooru v2 匿名 API 限制最多 2 个普通标签；元标签与排序不计入。
     Gelbooru 忽略 ``date:`` 元标签。
 
     引用:
         ``routes.booru.booru_search``；``search_posts``。
     """
     parts: list[str] = []
-    t_tokens = (tags or "").split()
-    if source == "danbooru" and len(t_tokens) > 2:
-        t_tokens = t_tokens[:2]
-    t = " ".join(t_tokens)
+    t = " ".join((tags or "").split())
     if t:
         parts.append(t)
     e_tokens = (extra or "").split()
@@ -287,7 +283,8 @@ def _build_caption(post: Mapping[str, object], *, anima_format: bool = False, in
     """构建标签 caption。
 
     Args:
-        post: booru API 返回的帖子数据。
+        post: booru API 返回的帖子数据。Gelbooru 调用方应先通过 tag_types 归类为
+            tag_string_general/character/copyright/artist/meta 兼容字段。
         anima_format: 按 Anima 格式输出 [性别][角色][系列][画师][通用标签]。
         include_meta_tags: 若为 False（默认），剔除 tag_string_meta 中的元数据标签。
         keep_underscores: 若为 True，保留下划线；默认转为空格。
@@ -421,12 +418,21 @@ async def _danbooru_get(
     accept: str,
     timeout: float = 30.0,
     params: Mapping[str, str | int] | None = None,
+    login: str | None = None,
+    api_key: str | None = None,
 ) -> CurlResponse:
-    """用 curl_cffi 请求 Danbooru。引用：搜索 / 下载 / 预览。"""
+    """用 curl_cffi 请求 Danbooru，可选 API Key 认证以提升标签查询限制。
+
+    引用：``search_danbooru``；``media.download_post``（预览与下载）。
+    """
+    p = dict(params) if params else {}
+    if login and api_key:
+        p["login"] = login
+        p["api_key"] = api_key
     async with AsyncSession() as client:
         return await client.get(
             url,
-            params=dict(params) if params else None,
+            params=p if p else None,
             headers=_danbooru_headers(accept=accept),
             proxies=_curl_proxies(proxy),
             impersonate=_DANBOORU_IMPERSONATE,

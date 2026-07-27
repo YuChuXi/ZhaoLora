@@ -100,6 +100,8 @@ def run_booru_batch(
     anima_format: bool = True,
     include_meta_tags: bool = False,
     keep_underscores: bool = False,
+    danbooru_login: str | None = None,
+    danbooru_api_key: str | None = None,
 ) -> None:
     """
     同步入口：在工作线程内 ``asyncio.run`` 执行批量下载。
@@ -124,6 +126,8 @@ def run_booru_batch(
                 anima_format=anima_format,
                 include_meta_tags=include_meta_tags,
                 keep_underscores=keep_underscores,
+                danbooru_login=danbooru_login,
+                danbooru_api_key=danbooru_api_key,
             )
         )
     finally:
@@ -146,6 +150,8 @@ async def _run_async(
     anima_format: bool = True,
     include_meta_tags: bool = False,
     keep_underscores: bool = False,
+    danbooru_login: str | None = None,
+    danbooru_api_key: str | None = None,
 ) -> None:
     """异步批量：翻页搜索 + 并发下载。引用：``run_booru_batch``。"""
 
@@ -205,6 +211,8 @@ async def _run_async(
             order=order,
             extra=extra,
             proxy=proxy,
+            danbooru_login=danbooru_login,
+            danbooru_api_key=danbooru_api_key,
         )
         page += 1
         if not has_more:

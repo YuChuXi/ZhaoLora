@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import sys
 from pathlib import Path
@@ -255,6 +256,18 @@ def main() -> int:
         default=False,
         help="屏蔽 QQ/微信/国产浏览器（UC/360/搜狗/百度/夸克等）",
     )
+    parser.add_argument(
+        "--danbooru-login",
+        type=str,
+        default=os.environ.get("DANBOORU_LOGIN", ""),
+        help="Danbooru 用户名（或环境变量 DANBOORU_LOGIN）",
+    )
+    parser.add_argument(
+        "--danbooru-api-key",
+        type=str,
+        default=os.environ.get("DANBOORU_API_KEY", ""),
+        help="Danbooru API Key（或环境变量 DANBOORU_API_KEY）",
+    )
     args = parser.parse_args()
 
     task_root = Path(args.data_dir).resolve()
@@ -273,6 +286,8 @@ def main() -> int:
     app.state.datasets = registry
     app.state.jobs = JobManager()
     app.state.booru_proxy = (args.booru_proxy or "").strip() or None
+    app.state.danbooru_login = (args.danbooru_login or "").strip() or None
+    app.state.danbooru_api_key = (args.danbooru_api_key or "").strip() or None
     app.state.paint_default_alpha = 255
     app.state.block_chinese_ua = args.block_chinese_ua
 

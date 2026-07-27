@@ -55,6 +55,38 @@ class Gelbooru(Danbooru):
             return raw[0]
         raise TypeError(raw)
 
+    async def getTagTypes(self, names: list[str]) -> dict[str, int]:
+        """批量查询标签类型（0=general, 1=artist, 3=copyright, 4=character, 5=meta）。
+
+        引用：``media.download_post`` / ``media.regenerate_captions``。
+        """
+        if not names:
+            return {}
+        enc = quote(" ".join(names), safe="")
+        api_key = "***REMOVED***"
+        user_id = "***REMOVED***"
+        url = f"https://gelbooru.com/index.php?page=dapi&s=tag&q=index&json=1&names={enc}&api_key={api_key}&user_id={user_id}"
+        req = await self.get(url)
+        if not req.content:
+            return {}
+        try:
+            data = json.loads(req.content)
+        except json.JSONDecodeError:
+            return {}
+        result: dict[str, int] = {}
+        raw = data.get("tag")
+        tags = []
+        if isinstance(raw, list):
+            tags = raw
+        elif isinstance(raw, dict):
+            tags = [raw]
+        for t in tags:
+            name = str(t.get("name") or "")
+            typ = int(t.get("type") or 0)
+            if name:
+                result[name] = typ
+        return result
+
     async def getPosts(self, tags: str, pid: int = 0) -> list:
         # metatags 含 :、>=、空格等，必须编码，否则查询无效或截断
         enc = quote(tags, safe="")

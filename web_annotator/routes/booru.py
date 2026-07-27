@@ -102,6 +102,8 @@ async def booru_search(request: Request, body: SearchBody) -> BooruSearchResult:
             order=order,
             extra=body.extra or "",
             proxy=_proxy(request),
+            danbooru_login=request.app.state.danbooru_login,
+            danbooru_api_key=request.app.state.danbooru_api_key,
         )
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
@@ -291,6 +293,8 @@ async def booru_batch_start(
     anima_format = bool(body.anima_format)
     include_meta_tags = bool(body.include_meta_tags)
     keep_underscores = bool(body.keep_underscores)
+    danbooru_login = request.app.state.danbooru_login
+    danbooru_api_key = request.app.state.danbooru_api_key
     job_box: dict[str, str] = {"id": ""}
 
     def run(emit: EmitFn) -> None:
@@ -311,6 +315,8 @@ async def booru_batch_start(
             anima_format=anima_format,
             include_meta_tags=include_meta_tags,
             keep_underscores=keep_underscores,
+            danbooru_login=danbooru_login,
+            danbooru_api_key=danbooru_api_key,
         )
 
     job_id = mgr.submit(
@@ -355,7 +361,7 @@ class RegenerateCaptionsBody(BaseModel):
 
 @router.post("/regenerate-captions")
 def booru_regenerate_captions(request: Request, body: RegenerateCaptionsBody) -> dict:
-    """从 .danbooru_meta 批量重生成旁路 .txt。
+    """从 .danbooru_meta / .gelbooru_meta 批量重生成旁路 .txt。
 
     引用：``booru_filter.js`` 批量重生成按钮。
     """

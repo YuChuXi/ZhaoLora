@@ -130,8 +130,13 @@ async def search_danbooru(
     page: int,
     limit: int,
     proxy: str | None,
+    danbooru_login: str | None = None,
+    danbooru_api_key: str | None = None,
 ) -> tuple[list[BooruPost], bool]:
     """搜索 Danbooru。
+
+    Args:
+        danbooru_login / danbooru_api_key: API 认证，提升标签查询限制。
 
     引用:
         ``search_posts``。
@@ -147,6 +152,8 @@ async def search_danbooru(
             "page": max(1, page),
             "limit": limit_used,
         },
+        login=danbooru_login,
+        api_key=danbooru_api_key,
     )
     if resp.status_code != 200:
         raise RuntimeError(f"Danbooru HTTP {resp.status_code}: {resp.text[:200]}")
@@ -174,11 +181,16 @@ async def search_posts(
     order: str = "",
     extra: str = "",
     proxy: str | None = None,
+    danbooru_login: str | None = None,
+    danbooru_api_key: str | None = None,
 ) -> tuple[list[BooruPost], bool]:
     """按源站搜索帖子。
 
+    Args:
+        danbooru_login / danbooru_api_key: Danbooru API 认证，提升标签查询限制。
+
     引用:
-        ``routes.booru.booru_search``。
+        ``routes.booru.booru_search``；``booru_batch._run_async``。
     """
     source = source.strip().lower()
     if source not in SOURCES:
@@ -186,5 +198,8 @@ async def search_posts(
     query = build_search_query(source, tags, order=order, extra=extra)
     if source == "gelbooru":
         return await search_gelbooru(query, page=page, proxy=proxy)
-    return await search_danbooru(query, page=page, limit=limit, proxy=proxy)
+    return await search_danbooru(
+        query, page=page, limit=limit, proxy=proxy,
+        danbooru_login=danbooru_login, danbooru_api_key=danbooru_api_key,
+    )
 
