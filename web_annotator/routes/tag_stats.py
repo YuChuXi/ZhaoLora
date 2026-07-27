@@ -169,7 +169,7 @@ class BatchEditBody(BaseModel):
 
 
 @router.post("/batch-edit")
-def tag_batch_edit(request: Request, body: BatchEditBody) -> JobSubmitResponse:
+async def tag_batch_edit(request: Request, body: BatchEditBody) -> JobSubmitResponse:
     """
     批量删除/添加标签。
 

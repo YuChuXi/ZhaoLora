@@ -321,6 +321,9 @@ def batch_edit_tags(
     insert_mode: str = "bottom",
     conditional: bool = False,
     keep_duplicates: bool = False,
+    inject_pony_score: bool = False,
+    dataset_root: Path | None = None,
+    aesthetic_scores: dict[str, float] | None = None,
     dry_run: bool = True,
     sample_limit: int = 40,
 ) -> TagCleanResult:
@@ -335,6 +338,9 @@ def batch_edit_tags(
         insert_mode: ``"top"`` 置顶 / ``"bottom"`` 置底 / ``"random"`` 随机插入。
         conditional: 仅当文件中已有同名 tag 时才插入。
         keep_duplicates: 不删除已有重复标签。
+        inject_pony_score: 根据美学分注入 score_0…score_9，永远置于最前。
+        dataset_root: 数据集根目录（解析旁路图像路径）。
+        aesthetic_scores: 相对路径 → 原始美学分 [0,1]。
         dry_run: True 仅预览。
         sample_limit: 返回样本上限。
 

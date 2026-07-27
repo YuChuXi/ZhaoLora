@@ -245,12 +245,97 @@
       refresh().catch(function (e) { toast(String(e.message || e)); });
     });
 
+    // ---- 批量编辑对话框 ----
+    document.getElementById('btn-batch-edit').addEventListener('click', function () {
+      // 预填已选标签到删除列表
+      var sel = selectedTags();
+      document.getElementById('batch-delete').value = sel.map(function (t) { return t.tag; }).join(', ');
+      document.getElementById('batch-edit-result').textContent = '';
+      document.getElementById('batch-edit-modal').classList.add('open');
+    });
+    document.getElementById('btn-batch-edit-close').addEventListener('click', function () {
+      document.getElementById('batch-edit-modal').classList.remove('open');
+    });
+
+    document.getElementById('btn-batch-preview').addEventListener('click', function () {
+      runBatchEdit(true).catch(function (e) { toast(String(e.message || e)); });
+    });
+    document.getElementById('btn-batch-apply').addEventListener('click', function () {
+      runBatchEdit(false).catch(function (e) { toast(String(e.message || e)); });
+    });
+
     setTimeout(function () {
       refresh().catch(function (e) {
         document.getElementById('tag-body').innerHTML =
           '<tr><td colspan="5" class="empty-hint">' + String(e.message || e) + '</td></tr>';
       });
     }, 80);
+  }
+
+  /**
+   * 提交批量编辑任务。
+   * @param {boolean} dryRun
+   */
+  async function runBatchEdit(dryRun) {
+    var dirs = DirPicker.getDirs();
+    if (!dirs.length) { toast('请选择目录'); return; }
+    var deleteTags = parseTagList(document.getElementById('batch-delete').value);
+    var addTags = parseTagList(document.getElementById('batch-add').value);
+    if (!deleteTags.length && !addTags.length) {
+      toast('请指定要删除或添加的标签'); return;
+    }
+    if (!dryRun) {
+      if (!confirm('将覆盖所选目录中的旁路 .txt，是否继续？')) return;
+    }
+    var body = {
+      dirs: dirs,
+      delete_tags: deleteTags,
+      add_tags: addTags,
+      position: document.getElementById('batch-position').value,
+      insert_mode: document.getElementById('batch-mode').value,
+      conditional: document.getElementById('batch-conditional').checked,
+      keep_duplicates: document.getElementById('batch-keep-dup').checked,
+      inject_pony_score: document.getElementById('batch-inject-pony').checked,
+      dry_run: !!dryRun,
+      sample_limit: 40,
+    };
+    var resultEl = document.getElementById('batch-edit-result');
+    resultEl.textContent = dryRun ? '预览中…' : '写入中…';
+    document.getElementById('btn-batch-preview').disabled = true;
+    document.getElementById('btn-batch-apply').disabled = true;
+    try {
+      var submitted = await API.request(API.apiPath('/tags/batch-edit'), {
+        method: 'POST', body: JSON.stringify(body),
+      });
+      var data = await new Promise(function (resolve, reject) {
+        API.watchJob(submitted.job_id, function (s) {
+          if (s.status === 'queued') { resultEl.textContent = '等待执行…'; return; }
+          if (s.status === 'running') { resultEl.textContent = s.message || (dryRun ? '预览中…' : '写入中…'); return; }
+          if (s.status === 'done') { resolve(s.result || {}); return; }
+          if (s.status === 'error' || s.status === 'cancelled') { reject(new Error(s.message || s.status)); }
+        });
+      });
+      var lines = [];
+      lines.push((dryRun ? '预览完成' : '写入完成') + ' · 已变更 ' + data.changed + ' · 未变更 ' + data.unchanged);
+      (data.samples || []).forEach(function (s) {
+        lines.push('--- ' + (s.name || s.path));
+        lines.push('- ' + s.before);
+        lines.push('+ ' + s.after);
+      });
+      resultEl.textContent = lines.join('\n');
+      toast((dryRun ? '预览' : '写入') + '完成 · 已变更 ' + data.changed);
+    } finally {
+      document.getElementById('btn-batch-preview').disabled = false;
+      document.getElementById('btn-batch-apply').disabled = false;
+    }
+  }
+
+  /**
+   * @param {string} raw
+   * @returns {string[]}
+   */
+  function parseTagList(raw) {
+    return String(raw || '').split(/[\n,]+/).map(function (s) { return s.trim(); }).filter(Boolean);
   }
 
   init();

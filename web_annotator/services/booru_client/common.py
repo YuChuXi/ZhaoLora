@@ -64,13 +64,17 @@ def build_search_query(
 ) -> str:
     """拼标签 + 额外元标签（rating:/width:/score: 等）+ 排序。
 
-    Gelbooru 忽略 ``date:`` 元标签（站内不支持）。
+    Danbooru v2 匿名 API 限制最多 2 个普通标签；元标签与排序不计入。
+    Gelbooru 忽略 ``date:`` 元标签。
 
     引用:
         ``routes.booru.booru_search``；``search_posts``。
     """
     parts: list[str] = []
-    t = " ".join((tags or "").split())
+    t_tokens = (tags or "").split()
+    if source == "danbooru" and len(t_tokens) > 2:
+        t_tokens = t_tokens[:2]
+    t = " ".join(t_tokens)
     if t:
         parts.append(t)
     e_tokens = (extra or "").split()
