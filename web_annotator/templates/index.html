@@ -145,6 +145,13 @@
   }
   .booru-extra-badge:empty { display: none; }
 
+  /* 工具栏内的批量进度条：独占一整行 */
+  #booru-batch-bar:not([hidden]) {
+    width: 100%; flex-basis: 100%;
+    border-bottom: none;
+    padding-top: 2px; padding-bottom: 2px;
+  }
+
   @media (max-width: 860px) {
     .booru-preview { flex-direction: column; }
     .booru-preview-side { flex: 0 0 auto; max-height: 40vh; width: 100%; }
@@ -224,17 +231,17 @@
     列数 <input type="range" id="cols-slider" min="0" max="16" value="0" step="1" style="width:90px;">
     <span id="cols-label">自动</span>
   </label>
-</div>
 
-<div class="job-progress compact" id="booru-batch-bar" hidden>
-  <div class="job-progress-meta">
-    <span class="job-progress-label" id="booru-batch-bar-label">批量下载</span>
-    <span class="job-progress-pct" id="booru-batch-bar-pct">0%</span>
+  <div class="job-progress compact" id="booru-batch-bar" hidden>
+    <div class="job-progress-meta">
+      <span class="job-progress-label" id="booru-batch-bar-label">批量下载</span>
+      <span class="job-progress-pct" id="booru-batch-bar-pct">0%</span>
+    </div>
+    <div class="job-progress-track">
+      <div class="job-progress-fill" id="booru-batch-bar-fill"></div>
+    </div>
+    <div class="job-progress-text" id="booru-batch-bar-text">-</div>
   </div>
-  <div class="job-progress-track">
-    <div class="job-progress-fill" id="booru-batch-bar-fill"></div>
-  </div>
-  <div class="job-progress-text" id="booru-batch-bar-text">-</div>
 </div>
 
 <div class="masonry" id="masonry"></div>

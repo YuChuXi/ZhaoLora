@@ -218,7 +218,7 @@ def run_aesthetic(
     if on_update:
         on_update()
 
-    results: list[dict] = []
+    _new_count = 0
     score_map = load_scores(root)
 
     for i, (src, parent) in enumerate(items):
@@ -227,7 +227,7 @@ def run_aesthetic(
             progress.phase = "done"
             progress.message = f"已取消 ({progress.ok} 完成)"
             progress.log(progress.message)
-            if results:
+            if _new_count:
                 save_scores(root, score_map)
             if on_update:
                 on_update()
@@ -254,12 +254,7 @@ def run_aesthetic(
             raw = float(mod.get_score(img, clip_model, preprocess, aesthetic_model, device))
             pony = int(mod.raw_to_pony(raw))
             score_map[rel_to_root] = round(raw, 6)
-            results.append({
-                "path": str(src),
-                "rel_path": rel_to_root,
-                "raw": round(raw, 6),
-                "pony": pony,
-            })
+            _new_count += 1
             progress.ok += 1
             progress.done += 1
             progress.log(f"[{i + 1}/{len(items)}] score_{pony} {raw:.4f}  {rel_to_root}")
@@ -273,21 +268,32 @@ def run_aesthetic(
     save_scores(root, score_map)
     progress.log(f"分数: {scores_path(root)}")
 
-    if write_report and results:
+    # 从 score_map 构建全量结果（含已有分数的旧图），用于报告与汇总
+    all_results: list[dict] = []
+    for rel_path, raw_val in score_map.items():
+        pony = int(mod.raw_to_pony(raw_val))
+        all_results.append({
+            "path": str(root / rel_path),
+            "rel_path": rel_path,
+            "raw": round(raw_val, 6),
+            "pony": pony,
+        })
+
+    if write_report and all_results:
         html_path = root / "aesthetic_report.html"
-        mod.generate_html(results, root.name, str(html_path), str(root))
+        mod.generate_html(all_results, root.name, str(html_path), str(root))
         progress.log(f"报告: {html_path}")
         progress.summary.report = str(html_path)
 
-    scores = [r["raw"] for r in results]
+    scores = [r["raw"] for r in all_results]
     pony_counts = [0] * 10
-    for r in results:
+    for r in all_results:
         pony_counts[r["pony"]] += 1
 
     mean_v = float(np.mean(scores)) if scores else 0.0
     progress.summary = progress.summary.model_copy(
         update={
-            "count": len(results),
+            "count": len(all_results),
             "mean": round(mean_v, 4),
             "median": round(float(np.median(scores)), 4) if scores else 0.0,
             "std": round(float(np.std(scores)), 4) if scores else 0.0,

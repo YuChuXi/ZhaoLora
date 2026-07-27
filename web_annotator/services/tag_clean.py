@@ -44,7 +44,7 @@ def rel_image_for_txt(txt: Path, root: Path) -> str | None:
     return None
 
 
-DROP_EXACT = frozenset()
+DROP_EXACT = frozenset({"highres", "original", "absurdres"})
 
 
 def normalize_tag_underscores(tag: str) -> str:

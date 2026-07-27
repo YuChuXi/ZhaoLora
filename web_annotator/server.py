@@ -66,6 +66,27 @@ _PAGE_TEMPLATES = {
 
 _DS_PATH_RE = re.compile(r"^/(?:api/)?d/([^/]+)(?:/|$)")
 
+_CHINESE_UA_PATTERNS = re.compile(
+    r"QQBrowser|MQQBrowser|MicroMessenger|UCBrowser|UCWEB|"
+    r"baidubrowser|Baidu(?!.*AppleWebKit)|"
+    r"360SE|360EE|360Browser|"
+    r"Sogou|MetaSr|Maxthon|LieBao|2345Explorer|Quark",
+    re.IGNORECASE,
+)
+
+async def _block_chinese_ua_middleware(
+    request: Request,
+    call_next: Callable[[Request], Awaitable[Response]],
+) -> Response:
+    if not request.app.state.block_chinese_ua:
+        return await call_next(request)
+    ua = request.headers.get("user-agent", "")
+    if _CHINESE_UA_PATTERNS.search(ua):
+        resp = _read_template("blocked.html")
+        resp.status_code = 403
+        return resp
+    return await call_next(request)
+
 
 def _migrate_meta_to_root(main_dir: Path, root: Path) -> None:
     """将误放在 main/ 下的元数据迁到任务目录根。引用：DatasetRegistry.ensure。"""
@@ -131,6 +152,14 @@ async def bind_dataset_middleware(
         reg: DatasetRegistry = request.app.state.datasets
         request.state.runtime = reg.ensure(name)
     return await call_next(request)
+
+
+@app.middleware("http")
+async def _ua_middleware(
+    request: Request,
+    call_next: Callable[[Request], Awaitable[Response]],
+) -> Response:
+    return await _block_chinese_ua_middleware(request, call_next)
 
 
 static_dir = Path(__file__).parent / "static"
@@ -220,6 +249,12 @@ def main() -> int:
         default="http://127.0.0.1:7890",
         help="Danbooru/Gelbooru 请求代理；空字符串表示直连",
     )
+    parser.add_argument(
+        "--block-chinese-ua",
+        action="store_true",
+        default=False,
+        help="屏蔽 QQ/微信/国产浏览器（UC/360/搜狗/百度/夸克等）",
+    )
     args = parser.parse_args()
 
     task_root = Path(args.data_dir).resolve()
@@ -239,11 +274,14 @@ def main() -> int:
     app.state.jobs = JobManager()
     app.state.booru_proxy = (args.booru_proxy or "").strip() or None
     app.state.paint_default_alpha = 255
+    app.state.block_chinese_ua = args.block_chinese_ua
 
     n = len(store.list_entries())
     print(f"任务根   : {task_root}")
     print(f"清单任务 : {n}")
     print(f"服务地址 : http://{args.host}:{args.port}")
+    if args.block_chinese_ua:
+        print("UA 拦截  : 已启用（屏蔽 QQ/微信/国产浏览器）")
 
     uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
     return 0
