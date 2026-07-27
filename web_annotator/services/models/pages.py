@@ -8,6 +8,7 @@ from __future__ import annotations
 from pydantic import BaseModel, Field
 
 from services.models.dataset import WorkDirInfo
+from services.models.jobs import JobSnapshot
 
 
 class AestheticDirsResponse(BaseModel):
@@ -38,6 +39,18 @@ class AestheticStartResponse(BaseModel):
     device: str
 
 
+class AestheticActiveResponse(BaseModel):
+    """美学任务重连回执。
+
+    引用:
+        ``routes.aesthetic.aesthetic_active``。
+    """
+
+    ok: bool = True
+    job_id: str | None = None
+    status: JobSnapshot | None = None
+
+
 class TaggingDirsResponse(BaseModel):
     """打标页目录与模型状态。
 
@@ -65,4 +78,3 @@ class TaggingStartResponse(BaseModel):
     threshold: float
     disable_orig_tags: bool
     force: bool
-

@@ -19,7 +19,7 @@ from services.aesthetic import (
     resolve_image_dirs,
     run_aesthetic,
 )
-from services.models import AestheticDirsResponse, AestheticStartResponse
+from services.models import AestheticActiveResponse, AestheticDirsResponse, AestheticStartResponse
 from services.thumbnailer import Thumbnailer
 from services.jobs import EmitFn
 
@@ -118,6 +118,16 @@ def aesthetic_report(request: Request) -> HTMLResponse:
         raise HTTPException(404, "报告尚未生成")
     html = path.read_text(encoding="utf-8")
     return HTMLResponse(rewrite_report_html(html, rt.thumbnailer, rt.name))
+
+
+@router.get("/active")
+def aesthetic_active(request: Request) -> AestheticActiveResponse:
+    """查询本数据集未结束的美学任务。引用：``aesthetic.js`` 刷新重连。"""
+    rt = get_runtime(request)
+    job = jobs(request).find_active(dataset=rt.name, kind="aesthetic")
+    if job is None:
+        return AestheticActiveResponse(ok=True, job_id=None, status=None)
+    return AestheticActiveResponse(ok=True, job_id=job.id, status=job.latest)
 
 
 @router.post("/start")

@@ -151,6 +151,15 @@
       showReport(data.report_url || API.apiPath('/aesthetic/report'), Date.now());
     }
     applyStatus({ status: 'idle', done: 0, total: 0, failed: 0 });
+    resumeAesthetic();
+  }
+
+  async function resumeAesthetic() {
+    var active = await API.request(API.apiPath('/aesthetic/active'));
+    if (!active || !active.job_id) return;
+    if (active.status) applyStatus(active.status);
+    startWatch(active.job_id);
+    toast('已恢复美学评分进度');
   }
 
   async function startJob() {

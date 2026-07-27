@@ -85,6 +85,7 @@ from services.models.paint import (
 from services.models.pages import (
     AestheticDirsResponse,
     AestheticStartResponse,
+    AestheticActiveResponse,
     TaggingDirsResponse,
     TaggingStartResponse,
 )
@@ -149,6 +150,7 @@ __all__ = [
     'PaintImageItem',
     'AestheticDirsResponse',
     'AestheticStartResponse',
+    'AestheticActiveResponse',
     'TaggingDirsResponse',
     'TaggingStartResponse',
 ]
