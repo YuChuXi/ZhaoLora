@@ -82,6 +82,19 @@
   }
   .task-card h3 { margin: 0; font-size: 18px; font-weight: 700; color: var(--text); letter-spacing: 0.01em; }
   .task-card .meta { font-size: 13px; color: var(--text-dim); }
+  .task-note {
+    font-size: 13px; color: var(--text-dim); line-height: 1.5;
+    padding: 6px 10px; background: rgba(255,255,255,0.03); border-radius: 6px;
+    cursor: default; min-height: 20px; word-break: break-word;
+  }
+  .task-note.empty { font-style: italic; opacity: 0.45; }
+  .task-note:hover { background: rgba(255,255,255,0.06); }
+  .task-note-input {
+    width: 100%; box-sizing: border-box; padding: 6px 10px;
+    background: var(--bg); color: var(--text); border: 1px solid var(--border);
+    border-radius: 6px; font-size: 13px; font-family: inherit; line-height: 1.5;
+    resize: vertical; min-height: 32px;
+  }
   .task-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: auto; }
   .task-actions .btn { padding: 7px 14px; font-size: 13px; }
   .task-actions .btn.green { min-width: 88px; }

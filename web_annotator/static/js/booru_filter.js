@@ -1053,6 +1053,7 @@ var BooruFilter = (function () {
     syncBatchCloseBtn();
     syncBatchStopBtn();
     syncBatchStartBtn();
+    setBatchProgress(null);
     updatePageStatus();
   }
 

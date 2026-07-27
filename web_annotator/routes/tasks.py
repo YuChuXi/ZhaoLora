@@ -15,6 +15,7 @@ from services.models import (
     TaskCandidatesResponse,
     TaskListResponse,
     TaskOkResponse,
+    SetNoteBody,
 )
 from services.scanner import scan_images
 from services.task_store import TaskStore, validate_task_name
@@ -83,6 +84,7 @@ def list_tasks(request: Request) -> TaskListResponse:
                 image_count=image_count,
                 preview_hashes=previews,
                 report_ready=report_ready,
+                note=entry.note,
             )
         )
     return TaskListResponse(tasks=items, root=str(store.root))
@@ -131,6 +133,7 @@ def add_task(request: Request, body: AddTaskBody) -> TaskOkResponse:
         name=info.name,
         completed=info.completed,
         root=info.root,
+        note=info.note,
     )
 
 
@@ -142,7 +145,7 @@ def complete_task(request: Request, name: str) -> TaskOkResponse:
         info = store.set_completed(name, True)
     except KeyError:
         raise HTTPException(404, f"未知任务: {name}") from None
-    return TaskOkResponse(ok=True, name=info.name, completed=info.completed)
+    return TaskOkResponse(ok=True, name=info.name, completed=info.completed, note=info.note)
 
 
 @router.post("/{name}/reopen")
@@ -153,4 +156,15 @@ def reopen_task(request: Request, name: str) -> TaskOkResponse:
         info = store.set_completed(name, False)
     except KeyError:
         raise HTTPException(404, f"未知任务: {name}") from None
-    return TaskOkResponse(ok=True, name=info.name, completed=info.completed)
+    return TaskOkResponse(ok=True, name=info.name, completed=info.completed, note=info.note)
+
+
+@router.post("/{name}/note")
+def set_note(request: Request, name: str, body: SetNoteBody) -> TaskOkResponse:
+    """修改任务备注。引用：home.js 双击卡片标题。"""
+    store = _store(request)
+    try:
+        info = store.set_note(name, body.note)
+    except KeyError:
+        raise HTTPException(404, f"未知任务: {name}") from None
+    return TaskOkResponse(ok=True, name=info.name, completed=info.completed, note=info.note)

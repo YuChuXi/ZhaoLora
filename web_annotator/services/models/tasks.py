@@ -17,6 +17,7 @@ class TaskEntry(BaseModel):
 
     completed: bool = False
     created: int = 0
+    note: str = ""
 
 
 class TaskListFile(BaseModel):
@@ -39,6 +40,7 @@ class TaskInfo(BaseModel):
     name: str
     completed: bool
     root: str | None = None
+    note: str = ""
 
 
 class TaskCard(BaseModel):
@@ -54,6 +56,7 @@ class TaskCard(BaseModel):
     image_count: int = 0
     preview_hashes: list[str] = Field(default_factory=list)
     report_ready: bool = False
+    note: str = ""
 
 
 class TaskListResponse(BaseModel):
@@ -88,6 +91,13 @@ class TaskOkResponse(BaseModel):
     name: str
     completed: bool
     root: str | None = None
+    note: str = ""
+
+
+class SetNoteBody(BaseModel):
+    """修改任务备注请求体。引用：``POST /api/tasks/{name}/note``。"""
+
+    note: str = Field(default="", max_length=200)
 
 
 class DatasetItem(BaseModel):

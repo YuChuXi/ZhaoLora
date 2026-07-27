@@ -69,7 +69,7 @@ class TaskStore:
         out: list[TaskInfo] = []
         for name in sorted(tasks.keys()):
             meta = tasks[name]
-            out.append(TaskInfo(name=name, completed=meta.completed))
+            out.append(TaskInfo(name=name, completed=meta.completed, note=meta.note))
         return out
 
     def contains(self, name: str) -> bool:
@@ -102,7 +102,7 @@ class TaskStore:
             mask.mkdir(parents=True, exist_ok=True)
         data.tasks[name] = TaskEntry(completed=False)
         self._write(data)
-        return TaskInfo(name=name, completed=False, root=str(task_root))
+        return TaskInfo(name=name, completed=False, root=str(task_root), note="")
 
     def set_completed(self, name: str, completed: bool) -> TaskInfo:
         """标记完成 / 重新打开。引用：complete / reopen。"""
@@ -112,4 +112,14 @@ class TaskStore:
         entry = data.tasks[name].model_copy(update={"completed": bool(completed)})
         data.tasks[name] = entry
         self._write(data)
-        return TaskInfo(name=name, completed=bool(completed))
+        return TaskInfo(name=name, completed=bool(completed), note=entry.note)
+
+    def set_note(self, name: str, note: str) -> TaskInfo:
+        """修改任务备注。引用：POST /api/tasks/{name}/note。"""
+        data = self._read()
+        if name not in data.tasks:
+            raise KeyError(name)
+        entry = data.tasks[name].model_copy(update={"note": note.strip()})
+        data.tasks[name] = entry
+        self._write(data)
+        return TaskInfo(name=name, completed=entry.completed, note=entry.note)

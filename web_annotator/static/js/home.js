@@ -136,6 +136,53 @@
   }
 
   /**
+   * @param {HTMLElement} noteWrap
+   * @param {string} name
+   */
+  function startEditNote(noteWrap, name) {
+    if (noteWrap.querySelector('textarea')) return;
+    var old = noteWrap.textContent;
+    if (old === '双击添加备注…') old = '';
+    var input = document.createElement('textarea');
+    input.className = 'task-note-input';
+    input.value = old;
+    input.rows = Math.max(1, old.split('\n').length) || 1;
+    noteWrap.textContent = '';
+    noteWrap.appendChild(input);
+    input.focus();
+    input.setSelectionRange(input.value.length, input.value.length);
+    function finish() {
+      var val = input.value.trim();
+      if (val === old) {
+        noteWrap.textContent = old || '双击添加备注…';
+        noteWrap.className = 'task-note' + (val ? '' : ' empty');
+        return;
+      }
+      postJson('/api/tasks/' + encodeURIComponent(name) + '/note', { note: val })
+        .then(function () {
+          noteWrap.textContent = val || '双击添加备注…';
+          noteWrap.className = 'task-note' + (val ? '' : ' empty');
+        })
+        .catch(function (err) {
+          noteWrap.textContent = old || '双击添加备注…';
+          noteWrap.className = 'task-note' + (old ? '' : ' empty');
+          toast(String(err.message || err));
+        });
+    }
+    input.addEventListener('blur', finish);
+    input.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        input.blur();
+      }
+      if (e.key === 'Escape') {
+        input.value = old;
+        input.blur();
+      }
+    });
+  }
+
+  /**
    * @param {object} t
    * @param {boolean} completed
    * @returns {HTMLElement}
@@ -178,6 +225,13 @@
     meta.textContent =
       '图像 ' + (t.image_count || 0) + (t.report_ready ? ' · 有美学报告' : '');
 
+    var noteWrap = document.createElement('div');
+    noteWrap.className = 'task-note' + (t.note ? '' : ' empty');
+    noteWrap.textContent = t.note || '双击添加备注…';
+    noteWrap.addEventListener('dblclick', function () {
+      startEditNote(noteWrap, t.name);
+    });
+
     var actions = document.createElement('div');
     actions.className = 'task-actions';
     if (!completed) {
@@ -217,6 +271,7 @@
 
     body.appendChild(title);
     body.appendChild(meta);
+    body.appendChild(noteWrap);
     body.appendChild(actions);
     card.appendChild(previews);
     card.appendChild(body);
