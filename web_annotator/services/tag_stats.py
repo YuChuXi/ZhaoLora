@@ -7,8 +7,12 @@ import json
 from collections import Counter
 from pathlib import Path
 
+import httpx
 
 from services.models import TagStatRow, TagStatsResult, TxtDirInfo
+
+_SHARED_CACHE_NAME = ".translation_cache.json"
+_BATCH_SIZE = 128
 
 
 def split_tags_line(s: str) -> list[str]:
@@ -81,32 +85,24 @@ def resolve_selected_dirs(root: Path, names: list[str] | None) -> list[Path]:
 
 
 def load_translation_map(root: Path) -> dict[str, str]:
-    """合并当前数据集及同级其它数据集下的翻译缓存。"""
-    root = root.resolve()
-    out: dict[str, str] = {}
-    search_roots = [root]
-    parent = root.parent
-    if parent.is_dir():
-        search_roots.append(parent)
+    """
+    加载共享翻译缓存 ``datasets/.translation_cache.json``。
 
-    seen_files: set[Path] = set()
-    for base in search_roots:
-        for path in base.rglob(".guo582_translation_cache.json"):
-            rp = path.resolve()
-            if rp in seen_files:
-                continue
-            seen_files.add(rp)
-            raw = path.read_text(encoding="utf-8")
-            data = json.loads(raw)
-            if not isinstance(data, dict):
-                continue
-            for k, v in data.items():
-                if isinstance(k, str) and isinstance(v, str) and k and v:
-                    out[k] = v
-                    # 归一化键也挂一份，便于 long_hair / long hair
-                    nk = " ".join(k.replace("_", " ").split()).lower()
-                    if nk and nk not in out:
-                        out[nk] = v
+    引用：POST /tags/stats、POST /tags/translate-missing。
+    """
+    cache_path = root.resolve().parent / _SHARED_CACHE_NAME
+    if not cache_path.is_file():
+        return {}
+    data = json.loads(cache_path.read_text(encoding="utf-8"))
+    if not isinstance(data, dict):
+        return {}
+    out: dict[str, str] = {}
+    for k, v in data.items():
+        if isinstance(k, str) and isinstance(v, str) and k and v:
+            out[k] = v
+            nk = " ".join(k.replace("_", " ").split()).lower()
+            if nk and nk not in out:
+                out[nk] = v
     return out
 
 
@@ -193,3 +189,49 @@ def count_tags(
         per_sample=per_sample,
         tags=rows,
     )
+
+
+async def translate_missing_tags(tags: list[str], root: Path) -> dict[str, str]:
+    """
+    批量翻译标签（en → zh-CN），写入共享缓存 ``.translation_cache.json``。
+
+    引用：POST /tags/translate-missing。
+    """
+    if not tags:
+        return {}
+    root = root.resolve()
+    cache_path = root.parent / _SHARED_CACHE_NAME
+
+    existing: dict[str, str] = {}
+    if cache_path.is_file():
+        data = json.loads(cache_path.read_text(encoding="utf-8"))
+        if isinstance(data, dict):
+            existing = {str(k): str(v) for k, v in data.items() if k and v}
+
+    uniq = list(dict.fromkeys(tags))
+    missing = [t for t in uniq if t not in existing]
+    if not missing:
+        return {t: existing[t] for t in uniq if t in existing}
+
+    async with httpx.AsyncClient(http2=True, timeout=30) as client:
+        for i in range(0, len(missing), _BATCH_SIZE):
+            chunk = missing[i : i + _BATCH_SIZE]
+            params: list[tuple[str, str]] = [
+                ("client", "gtx"), ("sl", "en"), ("tl", "zh-CN"),
+            ]
+            for t in chunk:
+                params.append(("q", t))
+            resp = await client.get(
+                "https://translate.google.com/translate_a/t",
+                params=params,
+                headers={"User-Agent": "Mozilla/5.0"},
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            translations = [str(v) for v in data] if isinstance(data, list) else chunk
+            for en, zh in zip(chunk, translations):
+                existing[en] = zh.strip() if zh else en
+
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    cache_path.write_text(json.dumps(existing, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return {t: existing[t] for t in uniq if t in existing}

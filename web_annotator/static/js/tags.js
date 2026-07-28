@@ -208,11 +208,43 @@
   }
 
   /**
+   * 翻译当前表格中缺失中文的标签。
+   */
+  async function translateMissing() {
+    var missing = _tags.filter(function (t) { return !t.zh; }).map(function (t) { return t.tag; });
+    if (!missing.length) {
+      toast('没有需要翻译的标签');
+      return;
+    }
+
+    var btn = document.getElementById('btn-translate-missing');
+    btn.disabled = true;
+    btn.textContent = '翻译中…';
+    try {
+      var res = await api(API.apiPath('/tags/translate-missing'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tags: missing }),
+      });
+      toast('已翻译 ' + res.translated + ' 个标签');
+      await refresh();
+    } catch (e) {
+      toast(String(e.message || e));
+    } finally {
+      btn.disabled = false;
+      btn.textContent = '翻译缺失';
+    }
+  }
+
+  /**
    * 绑定页面事件。
    */
   function init() {
     document.getElementById('btn-refresh').addEventListener('click', function () {
       refresh().catch(function (e) { toast(String(e.message || e)); });
+    });
+    document.getElementById('btn-translate-missing').addEventListener('click', function () {
+      translateMissing();
     });
     document.getElementById('btn-select-all-tags').addEventListener('click', function () {
       _tags.forEach(function (t) { _selected[t.tag] = true; });

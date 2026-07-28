@@ -12,7 +12,7 @@ from services.aesthetic import load_scores
 from services.jobs import EmitFn
 from services.models import JobSnapshot, JobSubmitResponse, TagCleanResult, TagStatsResult, TxtDirInfo
 from services.tag_clean import batch_edit_tags, clean_txt_dirs
-from services.tag_stats import count_tags, list_txt_subdirs, load_translation_map, resolve_selected_dirs
+from services.tag_stats import count_tags, list_txt_subdirs, load_translation_map, resolve_selected_dirs, translate_missing_tags
 
 router = APIRouter(prefix="/tags", tags=["tags"])
 
@@ -90,6 +90,24 @@ def tag_stats(request: Request, body: StatsBody) -> TagStatsResult:
             "zh_cache_size": len(zh_map),
         }
     )
+
+
+class TranslateMissingBody(BaseModel):
+    """批量翻译缺失标签请求。引用：``POST /tags/translate-missing``。"""
+
+    tags: list[str] = Field(..., min_length=1)
+
+
+@router.post("/translate-missing")
+async def translate_missing(request: Request, body: TranslateMissingBody) -> dict:
+    """
+    异步批量翻译标签，保存到共享缓存。
+
+    引用：tags.js。
+    """
+    root = _root(request)
+    result = await translate_missing_tags(body.tags, root)
+    return {"translated": len(result), "map": result}
 
 
 @router.post("/clean")
