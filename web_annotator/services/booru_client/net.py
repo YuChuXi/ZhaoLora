@@ -13,6 +13,7 @@ from curl_cffi.requests import AsyncSession
 from curl_cffi.requests.models import Response as CurlResponse
 
 from services.scanner import IMAGE_EXTS
+from services.models.booru import BooruPost
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 if str(_REPO_ROOT) not in sys.path:
@@ -91,23 +92,22 @@ def make_gelbooru(proxy: str | None) -> Gelbooru:
     return Gelbooru(proxy=p) if p else Gelbooru(proxy=None)  # type: ignore[arg-type]
 
 
-def danbooru_preview_url(post: Mapping[str, Any]) -> str:
+def danbooru_preview_url(post: BooruPost) -> str:
     """优先 720x720 webp 预览；回退 file_url。
 
     引用：``sources.DanbooruSource.preview_url`` / ``search.normalize_danbooru_post``。
     """
-    ma = post.get("media_asset")
-    if isinstance(ma, dict):
-        variants = ma.get("variants") or []
-        by_type: dict[str, str] = {}
+    if post.media_asset:
+        variants = post.media_asset.get("variants") or []
         for v in variants:
-            if not isinstance(v, dict): continue
-            t = v.get("type"); u = v.get("url")
-            if t and u: by_type[str(t)] = str(u)
-        for key in ("720x720", "360x360", "sample"):
-            if by_type.get(key): return by_type[key]
-    md5 = str(post.get("md5") or "")
-    if len(md5) >= 4:
-        return f"https://cdn.donmai.us/720x720/{md5[:2]}/{md5[2:4]}/{md5}.webp"
-    return str(post.get("large_file_url") or post.get("preview_file_url")
-               or post.get("file_url") or "")
+            if not isinstance(v, dict):
+                continue
+            t = v.get("type")
+            if t == "720x720":
+                return str(v.get("url", ""))
+        for v in variants:
+            if isinstance(v, dict) and v.get("type") in ("360x360", "sample"):
+                return str(v.get("url", ""))
+    if len(post.md5) >= 4:
+        return f"https://cdn.donmai.us/720x720/{post.md5[:2]}/{post.md5[2:4]}/{post.md5}.webp"
+    return post.large_file_url or post.preview_url or post.file_url

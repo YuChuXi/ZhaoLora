@@ -5,9 +5,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 from urllib.parse import quote
 
 from services.booru_client.common import SourceClient
@@ -48,27 +47,18 @@ class GelbooruSource(SourceClient):
         return "gelbooru.com" in url
 
     @staticmethod
-    def normalize(post: Mapping[str, Any]) -> BooruPost | None:
-        """Gelbooru 原始帖转 ``BooruPost``。
+    def normalize(post: BooruPost) -> BooruPost | None:
+        """Gelbooru 原始帖补充 ``source`` 和回退 URL。
 
         覆盖父类 ``common.SourceClient``；
         引用：``sources.py:GelbooruSource.search``。
         """
-        from services.models import BooruPost
-        pid = post.get("id")
-        if pid is None:
+        if not post.file_url:
             return None
-        file_url = str(post.get("file_url") or "")
-        if not file_url:
-            return None
-        return BooruPost(
-            source="gelbooru", id=str(pid), key=f"gelbooru:{pid}",
-            width=int(post.get("width") or 0), height=int(post.get("height") or 0),
-            score=int(post.get("score") or 0), tags=str(post.get("tags") or ""),
-            preview_url=str(post.get("preview_url") or post.get("sample_url") or file_url),
-            sample_url=str(post.get("sample_url") or post.get("preview_url") or file_url),
-            file_url=file_url, rating=str(post.get("rating") or ""),
-        )
+        post.source = "gelbooru"
+        post.preview_url = post.preview_url or post.sample_url or post.file_url
+        post.sample_url = post.sample_url or post.preview_url
+        return post
 
     async def fetch_meta(self, out_dir: Path, pid: str, proxy: str | None) -> None:
         """拉取 Gelbooru 帖元数据并写入磁盘。
@@ -77,8 +67,8 @@ class GelbooruSource(SourceClient):
         引用：``common.SourceClient._write_meta`` / ``routes/booru._run_refresh``。
         """
         api = make_gelbooru(proxy)
-        post = await api.getPost(int(pid))
-        self._write_meta(out_dir, pid, post)
+        raw = await api.getPost(int(pid))
+        self._write_meta(out_dir, pid, BooruPost.model_validate(raw))
 
     async def search(self, tags: str, page: int, limit: int, order: str, extra: str,
                      proxy: str | None, **auth) -> tuple[list[BooruPost], bool]:
@@ -106,8 +96,10 @@ class GelbooruSource(SourceClient):
         else:
             has_more = len(posts_raw) >= g_limit
         out: list[BooruPost] = []
-        for p in posts_raw:
-            n = self.normalize(p)
+        for raw_post in posts_raw:
+            if not isinstance(raw_post, dict):
+                continue
+            n = self.normalize(BooruPost.model_validate(raw_post))
             if n is not None:
                 out.append(n)
         return out, has_more
@@ -122,6 +114,7 @@ class GelbooruSource(SourceClient):
         """
         from services.booru_client.media import _categorize_gelbooru_tags
         from services.booru_client.utils import convert_path_to_png
+        from services.models import BooruPost
 
         api = make_gelbooru(proxy)
         stem = self.file_stem(pid)
@@ -132,22 +125,23 @@ class GelbooruSource(SourceClient):
         if not overwrite and existing is not None and tags_path.is_file():
             return {"skipped": True, "path": str(existing), "stem": stem, "id": pid}
 
-        post = await api.getPost(int(pid))
-        file_url = str(post.get("file_url") or "")
-        if not file_url:
+        raw = await api.getPost(int(pid))
+        api_post = BooruPost.model_validate(raw)
+        if not api_post.file_url:
             raise ValueError("无 file_url")
         if overwrite or not image_path.is_file():
-            tmp_ext = ext_from_url(file_url, ".bin")
+            tmp_ext = ext_from_url(api_post.file_url, ".bin")
             tmp_path = out_dir / f"{stem}.tmp{tmp_ext}"
             await api.getImage(int(pid), str(tmp_path))
             convert_path_to_png(tmp_path, image_path)
             self._clean_old_files(out_dir, pid, image_path)
 
         if anima_format:
-            post = await _categorize_gelbooru_tags(post, api)
-        caption = self._build_caption(post, anima_format=anima_format, include_meta_tags=include_meta_tags, keep_underscores=keep_underscores)
+            raw = await _categorize_gelbooru_tags(raw, api)
+            api_post = BooruPost.model_validate(raw)
+        caption = self._build_caption(api_post, anima_format=anima_format, include_meta_tags=include_meta_tags, keep_underscores=keep_underscores)
         tags_path.write_text(caption + "\n", encoding="utf-8")
-        self._write_meta(out_dir, pid, post)
+        self._write_meta(out_dir, pid, api_post)
         return {"path": str(image_path), "stem": stem, "id": pid}
 
 
@@ -157,37 +151,27 @@ class DanbooruSource(SourceClient):
     order_tags = {"score": "order:score", "id": "order:id_desc", "id_asc": "order:id"}
     valid_orders = ("score", "id", "id_asc")
 
-    def preview_url(self, post: Mapping[str, Any]) -> str:
+    def preview_url(self, post: BooruPost) -> str:
         """Danbooru 帖缩略图 URL，优先 720x720 webp。
 
         覆盖父类 ``common.SourceClient``；
         引用：``routes/booru`` 搜索结果列表。
         """
-        return danbooru_preview_url(post)
+        return danbooru_preview_url(post)  # type: ignore[arg-type]
 
     @staticmethod
-    def normalize(post: Mapping[str, Any]) -> BooruPost | None:
-        """Danbooru 原始帖转 ``BooruPost``。
+    def normalize(post: BooruPost) -> BooruPost | None:
+        """Danbooru 原始帖补充 ``source`` 和预览 URL。
 
         覆盖父类 ``common.SourceClient``；
         引用：``sources.py:DanbooruSource.search``。
         """
-        from services.models import BooruPost
-        if post.get("is_banned") or post.get("is_deleted"):
+        if post.is_banned or post.is_deleted or not post.file_url:
             return None
-        pid = post.get("id")
-        file_url = str(post.get("file_url") or "")
-        if pid is None or not file_url:
-            return None
-        return BooruPost(
-            source="danbooru", id=str(pid), key=f"danbooru:{pid}",
-            width=int(post.get("image_width") or 0), height=int(post.get("image_height") or 0),
-            score=int(post.get("score") or 0), tags=str(post.get("tag_string") or ""),
-            preview_url=danbooru_preview_url(post),
-            sample_url=str(post.get("large_file_url") or post.get("file_url") or ""),
-            file_url=file_url, rating=str(post.get("rating") or ""),
-            file_ext=str(post.get("file_ext") or ""),
-        )
+        post.source = "danbooru"
+        post.preview_url = danbooru_preview_url(post)
+        post.sample_url = post.large_file_url or post.file_url
+        return post
 
     async def fetch_meta(self, out_dir: Path, pid: str, proxy: str | None) -> None:
         """拉取 Danbooru 帖元数据并写入磁盘。
@@ -201,7 +185,7 @@ class DanbooruSource(SourceClient):
         )
         if meta.status_code != 200:
             raise RuntimeError(f"Danbooru HTTP {meta.status_code}")
-        self._write_meta(out_dir, pid, meta.json())
+        self._write_meta(out_dir, pid, BooruPost.model_validate(meta.json()))
 
     async def search(self, tags: str, page: int, limit: int, order: str, extra: str,
                      proxy: str | None, **auth) -> tuple[list[BooruPost], bool]:
@@ -227,8 +211,10 @@ class DanbooruSource(SourceClient):
             return [], False
         has_more = len(data) >= limit_used
         out: list[BooruPost] = []
-        for p in data:
-            n = self.normalize(p)
+        for raw_post in data:
+            if not isinstance(raw_post, dict):
+                continue
+            n = self.normalize(BooruPost.model_validate(raw_post))
             if n is not None:
                 out.append(n)
         return out, has_more
@@ -242,6 +228,7 @@ class DanbooruSource(SourceClient):
         引用：``booru_batch.download_one``。
         """
         from services.booru_client.media import _danbooru_fetch_image_bytes as _fetch
+        from services.models import BooruPost
 
         stem = self.file_stem(pid)
         image_path = out_dir / f"{stem}.png"
@@ -254,19 +241,18 @@ class DanbooruSource(SourceClient):
         )
         if meta.status_code != 200:
             raise RuntimeError(f"Danbooru HTTP {meta.status_code}")
-        post = meta.json()
-        file_ext = str(post.get("file_ext") or "").lower().lstrip(".")
-        if file_ext in UNSUPPORTED_FILE_EXT and not post.get("large_file_url"):
-            raise ValueError(f"不支持的类型: .{file_ext}")
+        api_post = BooruPost.model_validate(meta.json())
+        if api_post.file_ext in UNSUPPORTED_FILE_EXT and not api_post.large_file_url:
+            raise ValueError(f"不支持的类型: .{api_post.file_ext}")
 
         if not overwrite and existing is not None and tags_path.is_file():
-            self._write_meta(out_dir, pid, post)
+            self._write_meta(out_dir, pid, api_post)
             return {"skipped": True, "path": str(existing), "stem": stem, "id": pid}
 
-        data = await _fetch(post, proxy=proxy)
+        data = await _fetch(api_post, proxy=proxy)
         self._save_png(data, image_path)
         self._clean_old_files(out_dir, pid, image_path)
-        caption = self._build_caption(post, anima_format=anima_format, include_meta_tags=include_meta_tags, keep_underscores=keep_underscores)
+        caption = self._build_caption(api_post, anima_format=anima_format, include_meta_tags=include_meta_tags, keep_underscores=keep_underscores)
         tags_path.write_text(caption + "\n", encoding="utf-8")
-        self._write_meta(out_dir, pid, post)
+        self._write_meta(out_dir, pid, api_post)
         return {"path": str(image_path), "stem": stem, "id": pid}

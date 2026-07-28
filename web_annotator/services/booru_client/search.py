@@ -37,7 +37,6 @@ def normalize_gelbooru_post(post: Mapping[str, Any]) -> BooruPost | None:
     return BooruPost(
         source="gelbooru",
         id=str(pid),
-        key=f"gelbooru:{pid}",
         width=int(post.get("width") or 0),
         height=int(post.get("height") or 0),
         score=int(post.get("score") or 0),
@@ -61,13 +60,12 @@ def normalize_danbooru_post(post: Mapping[str, Any]) -> BooruPost | None:
     file_url = str(post.get("file_url") or "")
     if pid is None or not file_url:
         return None
-    preview = danbooru_preview_url(post)
+    preview = danbooru_preview_url(BooruPost.model_validate(post))  # type: ignore[arg-type]
     sample = str(post.get("large_file_url") or preview)
     tags = str(post.get("tag_string") or "")
     return BooruPost(
         source="danbooru",
         id=str(pid),
-        key=f"danbooru:{pid}",
         width=int(post.get("image_width") or 0),
         height=int(post.get("image_height") or 0),
         score=int(post.get("score") or 0),

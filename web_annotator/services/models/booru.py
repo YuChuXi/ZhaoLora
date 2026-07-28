@@ -5,32 +5,67 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from typing import Any
+
+from pydantic import BaseModel, Field, computed_field, model_validator
 
 from services.models.jobs import JobSnapshot
 
 
 class BooruPost(BaseModel):
-    """规范化后的图站帖子。
+    """图站帖子，同时接纳 Gelbooru/Danbooru API 原始字段并统一规范化。
 
-    引用:
-        ``booru_client.normalize_*`` / ``search_posts``；``routes.booru``。
+    引用: ``sources.*.normalize`` / ``search_posts`` / ``routes.booru``。
     """
 
-    source: str
-    id: str
-    key: str
+    model_config = {"extra": "allow"}
+
+    source: str = ""
+    id: str = ""
     width: int = 0
     height: int = 0
     score: int = 0
     tags: str = ""
+    file_url: str = ""
     preview_url: str = ""
     sample_url: str = ""
-    file_url: str = ""
+    large_file_url: str = ""
     rating: str = ""
     file_ext: str = ""
+    # API 特有字段（extra="allow" 保证写入 meta 时不丢失）
+    md5: str = ""
+    media_asset: dict[str, Any] | None = None
+    is_banned: bool = False
+    is_deleted: bool = False
+    tag_string_meta: str = ""
+    tag_string_general: str = ""
+    tag_string_character: str = ""
+    tag_string_copyright: str = ""
+    tag_string_artist: str = ""
+    # 运行时附加
     downloaded: bool = False
     stem: str = ""
+
+    @computed_field
+    @property
+    def key(self) -> str:
+        return f"{self.source}:{self.id}"
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_fields(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+        for src, dst in [
+            ("image_width", "width"), ("image_height", "height"),
+            ("tag_string", "tags"), ("preview_file_url", "preview_url"),
+        ]:
+            if src in data and dst not in data:
+                data[dst] = data[src]
+        # id 可能是 int（API 原始）→ str
+        if "id" in data and not isinstance(data["id"], str):
+            data["id"] = str(data["id"])
+        return data
 
 
 class BooruSearchResult(BaseModel):

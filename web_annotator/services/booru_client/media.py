@@ -13,7 +13,7 @@ from urllib.parse import urlparse
 
 import httpx
 
-from services.models import BooruDownloadResult, BooruUndownloadResult
+from services.models import BooruPost, BooruDownloadResult, BooruUndownloadResult
 from services.scanner import IMAGE_EXTS
 from services.booru_client.common import (
     _SOURCES as SOURCES,
@@ -155,16 +155,13 @@ async def fetch_gelbooru_bytes(
 
 
 async def _danbooru_fetch_image_bytes(
-    post: Mapping[str, Any],
+    post: BooruPost,
     *,
     proxy: str | None,
 ) -> bytes:
     """优先原图；失败或不支持时回退 large_file_url。"""
-    urls: list[str] = []
-    for key in ("file_url", "large_file_url"):
-        u = str(post.get(key) or "")
-        if u and u not in urls:
-            urls.append(u)
+    urls: list[str] = [u for u in (post.file_url, post.large_file_url) if u and u not in (None, "")]
+    urls = list(dict.fromkeys(urls))
     if not urls:
         raise ValueError("该帖无 file_url（可能需登录或已删除）")
 
@@ -315,13 +312,14 @@ async def download_post(
                 source=source
             )
         post = await api.getPost(int(pid))
-        file_url = str(post.get("file_url") or "")
+        api_post = BooruPost.model_validate(post)
+        file_url = api_post.file_url
         if not file_url:
             raise ValueError("无 file_url")
         if overwrite or not image_path.is_file():
             tmp_ext = ext_from_url(file_url, ".bin")
             tmp_path = out_dir / f"{stem}.tmp{tmp_ext}"
-            post = await api.getImage(int(pid), str(tmp_path))
+            _image_result = await api.getImage(int(pid), str(tmp_path))
             convert_path_to_png(tmp_path, image_path)
             # 清掉旧版纯 id / 其它后缀
             for old in stem_candidates(source, pid, file_stem_fn=get_source(source).file_stem):
@@ -331,10 +329,11 @@ async def download_post(
                         p.unlink()
         # Gelbooru Anima 格式：查询标签类型，构造 Danbooru 兼容字段
         if anima_format and source == "gelbooru":
-            post = await _categorize_gelbooru_tags(post, api)
-        caption = build_caption_from_meta(post, anima_format=anima_format, include_meta_tags=include_meta_tags, keep_underscores=keep_underscores)
+            post_dict = await _categorize_gelbooru_tags(api_post.model_dump(), api)
+            api_post = BooruPost.model_validate(post_dict)
+        caption = build_caption_from_meta(api_post, anima_format=anima_format, include_meta_tags=include_meta_tags, keep_underscores=keep_underscores)
         tags_path.write_text(caption + "\n", encoding="utf-8")
-        get_source(source)._write_meta(out_dir, pid, post)
+        get_source(source)._write_meta(out_dir, pid, api_post)
         return BooruDownloadResult(
             skipped=False,
             path=str(image_path),
@@ -353,12 +352,12 @@ async def download_post(
     if meta.status_code != 200:
         raise RuntimeError(f"Danbooru HTTP {meta.status_code}: {meta.text[:200]}")
     post = meta.json()
-    file_ext = str(post.get("file_ext") or "").lower().lstrip(".")
-    # zip/视频：若有 large 仍可下静态图；否则直接拒绝
-    if file_ext in UNSUPPORTED_FILE_EXT and not post.get("large_file_url"):
+    api_post = BooruPost.model_validate(post)
+    file_ext = api_post.file_ext
+    if file_ext in UNSUPPORTED_FILE_EXT and not api_post.large_file_url:
         raise ValueError(f"不支持的类型: .{file_ext}")
     if not overwrite and existing is not None and tags_path.is_file():
-        get_source(source)._write_meta(out_dir, pid, post)
+        get_source(source)._write_meta(out_dir, pid, api_post)
         return BooruDownloadResult(
             skipped=True,
             path=str(existing),
@@ -367,7 +366,7 @@ async def download_post(
             stem=stem,
             source=source
         )
-    data = await _danbooru_fetch_image_bytes(post, proxy=proxy)
+    data = await _danbooru_fetch_image_bytes(api_post, proxy=proxy)
     tmp_path = out_dir / f"{stem}.tmp"
     tmp_path.write_bytes(data)
     convert_path_to_png(tmp_path, image_path)
@@ -376,12 +375,12 @@ async def download_post(
             p = out_dir / f"{old}{ext}"
             if p.is_file() and p.resolve() != image_path.resolve():
                 p.unlink()
-    caption = build_caption_from_meta(post, anima_format=anima_format, include_meta_tags=include_meta_tags, keep_underscores=keep_underscores)
+    caption = build_caption_from_meta(api_post, anima_format=anima_format, include_meta_tags=include_meta_tags, keep_underscores=keep_underscores)
     tags_path.write_text(caption + "\n", encoding="utf-8")
     legacy_txt = out_dir / f"{pid}.txt"  # Danbooru
     if legacy_txt.is_file() and legacy_txt.resolve() != tags_path.resolve():
         legacy_txt.unlink()
-    get_source(source)._write_meta(out_dir, pid, post)
+    get_source(source)._write_meta(out_dir, pid, api_post)
     return BooruDownloadResult(
         skipped=False,
         path=str(image_path),

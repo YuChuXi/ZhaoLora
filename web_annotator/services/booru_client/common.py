@@ -6,11 +6,10 @@
 from __future__ import annotations
 
 import io
-import json
 from abc import ABC, abstractmethod
 from collections.abc import Mapping
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from PIL import Image
 
@@ -21,9 +20,7 @@ from services.booru_client.utils import (
     _tags_to_caption,
     find_downloaded,
 )
-
-if TYPE_CHECKING:
-    from services.models import BooruPost
+from services.models.booru import BooruPost
 
 
 _SOURCES: dict[str, SourceClient] = {}
@@ -62,19 +59,19 @@ class SourceClient(ABC):
         引用：``booru_batch.download_one``。
         """
 
-    def preview_url(self, post: Mapping[str, Any]) -> str:
-        """从帖数据提取缩略图 URL。
+    def preview_url(self, post: BooruPost) -> str:
+        """从已规范化的帖模型提取缩略图 URL。
 
         引用：``search_posts`` 结果构造。
         """
-        return str(post.get("preview_url") or post.get("file_url") or "")
+        return post.preview_url or post.file_url
 
-    def sample_url(self, post: Mapping[str, Any]) -> str:
-        """从帖数据提取大图 URL。
+    def sample_url(self, post: BooruPost) -> str:
+        """从已规范化的帖模型提取大图 URL。
 
         引用：前端预览框。
         """
-        return str(post.get("sample_url") or self.preview_url(post))
+        return post.sample_url or self.preview_url(post)
 
     def is_media_url(self, url: str) -> bool:
         """判断 URL 是否为本来源图床。
@@ -119,11 +116,11 @@ class SourceClient(ABC):
         """
         return extra.strip()
 
-    def _write_meta(self, out_dir: Path, pid: str, post: Mapping[str, Any]) -> None:
+    def _write_meta(self, out_dir: Path, pid: str, post: BooruPost) -> None:
         meta_dir = out_dir / self.meta_subdir
         meta_dir.mkdir(parents=True, exist_ok=True)
         (meta_dir / f"{pid}.json").write_text(
-            json.dumps(post, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            post.model_dump_json(indent=2) + "\n", encoding="utf-8")
 
     def _save_png(self, data: bytes, dest: Path) -> None:
         kind = sniff_image_kind(data)
@@ -147,39 +144,37 @@ class SourceClient(ABC):
                 if p.is_file() and p.resolve() != keep.resolve():
                     p.unlink()
 
-    def _build_caption(self, post: Mapping[str, Any], *, anima_format: bool = False,
+    def _build_caption(self, post: BooruPost, *, anima_format: bool = False,
                        include_meta_tags: bool = False, keep_underscores: bool = False) -> str:
         def _norm(t: str) -> str:
             return t if keep_underscores else t.replace("_", " ")
         if not anima_format and include_meta_tags:
-            tags = str(post.get("tag_string") or post.get("tags") or "")
-            return _norm(_tags_to_caption(tags))
+            return _norm(_tags_to_caption(post.tags))
         meta_set: set[str] = set()
         if not include_meta_tags:
-            for t in str(post.get("tag_string_meta") or "").split():
+            for t in post.tag_string_meta.split():
                 t = t.strip().lower()
                 if t: meta_set.add(t)
         if not anima_format:
-            raw = str(post.get("tag_string") or post.get("tags") or "")
-            return ", ".join(_norm(t) for t in raw.replace(",", " ").split()
+            return ", ".join(_norm(t) for t in post.tags.replace(",", " ").split()
                              if t.strip() and t.lower() not in meta_set)
 
         def _split(raw: str) -> list[str]:
             return [t.strip() for t in raw.replace(",", " ").split() if t.strip()]
-        general = _split(str(post.get("tag_string_general") or post.get("tag_string") or post.get("tags") or ""))
+        general = _split(post.tag_string_general or post.tags)
         gender, rest = [], []
         for t in general:
             if t.lower() in _GENDER_TAGS: gender.append(t)
             elif t.lower() not in meta_set: rest.append(t)
         used = {g.lower() for g in gender}
         captions = [_norm(g) for g in gender]
-        for group in [_split(str(post.get("tag_string_character") or "")),
-                      _split(str(post.get("tag_string_copyright") or ""))]:
+        for group in [_split(post.tag_string_character),
+                      _split(post.tag_string_copyright)]:
             for t in group:
                 low = t.lower()
                 if low not in used and low not in meta_set:
                     used.add(low); captions.append(_norm(t))
-        for t in _split(str(post.get("tag_string_artist") or "")):
+        for t in _split(post.tag_string_artist):
             low = t.lower()
             if low not in used and low not in meta_set:
                 used.add(low); captions.append(f"@{_norm(t)}")
@@ -195,7 +190,7 @@ META_SUBDIR: dict[str, str] = {
 }
 
 
-def build_caption_from_meta(post: Mapping[str, Any], *, anima_format: bool = False,
+def build_caption_from_meta(post: BooruPost, *, anima_format: bool = False,
                             include_meta_tags: bool = False,
                             keep_underscores: bool = False) -> str:
     """从元数据构建标签文本（独立函数版）。
@@ -207,34 +202,32 @@ def build_caption_from_meta(post: Mapping[str, Any], *, anima_format: bool = Fal
     def _norm(t: str) -> str:
         return t if keep_underscores else t.replace("_", " ")
     if not anima_format and include_meta_tags:
-        tags = str(post.get("tag_string") or post.get("tags") or "")
-        return _norm(_tags_to_caption(tags))
+        return _norm(_tags_to_caption(post.tags))
     meta_set: set[str] = set()
     if not include_meta_tags:
-        for t in str(post.get("tag_string_meta") or "").split():
+        for t in post.tag_string_meta.split():
             t = t.strip().lower()
             if t: meta_set.add(t)
     if not anima_format:
-        raw = str(post.get("tag_string") or post.get("tags") or "")
-        return ", ".join(_norm(t) for t in raw.replace(",", " ").split()
+        return ", ".join(_norm(t) for t in post.tags.replace(",", " ").split()
                          if t.strip() and t.lower() not in meta_set)
 
     def _split(raw: str) -> list[str]:
         return [t.strip() for t in raw.replace(",", " ").split() if t.strip()]
-    general = _split(str(post.get("tag_string_general") or post.get("tag_string") or post.get("tags") or ""))
+    general = _split(post.tag_string_general or post.tags)
     gender, rest = [], []
     for t in general:
         if t.lower() in _GENDER_TAGS: gender.append(t)
         elif t.lower() not in meta_set: rest.append(t)
     used = {g.lower() for g in gender}
     captions = [_norm(g) for g in gender]
-    for group in [_split(str(post.get("tag_string_character") or "")),
-                  _split(str(post.get("tag_string_copyright") or ""))]:
+    for group in [_split(post.tag_string_character),
+                  _split(post.tag_string_copyright)]:
         for t in group:
             low = t.lower()
             if low not in used and low not in meta_set:
                 used.add(low); captions.append(_norm(t))
-    for t in _split(str(post.get("tag_string_artist") or "")):
+    for t in _split(post.tag_string_artist):
         low = t.lower()
         if low not in used and low not in meta_set:
             used.add(low); captions.append(f"@{_norm(t)}")
