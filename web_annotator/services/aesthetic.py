@@ -218,8 +218,9 @@ def run_aesthetic(
     if on_update:
         on_update()
 
-    _new_count = 0
     score_map = load_scores(root)
+    all_results: list[dict] = []
+    seen_paths: set[str] = set()
 
     for i, (src, parent) in enumerate(items):
         if progress.cancel_requested:
@@ -227,8 +228,7 @@ def run_aesthetic(
             progress.phase = "done"
             progress.message = f"已取消 ({progress.ok} 完成)"
             progress.log(progress.message)
-            if _new_count:
-                save_scores(root, score_map)
+            save_scores(root, {r["rel_path"]: r["raw"] for r in all_results})
             if on_update:
                 on_update()
             return
@@ -236,7 +236,19 @@ def run_aesthetic(
         rel = f"{parent.name}/{src.name}" if parent != root else src.name
         rel_to_root = str(src.resolve().relative_to(root)).replace("\\", "/")
 
+        if rel_to_root in seen_paths:
+            continue
+        seen_paths.add(rel_to_root)
+
         if rel_to_root in score_map:
+            raw_val = score_map[rel_to_root]
+            pony = int(mod.raw_to_pony(raw_val))
+            all_results.append({
+                "path": str(src),
+                "rel_path": rel_to_root,
+                "raw": round(raw_val, 6),
+                "pony": pony,
+            })
             progress.skipped += 1
             progress.done += 1
             progress.log(f"[{i + 1}/{len(items)}] 跳过: {rel_to_root} (已有分数)")
@@ -253,10 +265,16 @@ def run_aesthetic(
             img = Image.open(src)
             raw = float(mod.get_score(img, clip_model, preprocess, aesthetic_model, device))
             pony = int(mod.raw_to_pony(raw))
-            score_map[rel_to_root] = round(raw, 6)
-            _new_count += 1
+            raw = round(raw, 6)
+            score_map[rel_to_root] = raw
             progress.ok += 1
             progress.done += 1
+            all_results.append({
+                "path": str(src),
+                "rel_path": rel_to_root,
+                "raw": raw,
+                "pony": pony,
+            })
             progress.log(f"[{i + 1}/{len(items)}] score_{pony} {raw:.4f}  {rel_to_root}")
         except (OSError, UnidentifiedImageError, RuntimeError, ValueError) as e:
             progress.failed += 1
@@ -265,19 +283,8 @@ def run_aesthetic(
         if on_update:
             on_update()
 
-    save_scores(root, score_map)
+    save_scores(root, {r["rel_path"]: r["raw"] for r in all_results})
     progress.log(f"分数: {scores_path(root)}")
-
-    # 从 score_map 构建全量结果（含已有分数的旧图），用于报告与汇总
-    all_results: list[dict] = []
-    for rel_path, raw_val in score_map.items():
-        pony = int(mod.raw_to_pony(raw_val))
-        all_results.append({
-            "path": str(root / rel_path),
-            "rel_path": rel_path,
-            "raw": round(raw_val, 6),
-            "pony": pony,
-        })
 
     if write_report and all_results:
         html_path = root / "aesthetic_report.html"
