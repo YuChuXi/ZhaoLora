@@ -2,7 +2,7 @@ from .Danbooru import Danbooru
 from .Gelbooru import Gelbooru
 from .KonachanCom import KonachanCom
 from .KonachanNet import KonachanNet
-from . Yande import Yande
+from .Yande import Yande
 
 
 proxy = "http://127.0.0.1:7890"

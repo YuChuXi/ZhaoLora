@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
@@ -10,16 +12,15 @@ from curl_cffi.requests.exceptions import RequestException
 
 from services.booru_batch import BooruBatchProgress, get_progress, register_progress, run_booru_batch
 from services.booru_client import (
-    SOURCES,
     build_search_query,
     download_post,
-    file_stem,
     fetch_gelbooru_bytes,
+    get_source,
     is_downloaded,
+    list_source_names,
     local_rel_path,
     regenerate_captions,
     remove_download,
-    search_posts,
 )
 from routes.deps import get_runtime, jobs
 from services.jobs import EmitFn
@@ -31,6 +32,7 @@ from services.models import (
     BooruSearchResult,
     BooruSourcesResponse,
     BooruUndownloadResult,
+    JobSnapshot,
     JobSubmitResponse,
 )
 from services.work_dir import resolve_subdir
@@ -70,7 +72,7 @@ class DownloadBody(BaseModel):
 def booru_sources(request: Request) -> BooruSourcesResponse:
     """列出可用图站与代理。引用：``booru_filter.js``。"""
     return BooruSourcesResponse(
-        sources=sorted(SOURCES),
+        sources=list_source_names(),
         proxy=_proxy(request) or "",
     )
 
@@ -79,14 +81,11 @@ def booru_sources(request: Request) -> BooruSourcesResponse:
 async def booru_search(request: Request, body: SearchBody) -> BooruSearchResult:
     """搜索图站并标记本地下载状态。引用：``booru_filter.js``。"""
     source = body.source.strip().lower()
-    if source not in SOURCES:
-        raise HTTPException(400, f"不支持的源: {body.source}")
+    src = get_source(source)
     order = (body.order or "").strip().lower()
-    if order and order not in ("score", "id", "id_asc"):
+    if order and src.valid_orders and order not in src.valid_orders:
         raise HTTPException(400, f"不支持的排序: {body.order}")
-    query = build_search_query(
-        source, body.tags, order=order, extra=body.extra or ""
-    )
+    query = src.build_search_query(body.tags, order=order, extra=body.extra or "")
     root = get_runtime(request).root
     try:
         _, out_dir = resolve_subdir(root, body.dir)
@@ -94,14 +93,9 @@ async def booru_search(request: Request, body: SearchBody) -> BooruSearchResult:
         raise HTTPException(400, str(e)) from e
 
     try:
-        posts, has_more = await search_posts(
-            source,
-            body.tags,
-            page=body.page,
-            limit=body.limit,
-            order=order,
-            extra=body.extra or "",
-            proxy=_proxy(request),
+        raw_posts, has_more = await src.search(
+            body.tags, page=body.page, limit=body.limit,
+            order=order, extra=body.extra or "", proxy=_proxy(request),
             danbooru_login=request.app.state.danbooru_login,
             danbooru_api_key=request.app.state.danbooru_api_key,
         )
@@ -109,9 +103,24 @@ async def booru_search(request: Request, body: SearchBody) -> BooruSearchResult:
         raise HTTPException(400, str(e)) from e
     except _NETWORK_ERRORS as e:
         raise HTTPException(502, f"搜索失败: {e}") from e
-    for p in posts:
-        p.downloaded = is_downloaded(out_dir, source, p.id)
-        p.stem = file_stem(source, p.id)
+
+    posts: list[BooruPost] = []
+    for p in raw_posts:
+        post = BooruPost(
+            source=source, id=str(p.get("id") or ""),
+            key=f"{source}:{p.get('id')}", width=int(p.get("width") or 0),
+            height=int(p.get("height") or 0), score=int(p.get("score") or 0),
+            tags=str(p.get("tags") or ""),
+            preview_url=str(p.get("preview_url") or ""),
+            sample_url=str(p.get("sample_url") or ""),
+            file_url=str(p.get("file_url") or ""),
+            rating=str(p.get("rating") or ""),
+            file_ext=str(p.get("file_ext") or ""),
+        )
+        post.downloaded = is_downloaded(out_dir, source, post.id)
+        post.stem = src.file_stem(post.id)
+        posts.append(post)
+
     return BooruSearchResult(
         source=source,
         tags=body.tags.strip(),
@@ -261,10 +270,9 @@ async def booru_batch_start(
     引用：``booru_filter.js``。
     """
     source = body.source.strip().lower()
-    if source not in SOURCES:
-        raise HTTPException(400, f"不支持的源: {body.source}")
+    src = get_source(source)
     order = (body.order or "").strip().lower()
-    if order and order not in ("score", "id", "id_asc"):
+    if order and src.valid_orders and order not in src.valid_orders:
         raise HTTPException(400, f"不支持的排序: {body.order}")
 
     rt = get_runtime(request)
@@ -360,23 +368,89 @@ class RegenerateCaptionsBody(BaseModel):
 
 
 @router.post("/regenerate-captions")
-def booru_regenerate_captions(request: Request, body: RegenerateCaptionsBody) -> dict:
+async def booru_regenerate_captions(request: Request, body: RegenerateCaptionsBody) -> dict:
     """从 .danbooru_meta / .gelbooru_meta 批量重生成旁路 .txt。
 
     引用：``booru_filter.js`` 批量重生成按钮。
     """
-    from routes.booru import resolve_subdir
-
     rt = get_runtime(request)
     try:
         _, out_dir = resolve_subdir(rt.root, body.dir)
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
 
-    count = regenerate_captions(
+    count = await regenerate_captions(
         out_dir,
         anima_format=body.anima_format,
         include_meta_tags=body.include_meta_tags,
         keep_underscores=body.keep_underscores,
     )
     return {"ok": True, "count": count}
+
+
+class RefreshMetadataBody(BaseModel):
+    """刷新元数据请求。引用：``POST /booru/refresh-metadata``。"""
+
+    dir: str = Field("main", description="工作子目录")
+
+
+@router.post("/refresh-metadata")
+async def booru_refresh_metadata(request: Request, body: RefreshMetadataBody) -> JobSubmitResponse:
+    """
+    扫描现有图片，根据文件名 ID 重新拉取 booru 元数据（长任务）。
+
+    引用：``booru_filter.js``。
+    """
+    rt = get_runtime(request)
+    try:
+        _, out_dir = resolve_subdir(rt.root, body.dir)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+
+    proxy = _proxy(request)
+
+    def run(emit: EmitFn) -> dict:
+        import asyncio as _asyncio
+        loop = _asyncio.new_event_loop()
+        try:
+            return loop.run_until_complete(_run_refresh(rt.root / body.dir if body.dir else rt.root, proxy, emit))
+        finally:
+            loop.close()
+
+    async def _run_refresh(scan_dir: Path, proxy: str | None, emit: EmitFn) -> dict:
+        from services.scanner import IMAGE_EXTS as _EXTS
+        from services.booru_client.common import detect_source, get_source
+
+        scan_dir = scan_dir.resolve()
+        files: list[tuple[str, str, str]] = []  # (source, pid, source_name)
+        for f in sorted(scan_dir.iterdir()):
+            if not f.is_file() or f.suffix.lower() not in _EXTS:
+                continue
+            detected = detect_source(f.stem)
+            if detected:
+                files.append((*detected,))
+
+        total = len(files)
+        stats: dict[str, int] = {}
+        errors: list[str] = []
+        emit(JobSnapshot(status="running", phase="running", total=total, done=0, pct=0,
+                         message=f"共 {total} 个文件"))
+
+        for i, (source, pid) in enumerate(files):
+            pct = round(100.0 * (i + 1) / total, 1) if total else 100.0
+            emit(JobSnapshot(status="running", phase="running", total=total, done=i + 1, pct=pct,
+                             message=f"[{i + 1}/{total}] {source}:{pid}"))
+            try:
+                src = get_source(source)
+                await src.fetch_meta(scan_dir, pid, proxy)
+                stats[source] = stats.get(source, 0) + 1
+            except Exception as e:
+                errors.append(f"{source}:{pid} {e}")
+
+        summary = ", ".join(f"{s}: {c}" for s, c in sorted(stats.items()))
+        emit(JobSnapshot(status="done", phase="done", total=total, done=total, pct=100,
+                         message=f"{summary}, 错误 {len(errors)}"))
+        return {"stats": stats, "errors": errors}
+
+    job_id = jobs(request).submit(kind="refresh_meta", group="compute", dataset=rt.name, run=run)
+    return JobSubmitResponse(ok=True, job_id=job_id)

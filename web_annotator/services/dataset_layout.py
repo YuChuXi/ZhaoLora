@@ -69,28 +69,19 @@ class DatasetLayout:
 
 def resolve_dataset_layout(data_dir: Path) -> DatasetLayout:
     """
-    解析 --data-dir。
-    - datasets/xxx（含 main/）→ root=xxx, main=xxx/main
-    - datasets/xxx/main → root=xxx, main=xxx/main
+    解析数据集根目录，自动确保 ``main/`` 与 ``mask/`` 存在。
+
+    Args:
+        data_dir: 数据集根目录（``datasets/xxx``）。
+
+    引用：``services.dataset_runtime.ensure``。
     """
     data_dir = data_dir.resolve()
     if not data_dir.is_dir():
         raise FileNotFoundError(f"目录不存在: {data_dir}")
 
-    if (data_dir / "main").is_dir():
-        root = data_dir
-        main_dir = data_dir / "main"
-    elif data_dir.name == "main" and data_dir.parent.is_dir():
-        root = data_dir.parent
-        main_dir = data_dir
-    else:
-        raise ValueError(
-            f"--data-dir 应为 datasets/xxx（其下需有 main/），收到: {data_dir}"
-        )
+    main_dir = data_dir / "main"
+    main_dir.mkdir(parents=True, exist_ok=True)
+    (data_dir / "mask").mkdir(parents=True, exist_ok=True)
 
-    return DatasetLayout(
-        root=root,
-        main_dir=main_dir,
-        mask_dir=root / "mask",
-        crops_dir=root / "crops",
-    )
+    return DatasetLayout(root=data_dir, main_dir=main_dir, mask_dir=data_dir / "mask", crops_dir=data_dir / "crops")

@@ -10,9 +10,10 @@ from urllib.parse import quote
 
 from services.models import BooruPost
 from services.booru_client.common import (
-    SOURCES,
-    _danbooru_get,
     build_search_query,
+)
+from services.booru_client.net import (
+    danbooru_get,
     danbooru_preview_url,
     make_gelbooru,
 )
@@ -142,7 +143,7 @@ async def search_danbooru(
         ``search_posts``。
     """
     limit_used = max(1, min(limit, 100))
-    resp = await _danbooru_get(
+    resp = await danbooru_get(
         "https://danbooru.donmai.us/posts.json",
         proxy=proxy,
         accept="application/json, text/plain, */*",
@@ -173,33 +174,16 @@ async def search_danbooru(
 
 
 async def search_posts(
-    source: str,
-    tags: str,
-    *,
-    page: int = 1,
-    limit: int = 40,
-    order: str = "",
-    extra: str = "",
-    proxy: str | None = None,
-    danbooru_login: str | None = None,
-    danbooru_api_key: str | None = None,
+    source: str, tags: str, *, page: int = 1, limit: int = 40, order: str = "",
+    extra: str = "", proxy: str | None = None,
+    danbooru_login: str | None = None, danbooru_api_key: str | None = None,
 ) -> tuple[list[BooruPost], bool]:
-    """按源站搜索帖子。
-
-    Args:
-        danbooru_login / danbooru_api_key: Danbooru API 认证，提升标签查询限制。
-
-    引用:
-        ``routes.booru.booru_search``；``booru_batch._run_async``。
-    """
-    source = source.strip().lower()
-    if source not in SOURCES:
-        raise ValueError(f"不支持的源: {source}")
-    query = build_search_query(source, tags, order=order, extra=extra)
-    if source == "gelbooru":
-        return await search_gelbooru(query, page=page, proxy=proxy)
-    return await search_danbooru(
-        query, page=page, limit=limit, proxy=proxy,
+    """旧接口，委托给 SourceClient。"""
+    from services.booru_client.common import get_source
+    src = get_source(source)
+    raw, has_more = await src.search(
+        tags, page=page, limit=limit, order=order, extra=extra, proxy=proxy,
         danbooru_login=danbooru_login, danbooru_api_key=danbooru_api_key,
     )
+    return [BooruPost(**p) for p in raw], has_more
 

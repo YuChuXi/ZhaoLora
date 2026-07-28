@@ -213,7 +213,7 @@ async def translate_missing_tags(tags: list[str], root: Path) -> dict[str, str]:
     if not missing:
         return {t: existing[t] for t in uniq if t in existing}
 
-    async with httpx.AsyncClient(http2=True, timeout=30) as client:
+    async with httpx.AsyncClient(timeout=30) as client:
         for i in range(0, len(missing), _BATCH_SIZE):
             chunk = missing[i : i + _BATCH_SIZE]
             params: list[tuple[str, str]] = [

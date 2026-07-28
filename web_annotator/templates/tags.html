@@ -94,7 +94,8 @@
   <span class="stat" id="stat-summary">-</span>
   <span class="sep"></span>
   <button class="btn green" id="btn-auto-tag" type="button">自动生成</button>
-  <button class="btn green" id="btn-batch-edit" type="button">批量编辑</button>
+  <button class="btn green" id="btn-batch-add" type="button">批量添加</button>
+  <button class="btn green" id="btn-batch-delete" type="button">批量删除</button>
   <button class="btn green" id="btn-refresh">统计</button>
   <button class="btn" id="btn-translate-missing">翻译缺失</button>
   <button class="btn" id="btn-select-all-tags">全选</button>
@@ -168,46 +169,62 @@
   </div>
 </div>
 
-<!-- 批量编辑对话框 -->
-<div class="tagging-modal" id="batch-edit-modal" aria-hidden="true">
-  <div class="tagging-panel" role="dialog" aria-labelledby="batch-edit-title" style="height:auto;max-height:min(520px,80vh);">
+<!-- 批量添加对话框 -->
+<div class="tagging-modal" id="batch-add-modal" aria-hidden="true">
+  <div class="tagging-panel" role="dialog" style="height:auto;max-height:min(480px,80vh);">
     <div class="tagging-panel-head">
-      <span class="title" id="batch-edit-title">批量编辑标签</span>
+      <span class="title">批量添加标签</span>
       <span class="spacer"></span>
-      <button class="btn" id="btn-batch-edit-close" type="button">关闭</button>
+      <button class="btn" id="btn-batch-add-close" type="button">关闭</button>
     </div>
     <div style="padding:12px;display:flex;flex-direction:column;gap:10px;overflow:auto;">
-      <div style="display:flex;gap:10px;flex-wrap:wrap;">
-        <label style="flex:1;min-width:140px;font-size:12px;color:var(--text-dim);display:flex;flex-direction:column;gap:3px;">
-          删除标签（逗号分隔）
-          <input type="text" id="batch-delete" placeholder="tag1, tag2" style="background:#0a1a30;color:var(--text);border:1px solid var(--border);border-radius:4px;padding:4px 8px;font-size:12px;">
-        </label>
-        <label style="flex:1;min-width:140px;font-size:12px;color:var(--text-dim);display:flex;flex-direction:column;gap:3px;">
-          添加标签（逗号分隔）
-          <input type="text" id="batch-add" placeholder="tag1, tag2" style="background:#0a1a30;color:var(--text);border:1px solid var(--border);border-radius:4px;padding:4px 8px;font-size:12px;">
-        </label>
-      </div>
+      <label style="font-size:12px;color:var(--text-dim);display:flex;flex-direction:column;gap:3px;">
+        要添加的标签（逗号分隔）
+        <input type="text" id="batch-add-tags" placeholder="tag1, tag2" style="background:#0a1a30;color:var(--text);border:1px solid var(--border);border-radius:4px;padding:4px 8px;font-size:12px;">
+      </label>
       <div style="display:flex;flex-wrap:wrap;align-items:center;gap:8px 16px;font-size:12px;color:var(--text-dim);">
         <span>放在</span>
-        <select id="batch-position" style="background:var(--card-bg);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:3px 6px;font-size:12px;">
+        <select id="batch-add-position" style="background:var(--card-bg);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:3px 6px;font-size:12px;">
           <option value="after">||| 之后</option>
           <option value="before">||| 之前</option>
         </select>
         <span>插入方式</span>
-        <select id="batch-mode" style="background:var(--card-bg);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:3px 6px;font-size:12px;">
+        <select id="batch-add-mode" style="background:var(--card-bg);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:3px 6px;font-size:12px;">
           <option value="bottom">置底</option>
           <option value="top">置顶</option>
           <option value="random">随机</option>
         </select>
-        <label style="display:flex;align-items:center;gap:4px;cursor:pointer;"><input type="checkbox" id="batch-conditional"> 仅当已有同名标签时</label>
-        <label style="display:flex;align-items:center;gap:4px;cursor:pointer;"><input type="checkbox" id="batch-keep-dup"> 不删除已有重复</label>
-        <label style="display:flex;align-items:center;gap:4px;cursor:pointer;"><input type="checkbox" id="batch-inject-pony"> 注入 Pony 美学档位（最前）</label>
+        <label style="display:flex;align-items:center;gap:4px;cursor:pointer;"><input type="checkbox" id="batch-add-conditional"> 仅当已有同名标签时</label>
+        <label style="display:flex;align-items:center;gap:4px;cursor:pointer;"><input type="checkbox" id="batch-add-keep-dup"> 不删除已有重复</label>
+        <label style="display:flex;align-items:center;gap:4px;cursor:pointer;"><input type="checkbox" id="batch-add-inject-pony"> 注入 Pony 美学档位（最前）</label>
       </div>
       <div style="display:flex;gap:8px;">
-        <button class="btn" type="button" id="btn-batch-preview">预览</button>
-        <button class="btn danger" type="button" id="btn-batch-apply">写入</button>
+        <button class="btn" type="button" id="btn-batch-add-preview">预览</button>
+        <button class="btn danger" type="button" id="btn-batch-add-apply">写入</button>
       </div>
-      <div id="batch-edit-result" style="font-size:12px;color:var(--text-dim);background:#0a1a30;border:1px solid var(--border);border-radius:6px;padding:8px 10px;max-height:180px;overflow:auto;white-space:pre-wrap;font-family:ui-monospace,monospace;"></div>
+      <div id="batch-add-result" style="font-size:12px;color:var(--text-dim);background:#0a1a30;border:1px solid var(--border);border-radius:6px;padding:8px 10px;max-height:180px;overflow:auto;white-space:pre-wrap;font-family:ui-monospace,monospace;"></div>
+    </div>
+  </div>
+</div>
+
+<!-- 批量删除对话框 -->
+<div class="tagging-modal" id="batch-delete-modal" aria-hidden="true">
+  <div class="tagging-panel" role="dialog" style="height:auto;max-height:min(400px,70vh);">
+    <div class="tagging-panel-head">
+      <span class="title">批量删除标签</span>
+      <span class="spacer"></span>
+      <button class="btn" id="btn-batch-delete-close" type="button">关闭</button>
+    </div>
+    <div style="padding:12px;display:flex;flex-direction:column;gap:10px;overflow:auto;">
+      <label style="font-size:12px;color:var(--text-dim);display:flex;flex-direction:column;gap:3px;">
+        要删除的标签（逗号分隔）
+        <input type="text" id="batch-delete-tags" placeholder="tag1, tag2" style="background:#0a1a30;color:var(--text);border:1px solid var(--border);border-radius:4px;padding:4px 8px;font-size:12px;">
+      </label>
+      <div style="display:flex;gap:8px;">
+        <button class="btn" type="button" id="btn-batch-delete-preview">预览</button>
+        <button class="btn danger" type="button" id="btn-batch-delete-apply">写入</button>
+      </div>
+      <div id="batch-delete-result" style="font-size:12px;color:var(--text-dim);background:#0a1a30;border:1px solid var(--border);border-radius:6px;padding:8px 10px;max-height:180px;overflow:auto;white-space:pre-wrap;font-family:ui-monospace,monospace;"></div>
     </div>
   </div>
 </div>

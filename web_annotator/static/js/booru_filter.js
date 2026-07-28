@@ -1186,6 +1186,25 @@ var BooruFilter = (function () {
   }
 
   /**
+   * 根据文件 ID 重新拉取 booru 元数据（长任务，SSE 进度）。
+   * 引用：批量下载对话框「刷新元数据」按钮。
+   */
+  async function refreshMetadata() {
+    var body = { dir: destDir() };
+    setBatchDlg(true);
+    setBatchProgress(0, 0, '提交中…');
+    _batchRunning = true;
+    syncBatchCloseBtn();
+    syncBatchStopBtn();
+    syncBatchStartBtn();
+    var submitted = await API.request(API.apiPath('/booru/refresh-metadata'), {
+      method: 'POST',
+      body: JSON.stringify(body),
+    });
+    watchBatch(submitted.job_id);
+  }
+
+  /**
    * 刷新后查询并重连进行中的批量任务。
    * 引用：init。
    */
@@ -1517,6 +1536,12 @@ var BooruFilter = (function () {
     if (batchRegen) {
       batchRegen.addEventListener('click', function () {
         regenerateCaptions().catch(function (e) { toast(String(e.message || e)); });
+      });
+    }
+    var batchRefreshMeta = document.getElementById('booru-batch-refresh-meta');
+    if (batchRefreshMeta) {
+      batchRefreshMeta.addEventListener('click', function () {
+        refreshMetadata().catch(function (e) { toast(String(e.message || e)); });
       });
     }
     function onSearchKey(e) {

@@ -1,442 +1,308 @@
-"""Booru 公共常量与网络/文件辅助。
+"""Booru 来源客户端基类与注册表。
 
-引用: ``services.booru_client.search`` / ``services.booru_client.media``。
+引用：``sources`` / ``routes.booru``。
 """
 
 from __future__ import annotations
 
 import io
 import json
-import sys
+from abc import ABC, abstractmethod
 from collections.abc import Mapping
 from pathlib import Path
-from urllib.parse import quote
+from typing import Any
 
-import httpx
-from curl_cffi.requests import AsyncSession
-from curl_cffi.requests.models import Response as CurlResponse
 from PIL import Image
 
 from services.scanner import IMAGE_EXTS
+from services.booru_client.utils import (
+    _GENDER_TAGS,
+    sniff_image_kind,
+    _tags_to_caption,
+    find_downloaded,
+)
 
-_REPO_ROOT = Path(__file__).resolve().parents[3]
-if str(_REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(_REPO_ROOT))
 
-from DanbooruApi.Gelbooru import Gelbooru  # noqa: E402
+_SOURCES: dict[str, SourceClient] = {}
 
-SOURCES = frozenset({"gelbooru", "danbooru"})
-META_SUBDIR = {
+
+class SourceClient(ABC):
+    """
+    来源客户端基类。子类实现 ``fetch_meta`` / ``search`` / ``download``。
+    """
+
+    name: str
+    prefix: str
+    order_tags: dict[str, str] = {}
+    valid_orders: tuple[str, ...] = ()
+
+    @abstractmethod
+    async def fetch_meta(self, out_dir: Path, pid: str, proxy: str | None) -> None:
+        """拉取帖子元数据并写入磁盘。
+
+        引用：``routes.booru._run_refresh``。
+        """
+    @abstractmethod
+    async def search(self, tags: str, page: int, limit: int, order: str, extra: str,
+                     proxy: str | None, **auth) -> tuple[list[dict], bool]:
+        """搜索帖子，返回 (posts, has_more)。
+
+        引用：``routes.booru.booru_search`` / ``common.search_posts``。
+        """
+    @abstractmethod
+    async def download(self, pid: str, out_dir: Path, proxy: str | None, *,
+                       overwrite: bool = False, anima_format: bool = True,
+                       include_meta_tags: bool = False, keep_underscores: bool = False) -> dict:
+        """下载帖子原图并写旁路标签与 meta。
+
+        引用：``booru_batch.download_one``。
+        """
+
+    def preview_url(self, post: Mapping[str, Any]) -> str:
+        """从帖数据提取缩略图 URL。
+
+        引用：``search_posts`` 结果构造。
+        """
+        return str(post.get("preview_url") or post.get("file_url") or "")
+
+    def sample_url(self, post: Mapping[str, Any]) -> str:
+        """从帖数据提取大图 URL。
+
+        引用：前端预览框。
+        """
+        return str(post.get("sample_url") or self.preview_url(post))
+
+    def is_media_url(self, url: str) -> bool:
+        """判断 URL 是否为本来源图床。
+
+        引用：``routes.booru`` 缩略图代理白名单。
+        """
+        return True
+
+    @property
+    def meta_subdir(self) -> str:
+        """元数据子目录名，如 .gelbooru_meta。
+
+        引用：``common.SourceClient._write_meta``。
+        """
+        return f".{self.name}_meta"
+
+    def file_stem(self, pid: str) -> str:
+        """文件名 stem，如 g12345。
+
+        引用：``media.download_post`` / ``utils.find_downloaded``。
+        """
+        return f"{self.prefix}{pid}"
+
+    def build_search_query(self, tags: str, *, order: str = "", extra: str = "") -> str:
+        """拼标签 + 额外元标签 + 排序。
+
+        引用：``routes.booru.booru_search`` / ``sources.search``。
+        """
+        parts = [tags.strip()] if tags.strip() else []
+        filtered = self.filter_extra(extra)
+        if filtered:
+            parts.append(filtered)
+        ord_tag = self.order_tags.get(order, "")
+        if ord_tag:
+            parts.append(ord_tag)
+        return " ".join(parts).strip()
+
+    def filter_extra(self, extra: str) -> str:
+        """过滤额外元标签；子类可覆盖。
+
+        引用：``build_search_query``。
+        """
+        return extra.strip()
+
+    def _write_meta(self, out_dir: Path, pid: str, post: Mapping[str, object]) -> None:
+        meta_dir = out_dir / self.meta_subdir
+        meta_dir.mkdir(parents=True, exist_ok=True)
+        (meta_dir / f"{pid}.json").write_text(
+            json.dumps(post, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+    def _save_png(self, data: bytes, dest: Path) -> None:
+        kind = sniff_image_kind(data)
+        if kind in ("html", "zip", "video", "webm"):
+            raise ValueError(f"不支持该文件类型（{kind}）")
+        if kind == "png":
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(data)
+            return
+        img = Image.open(io.BytesIO(data))
+        img.load()
+        out = img.convert("RGBA") if img.mode in ("RGBA", "LA", "P") else img.convert("RGB")
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        out.save(dest, format="PNG", optimize=True)
+
+    def _clean_old_files(self, out_dir: Path, pid: str, keep: Path) -> None:
+        from services.booru_client.utils import stem_candidates
+        for old in stem_candidates(self.name, pid, file_stem_fn=self.file_stem):
+            for ext in IMAGE_EXTS:
+                p = out_dir / f"{old}{ext}"
+                if p.is_file() and p.resolve() != keep.resolve():
+                    p.unlink()
+
+    def _build_caption(self, post: Mapping[str, object], *, anima_format: bool = False,
+                       include_meta_tags: bool = False, keep_underscores: bool = False) -> str:
+        def _norm(t: str) -> str:
+            return t if keep_underscores else t.replace("_", " ")
+        if not anima_format and include_meta_tags:
+            tags = str(post.get("tag_string") or post.get("tags") or "")
+            return _norm(_tags_to_caption(tags))
+        meta_set: set[str] = set()
+        if not include_meta_tags:
+            for t in str(post.get("tag_string_meta") or "").split():
+                t = t.strip().lower()
+                if t: meta_set.add(t)
+        if not anima_format:
+            raw = str(post.get("tag_string") or post.get("tags") or "")
+            return ", ".join(_norm(t) for t in raw.replace(",", " ").split()
+                             if t.strip() and t.lower() not in meta_set)
+
+        def _split(raw: str) -> list[str]:
+            return [t.strip() for t in raw.replace(",", " ").split() if t.strip()]
+        general = _split(str(post.get("tag_string_general") or post.get("tag_string") or post.get("tags") or ""))
+        gender, rest = [], []
+        for t in general:
+            if t.lower() in _GENDER_TAGS: gender.append(t)
+            elif t.lower() not in meta_set: rest.append(t)
+        used = {g.lower() for g in gender}
+        captions = [_norm(g) for g in gender]
+        for group in [_split(str(post.get("tag_string_character") or "")),
+                      _split(str(post.get("tag_string_copyright") or ""))]:
+            for t in group:
+                low = t.lower()
+                if low not in used and low not in meta_set:
+                    used.add(low); captions.append(_norm(t))
+        for t in _split(str(post.get("tag_string_artist") or "")):
+            low = t.lower()
+            if low not in used and low not in meta_set:
+                used.add(low); captions.append(f"@{_norm(t)}")
+        tail = [_norm(t) for t in rest if t.lower() not in used]
+        return ", ".join(captions) + " ||| " + ", ".join(tail)
+
+
+# 元数据子目录映射，供外部（如 media.regenerate_captions）使用。
+
+META_SUBDIR: dict[str, str] = {
     "gelbooru": ".gelbooru_meta",
     "danbooru": ".danbooru_meta",
 }
-# 文件名前缀，避免两边数字 id 撞车
-STEM_PREFIX = {
-    "gelbooru": "g",
-    "danbooru": "d",
-}
-_DEFAULT_UA = (
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
-)
-# TLS/JA3 伪装；普通 httpx 会被 CF 拦
-_DANBOORU_IMPERSONATE = "chrome"
-
-# UI 排序 → 站点元标签（Gelbooru sort: / Danbooru order:）
-_ORDER_GELBOORU = {
-    "score": "sort:score:desc",
-    "id": "sort:id:desc",
-    "id_asc": "sort:id:asc",
-}
-_ORDER_DANBOORU = {
-    "score": "order:score",
-    "id": "order:id_desc",
-    "id_asc": "order:id",
-}
 
 
-def build_search_query(
-    source: str,
-    tags: str,
-    *,
-    order: str = "",
-    extra: str = "",
-) -> str:
-    """拼标签 + 额外元标签（rating:/width:/score: 等）+ 排序。
+def build_caption_from_meta(post: Mapping[str, object], *, anima_format: bool = False,
+                            include_meta_tags: bool = False,
+                            keep_underscores: bool = False) -> str:
+    """从元数据构建标签文本（独立函数版）。
 
-    Gelbooru 忽略 ``date:`` 元标签。
+    与 ``SourceClient._build_caption`` 逻辑一致但无需实例。
 
-    引用:
-        ``routes.booru.booru_search``；``search_posts``。
-    """
-    parts: list[str] = []
-    t = " ".join((tags or "").split())
-    if t:
-        parts.append(t)
-    e_tokens = (extra or "").split()
-    if source == "gelbooru":
-        e_tokens = [x for x in e_tokens if not x.lower().startswith("date:")]
-    e = " ".join(e_tokens)
-    if e:
-        parts.append(e)
-    key = (order or "").strip().lower()
-    table = _ORDER_GELBOORU if source == "gelbooru" else _ORDER_DANBOORU
-    ord_tag = table.get(key, "")
-    if ord_tag:
-        parts.append(ord_tag)
-    return " ".join(parts).strip()
-
-
-def _headers(*, referer: str | None = None) -> dict[str, str]:
-    """构造图片请求头。引用：fetch_gelbooru_bytes。"""
-    h = {
-        "user-agent": _DEFAULT_UA,
-        "accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
-    }
-    if referer:
-        h["referer"] = referer
-        if "gelbooru.com" in referer:
-            h["cookie"] = "fringeBenefits=yup"
-    return h
-
-
-def _proxy_or_none(proxy: str | None) -> str | None:
-    """空代理字符串视为直连。引用：make_gelbooru / _curl_proxies。"""
-    p = (proxy or "").strip()
-    return p or None
-
-
-def _curl_proxies(proxy: str | None) -> dict[str, str] | None:
-    """curl_cffi 代理字典。引用：_danbooru_get。"""
-    p = _proxy_or_none(proxy)
-    if not p:
-        return None
-    return {"http": p, "https": p}
-
-
-def make_gelbooru(proxy: str | None) -> Gelbooru:
-    """构造 Gelbooru 客户端。引用：search / download。"""
-    p = _proxy_or_none(proxy)
-    return Gelbooru(proxy=p) if p else Gelbooru(proxy=None)  # type: ignore[arg-type]
-
-
-def _ext_from_url(url: str, fallback: str = ".jpg") -> str:
-    """从 URL 猜图像后缀。引用：download_post。"""
-    path = url.split("?", 1)[0]
-    suf = Path(path).suffix.lower()
-    if suf in IMAGE_EXTS:
-        return suf
-    return fallback
-
-
-def file_stem(source: str, post_id: str) -> str:
-    """规范文件名：g{id} / d{id}，避免源站 id 撞车。"""
-    src = source.strip().lower()
-    prefix = STEM_PREFIX.get(src, "")
-    return f"{prefix}{post_id}"
-
-
-def _stem_candidates(source: str, post_id: str) -> list[str]:
-    """新名优先，兼容旧版纯 id 文件名。"""
-    pid = str(post_id).strip()
-    primary = file_stem(source, pid)
-    out = [primary]
-    if pid != primary:
-        out.append(pid)
-    return out
-
-
-def _find_existing(out_dir: Path, stem: str) -> Path | None:
-    """按 stem 找已有图像。引用：find_downloaded。"""
-    for ext in IMAGE_EXTS:
-        p = out_dir / f"{stem}{ext}"
-        if p.is_file():
-            return p
-    return None
-
-
-def find_downloaded(out_dir: Path, source: str, post_id: str) -> Path | None:
-    """查找已下载帖图。引用：is_downloaded / download_post。"""
-    for stem in _stem_candidates(source, post_id):
-        hit = _find_existing(out_dir, stem)
-        if hit is not None:
-            return hit
-    return None
-
-
-def is_downloaded(out_dir: Path, source: str, post_id: str) -> bool:
-    """是否已下载。引用：routes.booru.booru_search。"""
-    return find_downloaded(out_dir, source, post_id) is not None
-
-
-def _sniff_image_kind(data: bytes) -> str:
-    """根据文件头判断类型：jpeg/png/gif/webp/avif/zip/video/webm/html/empty/unknown。"""
-    if not data:
-        return "empty"
-    if data[:3] == b"\xff\xd8\xff":
-        return "jpeg"
-    if data[:8] == b"\x89PNG\r\n\x1a\n":
-        return "png"
-    if data[:6] in (b"GIF87a", b"GIF89a"):
-        return "gif"
-    if len(data) >= 12 and data[:4] == b"RIFF" and data[8:12] == b"WEBP":
-        return "webp"
-    if len(data) >= 12 and data[4:8] == b"ftyp":
-        brand = data[8:12]
-        if brand in (b"avif", b"avis", b"mif1", b"msf1", b"heic", b"heif"):
-            return "avif"
-        return "video"
-    if data[:4] == b"PK\x03\x04":
-        return "zip"
-    if data[:4] == b"\x1aE\xdf\xa3":
-        return "webm"
-    head = data[:80].lstrip().lower()
-    if head.startswith((b"<!doctype", b"<html", b"<head", b"<?xml")):
-        return "html"
-    return "unknown"
-
-
-_UNSUPPORTED_FILE_EXT = frozenset({"zip", "mp4", "webm", "swf", "mkv", "avi", "ugoira"})
-
-
-def _save_image_as_png(data: bytes, dest: Path) -> None:
-    """任意常见静态图 → PNG（保留透明）。"""
-    kind = _sniff_image_kind(data)
-    if kind == "empty":
-        raise ValueError("下载内容为空")
-    if kind == "html":
-        raise ValueError("下载到的是网页而非图片（可能被代理/CDN 拦截）")
-    if kind in ("zip", "video", "webm"):
-        raise ValueError(f"不支持该文件类型（{kind}，视频或动图包）")
-
-    if kind == "png":
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_bytes(data)
-        return
-
-    from PIL import UnidentifiedImageError
-
-    try:
-        img = Image.open(io.BytesIO(data))
-        img.load()
-    except UnidentifiedImageError as e:
-        raise ValueError(
-            f"无法识别的图片数据（头={kind}，大小={len(data)}字节）"
-        ) from e
-
-    if img.mode in ("RGBA", "LA"):
-        out = img.convert("RGBA")
-    elif img.mode == "P":
-        out = img.convert("RGBA") if "transparency" in img.info else img.convert("RGB")
-    else:
-        out = img.convert("RGB")
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    out.save(dest, format="PNG", optimize=True)
-
-
-def _convert_path_to_png(src: Path, dest: Path) -> None:
-    """临时文件转 PNG。引用：download_post。"""
-    data = src.read_bytes()
-    if src.is_file():
-        src.unlink()
-    _save_image_as_png(data, dest)
-
-
-def _pil_can_open(data: bytes) -> bool:
-    """PIL 能否打开字节流。引用：_danbooru_fetch_image_bytes。"""
-    from PIL import UnidentifiedImageError
-
-    try:
-        im = Image.open(io.BytesIO(data))
-        im.load()
-        return True
-    except UnidentifiedImageError:
-        return False
-
-
-def _write_meta(out_dir: Path, source: str, post_id: str, post: Mapping[str, object]) -> None:
-    """写源站帖子 JSON meta。引用：download_post。"""
-    meta_dir = out_dir / META_SUBDIR[source]
-    meta_dir.mkdir(parents=True, exist_ok=True)
-    (meta_dir / f"{post_id}.json").write_text(
-        json.dumps(post, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
-    )
-
-
-def _tags_to_caption(tags: str) -> str:
-    """空格标签转逗号 caption。引用：download_post。"""
-    parts = [t.strip() for t in tags.replace(",", " ").split() if t.strip()]
-    return ", ".join(parts)
-
-
-# Anima 格式中识别为性别/人数标签的关键词集合
-_GENDER_TAGS: frozenset[str] = frozenset({
-    "1girl", "2girls", "3girls", "4girls", "5girls", "6+girls", "multiple_girls",
-    "1boy", "2boys", "3boys", "4boys", "5boys", "6+boys", "multiple_boys",
-    "1other", "2others", "3others", "4others", "5others", "6+others", "multiple_others",
-    "solo", "no_humans",
-})
-
-
-def _build_caption(post: Mapping[str, object], *, anima_format: bool = False, include_meta_tags: bool = False, keep_underscores: bool = False) -> str:
-    """构建标签 caption。
-
-    Args:
-        post: booru API 返回的帖子数据。Gelbooru 调用方应先通过 tag_types 归类为
-            tag_string_general/character/copyright/artist/meta 兼容字段。
-        anima_format: 按 Anima 格式输出 [性别][角色][系列][画师][通用标签]。
-        include_meta_tags: 若为 False（默认），剔除 tag_string_meta 中的元数据标签。
-        keep_underscores: 若为 True，保留下划线；默认转为空格。
-
-    引用：``download_post``。
+    引用：``media.regenerate_captions``。
     """
     def _norm(t: str) -> str:
         return t if keep_underscores else t.replace("_", " ")
-
     if not anima_format and include_meta_tags:
         tags = str(post.get("tag_string") or post.get("tags") or "")
-        result = _tags_to_caption(tags)
-        return result if keep_underscores else result.replace("_", " ")
-
-    # 收集需要排除的 meta tag
+        return _norm(_tags_to_caption(tags))
     meta_set: set[str] = set()
     if not include_meta_tags:
-        meta_str = str(post.get("tag_string_meta") or "")
-        for t in meta_str.split():
-            t = t.strip()
-            if t:
-                meta_set.add(t.lower())
-
+        for t in str(post.get("tag_string_meta") or "").split():
+            t = t.strip().lower()
+            if t: meta_set.add(t)
     if not anima_format:
-        general_str = str(post.get("tag_string") or post.get("tags") or "")
-        general = [t.strip() for t in general_str.replace(",", " ").split() if t.strip()]
-        remaining = [_norm(t) for t in general if t.lower() not in meta_set]
-        return ", ".join(remaining)
+        raw = str(post.get("tag_string") or post.get("tags") or "")
+        return ", ".join(_norm(t) for t in raw.replace(",", " ").split()
+                         if t.strip() and t.lower() not in meta_set)
 
-    # ---- Anima 格式 ----
-    def _split_tags(raw: str) -> list[str]:
+    def _split(raw: str) -> list[str]:
         return [t.strip() for t in raw.replace(",", " ").split() if t.strip()]
-
-    general = _split_tags(str(post.get("tag_string_general") or post.get("tag_string") or post.get("tags") or ""))
-    character = _split_tags(str(post.get("tag_string_character") or ""))
-    copyright_tags = _split_tags(str(post.get("tag_string_copyright") or ""))
-    artist = _split_tags(str(post.get("tag_string_artist") or ""))
-
-    # 从 general 中分离性别/人数标签
-    gender: list[str] = []
-    rest: list[str] = []
+    general = _split(str(post.get("tag_string_general") or post.get("tag_string") or post.get("tags") or ""))
+    gender, rest = [], []
     for t in general:
-        if t.lower() in _GENDER_TAGS:
-            gender.append(t)
-        elif t.lower() not in meta_set:
-            rest.append(t)
-
-    used: set[str] = {g.lower() for g in gender}
-    captions: list[str] = [_norm(g) for g in gender]
-
-    def _add_group(tags: list[str]) -> None:
-        for t in tags:
+        if t.lower() in _GENDER_TAGS: gender.append(t)
+        elif t.lower() not in meta_set: rest.append(t)
+    used = {g.lower() for g in gender}
+    captions = [_norm(g) for g in gender]
+    for group in [_split(str(post.get("tag_string_character") or "")),
+                  _split(str(post.get("tag_string_copyright") or ""))]:
+        for t in group:
             low = t.lower()
             if low not in used and low not in meta_set:
-                used.add(low)
-                captions.append(_norm(t))
-
-    _add_group(character)
-    _add_group(copyright_tags)
-    # 画师加 @ 前缀
-    for t in artist:
+                used.add(low); captions.append(_norm(t))
+    for t in _split(str(post.get("tag_string_artist") or "")):
         low = t.lower()
         if low not in used and low not in meta_set:
-            used.add(low)
-            captions.append(f"@{_norm(t)}")
-
-    # general 剩余部分用 ||| 分隔
-    general_tail: list[str] = []
-    for t in rest:
-        if t.lower() not in used:
-            used.add(t.lower())
-            general_tail.append(_norm(t))
-
-    return ", ".join(captions) + " ||| " + ", ".join(general_tail)
+            used.add(low); captions.append(f"@{_norm(t)}")
+    tail = [_norm(t) for t in rest if t.lower() not in used]
+    return ", ".join(captions) + " ||| " + ", ".join(tail)
 
 
-def build_caption_from_meta(post: Mapping[str, object], *, anima_format: bool = True, include_meta_tags: bool = False, keep_underscores: bool = False) -> str:
-    """从 booru 帖子数据构建 caption 的公开接口。
+def register_source(client: SourceClient) -> None:
+    """注册来源客户端。
 
-    引用：``_build_caption``；``regenerate_captions``。
+    引用：``sources`` 各来源模块初始化。
     """
-    return _build_caption(post, anima_format=anima_format, include_meta_tags=include_meta_tags, keep_underscores=keep_underscores)
+    _SOURCES[client.name] = client
 
+def get_source(name: str) -> SourceClient:
+    """获取来源客户端。
 
-def danbooru_preview_url(post: Mapping[str, object]) -> str:
-    """优先 720x720（webp），避免默认 180x180 预览过小。"""
-    ma = post.get("media_asset")
-    if isinstance(ma, dict):
-        variants = ma.get("variants") or []
-        by_type: dict[str, str] = {}
-        for v in variants:
-            if not isinstance(v, dict):
-                continue
-            t = v.get("type")
-            u = v.get("url")
-            if t and u:
-                by_type[str(t)] = str(u)
-        for key in ("720x720", "360x360", "sample"):
-            if by_type.get(key):
-                return by_type[key]
+    Raises:
+        ValueError: 未知来源名。
 
-    md5 = str(post.get("md5") or "")
-    if len(md5) >= 4:
-        return f"https://cdn.donmai.us/720x720/{md5[:2]}/{md5[2:4]}/{md5}.webp"
+    引用：``routes.booru`` 所有端点；``utils.find_downloaded``。
+    """
+    src = _SOURCES.get(name)
+    if src is None:
+        raise ValueError(f"未知来源: {name}")
+    return src
 
-    return str(
-        post.get("large_file_url")
-        or post.get("preview_file_url")
-        or post.get("file_url")
-        or ""
+def list_source_names() -> list[str]:
+    """列出已注册来源名。
+
+    引用：``routes.booru.booru_sources``。
+    """
+    return sorted(_SOURCES.keys())
+
+def detect_source(stem: str) -> tuple[str, str] | None:
+    """从文件名 stem 检测来源与 ID。
+
+    Returns:
+        ``(source, post_id)`` 或 None。
+
+    引用：``routes.booru._run_refresh``。
+    """
+    for src in _SOURCES.values():
+        if stem.startswith(src.prefix) and stem[len(src.prefix):].isdigit():
+            return src.name, stem[len(src.prefix):]
+    return None
+
+def file_stem(source: str, post_id: str) -> str:
+    """规范文件名，委托给 SourceClient。
+
+    引用：``media.download_post`` / ``media.is_downloaded``。
+    """
+    return get_source(source).file_stem(post_id)
+
+def build_search_query(source: str, tags: str, *, order: str = "", extra: str = "") -> str:
+    """拼搜索查询，委托给 SourceClient。
+
+    引用：``routes.booru.booru_search``。
+    """
+    return get_source(source).build_search_query(tags, order=order, extra=extra)
+
+async def search_posts(
+    source: str, tags: str, *, page: int = 1, limit: int = 40, order: str = "",
+    extra: str = "", proxy: str | None = None,
+    danbooru_login: str | None = None, danbooru_api_key: str | None = None,
+) -> tuple[list[dict], bool]:
+    """搜索帖子，委托给 SourceClient。
+
+    引用：``booru_batch._run_async``。
+    """
+    src = get_source(source)
+    return await src.search(
+        tags, page=page, limit=limit, order=order, extra=extra, proxy=proxy,
+        danbooru_login=danbooru_login, danbooru_api_key=danbooru_api_key,
     )
-
-
-def _danbooru_headers(*, accept: str) -> dict[str, str]:
-    """Danbooru 请求头。引用：_danbooru_get。"""
-    return {
-        "accept": accept,
-        "accept-language": "en-US,en;q=0.9",
-        "referer": "https://danbooru.donmai.us/",
-        "origin": "https://danbooru.donmai.us",
-        "sec-fetch-dest": "empty",
-        "sec-fetch-mode": "cors",
-        "sec-fetch-site": "same-origin",
-    }
-
-
-async def _danbooru_get(
-    url: str,
-    *,
-    proxy: str | None,
-    accept: str,
-    timeout: float = 30.0,
-    params: Mapping[str, str | int] | None = None,
-    login: str | None = None,
-    api_key: str | None = None,
-) -> CurlResponse:
-    """用 curl_cffi 请求 Danbooru，可选 API Key 认证以提升标签查询限制。
-
-    引用：``search_danbooru``；``media.download_post``（预览与下载）。
-    """
-    p = dict(params) if params else {}
-    if login and api_key:
-        p["login"] = login
-        p["api_key"] = api_key
-    async with AsyncSession() as client:
-        return await client.get(
-            url,
-            params=p if p else None,
-            headers=_danbooru_headers(accept=accept),
-            proxies=_curl_proxies(proxy),
-            impersonate=_DANBOORU_IMPERSONATE,
-            timeout=timeout,
-            allow_redirects=True,
-        )
-
