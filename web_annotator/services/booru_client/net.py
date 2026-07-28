@@ -91,7 +91,7 @@ def make_gelbooru(proxy: str | None) -> Gelbooru:
     return Gelbooru(proxy=p) if p else Gelbooru(proxy=None)  # type: ignore[arg-type]
 
 
-def danbooru_preview_url(post: Mapping[str, object]) -> str:
+def danbooru_preview_url(post: Mapping[str, Any]) -> str:
     """优先 720x720 webp 预览；回退 file_url。
 
     引用：``sources.DanbooruSource.preview_url`` / ``search.normalize_danbooru_post``。

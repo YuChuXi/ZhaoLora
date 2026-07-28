@@ -119,7 +119,7 @@ class SourceClient(ABC):
         """
         return extra.strip()
 
-    def _write_meta(self, out_dir: Path, pid: str, post: Mapping[str, object]) -> None:
+    def _write_meta(self, out_dir: Path, pid: str, post: Mapping[str, Any]) -> None:
         meta_dir = out_dir / self.meta_subdir
         meta_dir.mkdir(parents=True, exist_ok=True)
         (meta_dir / f"{pid}.json").write_text(
@@ -147,7 +147,7 @@ class SourceClient(ABC):
                 if p.is_file() and p.resolve() != keep.resolve():
                     p.unlink()
 
-    def _build_caption(self, post: Mapping[str, object], *, anima_format: bool = False,
+    def _build_caption(self, post: Mapping[str, Any], *, anima_format: bool = False,
                        include_meta_tags: bool = False, keep_underscores: bool = False) -> str:
         def _norm(t: str) -> str:
             return t if keep_underscores else t.replace("_", " ")
@@ -195,7 +195,7 @@ META_SUBDIR: dict[str, str] = {
 }
 
 
-def build_caption_from_meta(post: Mapping[str, object], *, anima_format: bool = False,
+def build_caption_from_meta(post: Mapping[str, Any], *, anima_format: bool = False,
                             include_meta_tags: bool = False,
                             keep_underscores: bool = False) -> str:
     """从元数据构建标签文本（独立函数版）。

@@ -155,7 +155,7 @@ async def fetch_gelbooru_bytes(
 
 
 async def _danbooru_fetch_image_bytes(
-    post: Mapping[str, object],
+    post: Mapping[str, Any],
     *,
     proxy: str | None,
 ) -> bytes:
