@@ -28,6 +28,7 @@ from services.models import (
     BooruBatchActiveResponse,
     BooruBatchParamsBody,
     BooruBatchStartBody,
+    BooruPost,
     BooruDownloadResult,
     BooruSearchResult,
     BooruSourcesResponse,
@@ -105,19 +106,8 @@ async def booru_search(request: Request, body: SearchBody) -> BooruSearchResult:
         raise HTTPException(502, f"搜索失败: {e}") from e
 
     posts: list[BooruPost] = []
-    for p in raw_posts:
-        post = BooruPost(
-            source=source, id=str(p.get("id") or ""),
-            key=f"{source}:{p.get('id')}", width=int(p.get("width") or 0),
-            height=int(p.get("height") or 0), score=int(p.get("score") or 0),
-            tags=str(p.get("tags") or ""),
-            preview_url=str(p.get("preview_url") or ""),
-            sample_url=str(p.get("sample_url") or ""),
-            file_url=str(p.get("file_url") or ""),
-            rating=str(p.get("rating") or ""),
-            file_ext=str(p.get("file_ext") or ""),
-        )
-        post.downloaded = is_downloaded(out_dir, source, post.id)
+    for post in raw_posts:
+        post.downloaded = is_downloaded(out_dir, source, post.id, file_stem_fn=src.file_stem)
         post.stem = src.file_stem(post.id)
         posts.append(post)
 

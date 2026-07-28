@@ -10,7 +10,7 @@ import json
 from abc import ABC, abstractmethod
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from PIL import Image
 
@@ -21,6 +21,9 @@ from services.booru_client.utils import (
     _tags_to_caption,
     find_downloaded,
 )
+
+if TYPE_CHECKING:
+    from services.models import BooruPost
 
 
 _SOURCES: dict[str, SourceClient] = {}
@@ -44,9 +47,10 @@ class SourceClient(ABC):
         """
     @abstractmethod
     async def search(self, tags: str, page: int, limit: int, order: str, extra: str,
-                     proxy: str | None, **auth) -> tuple[list[dict], bool]:
+                     proxy: str | None, **auth) -> tuple[list[BooruPost], bool]:
         """搜索帖子，返回 (posts, has_more)。
 
+        实现类应将 API 原始帖转为 ``BooruPost`` 后返回。
         引用：``routes.booru.booru_search`` / ``common.search_posts``。
         """
     @abstractmethod
@@ -296,8 +300,8 @@ async def search_posts(
     source: str, tags: str, *, page: int = 1, limit: int = 40, order: str = "",
     extra: str = "", proxy: str | None = None,
     danbooru_login: str | None = None, danbooru_api_key: str | None = None,
-) -> tuple[list[dict], bool]:
-    """搜索帖子，委托给 SourceClient。
+) -> tuple[list[BooruPost], bool]:
+    """搜索帖子，委托给 SourceClient；返回值中每帖为 ``BooruPost`` 模型。
 
     引用：``booru_batch._run_async``。
     """

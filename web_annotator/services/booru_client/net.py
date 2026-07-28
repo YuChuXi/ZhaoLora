@@ -14,7 +14,7 @@ from curl_cffi.requests.models import Response as CurlResponse
 
 from services.scanner import IMAGE_EXTS
 
-_REPO_ROOT = Path(__file__).resolve().parents[4]
+_REPO_ROOT = Path(__file__).resolve().parents[3]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
@@ -77,7 +77,7 @@ async def danbooru_get(
     async with AsyncSession() as client:
         return await client.get(
             url, params=p if p else None, headers=_danbooru_headers(accept=accept),
-            proxies=_curl_proxies(proxy), impersonate=_DANBOORU_IMPERSONATE,
+            proxies=_curl_proxies(proxy),  # type: ignore[arg-type]
             timeout=timeout, allow_redirects=True,
         )
 

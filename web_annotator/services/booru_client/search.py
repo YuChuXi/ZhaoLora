@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from typing import Any
 from urllib.parse import quote
 
 from services.models import BooruPost
@@ -18,7 +19,7 @@ from services.booru_client.net import (
     make_gelbooru,
 )
 
-def normalize_gelbooru_post(post: Mapping[str, object]) -> BooruPost | None:
+def normalize_gelbooru_post(post: Mapping[str, Any]) -> BooruPost | None:
     """将 Gelbooru 原始帖子规范化为 ``BooruPost``。
 
     引用:
@@ -48,7 +49,7 @@ def normalize_gelbooru_post(post: Mapping[str, object]) -> BooruPost | None:
     )
 
 
-def normalize_danbooru_post(post: Mapping[str, object]) -> BooruPost | None:
+def normalize_danbooru_post(post: Mapping[str, Any]) -> BooruPost | None:
     """将 Danbooru 原始帖子规范化为 ``BooruPost``。
 
     引用:
@@ -185,5 +186,5 @@ async def search_posts(
         tags, page=page, limit=limit, order=order, extra=extra, proxy=proxy,
         danbooru_login=danbooru_login, danbooru_api_key=danbooru_api_key,
     )
-    return [BooruPost(**p) for p in raw], has_more
+    return raw, has_more
 

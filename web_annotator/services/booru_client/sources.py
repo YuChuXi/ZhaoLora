@@ -7,10 +7,10 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from urllib.parse import quote
 
-from services.booru_client.common import SourceClient, register_source
+from services.booru_client.common import SourceClient
 from services.booru_client.net import (
     UNSUPPORTED_FILE_EXT,
     danbooru_get,
@@ -19,6 +19,9 @@ from services.booru_client.net import (
     make_gelbooru,
 )
 from services.booru_client.utils import find_downloaded
+
+if TYPE_CHECKING:
+    from services.models import BooruPost
 
 
 class GelbooruSource(SourceClient):
@@ -45,8 +48,8 @@ class GelbooruSource(SourceClient):
         return "gelbooru.com" in url
 
     @staticmethod
-    def normalize(post: Mapping[str, Any]) -> dict | None:
-        """Gelbooru 原始帖转标准 dict。
+    def normalize(post: Mapping[str, Any]) -> BooruPost | None:
+        """Gelbooru 原始帖转 ``BooruPost``。
 
         覆盖父类 ``common.SourceClient``；
         引用：``sources.py:GelbooruSource.search``。
@@ -65,7 +68,7 @@ class GelbooruSource(SourceClient):
             preview_url=str(post.get("preview_url") or post.get("sample_url") or file_url),
             sample_url=str(post.get("sample_url") or post.get("preview_url") or file_url),
             file_url=file_url, rating=str(post.get("rating") or ""),
-        ).model_dump()
+        )
 
     async def fetch_meta(self, out_dir: Path, pid: str, proxy: str | None) -> None:
         """拉取 Gelbooru 帖元数据并写入磁盘。
@@ -78,12 +81,14 @@ class GelbooruSource(SourceClient):
         self._write_meta(out_dir, pid, post)
 
     async def search(self, tags: str, page: int, limit: int, order: str, extra: str,
-                     proxy: str | None, **auth) -> tuple[list[dict], bool]:
+                     proxy: str | None, **auth) -> tuple[list[BooruPost], bool]:
         """搜索 Gelbooru 帖。
 
         实现 ``common.SourceClient.search``；
         引用：``common.search_posts`` / ``routes/booru.booru_search``。
         """
+        from services.models import BooruPost
+
         api = make_gelbooru(proxy)
         query = self.build_search_query(tags, order=order, extra=extra)
         pid = max(0, page - 1)
@@ -100,7 +105,7 @@ class GelbooruSource(SourceClient):
             has_more = offset + len(posts_raw) < int(total) if total is not None else len(posts_raw) >= g_limit
         else:
             has_more = len(posts_raw) >= g_limit
-        out: list[dict] = []
+        out: list[BooruPost] = []
         for p in posts_raw:
             n = self.normalize(p)
             if n is not None:
@@ -161,8 +166,8 @@ class DanbooruSource(SourceClient):
         return danbooru_preview_url(post)
 
     @staticmethod
-    def normalize(post: Mapping[str, Any]) -> dict | None:
-        """Danbooru 原始帖转标准 dict。
+    def normalize(post: Mapping[str, Any]) -> BooruPost | None:
+        """Danbooru 原始帖转 ``BooruPost``。
 
         覆盖父类 ``common.SourceClient``；
         引用：``sources.py:DanbooruSource.search``。
@@ -182,7 +187,7 @@ class DanbooruSource(SourceClient):
             sample_url=str(post.get("large_file_url") or post.get("file_url") or ""),
             file_url=file_url, rating=str(post.get("rating") or ""),
             file_ext=str(post.get("file_ext") or ""),
-        ).model_dump()
+        )
 
     async def fetch_meta(self, out_dir: Path, pid: str, proxy: str | None) -> None:
         """拉取 Danbooru 帖元数据并写入磁盘。
@@ -199,12 +204,14 @@ class DanbooruSource(SourceClient):
         self._write_meta(out_dir, pid, meta.json())
 
     async def search(self, tags: str, page: int, limit: int, order: str, extra: str,
-                     proxy: str | None, **auth) -> tuple[list[dict], bool]:
+                     proxy: str | None, **auth) -> tuple[list[BooruPost], bool]:
         """搜索 Danbooru 帖。
 
         实现 ``common.SourceClient.search``；
         引用：``common.search_posts`` / ``routes/booru.booru_search``。
         """
+        from services.models import BooruPost
+
         query = self.build_search_query(tags, order=order, extra=extra)
         limit_used = max(1, min(limit, 100))
         resp = await danbooru_get(
@@ -219,7 +226,7 @@ class DanbooruSource(SourceClient):
         if not isinstance(data, list):
             return [], False
         has_more = len(data) >= limit_used
-        out: list[dict] = []
+        out: list[BooruPost] = []
         for p in data:
             n = self.normalize(p)
             if n is not None:
@@ -263,7 +270,3 @@ class DanbooruSource(SourceClient):
         tags_path.write_text(caption + "\n", encoding="utf-8")
         self._write_meta(out_dir, pid, post)
         return {"path": str(image_path), "stem": stem, "id": pid}
-
-
-register_source(GelbooruSource())
-register_source(DanbooruSource())

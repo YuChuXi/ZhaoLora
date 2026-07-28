@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from services.booru_client import download_post, is_downloaded, local_rel_path, search_posts
+from services.booru_client import download_post, get_source, is_downloaded, local_rel_path, search_posts
 from services.models import JobSnapshot
 
 PAGE_LIMIT = 40
@@ -224,7 +224,7 @@ async def _run_async(
             return
         empty_streak = 0
         for p in posts:
-            if is_downloaded(out_dir, source, p.id):
+            if is_downloaded(out_dir, source, str(p.id), file_stem_fn=get_source(source).file_stem):
                 progress.skipped += 1
             else:
                 buffer.append(p)
@@ -241,7 +241,7 @@ async def _run_async(
                 while buf_i < len(buffer):
                     p = buffer[buf_i]
                     buf_i += 1
-                    if is_downloaded(out_dir, source, p.id):
+                    if is_downloaded(out_dir, source, str(p.id), file_stem_fn=get_source(source).file_stem):
                         progress.skipped += 1
                         push("")
                         continue
