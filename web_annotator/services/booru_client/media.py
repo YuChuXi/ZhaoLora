@@ -43,6 +43,7 @@ _clients: dict[str, httpx.AsyncClient] = {}
 _client_lock = asyncio.Lock()
 _inflight: dict[str, asyncio.Future[tuple[bytes, str]]] = {}
 _inflight_lock = asyncio.Lock()
+_tag_types_cache: dict[str, int] = {}
 
 
 def _cache_files(kind: str, post_id: str) -> tuple[Path, Path]:
@@ -240,7 +241,7 @@ def remove_download(
 
 
 async def _categorize_gelbooru_tags(post: dict, api) -> dict:
-    """查询 Gelbooru 标签类型并写入 Danbooru 兼容字段。
+    """查询 Gelbooru 标签类型并写入 Danbooru 兼容字段，结果缓存在内存。
 
     Args:
         post: Gelbooru API 返回的帖子数据。
@@ -254,10 +255,13 @@ async def _categorize_gelbooru_tags(post: dict, api) -> dict:
     all_names = str(post.get("tags") or "").split()
     if not all_names:
         return dict(post)
-    types = await api.getTagTypes(all_names)
+    missing = [n for n in all_names if n not in _tag_types_cache]
+    if missing:
+        types = await api.getTagTypes(missing)
+        _tag_types_cache.update(types)
     cats: dict[int, list[str]] = {0: [], 1: [], 3: [], 4: [], 5: []}
     for t in all_names:
-        cats[types.get(t, 0)].append(t)
+        cats[_tag_types_cache.get(t, 0)].append(t)
     post = dict(post)
     post["tag_string_general"] = " ".join(cats[0])
     post["tag_string_artist"] = " ".join(cats[1])
@@ -327,6 +331,9 @@ async def download_post(
         # Gelbooru Anima 格式：查询标签类型，构造 Danbooru 兼容字段
         if anima_format and source == "gelbooru":
             post = await _categorize_gelbooru_tags(post, api)
+        caption = _build_caption(post, anima_format=anima_format, include_meta_tags=include_meta_tags, keep_underscores=keep_underscores)
+        tags_path.write_text(caption + "\n", encoding="utf-8")
+        _write_meta(out_dir, source, pid, post)
         return BooruDownloadResult(
             skipped=False,
             path=str(image_path),
