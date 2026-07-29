@@ -25,8 +25,8 @@ from services.core.scanner import IMAGE_EXTS, collect_images
 AESTHETIC_SCORES = ".aesthetic_scores.json"
 QUALITY_SCORES = ".quality_scores.json"
 QUALITY_TAGS = [
-    "masterpiece", "best quality", "good quality",
-    "normal quality", "low quality", "worst quality",
+    "worst quality", "low quality", "normal quality",
+    "good quality", "best quality", "masterpiece",
 ]
 
 # ---------------------------------------------------------------------------

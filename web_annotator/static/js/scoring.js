@@ -274,12 +274,12 @@
         sel.innerHTML += '<option value="' + j + '">score_' + j + ' (' + counts[j] + ')</option>';
       }
     } else {
-      var tags = ['masterpiece', 'best quality', 'good quality', 'normal quality', 'low quality', 'worst quality'];
+      var tags = ['worst quality', 'low quality', 'normal quality', 'good quality', 'best quality', 'masterpiece'];
       var tagCounts = tags.map(function (t) {
         return results.filter(function (r) { return r.quality_tag === t; }).length;
       });
       var maxQ = Math.max.apply(null, tagCounts) || 1;
-      var qColors = ['#2ecc71', '#27ae60', '#1e8449', '#f39c12', '#e67e22', '#e74c3c'];
+      var qColors = ['#e74c3c', '#e67e22', '#f39c12', '#1e8449', '#27ae60', '#2ecc71'];
       var html2 = '';
       for (var k = 0; k < tags.length; k++) {
         html2 += '<div class="hist-col">' +

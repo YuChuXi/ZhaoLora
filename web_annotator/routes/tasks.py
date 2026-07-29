@@ -59,7 +59,7 @@ def _preview_hashes(rt: DatasetRuntime, limit: int = 4) -> list[str]:
 
 
 @router.get("")
-def list_tasks(
+async def list_tasks(
     request: Request,
     sort_by: SortField = Query("sort_order", description="排序字段"),
     sort_order: SortOrder = Query("asc", description="排序方向"),
