@@ -11,7 +11,7 @@ import numpy as np
 from PIL import Image
 
 from services.models import JobSnapshot, WorkDirInfo
-from services.scanner import IMAGE_EXTS
+from services.scanner import IMAGE_EXTS, collect_images
 
 if TYPE_CHECKING:
     from onnxruntime import InferenceSession
@@ -246,18 +246,6 @@ class TaggingProgress:
             self.logs = self.logs[-300:]
 
 
-def collect_jobs(dirs: list[Path]) -> list[tuple[Path, Path]]:
-    """返回 (src_image, out_dir) 列表。"""
-    items: list[tuple[Path, Path]] = []
-    for d in dirs:
-        if not d.is_dir():
-            continue
-        for p in sorted(d.iterdir()):
-            if p.is_file() and p.suffix.lower() in IMAGE_EXTS:
-                items.append((p, d))
-    return items
-
-
 def process_one(
     src: Path,
     *,
@@ -290,7 +278,7 @@ def run_batch(
     on_update: Callable[[], None] | None = None,
 ) -> None:
     """批量打标主循环。引用：routes.tagging。"""
-    items = collect_jobs(dirs)
+    items = collect_images(dirs)
     progress.total = len(items)
     progress.done = 0
     progress.skipped = 0
@@ -322,7 +310,7 @@ def run_batch(
     if on_update:
         on_update()
 
-    for i, (src, out_dir) in enumerate(items):
+    for i, src in enumerate(items):
         if progress.cancel_requested:
             progress.status = "cancelled"
             progress.phase = "done"
@@ -332,7 +320,7 @@ def run_batch(
                 on_update()
             return
 
-        rel = f"{out_dir.name}/{src.name}"
+        rel = f"{src.parent.name}/{src.name}"
         progress.current = rel
         progress.message = f"[{i + 1}/{len(items)}] {rel}"
         if on_update:

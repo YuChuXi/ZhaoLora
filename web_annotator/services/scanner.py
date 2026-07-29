@@ -16,6 +16,31 @@ from services.models import ScannedImage
 IMAGE_EXTS = frozenset({".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif"})
 
 
+def collect_images(dirs: list[Path]) -> list[Path]:
+    """收集多个目录下所有图片文件的路径。
+
+    目录内扁平扫描（不递归），按文件名排序。
+
+    Args:
+        dirs: 要扫描的目录列表。
+
+    Returns:
+        list[Path]: 图片绝对路径列表。
+
+    Callers:
+        - ``services/scoring.py:_run_scoring``
+        - ``services/wd14_batch.py:run_batch``
+    """
+    items: list[Path] = []
+    for d in dirs:
+        if not d.is_dir():
+            continue
+        for p in sorted(d.iterdir()):
+            if p.is_file() and p.suffix.lower() in IMAGE_EXTS:
+                items.append(p)
+    return items
+
+
 def _natural_key(s: str) -> tuple:
     """自然排序键：``img2_abc10`` → ``('img', 2, '_abc', 10)``。
 

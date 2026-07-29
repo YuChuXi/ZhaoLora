@@ -16,7 +16,7 @@ from huggingface_hub import hf_hub_download
 from PIL import Image, UnidentifiedImageError
 
 from services.models import JobSnapshot
-from services.scanner import IMAGE_EXTS
+from services.scanner import IMAGE_EXTS, collect_images
 
 # ---------------------------------------------------------------------------
 # 常量
@@ -150,29 +150,6 @@ def save_score_json(root: Path, filename: str, scores: dict[str, float]) -> None
     path.write_text(json.dumps(clean, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
-def _collect_images(root: Path, dirs: list[Path]) -> list[Path]:
-    """收集目录列表中所有图片文件的路径。
-
-    按文件名排序，过滤掉 ``scanner.IMAGE_EXTS`` 不包含的扩展名。
-
-    Args:
-        root: 数据集根目录（保留参数，供未来扩展）。
-        dirs: 要扫描的子目录列表。
-
-    Returns:
-        list[Path]: 图片绝对路径列表。
-
-    Callers:
-        - ``_run_scoring``
-    """
-    items: list[Path] = []
-    for d in dirs:
-        if not d.is_dir():
-            continue
-        for p in sorted(d.iterdir()):
-            if p.is_file() and p.suffix.lower() in IMAGE_EXTS:
-                items.append(p)
-    return items
 
 
 # ---------------------------------------------------------------------------
@@ -183,8 +160,8 @@ _AES_MODELS: dict[str, tuple] = {}
 _AES_LOCK = _th.Lock()
 
 
-def _raw_to_pony(raw: float) -> int:
-    """原始美学分 [0, 1] → score_0 ~ score_9。
+def _raw_to_bin(raw: float) -> int:
+    """原始美学分 [0, 1] → 0~9 整数档位。
 
     Args:
         raw: CLIP 美学头输出的原始分数。
@@ -403,7 +380,7 @@ def _run_scoring(
         - ``run_scoring``
     """
     root = root.resolve()
-    items = _collect_images(root, list(dict.fromkeys(dirs)))
+    items = collect_images(list(dict.fromkeys(dirs)))
     progress.total = len(items)
     progress.done = progress.ok = progress.skipped = progress.failed = 0
     progress.status = "running"
@@ -547,8 +524,8 @@ def build_score_results(
             results.append({
                 "path": path,
                 "score": round(raw, 6),
-                "pony": _raw_to_pony(raw),
-                "pony_label": f"score_{_raw_to_pony(raw)}",
+                "pony": _raw_to_bin(raw),
+                "pony_label": f"score_{_raw_to_bin(raw)}",
             })
         results.sort(key=lambda r: r["score"], reverse=True)
         return results
