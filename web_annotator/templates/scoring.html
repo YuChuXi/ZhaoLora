@@ -9,21 +9,14 @@
   body { margin: 0; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
   .scoring-main { flex: 1; display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
 
-  /* 结果标签 */
-  .result-tabs { display: flex; gap: 0; background: #1a1a2e; border-bottom: 1px solid #333; flex-shrink: 0; }
-  .result-tab { padding: 6px 16px; font-size: 13px; cursor: pointer; color: var(--text-dim); border: none; background: none; border-bottom: 2px solid transparent; display: flex; align-items: center; gap: 6px; }
+  /* 结果标签(含工具栏) */
+  .result-tabs { display: flex; gap: 0; align-items: center; background: #1a1a2e; border-bottom: 1px solid #333; flex-shrink: 0; position: sticky; top: 41px; z-index: 100; padding: 4px 8px; }
+  .result-tab { padding: 6px 14px; font-size: 13px; cursor: pointer; color: var(--text-dim); border: none; background: none; border-bottom: 2px solid transparent; display: flex; align-items: center; gap: 6px; }
   .result-tab.active { color: var(--text); border-bottom-color: var(--accent, #4fc3f7); }
   .tab-badge { font-size: 11px; background: rgba(255,255,255,0.1); padding: 1px 6px; border-radius: 8px; min-width: 16px; text-align: center; }
-
-  /* 工具栏 */
-  .toolbar.compact label {
-    display: flex; align-items: center; gap: 4px;
-    font-size: 12px; color: var(--text-dim); cursor: pointer; user-select: none;
-  }
-  .toolbar.compact select, .toolbar.compact input {
-    background: #0a1a30; color: var(--text);
-    border: 1px solid var(--border); border-radius: 4px; padding: 2px 6px; font-size: 12px;
-  }
+  .result-tabs .sep { width: 1px; height: 18px; background: var(--border); margin: 0 6px; flex-shrink: 0; }
+  .result-tabs label { display: flex; align-items: center; gap: 4px; font-size: 12px; color: var(--text-dim); cursor: pointer; user-select: none; }
+  .result-tabs select { background: #0a1a30; color: var(--text); border: 1px solid var(--border); border-radius: 4px; padding: 2px 6px; font-size: 12px; }
 
   /* 统计 */
   .stats-bar {
@@ -126,24 +119,6 @@
 <body>
 <nav class="app-tabs" id="app-tabs"></nav>
 
-<div class="toolbar compact">
-  <button class="btn green" id="btn-start">开始</button>
-  <button class="btn" id="btn-cancel" disabled>取消</button>
-  <span class="sep"></span>
-  <label>评分类型
-    <select id="score-type">
-      <option value="aesthetic">美学</option>
-      <option value="quality">质量</option>
-    </select>
-  </label>
-  <label>设备
-    <select id="device">
-      <option value="cpu">CPU</option>
-      <option value="cuda">CUDA</option>
-    </select>
-  </label>
-</div>
-
 <div class="job-progress compact" id="job-progress" hidden>
   <div class="job-progress-track">
     <div class="job-progress-fill aes" id="progress-fill"></div>
@@ -152,6 +127,16 @@
 </div>
 
 <div class="result-tabs">
+  <button class="btn green" id="btn-start" style="padding:4px 10px;font-size:12px;">开始</button>
+  <button class="btn" id="btn-cancel" disabled style="padding:4px 10px;font-size:12px;">取消</button>
+  <span class="sep"></span>
+  <label>设备
+    <select id="device">
+      <option value="cpu">CPU</option>
+      <option value="cuda">CUDA</option>
+    </select>
+  </label>
+  <span class="sep"></span>
   <button class="result-tab active" data-type="aesthetic">
     美学 <span class="tab-badge">0</span>
   </button>
@@ -159,7 +144,7 @@
     质量 <span class="tab-badge">0</span>
   </button>
   <span style="flex:1"></span>
-  <span style="display:flex;align-items:center;gap:6px;padding-right:10px;font-size:11px;color:#666;">
+  <span style="display:flex;align-items:center;gap:6px;padding-right:4px;font-size:11px;color:#666;">
     共 <strong id="result-count" style="color:#ccc">0</strong> 张
     <select id="sortSelect" style="background:#0a1a30;color:#ccc;border:1px solid #333;border-radius:4px;padding:2px 6px;font-size:11px;">
       <option value="score">按分数</option>
@@ -169,29 +154,29 @@
   </span>
 </div>
 
-<div class="stats-bar" id="stats" style="display:none">
-  <div class="stat-item"><div class="stat-label">均值</div><div class="stat-value" style="color:#27ae60" id="stat-mean">-</div></div>
-  <div class="stat-item"><div class="stat-label">中位</div><div class="stat-value" style="color:#27ae60" id="stat-median">-</div></div>
-  <div class="stat-item"><div class="stat-label">标准差</div><div class="stat-value" style="color:#888" id="stat-std">-</div></div>
-  <div class="stat-item"><div class="stat-label">最低</div><div class="stat-value" style="color:#e74c3c" id="stat-min">-</div></div>
-  <div class="stat-item"><div class="stat-label">最高</div><div class="stat-value" style="color:#27ae60" id="stat-max">-</div></div>
-  <div class="stat-item"><div class="stat-label">总数</div><div class="stat-value" style="color:#888" id="stat-count">-</div></div>
-</div>
-
-<div class="hist-section">
-  <div class="hist" id="histogram"></div>
-</div>
-
-<div style="display:flex;align-items:center;gap:8px;padding:0 14px 8px;flex-shrink:0;">
-  <input type="text" id="searchBox" placeholder="搜索文件名..." style="flex:1;background:#0a1a30;color:#ccc;border:1px solid #333;border-radius:4px;padding:4px 8px;font-size:12px;outline:none;">
-  <select id="scoreFilter" style="background:#0a1a30;color:#ccc;border:1px solid #333;border-radius:4px;padding:4px 8px;font-size:12px;">
-    <option value="all">全部</option>
-  </select>
-</div>
-
 <div class="scoring-main">
   <div class="gallery-empty" id="gallery-empty">暂无评分数据</div>
   <div class="gallery-wrap">
+    <div class="stats-bar" id="stats" style="display:none">
+      <div class="stat-item"><div class="stat-label">均值</div><div class="stat-value" style="color:#27ae60" id="stat-mean">-</div></div>
+      <div class="stat-item"><div class="stat-label">中位</div><div class="stat-value" style="color:#27ae60" id="stat-median">-</div></div>
+      <div class="stat-item"><div class="stat-label">标准差</div><div class="stat-value" style="color:#888" id="stat-std">-</div></div>
+      <div class="stat-item"><div class="stat-label">最低</div><div class="stat-value" style="color:#e74c3c" id="stat-min">-</div></div>
+      <div class="stat-item"><div class="stat-label">最高</div><div class="stat-value" style="color:#27ae60" id="stat-max">-</div></div>
+      <div class="stat-item"><div class="stat-label">总数</div><div class="stat-value" style="color:#888" id="stat-count">-</div></div>
+    </div>
+
+    <div class="hist-section" id="hist-section" style="display:none">
+      <div class="hist" id="histogram"></div>
+    </div>
+
+    <div id="search-bar" style="display:none;align-items:center;gap:8px;padding:0 14px 8px;">
+      <input type="text" id="searchBox" placeholder="搜索文件名..." style="flex:1;background:#0a1a30;color:#ccc;border:1px solid #333;border-radius:4px;padding:4px 8px;font-size:12px;outline:none;">
+      <select id="scoreFilter" style="background:#0a1a30;color:#ccc;border:1px solid #333;border-radius:4px;padding:4px 8px;font-size:12px;">
+        <option value="all">全部</option>
+      </select>
+    </div>
+
     <div class="gallery" id="gallery"></div>
   </div>
 </div>

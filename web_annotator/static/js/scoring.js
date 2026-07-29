@@ -44,7 +44,6 @@
     document.getElementById('btn-start').disabled = running;
     document.getElementById('btn-cancel').disabled = !running;
     document.getElementById('device').disabled = running;
-    document.getElementById('score-type').disabled = running;
     DirPicker.setDisabled(running);
   }
 
@@ -120,8 +119,7 @@
   // -----------------------------------------------------------------------
 
   function loadResults(type) {
-    var prefix = '/api' + API.apiPath('/scoring/results?kind=' + type).split('?')[0];
-    API.request(prefix + '?kind=' + type).then(function (data) {
+    API.request(API.apiPath('/scoring/results?kind=' + type)).then(function (data) {
       _results[type] = data.results || [];
       if (type === _currentType) {
         renderGallery();
@@ -164,16 +162,23 @@
     var empty = document.getElementById('gallery-empty');
     var stats = document.getElementById('stats');
 
+    var histSection = document.getElementById('hist-section');
+    var searchBar = document.getElementById('search-bar');
+
     if (!results.length) {
       gallery.innerHTML = '';
       gallery.style.display = 'none';
       if (empty) empty.style.display = 'flex';
       if (stats) stats.style.display = 'none';
+      if (histSection) histSection.style.display = 'none';
+      if (searchBar) searchBar.style.display = 'none';
       document.getElementById('result-count').textContent = '0';
       return;
     }
 
     if (empty) empty.style.display = 'none';
+    if (histSection) histSection.style.display = '';
+    if (searchBar) searchBar.style.display = 'flex';
     gallery.style.display = '';
 
     // 排序
@@ -356,7 +361,6 @@
     var active = await API.request(API.apiPath('/scoring/active'));
     if (active && active.job_id) {
       _currentType = active.kind;
-      document.getElementById('score-type').value = active.kind;
       applyStatus({ status: active.status ? active.status.status : 'running' });
       startWatch(active.job_id);
       toast('\u5DF2\u6062\u590D' + (active.kind === 'quality' ? '\u8D28\u91CF' : '\u7F8E\u5B66') + '\u8BC4\u5206\u8FDB\u5EA6');
@@ -370,7 +374,6 @@
       toast('\u8BF7\u9009\u62E9\u76EE\u5F55');
       return;
     }
-    _currentType = document.getElementById('score-type').value;
     var body = {
       kind: _currentType,
       dirs: dirs,
@@ -410,7 +413,6 @@
       document.querySelectorAll('.result-tab').forEach(function (t) {
         t.classList.toggle('active', t.dataset.type === _currentType);
       });
-      document.getElementById('score-type').value = _currentType;
       document.getElementById('searchBox').value = '';
       document.getElementById('scoreFilter').value = 'all';
       if (_results[_currentType]) {
