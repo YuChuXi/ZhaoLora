@@ -1,4 +1,4 @@
-"""任务列表别名与长任务 SSE / 取消。"""
+"""任务列表别名与长任务 SSE / 取消. """
 
 from __future__ import annotations
 
@@ -15,9 +15,9 @@ jobs_router = APIRouter(prefix="/api/jobs", tags=["jobs"])
 @datasets_router.get("/api/datasets")
 def list_datasets(request: Request) -> DatasetsResponse:
     """
-    返回清单中未完成的任务名，供业务页路径校验。
+    返回清单中未完成的任务名, 供业务页路径校验. 
 
-    引用：nav.js boot。
+    引用: nav.js boot. 
     """
     store = request.app.state.task_store
     items = [
@@ -30,9 +30,9 @@ def list_datasets(request: Request) -> DatasetsResponse:
 @jobs_router.get("/{job_id}/events")
 async def job_events(request: Request, job_id: str) -> StreamingResponse:
     """
-    Server-Sent Events：推送任务进度直至结束。
+    Server-Sent Events: 推送任务进度直至结束. 
 
-    引用：前端 API.watchJob。
+    引用: 前端 API.watchJob. 
     """
     mgr = jobs(request)
     if mgr.get(job_id) is None:
@@ -52,9 +52,9 @@ async def job_events(request: Request, job_id: str) -> StreamingResponse:
 @jobs_router.post("/{job_id}/cancel")
 def job_cancel(request: Request, job_id: str) -> JobCancelResponse:
     """
-    请求协作取消长任务。
+    请求协作取消长任务. 
 
-    引用：aesthetic.js、tagging.js。
+    引用: aesthetic.js、tagging.js. 
     """
     mgr = jobs(request)
     try:

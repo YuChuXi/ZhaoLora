@@ -1,4 +1,4 @@
-"""单个任务数据集在运行时的服务句柄。
+"""单个任务数据集在运行时的服务句柄. 
 
 Callers:
     - `server.py` 按需构建
@@ -11,21 +11,21 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable
 
-from services.dataset_layout import DatasetLayout, resolve_dataset_layout
+from services.dataset.layout import DatasetLayout, resolve_dataset_layout
 from services.models import JobSnapshot
-from services.state_manager import StateManager
-from services.thumbnailer import Thumbnailer
+from services.state.annotator import StateManager
+from services.core.thumbnailer import Thumbnailer
 
 if TYPE_CHECKING:
-    from services.jobs import JobManager
+    from services.core.jobs import JobManager
 
 if TYPE_CHECKING:
-    from services.color_similarity import ColorIndex
+    from services.analysis.similarity import ColorIndex
 
 
 @dataclass
 class DatasetRuntime:
-    """一个已登记任务目录的运行时对象。"""
+    """一个已登记任务目录的运行时对象. """
 
     name: str
     layout: DatasetLayout
@@ -36,7 +36,7 @@ class DatasetRuntime:
 
     @property
     def root(self) -> Path:
-        """任务根目录。
+        """任务根目录. 
 
         Callers:
             - 各路由 `get_runtime`
@@ -45,7 +45,7 @@ class DatasetRuntime:
 
     @property
     def main_dir(self) -> Path:
-        """main 图像目录。
+        """main 图像目录. 
 
         Callers:
             - 各路由
@@ -55,7 +55,7 @@ class DatasetRuntime:
 
 @dataclass
 class DatasetRegistry:
-    """按需缓存任务运行时。
+    """按需缓存任务运行时. 
 
     Callers:
         - `server.py`
@@ -70,7 +70,7 @@ class DatasetRegistry:
     _migrate: Callable[[Path, Path], None] | None = None
 
     def get(self, name: str) -> DatasetRuntime | None:
-        """按名取已加载运行时。
+        """按名取已加载运行时. 
 
         Callers:
             - `DatasetRegistry`
@@ -78,7 +78,7 @@ class DatasetRegistry:
         return self.by_name.get(name)
 
     def names(self) -> list[str]:
-        """已加载任务名列表。
+        """已加载任务名列表. 
 
         Callers:
             - 管理接口
@@ -86,7 +86,7 @@ class DatasetRegistry:
         return sorted(self.by_name.keys())
 
     def ensure(self, name: str) -> DatasetRuntime:
-        """若尚未加载则解析 ``{task_root}/{name}`` 并缓存，同时提交缩略图填充任务。
+        """若尚未加载则解析 ``{task_root}/{name}`` 并缓存, 同时提交缩略图填充任务. 
 
         Callers:
             - 中间件 `bind_dataset_middleware`
@@ -117,7 +117,7 @@ class DatasetRegistry:
 
 
 def _submit_thumb_fill(jobs: JobManager, dataset: str, thumb: Thumbnailer) -> None:
-    """通过 JobManager 提交后台缩略图填充任务。
+    """通过 JobManager 提交后台缩略图填充任务. 
 
     Callers:
         - `DatasetRegistry.ensure`

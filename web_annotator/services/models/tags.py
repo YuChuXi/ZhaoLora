@@ -1,6 +1,6 @@
-"""标签统计与清洗模型。
+"""标签统计与清洗模型. 
 
-引用: ``services.models`` 包导出；各 routes / services。
+引用: ``services.models`` 包导出；各 routes / services. 
 """
 
 from __future__ import annotations
@@ -9,10 +9,10 @@ from pydantic import BaseModel, Field
 
 
 class TagStatRow(BaseModel):
-    """标签频率一行。
+    """标签频率一行. 
 
     引用:
-        ``tag_stats.count_tags``。
+        ``tag_stats.count_tags``. 
     """
 
     tag: str
@@ -22,10 +22,10 @@ class TagStatRow(BaseModel):
 
 
 class TagStatsResult(BaseModel):
-    """标签频率统计结果。
+    """标签频率统计结果. 
 
     引用:
-        ``tag_stats.count_tags``；``routes.tag_stats``。
+        ``tag_stats.count_tags``；``routes.tag_stats``. 
     """
 
     sample_count: int
@@ -41,10 +41,10 @@ class TagStatsResult(BaseModel):
 
 
 class TagCleanSample(BaseModel):
-    """标签清洗样本对比。
+    """标签清洗样本对比. 
 
     引用:
-        ``tag_clean.clean_txt_dirs``。
+        ``tag_clean.clean_txt_dirs``. 
     """
 
     path: str
@@ -54,10 +54,10 @@ class TagCleanSample(BaseModel):
 
 
 class TagCleanResult(BaseModel):
-    """标签清洗结果。
+    """标签清洗结果. 
 
     引用:
-        ``tag_clean.clean_txt_dirs``；``routes.tag_stats``。
+        ``tag_clean.clean_txt_dirs``；``routes.tag_stats``. 
     """
 
     dry_run: bool

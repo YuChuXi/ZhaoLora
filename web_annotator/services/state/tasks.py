@@ -1,7 +1,7 @@
 """
-任务清单：唯一来源为任务根下的 .annotator_tasks.json。
+任务清单: 唯一来源为任务根下的 .annotator_tasks.json. 
 
-引用：server.py 启动校验；routes/tasks.py、routes/meta.py；中间件按清单放行。
+引用: server.py 启动校验；routes/tasks.py、routes/meta.py；中间件按清单放行. 
 """
 
 from __future__ import annotations
@@ -18,18 +18,20 @@ _NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
 
 
 def validate_task_name(name: str) -> str:
-    """
-    校验任务目录名。
+    """校验并规范化任务目录名. 
+
+    Returns:
+        str: 规范化后的任务名. 
 
     Raises:
-        ValueError: 名称非法。
+        ValueError: 名称非法. 
 
-    引用：
-        ``routes.tasks`` 添加任务与候选过滤。
+    引用: 
+        ``routes/tasks.py`` 添加任务与候选过滤. 
     """
     name = (name or "").strip()
     if not name or not _NAME_RE.match(name):
-        raise ValueError("任务名须为字母、数字、下划线或连字符，且不以符号开头")
+        raise ValueError("任务名须为字母、数字、下划线或连字符, 且不以符号开头")
     if name in (".", ".."):
         raise ValueError("非法任务名")
     return name
@@ -37,34 +39,36 @@ def validate_task_name(name: str) -> str:
 
 class TaskStore:
     """
-    读写任务清单。
+    读写任务清单. 
 
-    引用：server.py（app.state.task_store）；routes/tasks.py。
+    引用: server.py(app.state.task_store)；routes/tasks.py. 
     """
 
     def __init__(self, root: Path) -> None:
-        """绑定任务根目录。引用：``server.main``。"""
+        """绑定任务根目录. 引用: ``server.main``. """
         self.root = root.resolve()
         self.path = self.root / TASKS_FILE
 
     def _read(self) -> TaskListFile:
-        """读取并校验任务清单文件。引用：本类公开方法。"""
+        """读取并校验任务清单文件. 引用: 本类公开方法. """
         if not self.path.is_file():
             return TaskListFile()
         data = json.loads(self.path.read_text(encoding="utf-8"))
         return TaskListFile.model_validate(data)
 
     def _write(self, data: TaskListFile) -> None:
-        """原子写入任务清单。引用：``add`` / ``set_completed``。"""
+        """原子写入任务清单. 引用: ``add`` / ``set_completed``. """
         self.root.mkdir(parents=True, exist_ok=True)
         text = data.model_dump_json(indent=2) + "\n"
         self.path.write_text(text, encoding="utf-8")
 
     def list_entries(self) -> list[TaskInfo]:
-        """
-        返回清单条目列表，按 sort_order 升序排列。
+        """返回清单条目列表, 按 sort_order 升序排列. 
 
-        引用：GET /api/tasks、GET /api/datasets。
+        Returns:
+            list[TaskInfo]: 排序后的任务信息列表. 
+
+        引用: ``routes/tasks.py``、``routes/meta.py``. 
         """
         tasks = self._read().tasks
         out: list[TaskInfo] = []
@@ -79,21 +83,35 @@ class TaskStore:
         return out
 
     def contains(self, name: str) -> bool:
-        """引用：中间件、缩略图路由。"""
+        """检查任务是否在清单中. 
+
+        Returns:
+            bool: 存在则为 True. 
+
+        引用: 中间件、缩略图路由. 
+        """
         return name in self._read().tasks
 
     def active_names(self) -> list[str]:
-        """未完成任务名。引用：GET /api/datasets。"""
+        """未完成任务名列表. 
+
+        Returns:
+            list[str]: 未完成任务的名称列表. 
+
+        引用: ``routes/meta.py``. 
+        """
         return [e.name for e in self.list_entries() if not e.completed]
 
     def add(self, name: str) -> TaskInfo:
-        """
-        登记任务；必要时创建 main/ 与 mask/。
+        """登记新任务；必要时自动创建 main/ 与 mask/ 目录. 
+
+        Returns:
+            TaskInfo: 新创建的任务信息. 
 
         Raises:
-            ValueError: 名称非法或任务已存在。
+            ValueError: 名称非法或任务已存在. 
 
-        引用：POST /api/tasks。
+        引用: ``routes/tasks.py``. 
         """
         name = validate_task_name(name)
         data = self._read()
@@ -112,7 +130,16 @@ class TaskStore:
         return TaskInfo(name=name, completed=False, root=str(task_root), note="", sort_order=max_order + 1)
 
     def set_completed(self, name: str, completed: bool) -> TaskInfo:
-        """标记完成 / 重新打开。引用：complete / reopen。"""
+        """标记任务完成或重新打开. 
+
+        Returns:
+            TaskInfo: 更新后的任务信息. 
+
+        Raises:
+            KeyError: 任务名不在清单中. 
+
+        引用: ``routes/tasks.py``. 
+        """
         data = self._read()
         if name not in data.tasks:
             raise KeyError(name)
@@ -122,7 +149,16 @@ class TaskStore:
         return TaskInfo(name=name, completed=bool(completed), note=entry.note)
 
     def set_note(self, name: str, note: str) -> TaskInfo:
-        """修改任务备注。引用：POST /api/tasks/{name}/note。"""
+        """修改任务备注. 
+
+        Returns:
+            TaskInfo: 更新后的任务信息. 
+
+        Raises:
+            KeyError: 任务名不在清单中. 
+
+        引用: ``routes/tasks.py``. 
+        """
         data = self._read()
         if name not in data.tasks:
             raise KeyError(name)
@@ -132,14 +168,14 @@ class TaskStore:
         return TaskInfo(name=name, completed=entry.completed, note=entry.note)
 
     def reorder(self, ordered_names: list[str]) -> None:
-        """
-        按给定名称列表重排所有任务的 sort_order。
-        未出现在列表中的任务保持原有相对顺序并追加到末尾。
+        """按给定名称列表重排所有任务的 sort_order. 
+
+        未出现在列表中的任务保持原有相对顺序并追加到末尾. 
 
         Raises:
-            KeyError: 存在未知的任务名。
+            KeyError: 存在未知的任务名. 
 
-        引用：POST /api/tasks/reorder。
+        引用: ``routes/tasks.py``. 
         """
         data = self._read()
         existing = set(data.tasks.keys())

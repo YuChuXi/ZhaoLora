@@ -1,12 +1,12 @@
-"""工作子目录与相对路径解析（筛选 / 去重 / 图片读写等）。"""
+"""工作子目录与相对路径解析(筛选 / 去重 / 图片读写等). """
 
 from __future__ import annotations
 
 from pathlib import Path
 
 from services.models import WorkDirInfo
-from services.scanner import IMAGE_EXTS
-from services.wd14_batch import list_image_subdirs
+from services.core.scanner import IMAGE_EXTS
+from services.analysis.wd14 import list_image_subdirs
 
 # 不允许当作筛选目录的名字
 _BLOCKED = frozenset({
@@ -20,23 +20,23 @@ _BLOCKED = frozenset({
 
 
 def resolve_under(root: Path, rel: str) -> Path:
-    """将相对路径解析到 ``root`` 下的绝对路径。
+    """将相对路径解析到 ``root`` 下的绝对路径. 
 
-    两端均 ``resolve()`` 后再用 ``is_relative_to`` 判定。
-    ``is_relative_to`` 不消除 ``..``，必须先 ``resolve``（Python pathlib 文档）。
+    两端均 ``resolve()`` 后再用 ``is_relative_to`` 判定. 
+    ``is_relative_to`` 不消除 ``..``, 必须先 ``resolve``(Python pathlib 文档). 
 
     Args:
-        root: 允许访问的根目录。
-        rel: 相对路径字符串。
+        root: 允许访问的根目录. 
+        rel: 相对路径字符串. 
 
     Returns:
-        规范化绝对路径。
+        规范化绝对路径. 
 
     Raises:
-        ValueError: 空路径，或解析结果不在 ``root`` 之下。
+        ValueError: 空路径, 或解析结果不在 ``root`` 之下. 
 
     引用:
-        ``routes.deps.resolve_path``；``mask_manager``；``state_manager``。
+        ``routes.deps.resolve_path``；``services/state/mask.py``；``services/state/annotator.py``. 
     """
     root = root.resolve()
     raw = (rel or "").replace("\\", "/")
@@ -52,20 +52,20 @@ def resolve_under(root: Path, rel: str) -> Path:
 
 
 def resolve_subdir(root: Path, name: str | None) -> tuple[str, Path]:
-    """解析一级子目录名，默认 ``main``。
+    """解析一级子目录名, 默认 ``main``. 
 
     Args:
-        root: 数据集根目录。
-        name: 子目录名；空则 ``main``。
+        root: 数据集根目录. 
+        name: 子目录名；空则 ``main``. 
 
     Returns:
-        ``(name, abs_path)``。
+        ``(name, abs_path)``. 
 
     Raises:
-        ValueError: 名称非法或目录不存在。
+        ValueError: 名称非法或目录不存在. 
 
     引用:
-        ``resolve_subdirs``；``routes.booru`` / ``images`` / ``dedupe``。
+        ``resolve_subdirs``；``routes.booru`` / ``images`` / ``dedupe``. 
     """
     raw = (name or "main").strip().replace("\\", "/").strip("/")
     if not raw or raw == ".":
@@ -79,10 +79,13 @@ def resolve_subdir(root: Path, name: str | None) -> tuple[str, Path]:
 
 
 def resolve_subdirs(root: Path, names: list[str] | None) -> list[tuple[str, Path]]:
-    """解析多个子目录；空则默认 ``main``。
+    """解析多个子目录；空则默认 ``main``, 自动去重. 
+
+    Returns:
+        ``[(子目录名, 绝对路径), ...]``. 
 
     引用:
-        ``routes.annotations`` / ``images`` / ``dedupe``。
+        ``routes/annotations.py`` / ``images.py`` / ``dedupe.py``. 
     """
     raw = [n for n in (names or []) if (n or "").strip()]
     if not raw:
@@ -99,10 +102,13 @@ def resolve_subdirs(root: Path, names: list[str] | None) -> list[tuple[str, Path
 
 
 def parse_dir_names(dirs: str | None = None, dir: str | None = None) -> list[str]:
-    """从 ``dirs=a,b`` 或 ``dir=a`` 解析目录名列表。
+    """从 ``dirs=a,b`` 或 ``dir=a`` 解析目录名列表. 
+
+    Returns:
+        目录名字符串列表；均未提供时返回 ``["main"]``. 
 
     引用:
-        ``routes.annotations`` / ``images``。
+        ``routes/annotations.py`` / ``images.py``. 
     """
     if dirs and dirs.strip():
         return [x.strip() for x in dirs.split(",") if x.strip()]
@@ -112,17 +118,20 @@ def parse_dir_names(dirs: str | None = None, dir: str | None = None) -> list[str
 
 
 def _count_images(d: Path) -> int:
-    """统计目录内图像文件数。引用：``pin_main``。"""
+    """统计目录内图像文件数. 引用: ``pin_main``. """
     if not d.is_dir():
         return 0
     return sum(1 for p in d.iterdir() if p.is_file() and p.suffix.lower() in IMAGE_EXTS)
 
 
 def pin_main(root: Path, dirs: list[WorkDirInfo]) -> list[WorkDirInfo]:
-    """将 ``main`` 置顶；磁盘有 ``main/`` 但列表缺失时补上。
+    """将 ``main`` 置顶；磁盘有 ``main/`` 但列表缺失时自动补上. 
+
+    Returns:
+        ``main`` 在首位的目录列表. 
 
     引用:
-        ``list_work_dirs``。
+        ``list_work_dirs``. 
     """
     by_name = {d.name: d for d in dirs if d.name and d.name != "."}
     out: list[WorkDirInfo] = []
@@ -137,10 +146,13 @@ def pin_main(root: Path, dirs: list[WorkDirInfo]) -> list[WorkDirInfo]:
 
 
 def list_work_dirs(root: Path) -> list[WorkDirInfo]:
-    """可选工作目录列表（``main`` 置顶）。
+    """列出数据集根下含图片的一级子目录(``main`` 置顶, 排除系统目录). 
+
+    Returns:
+        ``WorkDirInfo`` 列表. 
 
     引用:
-        ``routes.images`` / ``ready`` / ``dedupe``。
+        ``routes/images.py`` / ``ready.py`` / ``dedupe.py``. 
     """
     dirs = [d for d in list_image_subdirs(root) if d.name != "."]
     return pin_main(root, dirs)

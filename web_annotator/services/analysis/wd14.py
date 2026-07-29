@@ -1,4 +1,4 @@
-"""WD14 批量打标。"""
+"""WD14 批量打标. """
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ import numpy as np
 from PIL import Image
 
 from services.models import JobSnapshot, WorkDirInfo
-from services.scanner import IMAGE_EXTS, collect_images
+from services.core.scanner import IMAGE_EXTS, collect_images
 
 if TYPE_CHECKING:
     from onnxruntime import InferenceSession
@@ -29,29 +29,56 @@ _WD14_LOCK = threading.Lock()
 
 
 class Tags:
+    """WD14 标签工具集, 提供拆分、拼接、等价键比较与置信度合并. 
+
+    Callers:
+        - ``process_one``: 调用 ``split_caption``、``merge_for_disk_by_confidence``
+    """
+
     @staticmethod
     def split_caption(caption: str) -> list[str]:
-        """按逗号拆 caption。引用：Tags.merge / process_one。"""
+        """按逗号拆分 caption. 
+
+        Callers:
+            - ``Tags.merge_for_disk_by_confidence``
+            - ``process_one``
+        """
         return [x.strip() for x in caption.replace("\n", ",").split(",") if x.strip()]
 
     @staticmethod
     def join_caption(tags: Iterable[str]) -> str:
-        """用逗号空格拼接 tags。引用：Tags.merge。"""
+        """用逗号空格拼接标签. 
+
+        Callers:
+            - ``Tags.merge_for_disk_by_confidence``
+        """
         return ", ".join([t.strip() for t in tags if t.strip()])
 
     @staticmethod
     def equivalence_key(tag: str) -> str:
-        """标签等价键（小写、空格化）。引用：merge_for_disk_by_confidence。"""
+        """标签等价键(小写、空格化). 
+
+        Callers:
+            - ``Tags.merge_for_disk_by_confidence``
+        """
         return " ".join(tag.strip().lower().replace("_", " ").split())
 
     @staticmethod
     def _canonical_spacing(tag: str) -> str:
-        """规范化空格，保留大小写。引用：merge_for_disk_by_confidence。"""
+        """规范化空格, 保留大小写. 
+
+        Callers:
+            - ``Tags.merge_for_disk_by_confidence``
+        """
         return " ".join(tag.strip().replace("_", " ").split())
 
     @staticmethod
     def merge_for_disk_by_confidence(base: list[str], wd_scored: list[tuple[str, float]]) -> str:
-        """按置信度合并原标签与 WD14。引用：process_one。"""
+        """按置信度合并原标签与 WD14 结果. 
+
+        Callers:
+            - ``process_one``
+        """
         score_by_key: dict[str, float] = {}
         canonical_by_key: dict[str, str] = {}
         for tag, score in wd_scored:
@@ -68,7 +95,7 @@ class Tags:
         return Tags.join_caption([canonical_by_key[k] for k in ordered])
 
 
-# 打标页不列出这些目录（mask 是 alpha，非待打标图）
+# 打标页不列出这些目录(mask 是 alpha, 非待打标图)
 _SKIP_TAG_DIRS = frozenset({
     "mask",
     "aesthetic_report",
@@ -80,10 +107,10 @@ _SKIP_TAG_DIRS = frozenset({
 
 
 def list_image_subdirs(root: Path) -> list[WorkDirInfo]:
-    """列出根下含图片的一级子目录。
+    """列出根下含图片的一级子目录. 
 
     引用:
-        ``work_dir.list_work_dirs``；``resolve_image_dirs``；打标 / 美学目录选择。
+        ``services/core/work_dir.py:list_work_dirs``；``resolve_image_dirs``；打标 / 美学目录选择. 
     """
     root = root.resolve()
     out: list[WorkDirInfo] = []
@@ -91,7 +118,7 @@ def list_image_subdirs(root: Path) -> list[WorkDirInfo]:
         return out
 
     def count_images(d: Path) -> int:
-        """统计目录内图像数。引用：``list_image_subdirs``。"""
+        """统计目录内图像数. 引用: ``list_image_subdirs``. """
         return sum(1 for p in d.iterdir() if p.is_file() and p.suffix.lower() in IMAGE_EXTS)
 
     n_root = count_images(root)
@@ -115,10 +142,11 @@ def list_image_subdirs(root: Path) -> list[WorkDirInfo]:
 
 
 def resolve_image_dirs(root: Path, names: list[str] | None) -> list[Path]:
-    """将子目录名解析为绝对路径；未知名跳过。
+    """将子目录名解析为绝对路径；未知名跳过. 
 
-    引用:
-        打标 / 美学启动任务。
+    Callers:
+        - ``routes/scoring.py``
+        - ``routes/tagging.py``
     """
     root = root.resolve()
     available = {
@@ -136,14 +164,18 @@ def resolve_image_dirs(root: Path, names: list[str] | None) -> list[Path]:
 
 
 def model_ready() -> tuple[bool, str]:
-    """检查本地 WD14 权重是否齐全。引用：routes.tagging。"""
+    """检查本地 WD14 权重是否齐全. 
+
+    Callers:
+        - ``routes/tagging.py``
+    """
     if WD14_ONNX_PATH.is_file() and WD14_CSV_PATH.is_file():
         return True, str(WD14_MODEL_DIR)
     return False, f"找不到本地 WD14 模型: {WD14_MODEL_DIR}"
 
 
 def _get_wd14() -> tuple[InferenceSession, list[str]]:
-    """加载或复用 WD14 ONNX 会话。引用：``run_wd14_on_image_scored``。"""
+    """加载或复用 WD14 ONNX 会话. 引用: ``run_wd14_on_image_scored``. """
     global _WD14_SESSION, _WD14_LABELS
     with _WD14_LOCK:
         if _WD14_SESSION is not None:
@@ -167,7 +199,7 @@ def _get_wd14() -> tuple[InferenceSession, list[str]]:
 
 
 def run_wd14_on_image_scored(img: Image.Image, threshold: float) -> list[tuple[str, float]]:
-    """对单张图跑 WD14，返回 (tag, score)。引用：process_one。"""
+    """对单张图跑 WD14, 返回 (tag, score). 引用: process_one. """
     session, labels = _get_wd14()
     if img.mode == "RGBA":
         rgb = Image.new("RGB", img.size, (255, 255, 255))
@@ -197,7 +229,11 @@ def run_wd14_on_image_scored(img: Image.Image, threshold: float) -> list[tuple[s
 
 
 def _load_text(path: Path) -> str:
-    """读取旁路 txt；不存在则空串。引用：process_one。"""
+    """读取旁路 txt；不存在则空串. 
+
+    Callers:
+        - ``process_one``
+    """
     if not path.is_file():
         return ""
     return path.read_text(encoding="utf-8")
@@ -218,7 +254,7 @@ class TaggingProgress:
     cancel_requested: bool = False
 
     def snapshot(self) -> JobSnapshot:
-        """导出进度快照。引用：``routes.tagging`` 长任务 emit。"""
+        """导出进度快照. 引用: ``routes.tagging`` 长任务 emit. """
         total = self.total
         done = self.done
         pct = round(100.0 * done / total, 1) if total > 0 else 0.0
@@ -240,7 +276,7 @@ class TaggingProgress:
         )
 
     def log(self, line: str) -> None:
-        """追加进度日志并截断。引用：run_batch。"""
+        """追加进度日志并截断. 引用: run_batch. """
         self.logs.append(line)
         if len(self.logs) > 400:
             self.logs = self.logs[-300:]
@@ -253,7 +289,14 @@ def process_one(
     disable_orig_tags: bool,
     force: bool,
 ) -> str:
-    """处理单张：只写同名 .txt。返回 skip|ok。"""
+    """处理单张图片: WD14 推理 → 合并原标签 → 写入同名 .txt. 
+
+    Returns:
+        ``"skip"`` 或 ``"ok"``. 
+
+    Callers:
+        - ``run_batch``
+    """
     out_txt_path = src.with_suffix(".txt")
     if not force and out_txt_path.exists():
         return "skip"
@@ -277,7 +320,7 @@ def run_batch(
     progress: TaggingProgress,
     on_update: Callable[[], None] | None = None,
 ) -> None:
-    """批量打标主循环。引用：routes.tagging。"""
+    """批量打标主循环. 引用: ``routes/tagging.py``. """
     items = collect_images(dirs)
     progress.total = len(items)
     progress.done = 0
@@ -286,7 +329,7 @@ def run_batch(
     progress.failed = 0
     progress.status = "running"
     progress.phase = "loading"
-    progress.message = f"共 {len(items)} 张，加载模型…"
+    progress.message = f"共 {len(items)} 张, 加载模型…"
     progress.log(
         f"开始: dirs={[d.name for d in dirs]}, threshold={threshold}, "
         f"disable_orig_tags={disable_orig_tags}, force={force}, total={len(items)}"

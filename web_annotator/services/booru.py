@@ -1,6 +1,6 @@
-"""Booru 批量下载长任务（工作线程内 asyncio 跑搜索与下载）。
+"""Booru 批量下载长任务(工作线程内 asyncio 跑搜索与下载). 
 
-引用: ``routes.booru``；进度经 ``JobManager`` SSE 推送。
+引用: ``routes/booru.py``；进度经 ``JobManager`` SSE 推送. 
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ EmitFn = Callable[[JobSnapshot], None]
 
 @dataclass
 class BooruBatchProgress:
-    """可变进度与运行参数。引用：``run_booru_batch``、参数热更新接口。"""
+    """可变进度与运行参数. 引用: ``run_booru_batch``、参数热更新接口. """
 
     cancel_requested: bool = False
     limit: int = 50
@@ -38,7 +38,7 @@ class BooruBatchProgress:
     dataset: str = ""
 
     def snapshot(self) -> JobSnapshot:
-        """组装 JobSnapshot。引用：``emit``。"""
+        """组装 JobSnapshot. 引用: ``emit``. """
         total = max(0, int(self.limit))
         done = max(0, int(self.done))
         pct = min(100.0, (done / total) * 100.0) if total > 0 else None
@@ -69,17 +69,32 @@ _ACTIVE: dict[str, BooruBatchProgress] = {}
 
 
 def register_progress(job_id: str, prog: BooruBatchProgress) -> None:
-    """登记进行中批量任务。引用：``routes.booru.booru_batch_start``。"""
+    """登记进行中的批量下载任务, 供热更新接口查询. 
+
+    Callers:
+        - ``routes/booru.py``
+    """
     _ACTIVE[job_id] = prog
 
 
 def unregister_progress(job_id: str) -> None:
-    """移除登记。引用：``run_booru_batch`` finally。"""
+    """移除已结束批量任务的登记. 
+
+    Callers:
+        - ``run_booru_batch`` (finally 块)
+    """
     _ACTIVE.pop(job_id, None)
 
 
 def get_progress(job_id: str) -> BooruBatchProgress | None:
-    """按 job_id 取进度对象。引用：参数热更新。"""
+    """按 job_id 获取进度对象. 
+
+    Returns:
+        BooruBatchProgress | None: 不存在时返回 None. 
+
+    Callers:
+        - 参数热更新接口. 
+    """
     return _ACTIVE.get(job_id)
 
 
@@ -104,9 +119,9 @@ def run_booru_batch(
     danbooru_api_key: str | None = None,
 ) -> None:
     """
-    同步入口：在工作线程内 ``asyncio.run`` 执行批量下载。
+    同步入口: 在工作线程内 ``asyncio.run`` 执行批量下载. 
 
-    引用：``routes.booru.booru_batch_start``。
+    引用: ``routes/booru.py``. 
     """
     register_progress(job_id, progress)
     try:
@@ -153,10 +168,14 @@ async def _run_async(
     danbooru_login: str | None = None,
     danbooru_api_key: str | None = None,
 ) -> None:
-    """异步批量：翻页搜索 + 并发下载。引用：``run_booru_batch``。"""
+    """异步批量下载核心: 翻页搜索 + 并发下载, 含令牌桶限速与 429 退避. 
+
+    Callers:
+        - ``run_booru_batch``
+    """
 
     def push(msg: str | None = None) -> None:
-        """推送快照。引用：各阶段。"""
+        """推送快照. 引用: 各阶段. """
         if msg is not None:
             progress.message = msg
         emit(progress.snapshot())
@@ -177,7 +196,7 @@ async def _run_async(
     rate_lock = asyncio.Lock()
 
     async def take_rate() -> None:
-        """令牌桶限速。引用：``download_one``。"""
+        """令牌桶限速. 引用: ``download_one``. """
         nonlocal rate_budget, rate_last
         rps = float(progress.rate_rps)
         if rps <= 0:
@@ -199,7 +218,7 @@ async def _run_async(
                 await asyncio.sleep(min(120.0, max(0.01, wait)))
 
     async def fill_buffer() -> None:
-        """向后翻一页并加入未下载候选。引用：``next_post``。"""
+        """向后翻一页并加入未下载候选. 引用: ``next_post``. """
         nonlocal page, empty_streak, has_more_pages
         if not has_more_pages:
             return
@@ -230,7 +249,7 @@ async def _run_async(
                 buffer.append(p)
 
     async def next_post() -> Any | None:
-        """取下一个未下载帖。引用：``worker``。"""
+        """取下一个未下载帖. 引用: ``worker``. """
         nonlocal buf_i, inflight
         async with gate:
             while True:
@@ -253,7 +272,7 @@ async def _run_async(
                 push("")
 
     async def download_one(post: Any) -> None:
-        """单帖下载（含 429 退避）。引用：``worker``。"""
+        """单帖下载(含 429 退避). 引用: ``worker``. """
         nonlocal inflight
         attempt = 0
         try:
@@ -301,7 +320,7 @@ async def _run_async(
             inflight -= 1
 
     async def worker(slot: int) -> None:
-        """并发槽位。引用：主循环。"""
+        """并发槽位. 引用: 主循环. """
         while not progress.cancel_requested:
             if slot >= progress.conn:
                 await asyncio.sleep(0.1)

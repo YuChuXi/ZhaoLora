@@ -1,6 +1,6 @@
-"""Danbooru / Gelbooru 搜索与下载。
+"""Danbooru / Gelbooru 搜索与下载. 
 
-引用: ``routes.booru``。
+引用: ``routes.booru``. 
 """
 
 from services.booru_client.common import (

@@ -1,6 +1,6 @@
-"""本地数据集 / 筛选页模型。
+"""本地数据集 / 筛选页模型. 
 
-引用: ``services.models`` 包导出；各 routes / services。
+引用: ``services.models`` 包导出；各 routes / services. 
 """
 
 from __future__ import annotations
@@ -9,10 +9,10 @@ from pydantic import BaseModel, Field
 
 
 class ScannedImage(BaseModel):
-    """扁平目录扫描得到的一张图片及其旁路文件。
+    """扁平目录扫描得到的一张图片及其旁路文件. 
 
     引用:
-        ``services.scanner.scan_images``。
+        ``services.scanner.scan_images``. 
     """
 
     path: str
@@ -23,10 +23,10 @@ class ScannedImage(BaseModel):
 
 
 class WorkDirInfo(BaseModel):
-    """可选工作子目录摘要（含图像数量）。
+    """可选工作子目录摘要(含图像数量). 
 
     引用:
-        ``work_dir.list_work_dirs``；``wd14_batch.list_image_subdirs``。
+        ``work_dir.list_work_dirs``；``wd14_batch.list_image_subdirs``. 
     """
 
     name: str
@@ -35,10 +35,10 @@ class WorkDirInfo(BaseModel):
 
 
 class TxtDirInfo(BaseModel):
-    """含旁路 ``.txt`` 的子目录摘要。
+    """含旁路 ``.txt`` 的子目录摘要. 
 
     引用:
-        ``tag_stats.list_txt_subdirs``。
+        ``tag_stats.list_txt_subdirs``. 
     """
 
     name: str
@@ -47,10 +47,10 @@ class TxtDirInfo(BaseModel):
 
 
 class AnnotatorState(BaseModel):
-    """标注选中与回收站状态。
+    """标注选中与回收站状态. 
 
     引用:
-        ``state_manager.StateManager``。
+        ``state_manager.StateManager``. 
     """
 
     selected: dict[str, int] = Field(default_factory=dict)
@@ -58,10 +58,10 @@ class AnnotatorState(BaseModel):
 
 
 class ImageListItem(BaseModel):
-    """筛选页图片列表项。
+    """筛选页图片列表项. 
 
     引用:
-        ``routes.images.list_images``。
+        ``routes.images.list_images``. 
     """
 
     path: str
@@ -80,10 +80,10 @@ class ImageListItem(BaseModel):
 
 
 class SimilarItem(BaseModel):
-    """色调相似结果项。
+    """色调相似结果项. 
 
     引用:
-        ``routes.images.similar_images``。
+        ``routes.images.similar_images``. 
     """
 
     path: str
@@ -97,10 +97,10 @@ class SimilarItem(BaseModel):
 
 
 class SimilarResponse(BaseModel):
-    """色调相似接口响应。
+    """色调相似接口响应. 
 
     引用:
-        ``routes.images.similar_images``。
+        ``routes.images.similar_images``. 
     """
 
     path: str
@@ -108,10 +108,10 @@ class SimilarResponse(BaseModel):
 
 
 class DirsResponse(BaseModel):
-    """工作目录列表响应。
+    """工作目录列表响应. 
 
     引用:
-        ``routes.images`` / ``dedupe`` / ``ready`` / ``aesthetic`` / ``tagging``。
+        ``routes.images`` / ``dedupe`` / ``ready`` / ``aesthetic`` / ``tagging``. 
     """
 
     root: str

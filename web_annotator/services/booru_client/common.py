@@ -1,4 +1,4 @@
-"""Booru 来源客户端基类与注册表。
+"""Booru 来源客户端基类与注册表. 
 
 Callers:
     - `sources`
@@ -15,7 +15,7 @@ from typing import Any
 
 from PIL import Image
 
-from services.scanner import IMAGE_EXTS
+from services.core.scanner import IMAGE_EXTS
 from services.booru_client.utils import (
     _GENDER_TAGS,
     sniff_image_kind,
@@ -30,7 +30,7 @@ _SOURCES: dict[str, SourceClient] = {}
 
 class SourceClient(ABC):
     """
-    来源客户端基类。子类实现 ``fetch_meta`` / ``search`` / ``download``。
+    来源客户端基类. 子类实现 ``fetch_meta`` / ``search`` / ``download``. 
     """
 
     name: str
@@ -40,7 +40,7 @@ class SourceClient(ABC):
 
     @abstractmethod
     async def fetch_meta(self, out_dir: Path, pid: str, proxy: str | None) -> None:
-        """拉取帖子元数据并写入磁盘。
+        """拉取帖子元数据并写入磁盘. 
 
         Callers:
             - `common.py:SourceClient.fetch_meta`
@@ -51,9 +51,9 @@ class SourceClient(ABC):
     @abstractmethod
     async def search(self, tags: str, page: int, limit: int, order: str, extra: str,
                      proxy: str | None, **auth) -> tuple[list[BooruPost], bool]:
-        """搜索帖子，返回 (posts, has_more)。
+        """搜索帖子, 返回 (posts, has_more). 
 
-        实现类应将 API 原始帖转为 ``BooruPost`` 后返回。
+        实现类应将 API 原始帖转为 ``BooruPost`` 后返回. 
 
         Callers:
             - `common.py:SourceClient.search`
@@ -66,7 +66,7 @@ class SourceClient(ABC):
     async def download(self, pid: str, out_dir: Path, proxy: str | None, *,
                        overwrite: bool = False, anima_format: bool = True,
                        include_meta_tags: bool = False, keep_underscores: bool = False) -> dict:
-        """下载帖子原图并写旁路标签与 meta。
+        """下载帖子原图并写旁路标签与 meta. 
 
         Callers:
             - `common.py:SourceClient.download`
@@ -76,7 +76,7 @@ class SourceClient(ABC):
         """
 
     def preview_url(self, post: BooruPost) -> str:
-        """从已规范化的帖模型提取缩略图 URL。
+        """从已规范化的帖模型提取缩略图 URL. 
 
         Callers:
             - `common.py:SourceClient.preview_url`
@@ -87,7 +87,7 @@ class SourceClient(ABC):
         return post.preview_url or post.file_url
 
     def sample_url(self, post: BooruPost) -> str:
-        """从已规范化的帖模型提取大图 URL。
+        """从已规范化的帖模型提取大图 URL. 
 
         Callers:
             - `common.py:SourceClient.sample_url`
@@ -98,7 +98,7 @@ class SourceClient(ABC):
         return post.sample_url or self.preview_url(post)
 
     def is_media_url(self, url: str) -> bool:
-        """判断 URL 是否为本来源图床。
+        """判断 URL 是否为本来源图床. 
 
         Callers:
             - `common.py:SourceClient.is_media_url`
@@ -110,7 +110,7 @@ class SourceClient(ABC):
 
     @property
     def meta_subdir(self) -> str:
-        """元数据子目录名，如 .gelbooru_meta。
+        """元数据子目录名, 如 .gelbooru_meta. 
 
         Callers:
             - `common.py:SourceClient.meta_subdir`
@@ -121,7 +121,7 @@ class SourceClient(ABC):
         return f".{self.name}_meta"
 
     def file_stem(self, pid: str) -> str:
-        """文件名 stem，如 g12345。
+        """文件名 stem, 如 g12345. 
 
         Callers:
             - `common.py:SourceClient.file_stem`
@@ -133,7 +133,7 @@ class SourceClient(ABC):
         return f"{self.prefix}{pid}"
 
     def build_search_query(self, tags: str, *, order: str = "", extra: str = "") -> str:
-        """拼接标签、额外元标签与排序。
+        """拼接标签、额外元标签与排序. 
 
         Callers:
             - `common.py:SourceClient.build_search_query`
@@ -152,7 +152,7 @@ class SourceClient(ABC):
         return " ".join(parts).strip()
 
     def filter_extra(self, extra: str) -> str:
-        """过滤额外元标签；子类可覆盖。
+        """过滤额外元标签；子类可覆盖. 
 
         Callers:
             - `common.py:SourceClient.filter_extra`
@@ -171,7 +171,7 @@ class SourceClient(ABC):
     def _save_png(self, data: bytes, dest: Path) -> None:
         kind = sniff_image_kind(data)
         if kind in ("html", "zip", "video", "webm"):
-            raise ValueError(f"不支持该文件类型（{kind}）")
+            raise ValueError(f"不支持该文件类型({kind})")
         if kind == "png":
             dest.parent.mkdir(parents=True, exist_ok=True)
             dest.write_bytes(data)
@@ -228,7 +228,7 @@ class SourceClient(ABC):
         return ", ".join(captions) + " ||| " + ", ".join(tail)
 
 
-# 元数据子目录映射，供外部（如 media.regenerate_captions）使用。
+# 元数据子目录映射, 供外部(如 media.regenerate_captions)使用. 
 
 META_SUBDIR: dict[str, str] = {
     "gelbooru": ".gelbooru_meta",
@@ -239,9 +239,9 @@ META_SUBDIR: dict[str, str] = {
 def build_caption_from_meta(post: BooruPost, *, anima_format: bool = False,
                             include_meta_tags: bool = False,
                             keep_underscores: bool = False) -> str:
-    """从元数据构建标签文本（独立函数版）。
+    """从元数据构建标签文本(独立函数版). 
 
-    与 ``SourceClient._build_caption`` 逻辑一致但无需实例。
+    与 ``SourceClient._build_caption`` 逻辑一致但无需实例. 
 
     Callers:
         - `media.py:regenerate_captions`
@@ -283,7 +283,7 @@ def build_caption_from_meta(post: BooruPost, *, anima_format: bool = False,
 
 
 def register_source(client: SourceClient) -> None:
-    """注册来源客户端。
+    """注册来源客户端. 
 
     Callers:
         - `sources.py` 模块初始化
@@ -291,10 +291,10 @@ def register_source(client: SourceClient) -> None:
     _SOURCES[client.name] = client
 
 def get_source(name: str) -> SourceClient:
-    """获取来源客户端。
+    """获取来源客户端. 
 
     Raises:
-        ValueError: 未知来源名。
+        ValueError: 未知来源名. 
 
     Callers:
         - `routes/booru.py` 所有端点
@@ -306,7 +306,7 @@ def get_source(name: str) -> SourceClient:
     return src
 
 def list_source_names() -> list[str]:
-    """列出已注册来源名。
+    """列出已注册来源名. 
 
     Callers:
         - `routes/booru.py:booru_sources`
@@ -314,10 +314,10 @@ def list_source_names() -> list[str]:
     return sorted(_SOURCES.keys())
 
 def detect_source(stem: str) -> tuple[str, str] | None:
-    """从文件名 stem 检测来源与 ID。
+    """从文件名 stem 检测来源与 ID. 
 
     Returns:
-        ``(source, post_id)`` 或 None。
+        ``(source, post_id)`` 或 None. 
 
     Callers:
         - `routes/booru.py:_run_refresh`
@@ -328,7 +328,7 @@ def detect_source(stem: str) -> tuple[str, str] | None:
     return None
 
 def file_stem(source: str, post_id: str) -> str:
-    """规范文件名，委托给 SourceClient。
+    """规范文件名, 委托给 SourceClient. 
 
     Callers:
         - `media.py:download_post`
@@ -337,7 +337,7 @@ def file_stem(source: str, post_id: str) -> str:
     return get_source(source).file_stem(post_id)
 
 def build_search_query(source: str, tags: str, *, order: str = "", extra: str = "") -> str:
-    """拼接搜索查询，委托给 SourceClient。
+    """拼接搜索查询, 委托给 SourceClient. 
 
     Callers:
         - `routes/booru.py:booru_search`
@@ -349,7 +349,7 @@ async def search_posts(
     extra: str = "", proxy: str | None = None,
     danbooru_login: str | None = None, danbooru_api_key: str | None = None,
 ) -> tuple[list[BooruPost], bool]:
-    """搜索帖子，委托给 SourceClient；返回值中每帖为 ``BooruPost`` 模型。
+    """搜索帖子, 委托给 SourceClient；返回值中每帖为 ``BooruPost`` 模型. 
 
     Callers:
         - `booru_batch.py:_run_async`

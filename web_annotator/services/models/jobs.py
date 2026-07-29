@@ -1,6 +1,6 @@
-"""长任务进度模型。
+"""长任务进度模型. 
 
-引用: ``services.models`` 包导出；各 routes / services。
+引用: ``services.models`` 包导出；各 routes / services. 
 """
 
 from __future__ import annotations
@@ -12,10 +12,10 @@ from services.models.tags import TagCleanResult
 
 
 class AestheticSummary(BaseModel):
-    """美学评分结束摘要。
+    """美学评分结束摘要. 
 
     引用:
-        ``AestheticProgress.summary``；``JobSnapshot.summary``。
+        ``AestheticProgress.summary``；``JobSnapshot.summary``. 
     """
 
     count: int = 0
@@ -30,10 +30,10 @@ class AestheticSummary(BaseModel):
 
 
 class JobSubmitResponse(BaseModel):
-    """提交长任务回执。
+    """提交长任务回执. 
 
     引用:
-        aesthetic / tagging / dedupe / tag_stats 启动接口。
+        aesthetic / tagging / dedupe / tag_stats 启动接口. 
     """
 
     ok: bool = True
@@ -43,10 +43,10 @@ class JobSubmitResponse(BaseModel):
 JobResult = DedupeScanResult | TagCleanResult
 
 class JobSnapshot(BaseModel):
-    """长任务进度快照（SSE / 取消回执）。
+    """长任务进度快照(SSE / 取消回执). 
 
     引用:
-        ``jobs.JobManager``；``aesthetic`` / ``wd14_batch`` snapshot；各长任务路由。
+        ``jobs.JobManager``；``aesthetic`` / ``wd14_batch`` snapshot；各长任务路由. 
     """
 
     status: str
@@ -72,10 +72,10 @@ class JobSnapshot(BaseModel):
 
 
 class JobCancelResponse(BaseModel):
-    """取消长任务回执。
+    """取消长任务回执. 
 
     引用:
-        ``routes.meta.job_cancel``。
+        ``routes.meta.job_cancel``. 
     """
 
     ok: bool = True

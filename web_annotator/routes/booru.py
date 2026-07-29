@@ -1,4 +1,4 @@
-"""Booru 挂载 API：搜索 / 预览代理 / 下载到工作目录。"""
+"""Booru 挂载 API: 搜索 / 预览代理 / 下载到工作目录. """
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 import httpx
 from curl_cffi.requests.exceptions import RequestException
 
-from services.booru_batch import BooruBatchProgress, get_progress, register_progress, run_booru_batch
+from services.booru import BooruBatchProgress, get_progress, register_progress, run_booru_batch
 from services.booru_client import (
     build_search_query,
     download_post,
@@ -23,7 +23,7 @@ from services.booru_client import (
     remove_download,
 )
 from routes.deps import get_runtime, jobs
-from services.jobs import EmitFn
+from services.core.jobs import EmitFn
 from services.models import (
     BooruBatchActiveResponse,
     BooruBatchParamsBody,
@@ -36,7 +36,7 @@ from services.models import (
     JobSnapshot,
     JobSubmitResponse,
 )
-from services.work_dir import resolve_subdir
+from services.core.work_dir import resolve_subdir
 
 router = APIRouter(prefix="/booru", tags=["booru"])
 
@@ -44,24 +44,24 @@ _NETWORK_ERRORS = (RuntimeError, OSError, httpx.HTTPError, RequestException)
 
 
 def _proxy(request: Request) -> str | None:
-    """读取进程级 Booru 代理配置。引用：本模块各网络接口。"""
+    """读取进程级 Booru 代理配置. 引用: 本模块各网络接口. """
     return getattr(request.app.state, "booru_proxy", None)
 
 
 class SearchBody(BaseModel):
-    """Booru 搜索请求体。引用：``POST /booru/search``。"""
+    """Booru 搜索请求体. 引用: ``POST /booru/search``. """
 
     source: str = Field(..., description="gelbooru | danbooru")
     tags: str = ""
     page: int = Field(1, ge=1, le=10000)
     limit: int = Field(40, ge=1, le=100)
     order: str = Field("", description="空 | score | id | id_asc")
-    extra: str = Field("", description="额外元标签，如 rating:g width:>=1920")
+    extra: str = Field("", description="额外元标签, 如 rating:g width:>=1920")
     dir: str = Field("main", description="用于标记已下载的工作子目录")
 
 
 class DownloadBody(BaseModel):
-    """Booru 下载 / 取消下载请求体。引用：``POST /booru/download|undownload``。"""
+    """Booru 下载 / 取消下载请求体. 引用: ``POST /booru/download|undownload``. """
 
     source: str
     id: str = Field(..., min_length=1)
@@ -71,7 +71,7 @@ class DownloadBody(BaseModel):
 
 @router.get("/sources")
 def booru_sources(request: Request) -> BooruSourcesResponse:
-    """列出可用图站与代理。引用：``booru_filter.js``。"""
+    """列出可用图站与代理. 引用: ``booru_filter.js``. """
     return BooruSourcesResponse(
         sources=list_source_names(),
         proxy=_proxy(request) or "",
@@ -80,7 +80,7 @@ def booru_sources(request: Request) -> BooruSourcesResponse:
 
 @router.post("/search")
 async def booru_search(request: Request, body: SearchBody) -> BooruSearchResult:
-    """搜索图站并标记本地下载状态。引用：``booru_filter.js``。"""
+    """搜索图站并标记本地下载状态. 引用: ``booru_filter.js``. """
     source = body.source.strip().lower()
     src = get_source(source)
     order = (body.order or "").strip().lower()
@@ -132,7 +132,7 @@ async def booru_thumb(
     id: str = Query(..., min_length=1),
     url: str = Query(..., min_length=8, description="搜索结果 preview_url"),
 ) -> Response:
-    """代理 Gelbooru 缩略图。引用：``booru_filter.js``。"""
+    """代理 Gelbooru 缩略图. 引用: ``booru_filter.js``. """
     try:
         data, ctype = await fetch_gelbooru_bytes(
             "thumb", id, url=url, proxy=_proxy(request)
@@ -154,7 +154,7 @@ async def booru_sample(
     id: str = Query(..., min_length=1),
     url: str = Query(..., min_length=8, description="搜索结果 sample_url"),
 ) -> Response:
-    """代理 Gelbooru 大图。引用：``booru_filter.js``。"""
+    """代理 Gelbooru 大图. 引用: ``booru_filter.js``. """
     try:
         data, ctype = await fetch_gelbooru_bytes(
             "sample", id, url=url, proxy=_proxy(request)
@@ -172,7 +172,7 @@ async def booru_sample(
 
 @router.post("/download")
 async def booru_download(request: Request, body: DownloadBody) -> BooruDownloadResult:
-    """下载帖子到工作目录。引用：``booru_filter.js``。"""
+    """下载帖子到工作目录. 引用: ``booru_filter.js``. """
     source = body.source.strip().lower()
     if source not in SOURCES:
         raise HTTPException(400, f"不支持的源: {body.source}")
@@ -212,7 +212,7 @@ async def booru_download(request: Request, body: DownloadBody) -> BooruDownloadR
 
 @router.post("/undownload")
 def booru_undownload(request: Request, body: DownloadBody) -> BooruUndownloadResult:
-    """删除工作目录中该帖已下载文件。引用：``booru_filter.js``。"""
+    """删除工作目录中该帖已下载文件. 引用: ``booru_filter.js``. """
     source = body.source.strip().lower()
     if source not in SOURCES:
         raise HTTPException(400, f"不支持的源: {body.source}")
@@ -241,7 +241,7 @@ def booru_undownload(request: Request, body: DownloadBody) -> BooruUndownloadRes
 
 @router.get("/batch/active")
 def booru_batch_active(request: Request) -> BooruBatchActiveResponse:
-    """查询本数据集未结束的批量下载任务。引用：``booru_filter.js`` 刷新重连。"""
+    """查询本数据集未结束的批量下载任务. 引用: ``booru_filter.js`` 刷新重连. """
     rt = get_runtime(request)
     job = jobs(request).find_active(dataset=rt.name, kind="booru_batch")
     if job is None:
@@ -254,10 +254,10 @@ async def booru_batch_start(
     request: Request, body: BooruBatchStartBody
 ) -> JobSubmitResponse:
     """
-    提交批量下载长任务。
+    提交批量下载长任务. 
 
-    进度见 GET /api/jobs/{id}/events；刷新后用 GET /booru/batch/active 重连。
-    引用：``booru_filter.js``。
+    进度见 GET /api/jobs/{id}/events；刷新后用 GET /booru/batch/active 重连. 
+    引用: ``booru_filter.js``. 
     """
     source = body.source.strip().lower()
     src = get_source(source)
@@ -296,7 +296,7 @@ async def booru_batch_start(
     job_box: dict[str, str] = {"id": ""}
 
     def run(emit: EmitFn) -> None:
-        """工作线程入口。引用：``JobManager.submit``。"""
+        """工作线程入口. 引用: ``JobManager.submit``. """
         run_booru_batch(
             job_id=job_box["id"],
             source=source,
@@ -331,7 +331,7 @@ async def booru_batch_start(
 
 @router.post("/batch/params")
 def booru_batch_params(request: Request, body: BooruBatchParamsBody) -> JobSubmitResponse:
-    """运行中更新数量 / 连接 / 限速。引用：``booru_filter.js``。"""
+    """运行中更新数量 / 连接 / 限速. 引用: ``booru_filter.js``. """
     rt = get_runtime(request)
     job = jobs(request).find_active(dataset=rt.name, kind="booru_batch")
     if job is None:
@@ -349,7 +349,7 @@ def booru_batch_params(request: Request, body: BooruBatchParamsBody) -> JobSubmi
 
 
 class RegenerateCaptionsBody(BaseModel):
-    """批量重生成 caption 请求。引用：``POST /booru/regenerate-captions``。"""
+    """批量重生成 caption 请求. 引用: ``POST /booru/regenerate-captions``. """
 
     dir: str = Field("main", description="工作子目录")
     anima_format: bool = Field(True, description="Anima 格式")
@@ -359,9 +359,9 @@ class RegenerateCaptionsBody(BaseModel):
 
 @router.post("/regenerate-captions")
 async def booru_regenerate_captions(request: Request, body: RegenerateCaptionsBody) -> dict:
-    """从 .danbooru_meta / .gelbooru_meta 批量重生成旁路 .txt。
+    """从 .danbooru_meta / .gelbooru_meta 批量重生成旁路 .txt. 
 
-    引用：``booru_filter.js`` 批量重生成按钮。
+    引用: ``booru_filter.js`` 批量重生成按钮. 
     """
     rt = get_runtime(request)
     try:
@@ -379,7 +379,7 @@ async def booru_regenerate_captions(request: Request, body: RegenerateCaptionsBo
 
 
 class RefreshMetadataBody(BaseModel):
-    """刷新元数据请求。引用：``POST /booru/refresh-metadata``。"""
+    """刷新元数据请求. 引用: ``POST /booru/refresh-metadata``. """
 
     dir: str = Field("main", description="工作子目录")
 
@@ -387,9 +387,9 @@ class RefreshMetadataBody(BaseModel):
 @router.post("/refresh-metadata")
 async def booru_refresh_metadata(request: Request, body: RefreshMetadataBody) -> JobSubmitResponse:
     """
-    扫描现有图片，根据文件名 ID 重新拉取 booru 元数据（长任务）。
+    扫描现有图片, 根据文件名 ID 重新拉取 booru 元数据(长任务). 
 
-    引用：``booru_filter.js``。
+    引用: ``booru_filter.js``. 
     """
     rt = get_runtime(request)
     try:
@@ -408,7 +408,7 @@ async def booru_refresh_metadata(request: Request, body: RefreshMetadataBody) ->
             loop.close()
 
     async def _run_refresh(scan_dir: Path, proxy: str | None, emit: EmitFn) -> dict:
-        from services.scanner import IMAGE_EXTS as _EXTS
+        from services.core.scanner import IMAGE_EXTS as _EXTS
         from services.booru_client.common import detect_source, get_source
 
         scan_dir = scan_dir.resolve()

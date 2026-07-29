@@ -1,4 +1,4 @@
-"""图像近似去重：指纹 MSE 分组，组内建议保留更清晰样本。"""
+"""图像近似去重: 指纹 MSE 分组, 组内建议保留更清晰样本. """
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ import cv2
 import numpy as np
 from PIL import Image, ImageFile
 
-from services.scanner import IMAGE_EXTS
+from services.core.scanner import IMAGE_EXTS
 
 Image.MAX_IMAGE_PIXELS = None
 ImageFile.LOAD_TRUNCATED_IMAGES = True
@@ -31,25 +31,25 @@ class ImageRecord:
 
 class UnionFind:
     def __init__(self, n: int) -> None:
-        """并查集初始化。引用：find_duplicate_groups。"""
+        """并查集初始化. 引用: find_duplicate_groups. """
         self.p = list(range(n))
 
     def find(self, x: int) -> int:
-        """查找并压缩路径。引用：union / find_duplicate_groups。"""
+        """查找并压缩路径. 引用: union / find_duplicate_groups. """
         while self.p[x] != x:
             self.p[x] = self.p[self.p[x]]
             x = self.p[x]
         return x
 
     def union(self, a: int, b: int) -> None:
-        """合并两个集合。引用：find_duplicate_groups。"""
+        """合并两个集合. 引用: find_duplicate_groups. """
         ra, rb = self.find(a), self.find(b)
         if ra != rb:
             self.p[rb] = ra
 
 
 def _blockiness(gray: np.ndarray) -> float:
-    """估计 JPEG 块效应强度。引用：_load_one。"""
+    """估计 JPEG 块效应强度. 引用: _load_one. """
     if gray is None or gray.ndim != 2 or gray.shape[0] < 16 or gray.shape[1] < 16:
         return 0.0
     g = gray.astype(np.float32)
@@ -69,7 +69,7 @@ def _blockiness(gray: np.ndarray) -> float:
 
 
 def _load_one(path: Path) -> ImageRecord | None:
-    """读图并生成 128×128 指纹。引用：load_records。"""
+    """读图并生成 128×128 指纹. 引用: load_records. """
     gray = cv2.imread(str(path), cv2.IMREAD_GRAYSCALE)
     blockiness = _blockiness(gray)
     try:
@@ -85,7 +85,7 @@ def _load_one(path: Path) -> ImageRecord | None:
 
 
 def collect_paths(data_dir: Path) -> list[Path]:
-    """列出目录内图像路径。引用：load_records。"""
+    """列出目录内图像路径. 引用: load_records. """
     data_dir = data_dir.resolve()
     out = []
     for p in sorted(data_dir.iterdir()):
@@ -95,7 +95,7 @@ def collect_paths(data_dir: Path) -> list[Path]:
 
 
 def load_records(data_dir: Path, workers: int | None = None) -> list[ImageRecord]:
-    """并行加载去重指纹。引用：routes.dedupe。"""
+    """并行加载去重指纹. 引用: ``routes/dedupe.py``. """
     paths = collect_paths(data_dir)
     if not paths:
         return []
@@ -112,7 +112,7 @@ def load_records(data_dir: Path, workers: int | None = None) -> list[ImageRecord
 
 
 def _compare_edges(fp_flat: np.ndarray, sq: np.ndarray, thresh: float, j_chunk: int = 2048) -> list[tuple[int, int]]:
-    """指纹 MSE 低于阈值的边。引用：find_duplicate_groups。"""
+    """指纹 MSE 低于阈值的边. 引用: find_duplicate_groups. """
     n, d = fp_flat.shape
     edges: list[tuple[int, int]] = []
     inv_d = np.float32(1.0 / float(d))
@@ -130,7 +130,7 @@ def _compare_edges(fp_flat: np.ndarray, sq: np.ndarray, thresh: float, j_chunk: 
 
 
 def suggest_keep_index(records: list[ImageRecord], idxs: list[int], similar_res_ratio: float) -> int:
-    """组内建议保留索引。引用：find_duplicate_groups。"""
+    """组内建议保留索引. 引用: find_duplicate_groups. """
     areas = [records[k].width * records[k].height for k in idxs]
     amax = max(areas)
     amin = min(areas)
@@ -160,10 +160,10 @@ def find_duplicate_groups(
     similar_res_ratio: float = 1.05,
     j_chunk: int = 2048,
 ) -> list[DedupeGroup]:
-    """返回仅含重复的组；每组含 members / keep / suggested_remove。
+    """返回仅含重复的组；每组含 members / keep / suggested_remove. 
 
     引用:
-        ``routes.dedupe``。
+        ``routes/dedupe.py``. 
     """
     n = len(records)
     if n < 2:

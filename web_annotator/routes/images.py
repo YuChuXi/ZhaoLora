@@ -1,5 +1,5 @@
 """
-图片 API —— 列表 / 原图 / 色调相似。缩略图通过 /thumb/ 静态目录直接提供。
+图片 API —— 列表 / 原图 / 色调相似. 缩略图通过 /thumb/ 静态目录直接提供. 
 """
 
 from __future__ import annotations
@@ -11,30 +11,30 @@ from fastapi.responses import FileResponse
 from PIL import Image
 
 from routes.deps import get_runtime, resolve_path
-from services.scanner import scan_images
-from services.color_similarity import ColorIndex, fingerprint_file
+from services.core.scanner import scan_images
+from services.analysis.similarity import ColorIndex, fingerprint_file
 from services.models import (
     DirsResponse,
     ImageListItem,
     SimilarItem,
     SimilarResponse,
 )
-from services.work_dir import list_work_dirs, parse_dir_names, resolve_subdir, resolve_subdirs
-from services.scoring import load_score_json
-from services.thumbnailer import Thumbnailer
-from services.state_manager import StateManager
+from services.core.work_dir import list_work_dirs, parse_dir_names, resolve_subdir, resolve_subdirs
+from services.analysis.scoring import load_score_json
+from services.core.thumbnailer import Thumbnailer
+from services.state.annotator import StateManager
 
 router = APIRouter(tags=["images"])
 
 
 def _services(request: Request) -> tuple[Path, Thumbnailer, StateManager]:
-    """引用：本模块列表与相似接口。"""
+    """引用: 本模块列表与相似接口. """
     rt = get_runtime(request)
     return rt.root, rt.thumbnailer, rt.state_manager
 
 
 def _color_index(request: Request) -> ColorIndex:
-    """引用：``similar_images``。"""
+    """引用: ``similar_images``. """
     rt = get_runtime(request)
     if rt.color_index is None:
         rt.color_index = ColorIndex()
@@ -42,10 +42,10 @@ def _color_index(request: Request) -> ColorIndex:
 
 
 def _resolve_image(root: Path, trash_dir: Path, rel: str) -> Path:
-    """在数据集根或回收站中解析图片路径。
+    """在数据集根或回收站中解析图片路径. 
 
     引用:
-        ``get_image`` / ``similar_images``。
+        ``get_image`` / ``similar_images``. 
     """
     main = resolve_path(root, rel)
     if main.is_file():
@@ -58,7 +58,7 @@ def _resolve_image(root: Path, trash_dir: Path, rel: str) -> Path:
 
 @router.get("/dirs")
 def list_dirs(request: Request) -> DirsResponse:
-    """列出工作子目录。引用：筛选页 DirPicker。"""
+    """列出工作子目录. 引用: 筛选页 DirPicker. """
     root = get_runtime(request).root
     return DirsResponse(root=str(root), dirs=list_work_dirs(root), default="main")
 
@@ -70,7 +70,7 @@ def list_images(
     dirs: str = Query(""),
     dir: str = Query("main"),
 ) -> list[ImageListItem]:
-    """列出指定子目录图片（dirs=main,head 或 dir=main）。路径相对数据集根。"""
+    """列出指定子目录图片(dirs=main,head 或 dir=main). 路径相对数据集根. """
     root, thumbnailer, state_mgr = _services(request)
     names = parse_dir_names(dirs, dir)
     try:
@@ -165,7 +165,7 @@ def list_images(
 
 @router.get("/image")
 def get_image(request: Request, path: str = Query(...)) -> FileResponse:
-    """返回原图文件（预览用）。"""
+    """返回原图文件(预览用). """
     root, _, state_mgr = _services(request)
     file_path = _resolve_image(root, state_mgr.trash_dir, path)
     return FileResponse(file_path)
@@ -177,7 +177,7 @@ def similar_images(
     path: str = Query(...),
     limit: int = Query(8, ge=1, le=24),
 ) -> SimilarResponse:
-    """按色调相似度返回若干张图（不含自身，候选为同目录未删图）。"""
+    """按色调相似度返回若干张图(不含自身, 候选为同目录未删图). """
     root, thumbnailer, state_mgr = _services(request)
     rel = path.replace("\\", "/").lstrip("/")
     query_file = _resolve_image(root, state_mgr.trash_dir, rel)
@@ -240,19 +240,19 @@ _size_cache: dict[str, tuple[float, int, int]] = {}
 
 
 def _image_size(path: Path) -> tuple[int, int]:
-    """读取图片宽高（仅打开文件头），按路径与 ``mtime`` 缓存。
+    """读取图片宽高(仅打开文件头), 按路径与 ``mtime`` 缓存. 
 
     Args:
-        path: 图片绝对路径。
+        path: 图片绝对路径. 
 
     Returns:
-        ``(width, height)``。
+        ``(width, height)``. 
 
     Raises:
-        OSError: 无法 ``stat`` 或打开文件。
+        OSError: 无法 ``stat`` 或打开文件. 
 
     引用:
-        ``list_images`` / ``similar_images``。
+        ``list_images`` / ``similar_images``. 
     """
     key = str(path)
     mtime = path.stat().st_mtime

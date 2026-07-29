@@ -1,6 +1,6 @@
-"""裁剪页模型。
+"""裁剪页模型. 
 
-引用: ``services.models`` 包导出；各 routes / services。
+引用: ``services.models`` 包导出；各 routes / services. 
 """
 
 from __future__ import annotations
@@ -9,10 +9,10 @@ from pydantic import BaseModel, Field
 
 
 class CropMatchConfig(BaseModel):
-    """裁剪边长网格配置。
+    """裁剪边长网格配置. 
 
     引用:
-        ``crop_match.match_config``；``routes.crop``。
+        ``crop_match.match_config``；``routes.crop``. 
     """
 
     side_min: int
@@ -23,10 +23,10 @@ class CropMatchConfig(BaseModel):
 
 
 class CropImageItem(BaseModel):
-    """裁剪页图片列表项。
+    """裁剪页图片列表项. 
 
     引用:
-        ``routes.crop.list_crop_images``。
+        ``routes.crop.list_crop_images``. 
     """
 
     path: str
@@ -35,10 +35,10 @@ class CropImageItem(BaseModel):
 
 
 class CropPageConfig(BaseModel):
-    """裁剪页配置。
+    """裁剪页配置. 
 
     引用:
-        ``routes.crop.get_config``。
+        ``routes.crop.get_config``. 
     """
 
     root: str
@@ -48,10 +48,10 @@ class CropPageConfig(BaseModel):
 
 
 class CropSavedItem(BaseModel):
-    """单次裁剪保存项。
+    """单次裁剪保存项. 
 
     引用:
-        ``routes.crop.save_crops``。
+        ``routes.crop.save_crops``. 
     """
 
     file: str
@@ -61,10 +61,10 @@ class CropSavedItem(BaseModel):
 
 
 class CropSaveResponse(BaseModel):
-    """裁剪保存响应。
+    """裁剪保存响应. 
 
     引用:
-        ``routes.crop.save_crops``。
+        ``routes.crop.save_crops``. 
     """
 
     saved: list[CropSavedItem]

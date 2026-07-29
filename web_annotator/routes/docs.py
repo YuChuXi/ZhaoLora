@@ -1,4 +1,4 @@
-"""文档：渲染 web_annotator/docs/*.md。"""
+"""文档: 渲染 web_annotator/docs/*.md. """
 
 from __future__ import annotations
 
@@ -46,15 +46,15 @@ _MD_LINK = re.compile(r"\]\(([\w\-]+)\.md(#[^)]*)?\)")
 
 
 def docs_nav() -> list[DocNavItem]:
-    """引用：GET /api/docs；home.js。"""
+    """引用: GET /api/docs；home.js. """
     return [DocNavItem(slug=s, label=lab) for s, lab in _NAV]
 
 
 def resolve_doc(slug: str) -> Path:
-    """按白名单解析文档文件路径。
+    """按白名单解析文档文件路径. 
 
     引用:
-        ``get_doc``。
+        ``get_doc``. 
     """
     key = (slug or "").strip().lower().lstrip("/")
     name = _DOC_MAP.get(key)
@@ -68,7 +68,7 @@ def resolve_doc(slug: str) -> Path:
 
 
 def render_markdown(text: str) -> str:
-    """MD → HTML；模块间 .md 链接改为 ?doc=。引用：get_doc。"""
+    """MD → HTML；模块间 .md 链接改为 ?doc=. 引用: get_doc. """
     text = _MD_LINK.sub(r"](?doc=\1\2)", text)
     return markdown.markdown(
         text,
@@ -79,13 +79,13 @@ def render_markdown(text: str) -> str:
 
 @router.get("/api/docs")
 def list_docs() -> DocsListResponse:
-    """引用：home.js。"""
+    """引用: home.js. """
     return DocsListResponse(nav=docs_nav())
 
 
 @router.get("/api/docs/{slug}")
 def get_doc(slug: str = "readme") -> DocContentResponse:
-    """引用：home.js。"""
+    """引用: home.js. """
     path = resolve_doc(slug)
     out_slug = "readme" if slug in ("readme", "index", "") else slug
     raw = path.read_text(encoding="utf-8")

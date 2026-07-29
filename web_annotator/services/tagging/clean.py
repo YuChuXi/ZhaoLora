@@ -1,4 +1,4 @@
-"""标签清洗：与仓库根目录 clean_dataset_tags.py 同一套规则。"""
+"""标签清洗: 与仓库根目录 clean_dataset_tags.py 同一套规则. """
 
 from __future__ import annotations
 
@@ -7,34 +7,58 @@ import random
 from pathlib import Path
 
 from services.models import TagCleanResult, TagCleanSample
-from services.scanner import IMAGE_EXTS
+from services.core.scanner import IMAGE_EXTS
 
-# 与 tag_key 一致：score_9 → "score 9"
+# 与 tag_key 一致: score_9 → "score 9"
 SCORE_TAG_KEYS = frozenset(f"score {i}" for i in range(10))
 
 
 def split_tags_line(s: str) -> list[str]:
-    """按逗号 / ||| / 换行拆分 caption。"""
+    """按逗号 / ||| / 换行拆分 caption. 
+
+    Callers:
+        - ``clean_caption``
+        - ``batch_edit_tags``
+    """
     return [x.strip() for x in s.replace("\n", ",").replace("|||", ",").split(",") if x.strip()]
 
 
 def join_tags_line(tags: list[str]) -> str:
-    """用逗号空格拼接 tag 列表。"""
+    """用逗号空格拼接 tag 列表. 
+
+    Callers:
+        - ``clean_caption``
+        - ``batch_edit_tags``
+    """
     return ", ".join(tags)
 
 
 def raw_to_pony(raw: float) -> int:
-    """原始美学分 [0,1] → score_0 … score_9（与 aesthetic_score_dataset_pony 一致）。"""
+    """原始美学分 [0,1] → score_0 … score_9. 
+
+    Callers:
+        - ``format_pony_score_tag``
+    """
     return int(max(0.0, min(0.99, float(raw))) * 10)
 
 
 def format_pony_score_tag(raw: float) -> str:
-    """生成 pony 美学 tag（保留下划线），如 score_9。"""
+    """生成 pony 美学标签(保留下划线), 如 score_9. 
+
+    Callers:
+        - ``clean_txt_dirs``
+        - ``batch_edit_tags``
+    """
     return f"score_{raw_to_pony(raw)}"
 
 
 def rel_image_for_txt(txt: Path, root: Path) -> str | None:
-    """同 stem 旁路图相对数据集根的路径（用于查美学分）。"""
+    """同 stem 旁路图片相对数据集根的路径(用于查美学分/质量分). 
+
+    Callers:
+        - ``clean_txt_dirs``
+        - ``batch_edit_tags``
+    """
     root_r = root.resolve()
     parent = txt.parent
     stem = txt.stem
@@ -49,17 +73,35 @@ DROP_EXACT = frozenset({"highres", "original", "absurdres"})
 
 
 def normalize_tag_underscores(tag: str) -> str:
-    """Danbooru 风格下划线词转为空格。"""
+    """Danbooru 风格下划线词转为空格. 
+
+    Callers:
+        - ``tag_key``
+        - ``clean_caption``
+        - ``batch_edit_tags``
+    """
     return " ".join(tag.replace("_", " ").split())
 
 
 def tag_key(tag: str) -> str:
-    """忽略大小写与下划线差异的比较键。"""
+    """忽略大小写与下划线差异的比较键. 
+
+    Callers:
+        - ``should_drop_tag``
+        - ``apply_promote_tags``
+        - ``clean_caption``
+        - ``batch_edit_tags``
+    """
     return normalize_tag_underscores(tag).strip().lower()
 
 
 def expand_cli_list(items: list[str]) -> list[str]:
-    """合并多次传入与逗号分隔的列表项。"""
+    """合并多次传入与逗号分隔的列表项. 
+
+    Callers:
+        - ``clean_txt_dirs``
+        - ``batch_edit_tags``
+    """
     out: list[str] = []
     for it in items:
         for part in it.split(","):
@@ -75,7 +117,11 @@ def should_drop_tag(
     user_drop_exact: frozenset[str],
     user_drop_contains: tuple[str, ...],
 ) -> bool:
-    """是否删除该 tag（整词表 + commentary/request + 子串）。"""
+    """是否删除该标签(整词表 + commentary/request + 子串). 
+
+    Callers:
+        - ``clean_caption``
+    """
     low = tag.strip().lower()
     if not low:
         return True
@@ -93,7 +139,11 @@ def should_drop_tag(
 
 
 def promote_keys_ordered(promote_tags: tuple[str, ...]) -> list[str]:
-    """promote 列表 → 去重且保序的 tag_key 序列。"""
+    """promote 列表 → 去重且保序的 tag_key 序列. 
+
+    Callers:
+        - ``clean_caption``
+    """
     seen: set[str] = set()
     out: list[str] = []
     for t in promote_tags:
@@ -107,10 +157,13 @@ def promote_keys_ordered(promote_tags: tuple[str, ...]) -> list[str]:
 
 
 def apply_promote_tags(kept: list[str], promote_order_keys: list[str]) -> tuple[list[str], int]:
-    """
-    将 promote_order_keys 中在 kept 里出现过的 tag 移到最前。
+    """将 promote 列表中的标签移到最前(先精确后子串匹配). 
 
-    先精确匹配，未命中则子串匹配。返回 (新列表, 被提升数量)。
+    Returns:
+        ``(新列表, 被提升数量)``. 
+
+    Callers:
+        - ``clean_caption``
     """
     if not promote_order_keys:
         return kept, 0
@@ -159,11 +212,11 @@ def clean_caption(
     use_promote_separator: bool = False,
 ) -> str:
     """
-    清洗单条 caption。
+    清洗单条 caption. 
 
-    顺序：HTML 实体还原与下划线规范化 → 删除 → 提升重排 → 美学/质量标签 → 头部前置。
-    pony_score_tag（如 score_9）和 quality_tag（如 masterpiece）写入头部前置之前，
-    两者随机排序，并移除既有 score_0…score_9 和质量标签。
+    顺序: HTML 实体还原与下划线规范化 → 删除 → 提升重排 → 美学/质量标签 → 头部前置. 
+    pony_score_tag(如 score_9)和 quality_tag(如 masterpiece)写入头部前置之前, 
+    两者随机排序, 并移除既有 score_0…score_9 和质量标签. 
     """
     s = html.unescape(raw.strip())
     tags = [normalize_tag_underscores(t) for t in split_tags_line(s)]
@@ -226,27 +279,27 @@ def clean_txt_dirs(
     sample_limit: int = 40,
 ) -> TagCleanResult:
     """
-    对若干目录内的 *.txt 执行清洗。
+    对若干目录内的 *.txt 执行清洗. 
 
     Args:
-        dirs: 绝对路径目录列表（不递归）。
-        drop: 整词删除列表。
-        drop_contains: 子串删除列表（另有内置 commentary/request）。
-        promote / prepend: 提升与前置列表。
-        promote_separator: 是否用 ||| 分隔提升块。
-        inject_pony_score: 是否根据 .aesthetic_scores.json 写入 score_0…score_9。
-        inject_quality_tag: 是否根据 .quality_scores.json 写入质量标签。
-        dataset_root: 数据集根目录（用于解析旁路图像相对路径）。
-        aesthetic_scores: 相对路径 → 原始美学分 [0,1]。
-        quality_scores: 相对路径 → 质量分 [0,1]。
-        dry_run: True 仅预览，不写文件。
-        sample_limit: 返回的前后对比样本上限。
+        dirs: 绝对路径目录列表(不递归). 
+        drop: 整词删除列表. 
+        drop_contains: 子串删除列表(另有内置 commentary/request). 
+        promote / prepend: 提升与前置列表. 
+        promote_separator: 是否用 ||| 分隔提升块. 
+        inject_pony_score: 是否根据 .aesthetic_scores.json 写入 score_0…score_9. 
+        inject_quality_tag: 是否根据 .quality_scores.json 写入质量标签. 
+        dataset_root: 数据集根目录(用于解析旁路图像相对路径). 
+        aesthetic_scores: 相对路径 → 原始美学分 [0,1]. 
+        quality_scores: 相对路径 → 质量分 [0,1]. 
+        dry_run: True 仅预览, 不写文件. 
+        sample_limit: 返回的前后对比样本上限. 
 
     Returns:
-        统计与可选样本对比。
+        统计与可选样本对比. 
 
     引用:
-        ``routes.tag_stats.tag_clean``。
+        ``routes/tag_stats.py``. 
     """
     user_drop_exact = frozenset(tag_key(t) for t in expand_cli_list(drop or []))
     user_drop_contains = tuple(
@@ -298,7 +351,7 @@ def clean_txt_dirs(
                 continue
             rel = rel_image_for_txt(path, root)
             if rel is not None and rel in q_scores:
-                from services.scoring import quality_to_tag
+                from services.analysis.scoring import quality_to_tag
                 quality_tag_val = quality_to_tag(q_scores[rel])
                 quality_injected += 1
             else:
@@ -368,28 +421,28 @@ def batch_edit_tags(
     sample_limit: int = 40,
 ) -> TagCleanResult:
     """
-    批量删除/添加标签。
+    批量删除/添加标签. 
 
     Args:
-        dirs: 绝对路径目录列表（不递归）。
-        delete_tags: 要删除的标签列表（tag_key 精确匹配）。
-        add_tags: 要添加的标签列表。
-        position: ``"before"`` 放置在 ``|||`` 之前，``"after"`` 之后。
-        insert_mode: ``"top"`` 置顶 / ``"bottom"`` 置底 / ``"random"`` 随机插入。
-        conditional: 仅当文件中已有同名 tag 时才插入。
-        keep_duplicates: 不删除已有重复标签。
-        inject_pony_score: 根据美学分注入 score_0…score_9。
-        inject_quality_tag: 根据质量分注入质量标签。
-        dataset_root: 数据集根目录（解析旁路图像路径）。
-        aesthetic_scores: 相对路径 → 原始美学分 [0,1]。
-        quality_scores: 相对路径 → 质量分 [0,1]。
-        dry_run: True 仅预览。
-        sample_limit: 返回样本上限。
+        dirs: 绝对路径目录列表(不递归). 
+        delete_tags: 要删除的标签列表(tag_key 精确匹配). 
+        add_tags: 要添加的标签列表. 
+        position: ``"before"`` 放置在 ``|||`` 之前, ``"after"`` 之后. 
+        insert_mode: ``"top"`` 置顶 / ``"bottom"`` 置底 / ``"random"`` 随机插入. 
+        conditional: 仅当文件中已有同名 tag 时才插入. 
+        keep_duplicates: 不删除已有重复标签. 
+        inject_pony_score: 根据美学分注入 score_0…score_9. 
+        inject_quality_tag: 根据质量分注入质量标签. 
+        dataset_root: 数据集根目录(解析旁路图像路径). 
+        aesthetic_scores: 相对路径 → 原始美学分 [0,1]. 
+        quality_scores: 相对路径 → 质量分 [0,1]. 
+        dry_run: True 仅预览. 
+        sample_limit: 返回样本上限. 
 
     Returns:
-        统计与可选样本对比。
+        统计与可选样本对比. 
 
-    引用：``routes.tag_stats.tag_batch_edit``。
+    引用: ``routes/tag_stats.py``. 
     """
     import random as _random
 
@@ -427,7 +480,7 @@ def batch_edit_tags(
 
         raw_stripped = raw.strip()
 
-        # Pony 美学档位：注入到最前，并移除既有 score_0…score_9
+        # Pony 美学档位: 注入到最前, 并移除既有 score_0…score_9
         score_tag: str | None = None
         if inject_pony_score and root is not None:
             rel = rel_image_for_txt(path, root)
@@ -441,7 +494,7 @@ def batch_edit_tags(
         if inject_quality_tag and root is not None:
             rel = rel_image_for_txt(path, root)
             if rel is not None and rel in q_scores:
-                from services.scoring import quality_to_tag
+                from services.analysis.scoring import quality_to_tag
                 quality_tag_val = quality_to_tag(q_scores[rel])
                 quality_injected += 1
             else:
@@ -507,7 +560,7 @@ def batch_edit_tags(
                 else:  # bottom
                     body = body + to_add
 
-        # 重组：美学/质量标签随机排序后永远在最前
+        # 重组: 美学/质量标签随机排序后永远在最前
         score_quality: list[str] = []
         if score_tag:
             score_quality.append(score_tag)

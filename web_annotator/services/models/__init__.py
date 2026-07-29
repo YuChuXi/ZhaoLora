@@ -1,6 +1,6 @@
-"""Pydantic 模型包（按领域拆分，对外仍从 ``services.models`` 导入）。
+"""Pydantic 模型包(按领域拆分, 对外仍从 ``services.models`` 导入). 
 
-引用: 各 routes / services。
+引用: 各 routes / services. 
 """
 
 from services.models.dataset import (

@@ -1,4 +1,4 @@
-"""任务清单 API。"""
+"""任务清单 API. """
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from routes.deps import registry
-from services.dataset_runtime import DatasetRuntime
+from services.dataset.runtime import DatasetRuntime
 from services.models import (
     TaskCard,
     TaskCandidatesResponse,
@@ -18,8 +18,8 @@ from services.models import (
     TaskOkResponse,
     SetNoteBody,
 )
-from services.scanner import scan_images
-from services.task_store import TaskStore, validate_task_name
+from services.core.scanner import scan_images
+from services.state.tasks import TaskStore, validate_task_name
 
 router = APIRouter(prefix="/api/tasks", tags=["tasks"])
 SortField = Literal["sort_order", "name", "image_count", "created"]
@@ -27,21 +27,21 @@ SortOrder = Literal["asc", "desc"]
 
 
 class AddTaskBody(BaseModel):
-    """添加任务请求体。引用：``POST /api/tasks``。"""
+    """添加任务请求体. 引用: ``POST /api/tasks``. """
 
     name: str = Field(..., min_length=1, max_length=64)
 
 
 def _store(request: Request) -> TaskStore:
-    """引用：本模块各接口。"""
+    """引用: 本模块各接口. """
     return request.app.state.task_store
 
 
 def _preview_hashes(rt: DatasetRuntime, limit: int = 4) -> list[str]:
     """
-    从 main 随机取最多 limit 张已有或可生成的缩略图 hash。
+    从 main 随机取最多 limit 张已有或可生成的缩略图 hash. 
 
-    引用：GET /api/tasks。
+    引用: GET /api/tasks. 
     """
     main = rt.main_dir
     if not main.is_dir():
@@ -65,9 +65,9 @@ def list_tasks(
     sort_order: SortOrder = Query("asc", description="排序方向"),
 ) -> TaskListResponse:
     """
-    列出清单内全部任务及概况。
+    列出清单内全部任务及概况. 
 
-    引用：home.js。
+    引用: home.js. 
     """
     store = _store(request)
     reg = registry(request)
@@ -113,9 +113,9 @@ def list_tasks(
 @router.get("/candidates")
 def list_candidates(request: Request) -> TaskCandidatesResponse:
     """
-    任务根下尚未登记、名称合法的一级子目录，供添加任务补全。
+    任务根下尚未登记、名称合法的一级子目录, 供添加任务补全. 
 
-    引用：home.js。
+    引用: home.js. 
     """
     store = _store(request)
     registered = {e.name for e in store.list_entries()}
@@ -138,9 +138,9 @@ def list_candidates(request: Request) -> TaskCandidatesResponse:
 @router.post("")
 def add_task(request: Request, body: AddTaskBody) -> TaskOkResponse:
     """
-    登记任务；必要时创建目录。
+    登记任务；必要时创建目录. 
 
-    引用：home.js。
+    引用: home.js. 
     """
     store = _store(request)
     try:
@@ -159,7 +159,7 @@ def add_task(request: Request, body: AddTaskBody) -> TaskOkResponse:
 
 @router.post("/{name}/complete")
 def complete_task(request: Request, name: str) -> TaskOkResponse:
-    """引用：home.js。"""
+    """引用: home.js. """
     store = _store(request)
     try:
         info = store.set_completed(name, True)
@@ -170,7 +170,7 @@ def complete_task(request: Request, name: str) -> TaskOkResponse:
 
 @router.post("/{name}/reopen")
 def reopen_task(request: Request, name: str) -> TaskOkResponse:
-    """引用：home.js。"""
+    """引用: home.js. """
     store = _store(request)
     try:
         info = store.set_completed(name, False)
@@ -181,7 +181,7 @@ def reopen_task(request: Request, name: str) -> TaskOkResponse:
 
 @router.post("/{name}/note")
 def set_note(request: Request, name: str, body: SetNoteBody) -> TaskOkResponse:
-    """修改任务备注。引用：home.js 双击卡片标题。"""
+    """修改任务备注. 引用: home.js 双击卡片标题. """
     store = _store(request)
     try:
         info = store.set_note(name, body.note)
@@ -191,7 +191,7 @@ def set_note(request: Request, name: str, body: SetNoteBody) -> TaskOkResponse:
 
 
 class ReorderBody(BaseModel):
-    """重排请求体。引用：``POST /api/tasks/reorder``。"""
+    """重排请求体. 引用: ``POST /api/tasks/reorder``. """
 
     order: list[str] = Field(..., min_length=1)
 
@@ -199,9 +199,9 @@ class ReorderBody(BaseModel):
 @router.post("/reorder")
 def reorder_tasks(request: Request, body: ReorderBody) -> dict:
     """
-    按指定名称顺序重设所有任务的 sort_order。
+    按指定名称顺序重设所有任务的 sort_order. 
 
-    引用：home.js 拖拽回调。
+    引用: home.js 拖拽回调. 
     """
     store = _store(request)
     try:

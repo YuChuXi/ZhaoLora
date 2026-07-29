@@ -1,17 +1,17 @@
-"""生成训练用 datasets TOML 片段，并统计 main 蒙版状态。"""
+"""生成训练用 datasets TOML 片段, 并统计 main 蒙版状态. """
 
 from __future__ import annotations
 
 from pathlib import Path
 
-from services.mask_manager import has_mask
+from services.state.mask import has_mask
 from services.models import MaskStats, ReadySubset, ReadyTomlResult
-from services.scanner import IMAGE_EXTS, scan_images
-from services.work_dir import list_work_dirs
+from services.core.scanner import IMAGE_EXTS, scan_images
+from services.core.work_dir import list_work_dirs
 
 
 def _has_images(d: Path) -> bool:
-    """目录内是否至少有一张图。引用：``build_ready_toml``。"""
+    """目录内是否至少有一张图. 引用: ``build_ready_toml``. """
     if not d.is_dir():
         return False
     return any(p.is_file() and p.suffix.lower() in IMAGE_EXTS for p in d.iterdir())
@@ -19,10 +19,10 @@ def _has_images(d: Path) -> bool:
 
 def main_mask_stats(root: Path) -> MaskStats:
     """
-    统计 main 相对蒙版状态：每张图仅「无」或「完整」。
+    统计 main 相对蒙版状态: 每张图仅「无」或「完整」. 
 
-    整体 status：全部有蒙版 →「完整」；否则 →「无」。
-    引用：ready_dirs、build_ready_toml；ready.js 侧栏。
+    整体 status: 全部有蒙版 →「完整」；否则 →「无」. 
+    引用: ``ready_dirs``、``build_ready_toml``；``routes/ready.py`` 侧栏. 
     """
     root = root.resolve()
     main_dir = root / "main"
@@ -52,10 +52,10 @@ def build_ready_toml(
     num_repeats: int = 1,
 ) -> ReadyTomlResult:
     """
-    生成 TOML 文本与 subset 元数据。
+    生成 TOML 文本与 subset 元数据. 
 
-    仅当 main 蒙版状态为「完整」时，main subset 附带 conditioning_data_dir。
-    引用：POST /ready/toml。
+    仅当 main 蒙版状态为「完整」时, main subset 附带 conditioning_data_dir. 
+    引用: ``routes/ready.py``. 
     """
     root = root.resolve()
     available = {d.name: d for d in list_work_dirs(root)}

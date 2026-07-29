@@ -1,6 +1,6 @@
-"""去重模型。
+"""去重模型. 
 
-引用: ``services.models`` 包导出；各 routes / services。
+引用: ``services.models`` 包导出；各 routes / services. 
 """
 
 from __future__ import annotations
@@ -9,10 +9,10 @@ from pydantic import BaseModel, Field
 
 
 class DedupeMember(BaseModel):
-    """去重组内成员。
+    """去重组内成员. 
 
     引用:
-        ``dedupe.find_duplicate_groups``；``routes.dedupe``。
+        ``dedupe.find_duplicate_groups``；``routes.dedupe``. 
     """
 
     path: str
@@ -26,10 +26,10 @@ class DedupeMember(BaseModel):
 
 
 class DedupeGroup(BaseModel):
-    """一组重复图像。
+    """一组重复图像. 
 
     引用:
-        ``dedupe.find_duplicate_groups``；``routes.dedupe``。
+        ``dedupe.find_duplicate_groups``；``routes.dedupe``. 
     """
 
     keep: str
@@ -39,10 +39,10 @@ class DedupeGroup(BaseModel):
 
 
 class DedupeScanResult(BaseModel):
-    """去重扫描任务结果。
+    """去重扫描任务结果. 
 
     引用:
-        ``routes.dedupe.scan_duplicates``。
+        ``routes.dedupe.scan_duplicates``. 
     """
 
     dirs: list[str]
@@ -56,10 +56,10 @@ class DedupeScanResult(BaseModel):
 
 
 class DedupeMoveResponse(BaseModel):
-    """去重移入回收站回执。
+    """去重移入回收站回执. 
 
     引用:
-        ``routes.dedupe``。
+        ``routes.dedupe``. 
     """
 
     moved: int

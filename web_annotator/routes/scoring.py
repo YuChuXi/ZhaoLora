@@ -1,4 +1,4 @@
-"""统一评分 API（美学 + 质量），数据集作用域。"""
+"""统一评分 API(美学 + 质量), 数据集作用域. """
 
 from __future__ import annotations
 
@@ -7,8 +7,8 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from routes.deps import get_runtime, jobs
-from services.jobs import EmitFn
-from services.scoring import (
+from services.core.jobs import EmitFn
+from services.analysis.scoring import (
     ScoreProgress,
     build_score_results,
     run_scoring,
@@ -18,7 +18,7 @@ from services.models.pages import (
     ScoringStartResponse,
     ScoringActiveResponse,
 )
-from services.wd14_batch import list_image_subdirs, resolve_image_dirs
+from services.analysis.wd14 import list_image_subdirs, resolve_image_dirs
 
 router = APIRouter(prefix="/scoring", tags=["scoring"])
 
@@ -28,7 +28,7 @@ router = APIRouter(prefix="/scoring", tags=["scoring"])
 # ---------------------------------------------------------------------------
 
 class StartBody(BaseModel):
-    """评分启动请求。
+    """评分启动请求. 
 
     Callers:
         - ``POST /scoring/start``
@@ -46,14 +46,14 @@ class StartBody(BaseModel):
 
 @router.get("/dirs")
 def scoring_dirs(request: Request) -> ScoringDirsResponse:
-    """列出可评分目录与两类分数文件的就绪状态。
+    """列出可评分目录与两类分数文件的就绪状态. 
 
     Callers:
-        - ``scoring.js``: 页面初始化时加载。
+        - ``scoring.js``: 页面初始化时加载. 
     """
     rt = get_runtime(request)
     root = rt.root
-    from services.scoring import load_score_json, AESTHETIC_SCORES, QUALITY_SCORES
+    from services.analysis.scoring import load_score_json, AESTHETIC_SCORES, QUALITY_SCORES
 
     aes_scores = load_score_json(root, AESTHETIC_SCORES)
     qual_scores = load_score_json(root, QUALITY_SCORES)
@@ -75,13 +75,13 @@ def scoring_results(
     request: Request,
     kind: str = Query(..., description="评分类型: 'aesthetic' | 'quality'"),
 ):
-    """返回评分结果 JSON（含缩略图 URL），前端直接渲染画廊。
+    """返回评分结果 JSON(含缩略图 URL), 前端直接渲染画廊. 
 
     Args:
-        kind: 评分类型。
+        kind: 评分类型. 
 
     Callers:
-        - ``scoring.js``: 获取评分数据渲染画廊。
+        - ``scoring.js``: 获取评分数据渲染画廊. 
     """
     if kind not in ("aesthetic", "quality"):
         raise HTTPException(400, "kind 必须是 'aesthetic' 或 'quality'")
@@ -107,10 +107,10 @@ def scoring_results(
 
 @router.get("/active")
 def scoring_active(request: Request) -> ScoringActiveResponse:
-    """查询本数据集是否有未结束的评分任务。
+    """查询本数据集是否有未结束的评分任务. 
 
     Callers:
-        - ``scoring.js``: 页面刷新时重连。
+        - ``scoring.js``: 页面刷新时重连. 
     """
     rt = get_runtime(request)
     for kind in ("aesthetic", "quality"):
@@ -127,12 +127,12 @@ def scoring_active(request: Request) -> ScoringActiveResponse:
 
 @router.post("/start")
 async def scoring_start(request: Request, body: StartBody) -> ScoringStartResponse:
-    """提交评分长任务（美学或质量）。
+    """提交评分长任务(美学或质量). 
 
-    返回 job_id；进度通过 GET /api/jobs/{id}/events (SSE) 获取。
+    返回 job_id；进度通过 GET /api/jobs/{id}/events (SSE) 获取. 
 
     Callers:
-        - ``scoring.js``: 用户点击"开始"按钮。
+        - ``scoring.js``: 用户点击"开始"按钮. 
     """
     kind = body.kind
     if kind not in ("aesthetic", "quality"):
@@ -153,7 +153,7 @@ async def scoring_start(request: Request, body: StartBody) -> ScoringStartRespon
     prog = ScoreProgress()
 
     def run(emit: EmitFn) -> None:
-        """工作线程入口。
+        """工作线程入口. 
 
         Callers:
             - ``JobManager.submit``

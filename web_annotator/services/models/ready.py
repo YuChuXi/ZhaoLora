@@ -1,6 +1,6 @@
-"""就绪 TOML / 蒙版统计模型。
+"""就绪 TOML / 蒙版统计模型. 
 
-引用: ``services.models`` 包导出；各 routes / services。
+引用: ``services.models`` 包导出；各 routes / services. 
 """
 
 from __future__ import annotations
@@ -13,10 +13,10 @@ from services.models.dataset import WorkDirInfo
 
 
 class MaskStats(BaseModel):
-    """main 蒙版统计。
+    """main 蒙版统计. 
 
     引用:
-        ``ready_toml.main_mask_stats``。
+        ``services/ready.py:main_mask_stats``. 
     """
 
     mask_status: Literal["完整", "无"]
@@ -26,10 +26,10 @@ class MaskStats(BaseModel):
 
 
 class ReadyDirsResponse(BaseModel):
-    """就绪页目录列表。
+    """就绪页目录列表. 
 
     引用:
-        ``routes.ready.ready_dirs``。
+        ``routes.ready.ready_dirs``. 
     """
 
     root: str
@@ -41,10 +41,10 @@ class ReadyDirsResponse(BaseModel):
 
 
 class ReadySubset(BaseModel):
-    """就绪 TOML 中的一个 subset。
+    """就绪 TOML 中的一个 subset. 
 
     引用:
-        ``ready_toml.build_ready_toml``。
+        ``services/ready.py:build_ready_toml``. 
     """
 
     name: str
@@ -55,10 +55,10 @@ class ReadySubset(BaseModel):
 
 
 class ReadyTomlResult(BaseModel):
-    """就绪页生成结果。
+    """就绪页生成结果. 
 
     引用:
-        ``ready_toml.build_ready_toml``；``routes.ready``。
+        ``services/ready.py:build_ready_toml``；``routes/ready.py``. 
     """
 
     root: str

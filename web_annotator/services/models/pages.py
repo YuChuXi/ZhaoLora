@@ -1,6 +1,6 @@
-"""评分 / 打标页目录与启动回执。
+"""评分 / 打标页目录与启动回执. 
 
-引用: ``services.models`` 包导出；各 routes / services。
+引用: ``services.models`` 包导出；各 routes / services. 
 """
 
 from __future__ import annotations
@@ -12,10 +12,10 @@ from services.models.jobs import JobSnapshot
 
 
 class AestheticDirsResponse(BaseModel):
-    """美学页目录与报告状态。
+    """美学页目录与报告状态. 
 
     引用:
-        ``routes.aesthetic.aesthetic_dirs``。
+        ``routes.aesthetic.aesthetic_dirs``. 
     """
 
     root: str
@@ -27,10 +27,10 @@ class AestheticDirsResponse(BaseModel):
 
 
 class AestheticStartResponse(BaseModel):
-    """美学任务提交回执。
+    """美学任务提交回执. 
 
     引用:
-        ``routes.aesthetic.aesthetic_start``。
+        ``routes.aesthetic.aesthetic_start``. 
     """
 
     ok: bool = True
@@ -40,10 +40,10 @@ class AestheticStartResponse(BaseModel):
 
 
 class AestheticActiveResponse(BaseModel):
-    """美学任务重连回执。
+    """美学任务重连回执. 
 
     引用:
-        ``routes.aesthetic.aesthetic_active``。
+        ``routes.aesthetic.aesthetic_active``. 
     """
 
     ok: bool = True
@@ -52,10 +52,10 @@ class AestheticActiveResponse(BaseModel):
 
 
 class ScoringDirsResponse(BaseModel):
-    """统一评分页目录与两类分数文件状态。
+    """统一评分页目录与两类分数文件状态. 
 
     引用:
-        ``routes.scoring.scoring_dirs``。
+        ``routes.scoring.scoring_dirs``. 
     """
 
     root: str
@@ -69,10 +69,10 @@ class ScoringDirsResponse(BaseModel):
 
 
 class ScoringStartResponse(BaseModel):
-    """统一评分任务提交回执。
+    """统一评分任务提交回执. 
 
     引用:
-        ``routes.scoring.scoring_start``。
+        ``routes.scoring.scoring_start``. 
     """
 
     ok: bool = True
@@ -83,10 +83,10 @@ class ScoringStartResponse(BaseModel):
 
 
 class ScoringActiveResponse(BaseModel):
-    """统一评分任务重连回执。
+    """统一评分任务重连回执. 
 
     引用:
-        ``routes.scoring.scoring_active``。
+        ``routes.scoring.scoring_active``. 
     """
 
     ok: bool = True
@@ -96,10 +96,10 @@ class ScoringActiveResponse(BaseModel):
 
 
 class TaggingDirsResponse(BaseModel):
-    """打标页目录与模型状态。
+    """打标页目录与模型状态. 
 
     引用:
-        ``routes.tagging.tagging_dirs``。
+        ``routes.tagging.tagging_dirs``. 
     """
 
     root: str
@@ -110,10 +110,10 @@ class TaggingDirsResponse(BaseModel):
 
 
 class TaggingStartResponse(BaseModel):
-    """打标任务提交回执。
+    """打标任务提交回执. 
 
     引用:
-        ``routes.tagging.tagging_start``。
+        ``routes.tagging.tagging_start``. 
     """
 
     ok: bool = True

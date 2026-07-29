@@ -1,4 +1,4 @@
-"""蒙版绘制 API。"""
+"""蒙版绘制 API. """
 
 from __future__ import annotations
 
@@ -12,31 +12,31 @@ from pydantic import BaseModel, Field
 from PIL import Image
 
 from routes.deps import get_runtime, resolve_path
-from services.scanner import scan_images
-from services.mask_manager import has_mask, load_mask, save_mask
+from services.core.scanner import scan_images
+from services.state.mask import has_mask, load_mask, save_mask
 from services.models import DefaultAlphaResponse, PaintImageItem, PaintSaveResponse
 
 router = APIRouter(prefix="/paint", tags=["paint"])
 
 
 class PaintConfigBody(BaseModel):
-    """蒙版页内存配置。引用：``POST /paint/config``。"""
+    """蒙版页内存配置. 引用: ``POST /paint/config``. """
 
     default_alpha: int = Field(255, ge=0, le=255)
 
 
 def _services(request: Request) -> tuple[Path, Path]:
-    """返回 ``(main_dir, mask_dir)``。引用：本模块各接口。"""
+    """返回 ``(main_dir, mask_dir)``. 引用: 本模块各接口. """
     rt = get_runtime(request)
     return rt.main_dir, rt.mask_dir
 
 
 @router.get("/images")
 def list_paint_images(request: Request) -> list[PaintImageItem]:
-    """列出 main 下图片及 mask 是否存在。
+    """列出 main 下图片及 mask 是否存在. 
 
     引用:
-        ``paint.js``。
+        ``paint.js``. 
     """
     data_dir, mask_dir = _services(request)
     images = scan_images(data_dir)
@@ -55,13 +55,13 @@ def list_paint_images(request: Request) -> list[PaintImageItem]:
 
 @router.get("/image")
 def serve_original_image(request: Request, path: str = Query(...)) -> Response:
-    """提供原图 AVIF 预览。
+    """提供原图 AVIF 预览. 
 
     Args:
-        path: 相对 ``main`` 的路径。
+        path: 相对 ``main`` 的路径. 
 
     引用:
-        ``paint.js``。
+        ``paint.js``. 
     """
     data_dir, _ = _services(request)
     src = resolve_path(data_dir, path)
@@ -76,10 +76,10 @@ def serve_original_image(request: Request, path: str = Query(...)) -> Response:
 
 @router.get("/mask")
 def get_existing_mask(request: Request, path: str = Query(...)) -> Response:
-    """返回已保存的灰度 mask PNG；不存在则 404。
+    """返回已保存的灰度 mask PNG；不存在则 404. 
 
     引用:
-        ``paint.js``。
+        ``paint.js``. 
     """
     data_dir, mask_dir = _services(request)
     src = resolve_path(data_dir, path)
@@ -101,14 +101,14 @@ async def upload_mask(
     path: str = Query(...),
     format: str = Query("alpha_bw"),
 ) -> PaintSaveResponse:
-    """接收灰度 PNG 并写入 mask 目录。
+    """接收灰度 PNG 并写入 mask 目录. 
 
     Args:
-        path: 相对 ``main`` 的原图路径。
-        format: ``alpha_bw`` 或 ``rgba``。
+        path: 相对 ``main`` 的原图路径. 
+        format: ``alpha_bw`` 或 ``rgba``. 
 
     引用:
-        ``paint.js``。
+        ``paint.js``. 
     """
     data_dir, mask_dir = _services(request)
     src = resolve_path(data_dir, path)
@@ -125,13 +125,13 @@ async def upload_mask(
 
 @router.get("/config")
 def get_config(request: Request) -> DefaultAlphaResponse:
-    """读取蒙版页配置。引用：``paint.js``。"""
+    """读取蒙版页配置. 引用: ``paint.js``. """
     da = getattr(request.app.state, "paint_default_alpha", 255)
     return DefaultAlphaResponse(default_alpha=da)
 
 
 @router.post("/config")
 def set_config(request: Request, body: PaintConfigBody) -> DefaultAlphaResponse:
-    """写入蒙版页配置。引用：``paint.js``。"""
+    """写入蒙版页配置. 引用: ``paint.js``. """
     request.app.state.paint_default_alpha = body.default_alpha
     return DefaultAlphaResponse(default_alpha=body.default_alpha)

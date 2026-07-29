@@ -1,4 +1,4 @@
-"""BiRefNet 背景移除蒙版生成，由 JobManager 管理进度。"""
+"""BiRefNet 背景移除蒙版生成, 由 JobManager 管理进度. """
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from PIL import Image
 from torchvision import transforms
 
 from services.models import JobSnapshot
-from services.scanner import IMAGE_EXTS
+from services.core.scanner import IMAGE_EXTS
 
 MODEL_REPO = "ZhengPeng7/BiRefNet"
 IMAGE_SIZE = (1024, 1024)
@@ -25,10 +25,10 @@ _MODEL_CACHE: tuple | None = None
 
 
 def _load_model(device: str = "cuda") -> tuple:
-    """加载 BiRefNet 模型与预处理变换，按设备缓存。
+    """加载 BiRefNet 模型与预处理变换, 按设备缓存. 
 
     Callers:
-        - `birefnet_mask.py:run_birefnet_mask`
+        - ``run_birefnet_mask``
     """
     global _MODEL_CACHE
     device = "cuda" if device == "cuda" and torch.cuda.is_available() else "cpu"
@@ -79,10 +79,10 @@ def _load_model(device: str = "cuda") -> tuple:
 
 
 def _predict_mask(model, image: Image.Image, transform, device: str) -> np.ndarray:
-    """对单张图片推理，返回 [0, 255] 的 uint8 mask (H, W)。
+    """对单张图片推理, 返回 [0, 255] 的 uint8 mask (H, W). 
 
     Callers:
-        - `birefnet_mask.py:run_birefnet_mask`
+        - ``run_birefnet_mask``
     """
     orig_size = image.size
     input_tensor = transform(image).unsqueeze(0).to(device)
@@ -100,10 +100,10 @@ def _predict_mask(model, image: Image.Image, transform, device: str) -> np.ndarr
 
 
 def _expand_mask(mask: np.ndarray, expand_px: int) -> np.ndarray:
-    """将 mask 主体向外扩展指定像素数。
+    """将 mask 主体向外扩展指定像素数. 
 
     Callers:
-        - `birefnet_mask.py:run_birefnet_mask`
+        - ``run_birefnet_mask``
     """
     if expand_px <= 0:
         return mask
@@ -112,10 +112,10 @@ def _expand_mask(mask: np.ndarray, expand_px: int) -> np.ndarray:
 
 
 def _shrink_mask(mask: np.ndarray, shrink_px: int) -> np.ndarray:
-    """将 mask 主体向内收缩指定像素数。
+    """将 mask 主体向内收缩指定像素数. 
 
     Callers:
-        - `birefnet_mask.py:run_birefnet_mask`
+        - ``run_birefnet_mask``
     """
     if shrink_px <= 0:
         return mask
@@ -124,10 +124,10 @@ def _shrink_mask(mask: np.ndarray, shrink_px: int) -> np.ndarray:
 
 
 def _remap_mask(mask: np.ndarray, lo: int, hi: int) -> np.ndarray:
-    """将 mask 值从 [0, 255] 线性映射到 [lo, hi]。
+    """将 mask 值从 [0, 255] 线性映射到 [lo, hi]. 
 
     Callers:
-        - `birefnet_mask.py:run_birefnet_mask`
+        - ``run_birefnet_mask``
     """
     if lo == 0 and hi == 255:
         return mask
@@ -136,10 +136,10 @@ def _remap_mask(mask: np.ndarray, lo: int, hi: int) -> np.ndarray:
 
 
 def collect_images(data_dir: Path) -> list[str]:
-    """收集 main/ 下所有图片的相对路径。
+    """收集 main/ 下所有图片的相对路径. 
 
     Callers:
-        - `routes/birefnet.py:birefnet_mask`
+        - ``routes/birefnet.py``
     """
     paths: list[str] = []
     main_dir = data_dir / "main"
@@ -154,7 +154,7 @@ def collect_images(data_dir: Path) -> list[str]:
 
 @dataclass
 class BirefnetProgress:
-    """BiRefNet 蒙版生成进度。"""
+    """BiRefNet 蒙版生成进度. """
 
     done: int = 0
     total: int = 0
@@ -162,10 +162,10 @@ class BirefnetProgress:
     cancel_requested: bool = False
 
     def snapshot(self) -> JobSnapshot:
-        """当前进度快照。
+        """当前进度快照. 
 
         Callers:
-            - `routes/birefnet.py:birefnet_mask`
+            - ``routes/birefnet.py``
         """
         return JobSnapshot(
             status="running",
@@ -193,24 +193,24 @@ def run_birefnet_mask(
     progress: BirefnetProgress | None = None,
     on_progress: Callable[[], None] | None = None,
 ) -> tuple[int, int]:
-    """对图片列表生成 BiRefNet 蒙版，输出到 mask_dir。
+    """对图片列表生成 BiRefNet 蒙版, 输出到 mask_dir. 
 
     Args:
-        image_rel_paths: main/ 下的相对路径列表。
-        data_dir: 数据集根目录。
-        mask_dir: 蒙版输出目录。
-        device: 推理设备。
-        mask_expand: 蒙版扩展像素数 (0-200)。
-        mask_shrink: 蒙版收缩像素数 (0-200)。
-        mask_min: 蒙版值域下限 (0-255，默认 96)。
-        mask_max: 蒙版值域上限 (0-255，默认 255)。
-        skip_existing: 是否跳过已有蒙版文件（默认 True）。
+        image_rel_paths: main/ 下的相对路径列表. 
+        data_dir: 数据集根目录. 
+        mask_dir: 蒙版输出目录. 
+        device: 推理设备. 
+        mask_expand: 蒙版扩展像素数 (0-200). 
+        mask_shrink: 蒙版收缩像素数 (0-200). 
+        mask_min: 蒙版值域下限 (0-255, 默认 96). 
+        mask_max: 蒙版值域上限 (0-255, 默认 255). 
+        skip_existing: 是否跳过已有蒙版文件(默认 True). 
 
     Returns:
-        (成功数, 总数)。
+        (成功数, 总数). 
 
     Callers:
-        - `routes/birefnet.py:birefnet_mask`
+        - ``routes/birefnet.py``
     """
     if not image_rel_paths:
         return 0, 0

@@ -1,4 +1,4 @@
-"""就绪：导出训练 datasets TOML，并返回目录与蒙版统计。"""
+"""就绪: 导出训练 datasets TOML, 并返回目录与蒙版统计. """
 
 from __future__ import annotations
 
@@ -7,14 +7,14 @@ from pydantic import BaseModel, Field
 
 from routes.deps import get_runtime
 from services.models import ReadyDirsResponse, ReadyTomlResult
-from services.ready_toml import build_ready_toml, main_mask_stats
-from services.work_dir import list_work_dirs
+from services.ready import build_ready_toml, main_mask_stats
+from services.core.work_dir import list_work_dirs
 
 router = APIRouter(prefix="/ready", tags=["ready"])
 
 
 class ReadyBody(BaseModel):
-    """就绪 TOML 生成请求。引用：``POST /ready/toml``。"""
+    """就绪 TOML 生成请求. 引用: ``POST /ready/toml``. """
 
     dirs: list[str] | None = None
     num_repeats: int = Field(default=1, ge=1, le=100)
@@ -23,9 +23,9 @@ class ReadyBody(BaseModel):
 @router.get("/dirs")
 def ready_dirs(request: Request) -> ReadyDirsResponse:
     """
-    可导出工作目录与 main 蒙版统计。
+    可导出工作目录与 main 蒙版统计. 
 
-    蒙版状态仅「无」或「完整」。引用：ready.js。
+    蒙版状态仅「无」或「完整」. 引用: ready.js. 
     """
     root = get_runtime(request).root
     mask = main_mask_stats(root)
@@ -42,7 +42,7 @@ def ready_dirs(request: Request) -> ReadyDirsResponse:
 @router.post("/toml")
 def ready_toml(request: Request, body: ReadyBody) -> ReadyTomlResult:
     """
-    生成 TOML 预览文本。引用：ready.js。
+    生成 TOML 预览文本. 引用: ready.js. 
     """
     root = get_runtime(request).root
     result = build_ready_toml(root, dirs=body.dirs, num_repeats=body.num_repeats)

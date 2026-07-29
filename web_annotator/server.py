@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-网页图片标注工具。
+网页图片标注工具. 
 
---data-dir 指向任务根（如 datasets/）。任务须在界面手动加入清单
-（datasets/.annotator_tasks.json），不会因磁盘子目录自动出现。
+--data-dir 指向任务根(如 datasets/). 任务须在界面手动加入清单
+(datasets/.annotator_tasks.json), 不会因磁盘子目录自动出现. 
 
 用法:
   python web_annotator/server.py --data-dir datasets
@@ -38,16 +38,16 @@ from routes.ready import router as ready_router
 from routes.tag_stats import router as tag_stats_router
 from routes.tagging import router as tagging_router
 from routes.tasks import router as tasks_router
-from services.dataset_runtime import DatasetRegistry
-from services.jobs import JobManager
-from services.task_store import TaskStore
+from services.dataset.runtime import DatasetRegistry
+from services.core.jobs import JobManager
+from services.state.tasks import TaskStore
 
 
 class _DevStaticFiles(StaticFiles):
-    """开发期静态资源不缓存，避免改 JS 后浏览器仍用旧文件。"""
+    """开发期静态资源不缓存, 避免改 JS 后浏览器仍用旧文件. """
 
     def file_response(self, *args, **kwargs) -> Response:
-        """关闭静态资源缓存。引用：开发期改 JS 后立即生效。"""
+        """关闭静态资源缓存. 引用: 开发期改 JS 后立即生效. """
         resp = super().file_response(*args, **kwargs)
         resp.headers["Cache-Control"] = "no-store"
         return resp
@@ -91,7 +91,7 @@ async def _block_chinese_ua_middleware(
 
 
 def _migrate_meta_to_root(main_dir: Path, root: Path) -> None:
-    """将误放在 main/ 下的元数据迁到任务目录根。引用：DatasetRegistry.ensure。"""
+    """将误放在 main/ 下的元数据迁到任务目录根. 引用: DatasetRegistry.ensure. """
     import shutil
 
     pairs = [
@@ -128,7 +128,7 @@ def _migrate_meta_to_root(main_dir: Path, root: Path) -> None:
 
 
 def _read_template(name: str) -> HTMLResponse:
-    """读取 templates 下 HTML。引用：home_page / dataset_page。"""
+    """读取 templates 下 HTML. 引用: home_page / dataset_page. """
     template = Path(__file__).parent / "templates" / name
     if not template.exists():
         return HTMLResponse(f"<h1>{name} not found</h1>", status_code=404)
@@ -141,9 +141,9 @@ async def bind_dataset_middleware(
     call_next: Callable[[Request], Awaitable[Response]],
 ) -> Response:
     """
-    从路径解析任务名；须在清单中，再按需加载运行时。
+    从路径解析任务名；须在清单中, 再按需加载运行时. 
 
-    引用：routes/deps.get_runtime。
+    引用: routes/deps.get_runtime. 
     """
     m = _DS_PATH_RE.match(request.url.path)
     if m:
@@ -190,19 +190,19 @@ app.include_router(docs_router)
 
 @app.get("/")
 def home_page() -> HTMLResponse:
-    """任务与文档首页。引用：浏览器打开根路径。"""
+    """任务与文档首页. 引用: 浏览器打开根路径. """
     return _read_template("home.html")
 
 
 @app.get("/d/{dataset}")
 def dataset_root_redirect(dataset: str) -> RedirectResponse:
-    """任务根路径重定向到筛选页。引用：浏览器打开 ``/d/{name}``。"""
+    """任务根路径重定向到筛选页. 引用: 浏览器打开 ``/d/{name}``. """
     return RedirectResponse(url=f"/d/{dataset}/filter", status_code=302)
 
 
 @app.get("/d/{dataset}/thumb/{filename}")
 def dataset_thumb(request: Request, dataset: str, filename: str) -> FileResponse:
-    """返回数据集的 AVIF 缩略图文件，缺失时即时生成。
+    """返回数据集的 AVIF 缩略图文件, 缺失时即时生成. 
 
     Callers:
         - `static/js/home.js:211`
@@ -228,9 +228,9 @@ def dataset_thumb(request: Request, dataset: str, filename: str) -> FileResponse
 @app.get("/d/{dataset}/{page}", response_model=None)
 def dataset_page(dataset: str, page: str) -> HTMLResponse | RedirectResponse:
     """
-    业务页面。任务名须已在清单中（中间件校验）。
+    业务页面. 任务名须已在清单中(中间件校验). 
 
-    引用：nav.js 功能标签。
+    引用: nav.js 功能标签. 
     """
     if page == "tagging":
         return RedirectResponse(url=f"/d/{dataset}/tags", status_code=302)
@@ -241,13 +241,13 @@ def dataset_page(dataset: str, page: str) -> HTMLResponse | RedirectResponse:
 
 
 def main() -> int:
-    """启动 uvicorn。引用：``python web_annotator/server.py``。"""
+    """启动 uvicorn. 引用: ``python web_annotator/server.py``. """
     parser = argparse.ArgumentParser(description="网页图片标注工具")
     parser.add_argument(
         "--data-dir",
         type=str,
         required=True,
-        help="任务根目录，例如 datasets/（任务须手动加入清单）",
+        help="任务根目录, 例如 datasets/(任务须手动加入清单)",
     )
     parser.add_argument("--host", type=str, default="0.0.0.0", help="监听地址")
     parser.add_argument("--port", type=int, default=8765, help="监听端口")
@@ -262,19 +262,19 @@ def main() -> int:
         "--block-chinese-ua",
         action="store_true",
         default=False,
-        help="屏蔽 QQ/微信/国产浏览器（UC/360/搜狗/百度/夸克等）",
+        help="屏蔽 QQ/微信/国产浏览器(UC/360/搜狗/百度/夸克等)",
     )
     parser.add_argument(
         "--danbooru-login",
         type=str,
         default=os.environ.get("DANBOORU_LOGIN", ""),
-        help="Danbooru 用户名（或环境变量 DANBOORU_LOGIN）",
+        help="Danbooru 用户名(或环境变量 DANBOORU_LOGIN)",
     )
     parser.add_argument(
         "--danbooru-api-key",
         type=str,
         default=os.environ.get("DANBOORU_API_KEY", ""),
-        help="Danbooru API Key（或环境变量 DANBOORU_API_KEY）",
+        help="Danbooru API Key(或环境变量 DANBOORU_API_KEY)",
     )
     args = parser.parse_args()
 
@@ -306,7 +306,7 @@ def main() -> int:
     print(f"清单任务 : {n}")
     print(f"服务地址 : http://{args.host}:{args.port}")
     if args.block_chinese_ua:
-        print("UA 拦截  : 已启用（屏蔽 QQ/微信/国产浏览器）")
+        print("UA 拦截  : 已启用(屏蔽 QQ/微信/国产浏览器)")
 
     uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
     return 0

@@ -1,4 +1,4 @@
-"""统一评分引擎：美学（CLIP）与质量（Q-ReAlign）共用基础设施。"""
+"""统一评分引擎: 美学(CLIP)与质量(Q-ReAlign)共用基础设施. """
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ from huggingface_hub import hf_hub_download
 from PIL import Image, UnidentifiedImageError
 
 from services.models import JobSnapshot
-from services.scanner import IMAGE_EXTS, collect_images
+from services.core.scanner import IMAGE_EXTS, collect_images
 
 # ---------------------------------------------------------------------------
 # 常量
@@ -36,22 +36,22 @@ QUALITY_TAGS = [
 
 @dataclass
 class ScoreProgress:
-    """通用评分进度追踪。
+    """通用评分进度追踪. 
 
-    通过 ``snapshot()`` 生成 ``JobSnapshot`` 推送至 SSE。
+    通过 ``snapshot()`` 生成 ``JobSnapshot`` 推送至 SSE. 
 
     Attributes:
-        status: 当前状态 ("idle", "running", "done", "cancelled")。
-        phase: 当前阶段 ("idle", "loading", "running", "done")。
-        total: 待处理图片总数。
-        done: 已处理数量。
-        ok: 成功评分数量。
-        skipped: 跳过（已有缓存）数量。
-        failed: 失败数量。
-        current: 当前处理的图片相对路径。
-        message: 用户可见的状态消息。
-        logs: 内部日志行列表（最多 400 条）。
-        cancel_requested: 是否已请求取消。
+        status: 当前状态 ("idle", "running", "done", "cancelled"). 
+        phase: 当前阶段 ("idle", "loading", "running", "done"). 
+        total: 待处理图片总数. 
+        done: 已处理数量. 
+        ok: 成功评分数量. 
+        skipped: 跳过(已有缓存)数量. 
+        failed: 失败数量. 
+        current: 当前处理的图片相对路径. 
+        message: 用户可见的状态消息. 
+        logs: 内部日志行列表(最多 400 条). 
+        cancel_requested: 是否已请求取消. 
     """
 
     status: str = "idle"
@@ -67,13 +67,13 @@ class ScoreProgress:
     cancel_requested: bool = False
 
     def snapshot(self) -> JobSnapshot:
-        """生成可序列化的进度快照。
+        """生成可序列化的进度快照. 
 
         Returns:
-            JobSnapshot: 包含完成百分比与最近 80 条日志的快照。
+            JobSnapshot: 包含完成百分比与最近 80 条日志的快照. 
 
         Callers:
-            - ``routes/scoring.py``: SSE 推送评分进度。
+            - ``routes/scoring.py``: SSE 推送评分进度. 
         """
         total, done = self.total, self.done
         pct = round(100.0 * done / total, 1) if total > 0 else 0.0
@@ -87,10 +87,10 @@ class ScoreProgress:
         )
 
     def log(self, line: str) -> None:
-        """追加一行日志，保持最多 400 行上限。
+        """追加一行日志, 保持最多 400 行上限. 
 
         Args:
-            line: 日志文本。
+            line: 日志文本. 
         """
         self.logs.append(line)
         if len(self.logs) > 400:
@@ -103,25 +103,25 @@ class ScoreProgress:
 
 
 def load_score_json(root: Path, filename: str) -> dict[str, float]:
-    """读取数据集根目录下的分数 JSON 文件。
+    """读取数据集根目录下的分数 JSON 文件. 
 
-    返回 ``{相对路径: 分数}`` 的映射字典；文件不存在时返回空字典。
-    自动规范化路径分隔符。
+    返回 ``{相对路径: 分数}`` 的映射字典；文件不存在时返回空字典. 
+    自动规范化路径分隔符. 
 
     Args:
-        root: 数据集根目录。
-        filename: JSON 文件名（如 ``.aesthetic_scores.json``）。
+        root: 数据集根目录. 
+        filename: JSON 文件名(如 ``.aesthetic_scores.json``). 
 
     Returns:
-        dict[str, float]: 相对路径到分数的映射。
+        dict[str, float]: 相对路径到分数的映射. 
 
     Raises:
-        TypeError: JSON 根节点不是对象时抛出。
+        TypeError: JSON 根节点不是对象时抛出. 
 
     Callers:
-        - ``routes/images.py``: 加载美学/质量分数填充图片列表。
-        - ``routes/tag_stats.py``: 加载分数用于标签注入。
-        - ``run_scoring``: 读取已有分数跳过重复计算。
+        - ``routes/images.py``: 加载美学/质量分数填充图片列表. 
+        - ``routes/tag_stats.py``: 加载分数用于标签注入. 
+        - ``run_scoring``: 读取已有分数跳过重复计算. 
     """
     path = root.resolve() / filename
     if not path.is_file():
@@ -133,17 +133,17 @@ def load_score_json(root: Path, filename: str) -> dict[str, float]:
 
 
 def save_score_json(root: Path, filename: str, scores: dict[str, float]) -> None:
-    """将分数写入数据集根目录下的 JSON 文件。
+    """将分数写入数据集根目录下的 JSON 文件. 
 
-    自动规范化路径分隔符，分数保留 6 位小数，按 key 排序输出。
+    自动规范化路径分隔符, 分数保留 6 位小数, 按 key 排序输出. 
 
     Args:
-        root: 数据集根目录。
-        filename: JSON 文件名。
-        scores: 相对路径到分数的映射。
+        root: 数据集根目录. 
+        filename: JSON 文件名. 
+        scores: 相对路径到分数的映射. 
 
     Callers:
-        - ``run_scoring``: 评分过程中定期持久化。
+        - ``run_scoring``: 评分过程中定期持久化. 
     """
     path = root.resolve() / filename
     clean = {str(k).replace("\\", "/").lstrip("/"): round(float(v), 6) for k, v in scores.items()}
@@ -153,7 +153,7 @@ def save_score_json(root: Path, filename: str, scores: dict[str, float]) -> None
 
 
 # ---------------------------------------------------------------------------
-# 美学模型（CLIP ViT-L/14 + purplesmartai aesthetic-classifier）
+# 美学模型(CLIP ViT-L/14 + purplesmartai aesthetic-classifier)
 # ---------------------------------------------------------------------------
 
 _AES_MODELS: dict[str, tuple] = {}
@@ -161,13 +161,13 @@ _AES_LOCK = _th.Lock()
 
 
 def _raw_to_bin(raw: float) -> int:
-    """原始美学分 [0, 1] → 0~9 整数档位。
+    """原始美学分 [0, 1] → 0~9 整数档位. 
 
     Args:
-        raw: CLIP 美学头输出的原始分数。
+        raw: CLIP 美学头输出的原始分数. 
 
     Returns:
-        int: 0~9 的整数档位。
+        int: 0~9 的整数档位. 
 
     Callers:
         - ``build_score_results``
@@ -177,17 +177,17 @@ def _raw_to_bin(raw: float) -> int:
 
 @torch.no_grad()
 def _aes_score_one(image: Image.Image, clip_model, preprocess, aes_head, device: str) -> float:
-    """对单张图片执行 CLIP + 美学头评分。
+    """对单张图片执行 CLIP + 美学头评分. 
 
     Args:
-        image: PIL 图片对象。
-        clip_model: CLIP ViT-L/14 模型。
-        preprocess: CLIP 预处理函数。
-        aes_head: 美学评分 MLP 头。
-        device: 计算设备。
+        image: PIL 图片对象. 
+        clip_model: CLIP ViT-L/14 模型. 
+        preprocess: CLIP 预处理函数. 
+        aes_head: 美学评分 MLP 头. 
+        device: 计算设备. 
 
     Returns:
-        float: 原始美学分数（约 0~1）。
+        float: 原始美学分数(约 0~1). 
 
     Callers:
         - ``_run_scoring`` (via ``score_one`` lambda)
@@ -200,15 +200,15 @@ def _aes_score_one(image: Image.Image, clip_model, preprocess, aes_head, device:
 
 
 def _load_aes_models(device: str) -> tuple:
-    """加载 CLIP ViT-L/14 + 美学 MLP 头，按设备缓存。
+    """加载 CLIP ViT-L/14 + 美学 MLP 头, 按设备缓存. 
 
-    若设备为 ``cuda`` 但 CUDA 不可用则回退至 ``cpu``。线程安全。
+    若设备为 ``cuda`` 但 CUDA 不可用则回退至 ``cpu``. 线程安全. 
 
     Args:
-        device: 目标设备字符串。
+        device: 目标设备字符串. 
 
     Returns:
-        tuple: ``(clip_model, preprocess_fn, aes_head, actual_device)``。
+        tuple: ``(clip_model, preprocess_fn, aes_head, actual_device)``. 
 
     Callers:
         - ``_run_scoring`` (via ``load_models``)
@@ -235,23 +235,23 @@ def _load_aes_models(device: str) -> tuple:
 
 
 # ---------------------------------------------------------------------------
-# 质量模型（Q-ReAlign-Lite-4B）
+# 质量模型(Q-ReAlign-Lite-4B)
 # ---------------------------------------------------------------------------
 
 _q_model: tuple | None = None
 
 
 def _load_q_models(device: str) -> tuple:
-    """加载 Q-ReAlign-Lite-4B 模型，模块级缓存。
+    """加载 Q-ReAlign-Lite-4B 模型, 模块级缓存. 
 
     Args:
-        device: 目标设备字符串。
+        device: 目标设备字符串. 
 
     Returns:
-        tuple: ``(model, processor)``。
+        tuple: ``(model, processor)``. 
 
     Raises:
-        RuntimeError: transformers 版本不足时抛出。
+        RuntimeError: transformers 版本不足时抛出. 
 
     Callers:
         - ``_run_scoring`` (via ``load_models``)
@@ -273,15 +273,15 @@ def _load_q_models(device: str) -> tuple:
 
 @torch.no_grad()
 def _q_score_one(src: Path, models: tuple, device: str) -> float:
-    """对单张图片执行 Q-ReAlign 质量评分。
+    """对单张图片执行 Q-ReAlign 质量评分. 
 
     Args:
-        src: 图片文件路径。
-        models: ``(model, processor)`` 元组。
-        device: 计算设备。
+        src: 图片文件路径. 
+        models: ``(model, processor)`` 元组. 
+        device: 计算设备. 
 
     Returns:
-        float: 加权质量分（0~1）。
+        float: 加权质量分(0~1). 
 
     Callers:
         - ``_run_scoring`` (via ``score_one``)
@@ -303,9 +303,9 @@ def _q_score_one(src: Path, models: tuple, device: str) -> float:
 
 
 def quality_to_tag(score: float) -> str:
-    """将连续质量分映射为 6 级质量标签。
+    """将连续质量分映射为 6 级质量标签. 
 
-    等宽分箱：
+    等宽分箱: 
 
     - [0.00, 0.17) → ``worst quality``
     - [0.17, 0.33) → ``low quality``
@@ -315,31 +315,31 @@ def quality_to_tag(score: float) -> str:
     - [0.83, 1.00] → ``masterpiece``
 
     Args:
-        score: 质量分数，范围 [0, 1]。
+        score: 质量分数, 范围 [0, 1]. 
 
     Returns:
-        str: 对应的质量标签。
+        str: 对应的质量标签. 
 
     Callers:
         - ``build_score_results``
-        - ``services/tag_clean.py:clean_caption``: 标签清理时注入质量标签。
+        - ``services/tagging/clean.py:clean_caption``: 标签清理时注入质量标签. 
     """
     i = min(int(score * len(QUALITY_TAGS)), len(QUALITY_TAGS) - 1)
     return QUALITY_TAGS[max(0, i)]
 
 
 def load_quality_scores(root: Path) -> dict[str, float]:
-    """读取数据集根目录下的质量分数 JSON 文件。
+    """读取数据集根目录下的质量分数 JSON 文件. 
 
     Args:
-        root: 数据集根目录。
+        root: 数据集根目录. 
 
     Returns:
-        dict[str, float]: 相对路径到质量分的映射，文件不存在时返回空字典。
+        dict[str, float]: 相对路径到质量分的映射, 文件不存在时返回空字典. 
 
     Callers:
-        - ``routes/images.py``: 填充图片列表的质量字段。
-        - ``routes/tag_stats.py``: 标签操作时加载质量分。
+        - ``routes/images.py``: 填充图片列表的质量字段. 
+        - ``routes/tag_stats.py``: 标签操作时加载质量分. 
     """
     return load_score_json(root, QUALITY_SCORES)
 
@@ -360,21 +360,21 @@ def _run_scoring(
     progress: ScoreProgress,
     on_update: Callable[[], None] | None,
 ) -> None:
-    """评分主循环引擎。
+    """评分主循环引擎. 
 
-    处理完整的评分流水线：文件收集 → 进度初始化 → 模型加载 →
-    缓存跳过/新评计算 → 定期持久化。
+    处理完整的评分流水线: 文件收集 → 进度初始化 → 模型加载 →
+    缓存跳过/新评计算 → 定期持久化. 
 
     Args:
-        dirs: 要评分的子目录列表（自动去重）。
-        root: 数据集根目录（仅关键字参数）。
-        device: 计算设备（仅关键字参数）。
-        scores_filename: 分数 JSON 文件名（仅关键字参数）。
-        model_name: 模型名称，用于进度消息（仅关键字参数）。
-        load_models: ``(device) -> model_state`` 模型加载回调（仅关键字参数）。
-        score_one: ``(src_path, model_state, device) -> float`` 单张评分回调（仅关键字参数）。
-        progress: 进度追踪实例（仅关键字参数）。
-        on_update: 每次状态变更后的回调（仅关键字参数）。
+        dirs: 要评分的子目录列表(自动去重). 
+        root: 数据集根目录(仅关键字参数). 
+        device: 计算设备(仅关键字参数). 
+        scores_filename: 分数 JSON 文件名(仅关键字参数). 
+        model_name: 模型名称, 用于进度消息(仅关键字参数). 
+        load_models: ``(device) -> model_state`` 模型加载回调(仅关键字参数). 
+        score_one: ``(src_path, model_state, device) -> float`` 单张评分回调(仅关键字参数). 
+        progress: 进度追踪实例(仅关键字参数). 
+        on_update: 每次状态变更后的回调(仅关键字参数). 
 
     Callers:
         - ``run_scoring``
@@ -385,7 +385,7 @@ def _run_scoring(
     progress.done = progress.ok = progress.skipped = progress.failed = 0
     progress.status = "running"
     progress.phase = "loading"
-    progress.message = f"共 {len(items)} 张，加载{model_name}模型…"
+    progress.message = f"共 {len(items)} 张, 加载{model_name}模型…"
     progress.log(f"开始: dirs={[d.name for d in dirs]}, device={device}, total={len(items)}")
     if on_update: on_update()
 
@@ -438,7 +438,7 @@ def _run_scoring(
     save_score_json(root, scores_filename, scores)
     progress.status = progress.phase = "done"
     progress.current = ""
-    progress.message = f"完成 {progress.ok} 张，跳过 {progress.skipped}"
+    progress.message = f"完成 {progress.ok} 张, 跳过 {progress.skipped}"
     if on_update: on_update()
 
 
@@ -455,24 +455,24 @@ def run_scoring(
     progress: ScoreProgress | None = None,
     on_update: Callable[[], None] | None = None,
 ) -> None:
-    """执行美学或质量评分。
+    """执行美学或质量评分. 
 
     Args:
-        dirs: 要评分的子目录列表。
-        kind: 评分类型，``"aesthetic"`` 或 ``"quality"``（仅关键字参数）。
-        root: 数据集根目录（仅关键字参数）。
-        device: 计算设备（仅关键字，默认 "cuda"）。
-        progress: 进度追踪实例（仅关键字，为 None 时自动创建）。
-        on_update: 每次状态变更后的回调（仅关键字）。
+        dirs: 要评分的子目录列表. 
+        kind: 评分类型, ``"aesthetic"`` 或 ``"quality"``(仅关键字参数). 
+        root: 数据集根目录(仅关键字参数). 
+        device: 计算设备(仅关键字, 默认 "cuda"). 
+        progress: 进度追踪实例(仅关键字, 为 None 时自动创建). 
+        on_update: 每次状态变更后的回调(仅关键字). 
 
     Raises:
-        ValueError: ``kind`` 不是 ``"aesthetic"`` 或 ``"quality"`` 时抛出。
+        ValueError: ``kind`` 不是 ``"aesthetic"`` 或 ``"quality"`` 时抛出. 
 
     Callers:
         - ``routes/scoring.py``
     """
     if kind not in ("aesthetic", "quality"):
-        raise ValueError(f"kind 必须是 'aesthetic' 或 'quality'，收到: {kind!r}")
+        raise ValueError(f"kind 必须是 'aesthetic' 或 'quality', 收到: {kind!r}")
     if progress is None:
         progress = ScoreProgress()
 
@@ -497,22 +497,22 @@ def run_scoring(
 
 
 # ---------------------------------------------------------------------------
-# 查询结果构建（供 API 返回 JSON）
+# 查询结果构建(供 API 返回 JSON)
 # ---------------------------------------------------------------------------
 
 
 def build_score_results(
     root: Path, kind: str,
 ) -> list[dict[str, Any]]:
-    """从缓存的分数 JSON 构建前端的评分结果列表。
+    """从缓存的分数 JSON 构建前端的评分结果列表. 
 
     Args:
-        root: 数据集根目录。
-        kind: 评分类型，``"aesthetic"`` 或 ``"quality"``。
+        root: 数据集根目录. 
+        kind: 评分类型, ``"aesthetic"`` 或 ``"quality"``. 
 
     Returns:
-        list[dict]: 每条包含 ``path``、``score`` 及类型专用字段，
-        按分数降序排列。
+        list[dict]: 每条包含 ``path``、``score`` 及类型专用字段, 
+        按分数降序排列. 
 
     Callers:
         - ``routes/scoring.py:scoring_results``

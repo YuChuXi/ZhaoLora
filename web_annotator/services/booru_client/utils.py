@@ -1,4 +1,4 @@
-"""Booru 图片/文件/标签工具。
+"""Booru 图片/文件/标签工具. 
 
 Callers:
     - ``common.SourceClient``
@@ -13,7 +13,7 @@ from pathlib import Path
 
 from PIL import Image
 
-from services.scanner import IMAGE_EXTS
+from services.core.scanner import IMAGE_EXTS
 
 
 def sniff_image_kind(data: bytes) -> str:
@@ -56,7 +56,7 @@ def find_existing(out_dir: Path, stem: str) -> Path | None:
 
 
 def find_downloaded(out_dir: Path, source: str, post_id: str, *, file_stem_fn) -> Path | None:
-    """查找已下载帖图。
+    """查找已下载帖图. 
 
     Callers:
         - `sources.py:GelbooruSource.download`
@@ -69,10 +69,10 @@ def find_downloaded(out_dir: Path, source: str, post_id: str, *, file_stem_fn) -
 
 
 def is_downloaded(out_dir: Path, source: str, post_id: str, *, file_stem_fn) -> bool:
-    """是否已下载。
+    """是否已下载. 
 
     Callers:
-        - `booru_batch.py`
+        - ``services/booru.py``
     """
     return find_downloaded(out_dir, source, post_id, file_stem_fn=file_stem_fn) is not None
 
@@ -90,9 +90,9 @@ def _tags_to_caption(tags: str) -> str:
     return ", ".join(parts)
 
 
-# ---- 图片转换（供 sources / media 使用） ----
+# ---- 图片转换(供 sources / media 使用) ----
 def convert_path_to_png(src: Path, dest: Path) -> None:
-    """临时文件转 PNG。
+    """临时文件转 PNG. 
 
     Callers:
         - `sources.py:GelbooruSource.download`
@@ -101,10 +101,10 @@ def convert_path_to_png(src: Path, dest: Path) -> None:
     data = src.read_bytes()
     if src.is_file():
         src.unlink()
-    # 使用 SourceClient._save_png 需要实例，这里直接用内联逻辑
+    # 使用 SourceClient._save_png 需要实例, 这里直接用内联逻辑
     kind = sniff_image_kind(data)
     if kind in ("html", "zip", "video", "webm"):
-        raise ValueError(f"不支持该文件类型（{kind}）")
+        raise ValueError(f"不支持该文件类型({kind})")
     if kind == "png":
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_bytes(data)

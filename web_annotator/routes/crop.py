@@ -1,4 +1,4 @@
-"""裁剪 API：多选区吸附并输出到部位目录。"""
+"""裁剪 API: 多选区吸附并输出到部位目录. """
 
 from __future__ import annotations
 
@@ -12,9 +12,9 @@ from pydantic import BaseModel, Field
 from PIL import Image
 
 from routes.deps import get_runtime, resolve_path
-from services.scanner import scan_images
-from services.crop_match import clamp_target_size, match_config
-from services.dataset_layout import RESERVED_DIR_NAMES, DatasetLayout
+from services.core.scanner import scan_images
+from services.dataset.crop import clamp_target_size, match_config
+from services.dataset.layout import RESERVED_DIR_NAMES, DatasetLayout
 from services.models import (
     CropImageItem,
     CropMatchConfig,
@@ -29,7 +29,7 @@ _SAFE_NAME = re.compile(r"^[\w\-]{1,64}$", re.UNICODE)
 
 
 class CropRect(BaseModel):
-    """单个裁剪框。引用：``SaveCropsBody``。"""
+    """单个裁剪框. 引用: ``SaveCropsBody``. """
 
     x1: int
     y1: int
@@ -42,7 +42,7 @@ class CropRect(BaseModel):
 
 
 class SaveCropsBody(BaseModel):
-    """裁剪保存请求体。引用：``POST /crop/save``、``crop.js``。"""
+    """裁剪保存请求体. 引用: ``POST /crop/save``、``crop.js``. """
 
     path: str = Field(..., min_length=1)
     no_crop_resize: bool = False
@@ -51,40 +51,40 @@ class SaveCropsBody(BaseModel):
 
 
 def _layout(request: Request) -> DatasetLayout:
-    """引用：本模块各接口。"""
+    """引用: 本模块各接口. """
     return get_runtime(request).layout
 
 
 def _main_dir(request: Request) -> Path:
-    """引用：``serve_original_image`` / ``save_crops``。"""
+    """引用: ``serve_original_image`` / ``save_crops``. """
     return get_runtime(request).main_dir
 
 
 def _require_part_name(name: str) -> str:
-    """校验部位目录名。
+    """校验部位目录名. 
 
     Raises:
-        HTTPException: 名称非法或为保留名。
+        HTTPException: 名称非法或为保留名. 
 
     引用:
-        ``save_crops``。
+        ``save_crops``. 
     """
     name = (name or "").strip()
     if not name or not _SAFE_NAME.match(name):
-        raise HTTPException(400, "需要合法部位名（如 head / foot）")
+        raise HTTPException(400, "需要合法部位名(如 head / foot)")
     if name.lower() in RESERVED_DIR_NAMES:
         raise HTTPException(400, f"选区名称不能使用保留名: {name}")
     return name
 
 
 def _resolve_out_path(layout: DatasetLayout, stem: str, part_name: str, index: int, total: int) -> Path:
-    """计算裁剪输出路径。
+    """计算裁剪输出路径. 
 
     有合法 ``part_name`` 时写入 ``root/{part}/{stem}.png``；
-    否则写入 ``root/crops/``。
+    否则写入 ``root/crops/``. 
 
     引用:
-        ``save_crops``。
+        ``save_crops``. 
     """
     if part_name and _SAFE_NAME.match(part_name):
         if part_name.lower() in RESERVED_DIR_NAMES:
@@ -101,10 +101,10 @@ def _resolve_out_path(layout: DatasetLayout, stem: str, part_name: str, index: i
 
 @router.get("/images")
 def list_crop_images(request: Request) -> list[CropImageItem]:
-    """列出 main 下图片及是否已有部位或裁剪输出。
+    """列出 main 下图片及是否已有部位或裁剪输出. 
 
     引用:
-        ``crop.js``。
+        ``crop.js``. 
     """
     layout = _layout(request)
     images = scan_images(layout.main_dir)
@@ -123,10 +123,10 @@ def list_crop_images(request: Request) -> list[CropImageItem]:
 
 @router.get("/image")
 def serve_original_image(request: Request, path: str = Query(...)) -> Response:
-    """提供原图像素尺寸的 AVIF 预览（仅供框选；保存时仍读磁盘原图）。
+    """提供原图像素尺寸的 AVIF 预览(仅供框选；保存时仍读磁盘原图). 
 
     引用:
-        ``crop.js``。
+        ``crop.js``. 
     """
     src = resolve_path(_main_dir(request), path)
     if not src.is_file():
@@ -141,10 +141,10 @@ def serve_original_image(request: Request, path: str = Query(...)) -> Response:
 
 @router.get("/candidates")
 def get_candidates() -> CropMatchConfig:
-    """返回边长网格配置。
+    """返回边长网格配置. 
 
     引用:
-        ``crop.js``。
+        ``crop.js``. 
     """
     return match_config()
 
@@ -152,9 +152,9 @@ def get_candidates() -> CropMatchConfig:
 @router.get("/config")
 def get_config(request: Request) -> CropPageConfig:
     """
-    裁剪页配置。默认裁切由前端 localStorage 管理，不再下发服务端默认。
+    裁剪页配置. 默认裁切由前端 localStorage 管理, 不再下发服务端默认. 
 
-    引用：crop.js。
+    引用: crop.js. 
     """
     layout = _layout(request)
     return CropPageConfig(
@@ -167,10 +167,10 @@ def get_config(request: Request) -> CropPageConfig:
 
 @router.post("/save")
 def save_crops(request: Request, body: SaveCropsBody) -> CropSaveResponse:
-    """按框裁切并写入部位目录或 ``crops/``。
+    """按框裁切并写入部位目录或 ``crops/``. 
 
     引用:
-        ``crop.js``。
+        ``crop.js``. 
     """
     layout = _layout(request)
     main_dir = layout.main_dir

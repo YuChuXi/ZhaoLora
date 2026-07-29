@@ -1,4 +1,4 @@
-"""去重 API：扫描重复组 / 删除选中图（数据集作用域）。"""
+"""去重 API: 扫描重复组 / 删除选中图(数据集作用域). """
 
 from __future__ import annotations
 
@@ -6,8 +6,8 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from routes.deps import get_runtime, jobs
-from services.dedupe import find_duplicate_groups, load_records
-from services.jobs import EmitFn
+from services.analysis.dedupe import find_duplicate_groups, load_records
+from services.core.jobs import EmitFn
 from services.models import (
     DedupeMoveResponse,
     DedupeScanResult,
@@ -15,14 +15,14 @@ from services.models import (
     JobSnapshot,
     JobSubmitResponse,
 )
-from services.scanner import scan_images
-from services.work_dir import list_work_dirs, resolve_subdirs
+from services.core.scanner import scan_images
+from services.core.work_dir import list_work_dirs, resolve_subdirs
 
 router = APIRouter(prefix="/dedupe", tags=["dedupe"])
 
 
 class ScanBody(BaseModel):
-    """去重扫描请求。引用：``POST /dedupe/scan``。"""
+    """去重扫描请求. 引用: ``POST /dedupe/scan``. """
 
     dirs: list[str] = Field(default_factory=lambda: ["main"])
     dir: str | None = None
@@ -31,7 +31,7 @@ class ScanBody(BaseModel):
 
 
 class ApplyBody(BaseModel):
-    """去重删除请求。引用：``POST /dedupe/apply``。"""
+    """去重删除请求. 引用: ``POST /dedupe/apply``. """
 
     paths: list[str]
     dirs: list[str] = Field(default_factory=lambda: ["main"])
@@ -39,7 +39,7 @@ class ApplyBody(BaseModel):
 
 
 def _names(dirs: list[str] | None, legacy: str | None) -> list[str]:
-    """解析目录名列表。引用：``scan_duplicates`` / ``apply_dedupe_delete``。"""
+    """解析目录名列表. 引用: ``scan_duplicates`` / ``apply_dedupe_delete``. """
     if dirs:
         return list(dirs)
     if legacy:
@@ -49,7 +49,7 @@ def _names(dirs: list[str] | None, legacy: str | None) -> list[str]:
 
 @router.get("/dirs")
 def dedupe_dirs(request: Request) -> DirsResponse:
-    """列出可扫描工作目录。引用：``dedupe.js``。"""
+    """列出可扫描工作目录. 引用: ``dedupe.js``. """
     rt = get_runtime(request)
     return DirsResponse(root=str(rt.root), dirs=list_work_dirs(rt.root), default="main")
 
@@ -57,10 +57,10 @@ def dedupe_dirs(request: Request) -> DirsResponse:
 @router.post("/scan")
 async def scan_duplicates(request: Request, body: ScanBody) -> JobSubmitResponse:
     """
-    提交去重扫描长任务。
+    提交去重扫描长任务. 
 
-    返回 job_id；结束事件的 result 字段含分组结果。
-    引用：dedupe.js。
+    返回 job_id；结束事件的 result 字段含分组结果. 
+    引用: dedupe.js. 
     """
     rt = get_runtime(request)
     root = rt.root
@@ -75,7 +75,7 @@ async def scan_duplicates(request: Request, body: ScanBody) -> JobSubmitResponse
     ratio = body.similar_res_ratio
 
     def run(emit: EmitFn) -> DedupeScanResult:
-        """工作线程：扫描重复组。引用：``JobManager.submit``。"""
+        """工作线程: 扫描重复组. 引用: ``JobManager.submit``. """
         emit(
             JobSnapshot(
                 status="running",
@@ -129,7 +129,7 @@ async def scan_duplicates(request: Request, body: ScanBody) -> JobSubmitResponse
 
 @router.post("/apply")
 def apply_dedupe_delete(request: Request, body: ApplyBody) -> DedupeMoveResponse:
-    """将手选路径移入回收站（与筛选页同一套 trash）。"""
+    """将手选路径移入回收站(与筛选页同一套 trash). """
     rt = get_runtime(request)
     root = rt.root
     state_mgr = rt.state_manager

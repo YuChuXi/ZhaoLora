@@ -1,6 +1,6 @@
-"""Booru 帖子规范化与搜索。
+"""Booru 帖子规范化与搜索. 
 
-引用: ``routes.booru.booru_search``。
+引用: ``routes.booru.booru_search``. 
 """
 
 from __future__ import annotations
@@ -20,10 +20,10 @@ from services.booru_client.net import (
 )
 
 def normalize_gelbooru_post(post: Mapping[str, Any]) -> BooruPost | None:
-    """将 Gelbooru 原始帖子规范化为 ``BooruPost``。
+    """将 Gelbooru 原始帖子规范化为 ``BooruPost``. 
 
     引用:
-        ``search_gelbooru``。
+        ``search_gelbooru``. 
     """
     pid = post.get("id")
     if pid is None:
@@ -49,10 +49,10 @@ def normalize_gelbooru_post(post: Mapping[str, Any]) -> BooruPost | None:
 
 
 def normalize_danbooru_post(post: Mapping[str, Any]) -> BooruPost | None:
-    """将 Danbooru 原始帖子规范化为 ``BooruPost``。
+    """将 Danbooru 原始帖子规范化为 ``BooruPost``. 
 
     引用:
-        ``search_danbooru``。
+        ``search_danbooru``. 
     """
     if post.get("is_banned") or post.get("is_deleted"):
         return None
@@ -84,10 +84,10 @@ async def search_gelbooru(
     page: int,
     proxy: str | None,
 ) -> tuple[list[BooruPost], bool]:
-    """搜索 Gelbooru。
+    """搜索 Gelbooru. 
 
     引用:
-        ``search_posts``。
+        ``search_posts``. 
     """
     api = make_gelbooru(proxy)
     pid = max(0, page - 1)
@@ -102,7 +102,7 @@ async def search_gelbooru(
     else:
         posts_raw = list(raw)
 
-    # 按 API 原始条数 / 总数判断，避免 normalize 过滤后误报没有更多
+    # 按 API 原始条数 / 总数判断, 避免 normalize 过滤后误报没有更多
     limit = 100
     offset = pid * limit
     if isinstance(attrs, dict):
@@ -133,13 +133,13 @@ async def search_danbooru(
     danbooru_login: str | None = None,
     danbooru_api_key: str | None = None,
 ) -> tuple[list[BooruPost], bool]:
-    """搜索 Danbooru。
+    """搜索 Danbooru. 
 
     Args:
-        danbooru_login / danbooru_api_key: API 认证，提升标签查询限制。
+        danbooru_login / danbooru_api_key: API 认证, 提升标签查询限制. 
 
     引用:
-        ``search_posts``。
+        ``search_posts``. 
     """
     limit_used = max(1, min(limit, 100))
     resp = await danbooru_get(
@@ -177,7 +177,7 @@ async def search_posts(
     extra: str = "", proxy: str | None = None,
     danbooru_login: str | None = None, danbooru_api_key: str | None = None,
 ) -> tuple[list[BooruPost], bool]:
-    """旧接口，委托给 SourceClient。"""
+    """旧接口, 委托给 SourceClient. """
     from services.booru_client.common import get_source
     src = get_source(source)
     raw, has_more = await src.search(

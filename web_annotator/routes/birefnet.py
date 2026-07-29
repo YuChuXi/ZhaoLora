@@ -1,4 +1,4 @@
-"""BiRefNet 蒙版生成 API 路由。"""
+"""BiRefNet 蒙版生成 API 路由. """
 
 from __future__ import annotations
 
@@ -6,8 +6,8 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from routes.deps import get_runtime, jobs
-from services.jobs import EmitFn
-from services.birefnet_mask import (
+from services.core.jobs import EmitFn
+from services.analysis.birefnet import (
     BirefnetProgress,
     collect_images,
     run_birefnet_mask,
@@ -17,7 +17,7 @@ router = APIRouter(tags=["birefnet"])
 
 
 class BirefnetStartBody(BaseModel):
-    """BiRefNet 蒙版生成请求体。"""
+    """BiRefNet 蒙版生成请求体. """
 
     mask_expand: int = Field(32, ge=0, le=200, description="蒙版向外扩展的像素数")
     mask_shrink: int = Field(0, ge=0, le=200, description="蒙版向内收缩的像素数")
@@ -27,7 +27,7 @@ class BirefnetStartBody(BaseModel):
 
 
 class BirefnetStartResponse(BaseModel):
-    """BiRefNet 任务启动响应。"""
+    """BiRefNet 任务启动响应. """
 
     ok: bool = True
     job_id: str
@@ -35,7 +35,7 @@ class BirefnetStartResponse(BaseModel):
 
 @router.post("/birefnet-mask")
 async def birefnet_mask(request: Request, body: BirefnetStartBody) -> BirefnetStartResponse:
-    """启动 BiRefNet 蒙版生成任务。
+    """启动 BiRefNet 蒙版生成任务. 
 
     Callers:
         - `static/js/api.js`
@@ -48,7 +48,7 @@ async def birefnet_mask(request: Request, body: BirefnetStartBody) -> BirefnetSt
     prog = BirefnetProgress()
 
     def run(emit: EmitFn) -> None:
-        """工作线程入口。
+        """工作线程入口. 
 
         Callers:
             - `JobManager.submit`

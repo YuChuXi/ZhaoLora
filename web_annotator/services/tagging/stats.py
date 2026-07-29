@@ -1,4 +1,4 @@
-"""标注文件标签频率统计。"""
+"""标注文件标签频率统计. """
 
 from __future__ import annotations
 
@@ -16,12 +16,21 @@ _BATCH_SIZE = 128
 
 
 def split_tags_line(s: str) -> list[str]:
-    """按逗号拆分标签行。引用：``count_tags`` / ``tag_clean``。"""
+    """按逗号拆分标签行. 
+
+    Callers:
+        - ``count_tags``
+        - ``services/tagging/clean.py``
+    """
     return [x.strip() for x in s.replace("\n", ",").replace("|||", ",").split(",") if x.strip()]
 
 
 def normalize_tag(tag: str, *, lower: bool, underscores: bool) -> str:
-    """规范化单个标签。引用：``count_tags``。"""
+    """规范化单个标签. 
+
+    Callers:
+        - ``count_tags``
+    """
     t = tag.strip()
     if underscores:
         t = " ".join(t.replace("_", " ").split())
@@ -31,10 +40,10 @@ def normalize_tag(tag: str, *, lower: bool, underscores: bool) -> str:
 
 
 def list_txt_subdirs(root: Path) -> list[TxtDirInfo]:
-    """列出根下含 ``.txt`` 的一级子目录（``main`` 置顶）。
+    """列出根下含 ``.txt`` 的一级子目录(``main`` 置顶). 
 
     引用:
-        ``resolve_selected_dirs``；``routes.tag_stats``。
+        ``resolve_selected_dirs``；``routes/tag_stats.py``. 
     """
     root = root.resolve()
     out: list[TxtDirInfo] = []
@@ -63,10 +72,10 @@ def list_txt_subdirs(root: Path) -> list[TxtDirInfo]:
 
 
 def resolve_selected_dirs(root: Path, names: list[str] | None) -> list[Path]:
-    """将选中的 txt 子目录名解析为路径；空则全选。
+    """将选中的 txt 子目录名解析为路径；空则全选. 
 
     引用:
-        ``routes.tag_stats``。
+        ``routes/tag_stats.py``. 
     """
     root = root.resolve()
     available = {
@@ -86,9 +95,9 @@ def resolve_selected_dirs(root: Path, names: list[str] | None) -> list[Path]:
 
 def load_translation_map(root: Path) -> dict[str, str]:
     """
-    加载共享翻译缓存 ``datasets/.translation_cache.json``。
+    加载共享翻译缓存 ``datasets/.translation_cache.json``. 
 
-    引用：POST /tags/stats、POST /tags/translate-missing。
+    引用: POST /tags/stats、POST /tags/translate-missing. 
     """
     cache_path = root.resolve().parent / _SHARED_CACHE_NAME
     if not cache_path.is_file():
@@ -107,7 +116,11 @@ def load_translation_map(root: Path) -> dict[str, str]:
 
 
 def lookup_zh(tag: str, zh_map: dict[str, str]) -> str:
-    """查标签中文译名；支持下划线与空格键。引用：count_tags。"""
+    """查标签中文译名；支持下划线与空格键. 
+
+    Callers:
+        - ``count_tags``
+    """
     if tag in zh_map:
         return zh_map[tag]
     nk = " ".join(tag.replace("_", " ").split()).lower()
@@ -126,10 +139,10 @@ def count_tags(
     per_sample: bool = True,
     min_count: int = 1,
 ) -> TagStatsResult:
-    """统计若干目录内旁路 ``.txt`` 的标签频率。
+    """统计若干目录内旁路 ``.txt`` 的标签频率. 
 
     引用:
-        ``routes.tag_stats.tag_stats``。
+        ``routes/tag_stats.py``. 
     """
     zh_map = zh_map or {}
     counter: Counter[str] = Counter()
@@ -193,9 +206,9 @@ def count_tags(
 
 async def translate_missing_tags(tags: list[str], root: Path) -> dict[str, str]:
     """
-    批量翻译标签（en → zh-CN），写入共享缓存 ``.translation_cache.json``。
+    批量翻译标签(en → zh-CN), 写入共享缓存 ``.translation_cache.json``. 
 
-    引用：POST /tags/translate-missing。
+    引用: POST /tags/translate-missing. 
     """
     if not tags:
         return {}

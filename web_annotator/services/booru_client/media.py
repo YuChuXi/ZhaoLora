@@ -1,6 +1,6 @@
-"""Booru 预览拉取、下载与取消下载。
+"""Booru 预览拉取、下载与取消下载. 
 
-引用: ``routes.booru``。
+引用: ``routes.booru``. 
 """
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ from urllib.parse import urlparse
 import httpx
 
 from services.models import BooruPost, BooruDownloadResult, BooruUndownloadResult
-from services.scanner import IMAGE_EXTS
+from services.core.scanner import IMAGE_EXTS
 from services.booru_client.common import (
     _SOURCES as SOURCES,
     build_caption_from_meta,
@@ -47,7 +47,7 @@ _tag_types_cache: dict[str, int] = {}
 
 
 def _cache_files(kind: str, post_id: str) -> tuple[Path, Path]:
-    """磁盘缓存路径。
+    """磁盘缓存路径. 
 
     Callers:
         - `media.py:fetch_gelbooru_bytes`
@@ -57,7 +57,7 @@ def _cache_files(kind: str, post_id: str) -> tuple[Path, Path]:
 
 
 def _assert_gelbooru_url(url: str) -> str:
-    """校验 Gelbooru 图床 URL。
+    """校验 Gelbooru 图床 URL. 
 
     Callers:
         - `media.py:fetch_gelbooru_bytes`
@@ -72,7 +72,7 @@ def _assert_gelbooru_url(url: str) -> str:
 
 
 async def _shared_client(proxy: str | None) -> httpx.AsyncClient:
-    """按代理复用 HTTP 连接池。
+    """按代理复用 HTTP 连接池. 
 
     Callers:
         - `media.py:fetch_gelbooru_bytes`
@@ -102,7 +102,7 @@ async def _download_gelbooru(
     *,
     proxy: str | None,
 ) -> tuple[bytes, str]:
-    """从 CDN 下载并写入磁盘缓存。
+    """从 CDN 下载并写入磁盘缓存. 
 
     Callers:
         - `media.py:fetch_gelbooru_bytes`
@@ -127,10 +127,10 @@ async def fetch_gelbooru_bytes(
     url: str,
     proxy: str | None,
 ) -> tuple[bytes, str]:
-    """拉 Gelbooru thumb/sample：磁盘缓存 + 同图进行中合并。
+    """拉 Gelbooru thumb/sample: 磁盘缓存 + 同图进行中合并. 
 
     引用:
-        ``routes.booru.booru_thumb`` / ``booru_sample``。
+        ``routes.booru.booru_thumb`` / ``booru_sample``. 
     """
     if kind not in ("thumb", "sample"):
         raise ValueError(f"不支持的 kind: {kind}")
@@ -175,11 +175,11 @@ async def _danbooru_fetch_image_bytes(
     *,
     proxy: str | None,
 ) -> bytes:
-    """优先原图；失败或不支持时回退 large_file_url。"""
+    """优先原图；失败或不支持时回退 large_file_url. """
     urls: list[str] = [u for u in (post.file_url, post.large_file_url) if u and u not in (None, "")]
     urls = list(dict.fromkeys(urls))
     if not urls:
-        raise ValueError("该帖无 file_url（可能需登录或已删除）")
+        raise ValueError("该帖无 file_url(可能需登录或已删除)")
 
     last_err = "无法下载图片"
     for url in urls:
@@ -194,15 +194,15 @@ async def _danbooru_fetch_image_bytes(
             continue
         ctype = (resp.headers.get("content-type") or "").lower()
         if "text/html" in ctype or "application/json" in ctype:
-            last_err = f"下载到的不是图片（Content-Type: {ctype}）"
+            last_err = f"下载到的不是图片(Content-Type: {ctype})"
             continue
         data = resp.content
         kind = sniff_image_kind(data)
         if kind in ("empty", "html", "zip", "video", "webm"):
-            last_err = f"不支持该文件类型（{kind}）"
+            last_err = f"不支持该文件类型({kind})"
             continue
         if kind == "unknown" and not pil_can_open(data):
-            last_err = f"无法识别的图片数据（大小={len(data)}字节）"
+            last_err = f"无法识别的图片数据(大小={len(data)}字节)"
             continue
         return data
     raise ValueError(last_err)
@@ -213,16 +213,16 @@ def remove_download(
     post_id: str,
     out_dir: Path,
 ) -> BooruUndownloadResult:
-    """取消选中时删除已下载的图、旁路 txt 与 meta。
+    """取消选中时删除已下载的图、旁路 txt 与 meta. 
 
     引用:
-        ``routes.booru.booru_undownload``。
+        ``routes.booru.booru_undownload``. 
     """
     source = source.strip().lower()
     if source not in SOURCES:
         raise ValueError(f"不支持的源: {source}")
     pid = str(post_id).strip()
-    # 若误传 g123 / d123，剥掉前缀
+    # 若误传 g123 / d123, 剥掉前缀
     src = get_source(source)
     prefix = src.prefix
     if prefix and pid.startswith(prefix) and pid[len(prefix) :].isdigit():
@@ -255,14 +255,14 @@ def remove_download(
 
 
 async def _categorize_gelbooru_tags(post: dict, api) -> dict:
-    """查询 Gelbooru 标签类型并写入 Danbooru 兼容字段，结果缓存在内存。
+    """查询 Gelbooru 标签类型并写入 Danbooru 兼容字段, 结果缓存在内存. 
 
     Args:
-        post: Gelbooru API 返回的帖子数据。
-        api: Gelbooru 客户端实例。
+        post: Gelbooru API 返回的帖子数据. 
+        api: Gelbooru 客户端实例. 
 
     Returns:
-        含 tag_string_* 字段的新 dict。
+        含 tag_string_* 字段的新 dict. 
 
     Callers:
         - `media.py:download_post`
@@ -297,15 +297,15 @@ async def download_post(
     include_meta_tags: bool = False,
     keep_underscores: bool = False,
 ) -> BooruDownloadResult:
-    """下载帖子原图为 PNG，并写旁路标签与 meta。
+    """下载帖子原图为 PNG, 并写旁路标签与 meta. 
 
     Args:
-        anima_format: 按 Anima 格式输出 [性别][角色][系列][画师][通用标签]。
-        include_meta_tags: 若为 True，保留元数据标签（rating、分辨率等）；默认不保留。
-        keep_underscores: 若为 True，保留下划线；默认转为空格。
+        anima_format: 按 Anima 格式输出 [性别][角色][系列][画师][通用标签]. 
+        include_meta_tags: 若为 True, 保留元数据标签(rating、分辨率等)；默认不保留. 
+        keep_underscores: 若为 True, 保留下划线；默认转为空格. 
 
     引用:
-        ``routes.booru.booru_download``。
+        ``routes.booru.booru_download``. 
     """
     source = source.strip().lower()
     if source not in SOURCES:
@@ -344,7 +344,7 @@ async def download_post(
                     p = out_dir / f"{old}{ext}"
                     if p.is_file() and p.resolve() != image_path.resolve():
                         p.unlink()
-        # Gelbooru Anima 格式：查询标签类型，构造 Danbooru 兼容字段
+        # Gelbooru Anima 格式: 查询标签类型, 构造 Danbooru 兼容字段
         if anima_format and source == "gelbooru":
             post_dict = await _categorize_gelbooru_tags(api_post.model_dump(), api)
             api_post = BooruPost.model_validate(post_dict)
@@ -409,7 +409,7 @@ async def download_post(
 
 
 def local_rel_path(root: Path, abs_path: str | Path) -> str:
-    """绝对路径转数据集相对路径。
+    """绝对路径转数据集相对路径. 
 
     Callers:
         - `routes/booru.py:booru_download`
@@ -425,16 +425,16 @@ async def regenerate_captions(
     include_meta_tags: bool = False,
     keep_underscores: bool = False,
 ) -> int:
-    """从 .danbooru_meta / .gelbooru_meta 批量重生成旁路 .txt。
+    """从 .danbooru_meta / .gelbooru_meta 批量重生成旁路 .txt. 
 
     Args:
-        out_dir: 图片与元数据所在目录。
-        anima_format: Anima 格式输出。
-        include_meta_tags: 是否包含元数据标签。
-        keep_underscores: 是否保留下划线。
+        out_dir: 图片与元数据所在目录. 
+        anima_format: Anima 格式输出. 
+        include_meta_tags: 是否包含元数据标签. 
+        keep_underscores: 是否保留下划线. 
 
     Returns:
-        成功重生成的 txt 数量。
+        成功重生成的 txt 数量. 
 
     Callers:
         - `routes/booru.py:booru_regenerate_captions`

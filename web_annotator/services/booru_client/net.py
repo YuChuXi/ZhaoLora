@@ -1,4 +1,4 @@
-"""Booru 网络请求与来源特定辅助。
+"""Booru 网络请求与来源特定辅助. 
 
 Callers:
     - ``sources``
@@ -14,7 +14,7 @@ from pathlib import Path
 from curl_cffi.requests import AsyncSession
 from curl_cffi.requests.models import Response as CurlResponse
 
-from services.scanner import IMAGE_EXTS
+from services.core.scanner import IMAGE_EXTS
 from services.models.booru import BooruPost
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -86,7 +86,7 @@ async def danbooru_get(
 
 
 def make_gelbooru(proxy: str | None) -> Gelbooru:
-    """构造 Gelbooru 客户端。
+    """构造 Gelbooru 客户端. 
 
     Callers:
         - `sources.py:GelbooruSource`
@@ -97,7 +97,7 @@ def make_gelbooru(proxy: str | None) -> Gelbooru:
 
 
 def danbooru_preview_url(post: BooruPost) -> str:
-    """Danbooru 帖的预览 URL，优先 720x720 webp，回退 file_url。
+    """Danbooru 帖的预览 URL, 优先 720x720 webp, 回退 file_url. 
 
     Callers:
         - `sources.py:DanbooruSource.preview_url`
