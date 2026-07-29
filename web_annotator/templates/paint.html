@@ -11,6 +11,16 @@
   .paint-canvas-wrap canvas { display: block; }
   .brush-preview { position: absolute; pointer-events: none; border-radius: 50%; border: 1px dashed rgba(255,255,255,0.6); background: rgba(255,255,255,0.08); z-index: 10; display: none; }
   .fabric-container { width: 100%; height: 100%; }
+  .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 100; display: flex; align-items: center; justify-content: center; }
+  .modal-overlay[hidden] { display: none; }
+  .modal-dlg { background: var(--card-bg, #2a2a2a); border-radius: 8px; padding: 24px; min-width: 300px; box-shadow: 0 4px 24px rgba(0,0,0,0.3); }
+  .modal-dlg h3 { margin: 0 0 16px; font-size: 16px; }
+  .modal-row { display: flex; gap: 16px; margin-bottom: 16px; }
+  .modal-row label { font-size: 13px; display: flex; flex-direction: column; gap: 4px; }
+  .modal-row label.inline { flex-direction: row; align-items: center; gap: 6px; }
+  .modal-row input { width: 80px; background: var(--input-bg, #333); color: var(--text, #ddd); border: 1px solid var(--border, #555); border-radius: 4px; padding: 4px 8px; font-size: 13px; }
+  .modal-row input[type="checkbox"] { width: auto; margin: 0; }
+  .modal-actions { display: flex; gap: 8px; justify-content: flex-end; }
 </style>
 </head>
 <body>
@@ -20,6 +30,8 @@
   <button class="btn" id="btn-next">下一张</button>
   <button class="btn" id="btn-skip">跳过</button>
   <button class="btn green" id="btn-save">保存</button>
+  <span class="sep"></span>
+  <button class="btn" id="btn-birefnet-mask" title="BiRefNet 批量生成蒙版到 mask/">生成蒙版</button>
   <span class="sep"></span>
   <button class="btn" id="btn-clear">全透明</button>
   <button class="btn" id="btn-fill">全不透明</button>
@@ -31,7 +43,7 @@
     <span id="brush-label">3.0%</span>
   </label>
   <label style="font-size:12px;color:var(--text-dim);display:flex;align-items:center;gap:4px;">
-    <input type="checkbox" id="chk-left-transparent" checked> 左键擦除
+    <input type="checkbox" id="chk-swap-buttons"> 交换左右键
   </label>
   <label style="font-size:12px;color:var(--text-dim);display:flex;align-items:center;gap:4px;">
     默认 Alpha
@@ -45,9 +57,42 @@
     </select>
   </label>
 </div>
+
+<div class="job-progress compact" id="birefnet-bar" hidden>
+  <div class="job-progress-meta">
+    <span class="job-progress-label">蒙版生成</span>
+    <span class="job-progress-pct" id="birefnet-pct">0%</span>
+  </div>
+  <div class="job-progress-track">
+    <div class="job-progress-fill" id="birefnet-fill" style="width:0%"></div>
+  </div>
+  <div class="job-progress-text" id="birefnet-text">-</div>
+</div>
+
 <div class="paint-canvas-wrap" id="canvas-wrap">
   <canvas id="paint-canvas"></canvas>
   <div class="brush-preview" id="brush-preview"></div>
+</div>
+
+<div class="modal-overlay" id="birefnet-dlg" hidden>
+  <div class="modal-dlg">
+    <h3>BiRefNet 蒙版生成</h3>
+    <div class="modal-row">
+      <label>扩展像素<br><input type="number" id="birefnet-expand" value="32" min="0" max="200"></label>
+      <label>收缩像素<br><input type="number" id="birefnet-shrink" value="0" min="0" max="200"></label>
+    </div>
+    <div class="modal-row">
+      <label>最小值<br><input type="number" id="birefnet-min" value="96" min="0" max="255" step="1"></label>
+      <label>最大值<br><input type="number" id="birefnet-max" value="255" min="0" max="255" step="1"></label>
+    </div>
+    <div class="modal-row">
+      <label class="inline"><input type="checkbox" id="birefnet-skip" checked> 跳过已有蒙版</label>
+    </div>
+    <div class="modal-actions">
+      <button type="button" class="btn" id="birefnet-cancel">取消</button>
+      <button type="button" class="btn green" id="birefnet-start">开始</button>
+    </div>
+  </div>
 </div>
 <div class="status-bar" id="paint-status">
   <span class="status-seg" id="seg-pos">0/0</span>

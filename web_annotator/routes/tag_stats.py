@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 
 from routes.deps import get_runtime, jobs
 from services.aesthetic import load_scores
+from services.quality import load_quality_scores
 from services.jobs import EmitFn
 from services.models import JobSnapshot, JobSubmitResponse, TagCleanResult, TagStatsResult, TxtDirInfo
 from services.tag_clean import batch_edit_tags, clean_txt_dirs
@@ -51,6 +52,9 @@ class CleanBody(BaseModel):
     promote_separator: bool = Field(False, description="以 ||| 分隔头部与正文")
     inject_pony_score: bool = Field(
         False, description="根据 .aesthetic_scores.json 写入 score_0…score_9（位于头部前置之前）"
+    )
+    inject_quality_tag: bool = Field(
+        False, description="根据 .quality_scores.json 写入质量标签（masterpiece/worst quality 等）"
     )
     dry_run: bool = True
     sample_limit: int = Field(default=40, ge=0, le=200)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import html
+import random
 from pathlib import Path
 
 from services.models import TagCleanResult, TagCleanSample
@@ -154,13 +155,15 @@ def clean_caption(
     promote_tags: tuple[str, ...] = (),
     prepend_tags: tuple[str, ...] = (),
     pony_score_tag: str | None = None,
+    quality_tag: str | None = None,
     use_promote_separator: bool = False,
 ) -> str:
     """
     清洗单条 caption。
 
-    顺序：HTML 实体还原与下划线规范化 → 删除 → 提升重排 → 美学档位 → 头部前置。
-    pony_score_tag（如 score_9）写入头部前置之前，并移除既有 score_0…score_9。
+    顺序：HTML 实体还原与下划线规范化 → 删除 → 提升重排 → 美学/质量标签 → 头部前置。
+    pony_score_tag（如 score_9）和 quality_tag（如 masterpiece）写入头部前置之前，
+    两者随机排序，并移除既有 score_0…score_9 和质量标签。
     """
     s = html.unescape(raw.strip())
     tags = [normalize_tag_underscores(t) for t in split_tags_line(s)]
@@ -174,13 +177,24 @@ def clean_caption(
     promote_keys = promote_keys_ordered(promote_tags)
     kept, n_promoted = apply_promote_tags(kept, promote_keys)
 
+    # 移除既有的美学档位标签和质量标签
     if pony_score_tag:
         kept = [t for t in kept if tag_key(t) not in SCORE_TAG_KEYS]
+    if quality_tag:
+        QUALITY_TAG_KEYS = frozenset(tag_key(t) for t in ["masterpiece", "best quality", "good quality", "normal quality", "low quality", "worst quality"])
+        kept = [t for t in kept if tag_key(t) not in QUALITY_TAG_KEYS]
 
     header: list[str] = []
+    # 美学标签与质量标签随机排序后置顶
+    score_quality: list[str] = []
     if pony_score_tag and pony_score_tag.strip():
-        # pony 训练用下划线形式，不做 underscore→space
-        header.append(pony_score_tag.strip())
+        score_quality.append(pony_score_tag.strip())
+    if quality_tag and quality_tag.strip():
+        score_quality.append(quality_tag.strip())
+    if len(score_quality) > 1:
+        random.shuffle(score_quality)
+    header.extend(score_quality)
+
     prep = [normalize_tag_underscores(t) for t in prepend_tags if t.strip()]
     header.extend(prep)
     if header:
@@ -206,6 +220,8 @@ def clean_txt_dirs(
     inject_pony_score: bool = False,
     dataset_root: Path | None = None,
     aesthetic_scores: dict[str, float] | None = None,
+    inject_quality_tag: bool = False,
+    quality_scores: dict[str, float] | None = None,
     dry_run: bool = True,
     sample_limit: int = 40,
 ) -> TagCleanResult:
@@ -218,9 +234,11 @@ def clean_txt_dirs(
         drop_contains: 子串删除列表（另有内置 commentary/request）。
         promote / prepend: 提升与前置列表。
         promote_separator: 是否用 ||| 分隔提升块。
-        inject_pony_score: 是否根据 .aesthetic_scores.json 写入 score_0…score_9（位于头部前置之前）。
+        inject_pony_score: 是否根据 .aesthetic_scores.json 写入 score_0…score_9。
+        inject_quality_tag: 是否根据 .quality_scores.json 写入质量标签。
         dataset_root: 数据集根目录（用于解析旁路图像相对路径）。
         aesthetic_scores: 相对路径 → 原始美学分 [0,1]。
+        quality_scores: 相对路径 → 质量分 [0,1]。
         dry_run: True 仅预览，不写文件。
         sample_limit: 返回的前后对比样本上限。
 
@@ -237,6 +255,7 @@ def clean_txt_dirs(
     promote_tags = tuple(expand_cli_list(promote or []))
     prepend_tags = tuple(expand_cli_list(prepend or []))
     scores = aesthetic_scores or {}
+    q_scores = quality_scores or {}
     root = dataset_root.resolve() if dataset_root is not None else None
 
     files: list[Path] = []
@@ -249,6 +268,8 @@ def clean_txt_dirs(
     failed = 0
     pony_injected = 0
     pony_missing = 0
+    quality_injected = 0
+    quality_missing = 0
     samples: list[TagCleanSample] = []
 
     for path in files:
@@ -270,6 +291,19 @@ def clean_txt_dirs(
             else:
                 pony_missing += 1
 
+        quality_tag_val: str | None = None
+        if inject_quality_tag:
+            if root is None:
+                failed += 1
+                continue
+            rel = rel_image_for_txt(path, root)
+            if rel is not None and rel in q_scores:
+                from services.quality import quality_to_tag
+                quality_tag_val = quality_to_tag(q_scores[rel])
+                quality_injected += 1
+            else:
+                quality_missing += 1
+
         new = clean_caption(
             raw,
             user_drop_exact=user_drop_exact,
@@ -277,6 +311,7 @@ def clean_txt_dirs(
             promote_tags=promote_tags,
             prepend_tags=prepend_tags,
             pony_score_tag=score_tag,
+            quality_tag=quality_tag_val,
             use_promote_separator=promote_separator,
         )
         if new == raw.strip():
@@ -309,6 +344,9 @@ def clean_txt_dirs(
         inject_pony_score=inject_pony_score,
         pony_injected=pony_injected,
         pony_missing=pony_missing,
+        inject_quality_tag=inject_quality_tag,
+        quality_injected=quality_injected,
+        quality_missing=quality_missing,
     )
 
 

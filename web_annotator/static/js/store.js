@@ -25,6 +25,13 @@ var Store = (function() {
         if (db !== da) return db - da;
         return (a.stem || '').localeCompare(b.stem || '', 'en');
       });
+    } else if (_sortBy === 'quality') {
+      out.sort(function (a, b) {
+        var da = (typeof a.quality === 'number') ? a.quality : -1;
+        var db = (typeof b.quality === 'number') ? b.quality : -1;
+        if (db !== da) return db - da;
+        return (a.stem || '').localeCompare(b.stem || '', 'en');
+      });
     } else if (_sortBy === 'pixels') {
       out.sort(function (a, b) {
         var pa = (a.width || 0) * (a.height || 0);

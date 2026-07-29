@@ -21,6 +21,7 @@ from services.models import (
 )
 from services.work_dir import list_work_dirs, parse_dir_names, resolve_subdir, resolve_subdirs
 from services.aesthetic import load_scores
+from services.quality import load_quality_scores
 from services.thumbnailer import Thumbnailer
 from services.state_manager import StateManager
 
@@ -82,6 +83,7 @@ def list_images(
     selected = set(state.selected.keys())
     trashed_state = set(state.trashed.keys())
     scores = load_scores(root)
+    quality_scores = load_quality_scores(root)
     result: list[ImageListItem] = []
     seen: set[str] = set()
 
@@ -103,6 +105,7 @@ def list_images(
                     thumbnail_hash=thumbnailer.hash_for(rel),
                     dir=sub,
                     aesthetic=scores.get(rel),
+                    quality=quality_scores.get(rel),
                 )
             )
 
@@ -128,6 +131,7 @@ def list_images(
                         thumbnail_hash=thumbnailer.hash_for(img.path),
                         dir=sub,
                         aesthetic=scores.get(img.path),
+                        quality=quality_scores.get(img.path),
                     )
                 )
         else:
@@ -153,6 +157,7 @@ def list_images(
                         thumbnail_hash=thumbnailer.hash_for(rel),
                         dir=sub,
                         aesthetic=scores.get(rel),
+                        quality=quality_scores.get(rel),
                     )
                 )
 

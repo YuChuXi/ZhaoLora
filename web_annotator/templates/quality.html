@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>质量评分</title>
+<link rel="stylesheet" href="/static/css/annotator.css">
+<style>
+  body { margin: 0; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+  .q-main { flex: 1; display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+  .report-frame {
+    flex: 1; width: 100%; border: 0; background: #0a101c; min-height: 0;
+  }
+  .report-empty {
+    flex: 1; display: flex; align-items: center; justify-content: center;
+    color: var(--text-dim); font-size: 14px; background: #0a101c;
+  }
+  .report-empty[hidden] { display: none; }
+  .toolbar.compact label {
+    display: flex; align-items: center; gap: 4px;
+    font-size: 12px; color: var(--text-dim); cursor: pointer; user-select: none;
+  }
+  .toolbar.compact select {
+    background: #0a1a30; color: var(--text);
+    border: 1px solid var(--border); border-radius: 4px; padding: 2px 6px; font-size: 12px;
+  }
+</style>
+</head>
+<body>
+<nav class="app-tabs" id="app-tabs"></nav>
+<div class="toolbar compact">
+  <button class="btn green" id="btn-start">开始</button>
+  <button class="btn" id="btn-cancel" disabled>取消</button>
+  <span class="sep"></span>
+  <label>设备
+    <select id="device">
+      <option value="cpu">CPU</option>
+      <option value="cuda">CUDA</option>
+    </select>
+  </label>
+</div>
+
+<div class="job-progress compact" id="job-progress" hidden>
+  <div class="job-progress-track">
+    <div class="job-progress-fill quality" id="progress-fill"></div>
+  </div>
+  <span class="job-progress-pct" id="progress-pct">0%</span>
+</div>
+
+<div class="q-main">
+  <div class="report-empty" id="report-empty">暂无报告</div>
+  <iframe class="report-frame" id="report-frame" title="质量报告" hidden></iframe>
+</div>
+
+<div class="status-bar" id="q-status">
+  <span class="status-seg" id="seg-pos">就绪</span>
+  <span class="status-seg" id="seg-done">完成 0</span>
+  <span class="status-seg" id="seg-status"></span>
+  <span class="status-seg" id="seg-metric">进度 0/0</span>
+  <span class="status-seg" id="seg-extra">失败 0</span>
+</div>
+<div class="toast" id="toast"></div>
+<script src="/static/js/api.js"></script>
+<script src="/static/js/nav.js"></script>
+<script src="/static/js/quality.js"></script>
+</body>
+</html>

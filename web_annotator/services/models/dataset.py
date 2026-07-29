@@ -76,6 +76,7 @@ class ImageListItem(BaseModel):
     thumbnail_hash: str = ""
     dir: str = ""
     aesthetic: float | None = None
+    quality: float | None = None
 
 
 class SimilarItem(BaseModel):

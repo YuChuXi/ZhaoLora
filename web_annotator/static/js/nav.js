@@ -8,6 +8,7 @@
 
   var PAGE_TABS = [
     { page: 'aesthetic', label: '美学' },
+    { page: 'quality', label: '质量' },
     { page: 'filter', label: '筛选' },
     { page: 'dedupe', label: '去重' },
     { page: 'crop', label: '裁剪' },
@@ -17,7 +18,7 @@
     { page: 'ready', label: '就绪' },
   ];
 
-  var HIDE_DIR = { filter: 0, crop: 1, paint: 1, ready: 1, aesthetic: 0, dedupe: 0, tags: 0, 'tag-clean': 0 };
+  var HIDE_DIR = { filter: 0, crop: 1, paint: 1, ready: 1, aesthetic: 0, quality: 0, dedupe: 0, tags: 0, 'tag-clean': 0 };
 
   /**
    * @returns {{dataset: string|null, page: string}}
@@ -40,6 +41,7 @@
   function dirsApi(page) {
     if (page === 'dedupe') return API.apiPath('/dedupe/dirs');
     if (page === 'aesthetic') return API.apiPath('/aesthetic/dirs');
+    if (page === 'quality') return API.apiPath('/quality/dirs');
     if (page === 'tags' || page === 'tag-clean') return API.apiPath('/tags/dirs');
     return API.apiPath('/dirs');
   }

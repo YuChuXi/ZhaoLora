@@ -73,6 +73,9 @@ class TagCleanResult(BaseModel):
     inject_pony_score: bool = False
     pony_injected: int = 0
     pony_missing: int = 0
+    inject_quality_tag: bool = False
+    quality_injected: int = 0
+    quality_missing: int = 0
     dirs: list[str] = Field(default_factory=list)
     root: str = ""
 

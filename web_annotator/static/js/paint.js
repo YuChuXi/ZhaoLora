@@ -9,7 +9,7 @@
   var _alpha = null, _rgbImg = null, _scale = 1;
   var _viewW = 0, _viewH = 0, _dpr = 1;
   var _brushRadius = 80, _brushPct = 3, _defaultAlpha = 255;
-  var _tool = 'brush', _isDrawing = false, _paintValue = 0;
+  var _tool = 'brush', _isDrawing = false, _isTouch = false, _paintValue = 0;
   var _rectStart = null, _mouseScreen = null, _modified = false;
   var _preloadCache = {};
   var _renderScheduled = false;
@@ -431,12 +431,40 @@
     }
   }
 
-  // ---- 鼠标 ----
-  canvas.addEventListener('mousedown', function(e) {
-    e.preventDefault(); if (!_alpha) return;
+  // ---- 触屏 ----
+  canvas.addEventListener('touchstart', function(e) {
+    e.preventDefault(); if (!_alpha || e.touches.length !== 1) return;
+    _isDrawing = true; _isTouch = true;
+    var t = e.touches[0];
+    var pos = screenToOrig(t.clientX, t.clientY);
+    var swapped = document.getElementById('chk-swap-buttons').checked;
+    _paintValue = swapped ? 255 : 0;
+    if (_tool === 'brush') stampDisc(pos[0], pos[1], _brushRadius, _paintValue);
+    _mouseScreen = [t.clientX, t.clientY];
+    _rectStart = pos; _scheduleRender();
+  }, { passive: false });
+  canvas.addEventListener('touchmove', function(e) {
+    e.preventDefault(); if (!_alpha || !_isDrawing) return;
+    var t = e.touches[0];
+    _mouseScreen = [t.clientX, t.clientY];
+    _updateBrushPreview();
+    var pos = screenToOrig(t.clientX, t.clientY);
+    if (_tool === 'brush' && _rectStart) { strokeLine(_rectStart[0], _rectStart[1], pos[0], pos[1], _brushRadius, _paintValue); _rectStart = pos; }
+    _scheduleRender();
+  }, { passive: false });
+  canvas.addEventListener('touchend', function(e) {
+    e.preventDefault(); if (!_isTouch || !_isDrawing || !_alpha) return;
+    var t = e.changedTouches[0];
+    if (_tool === 'rect' && _rectStart && t) { var pos = screenToOrig(t.clientX, t.clientY); fillRect(_rectStart[0], _rectStart[1], pos[0], pos[1], _paintValue); }
+    _isDrawing = false; _isTouch = false; _rectStart = null; _brushPreview.style.display = 'none'; _modified = true; _scheduleRender();
+  }, { passive: false });
+  canvas.addEventListener('touchcancel', function() { _isDrawing = false; _isTouch = false; _rectStart = null; _mouseScreen = null; _brushPreview.style.display = 'none'; });
+  // 防止触屏时触发对应的 mouse 事件
+  canvas.addEventListener('mousedown', function(e) { if (_isTouch) return; e.preventDefault(); if (!_alpha) return;
     _isDrawing = true;
     var pos = screenToOrig(e.clientX, e.clientY);
-    _paintValue = (e.button === 0) ? (document.getElementById('chk-left-transparent').checked ? 0 : 255) : 255;
+    var swapped = document.getElementById('chk-swap-buttons').checked;
+    _paintValue = (e.button === 0) ? (swapped ? 255 : 0) : (swapped ? 0 : 255);
     if (_tool === 'brush') stampDisc(pos[0], pos[1], _brushRadius, _paintValue);
     _rectStart = pos; _scheduleRender();
   });
@@ -523,6 +551,64 @@
 
   function updateNav() {
     updateStatusBar();
+  }
+
+  // BiRefNet 蒙版批量生成
+  var birefnetBtn = document.getElementById('btn-birefnet-mask');
+  var birefnetDlg = document.getElementById('birefnet-dlg');
+  if (birefnetBtn && birefnetDlg) {
+    birefnetBtn.addEventListener('click', function () { birefnetDlg.hidden = false; });
+    document.getElementById('birefnet-cancel').addEventListener('click', function () { birefnetDlg.hidden = true; });
+    document.getElementById('birefnet-start').addEventListener('click', function () {
+      var expand = parseInt(document.getElementById('birefnet-expand').value) || 32;
+      var shrink = parseInt(document.getElementById('birefnet-shrink').value) || 0;
+      var maskMin = parseInt(document.getElementById('birefnet-min').value) || 96;
+      var maskMax = parseInt(document.getElementById('birefnet-max').value) || 255;
+      var skipExisting = document.getElementById('birefnet-skip').checked;
+      birefnetDlg.hidden = true;
+      fetch('/api/d/' + API.dataset() + '/birefnet-mask', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mask_expand: expand, mask_shrink: shrink, mask_min: maskMin, mask_max: maskMax, skip_existing: skipExisting })
+      })
+        .then(function (r) { return r.json(); })
+        .then(function (resp) {
+          if (resp.ok && resp.job_id) {
+            watchBirefnetJob(resp.job_id);
+          } else {
+            toast('启动失败');
+          }
+        })
+        .catch(function (e) { toast(String(e.message || e)); });
+    });
+  }
+
+  function watchBirefnetJob(jobId) {
+    var bar = document.getElementById('birefnet-bar');
+    var fill = document.getElementById('birefnet-fill');
+    var pct = document.getElementById('birefnet-pct');
+    var text = document.getElementById('birefnet-text');
+    bar.hidden = false;
+    var evtSource = new EventSource('/api/jobs/' + jobId + '/events');
+    evtSource.onmessage = function (e) {
+      var snap = JSON.parse(e.data);
+      if (snap.total) {
+        var p = Math.round(snap.done / snap.total * 100);
+        fill.style.width = p + '%';
+        pct.textContent = p + '%';
+        text.textContent = snap.done + '/' + snap.total + (snap.failed ? ' 失败' + snap.failed : '');
+      }
+      if (snap.status === 'done') {
+        evtSource.close();
+        location.reload();
+        return;
+      }
+      if (snap.status === 'cancelled') {
+        evtSource.close();
+        setTimeout(function () { bar.hidden = true; }, 3000);
+      }
+    };
+    evtSource.onerror = function () { evtSource.close(); };
   }
 
   loadConfig().then(loadImages);

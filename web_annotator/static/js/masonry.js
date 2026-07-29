@@ -144,10 +144,13 @@ var Masonry = (function() {
     var name = document.createElement('span');
     name.className = 'name';
     var res = (img.width && img.height) ? (img.width + '×' + img.height + ' ') : '';
-    var score = (typeof img.aesthetic === 'number')
-      ? (img.aesthetic.toFixed(2) + ' ')
+    var aes = (typeof img.aesthetic === 'number')
+      ? ('A' + img.aesthetic.toFixed(2) + ' ')
       : '';
-    name.textContent = score + res + img.stem;
+    var qual = (typeof img.quality === 'number')
+      ? ('Q' + img.quality.toFixed(2) + ' ')
+      : '';
+    name.textContent = aes + qual + res + img.stem;
     info.appendChild(name);
     card.appendChild(info);
 
