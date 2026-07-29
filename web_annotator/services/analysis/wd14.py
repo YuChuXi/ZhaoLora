@@ -18,7 +18,7 @@ if TYPE_CHECKING:
 
 DEFAULT_THRESHOLD = 0.1
 
-_REPO_ROOT = Path(__file__).resolve().parents[1].parent
+_REPO_ROOT = Path(__file__).resolve().parents[3]
 WD14_MODEL_DIR = _REPO_ROOT / "wd14_tagger_model" / "SmilingWolf_wd-vit-large-tagger-v3"
 WD14_ONNX_PATH = WD14_MODEL_DIR / "model.onnx"
 WD14_CSV_PATH = WD14_MODEL_DIR / "selected_tags.csv"
