@@ -1,6 +1,7 @@
 """内置来源实现。
 
-引用：导入时自动注册到 ``common._SOURCES``。
+Callers:
+    - ``__init__.py`` 导入时自动注册
 """
 
 from __future__ import annotations
@@ -32,8 +33,10 @@ class GelbooruSource(SourceClient):
     def filter_extra(self, extra: str) -> str:
         """Gelbooru 忽略 date: 元标签。
 
-        覆盖父类 ``common.SourceClient``；
-        引用：``common.SourceClient.build_search_query``。
+        覆盖父类 ``common.SourceClient``。
+
+        Callers:
+            - `common.SourceClient:build_search_query`
         """
         tokens = [x for x in extra.split() if not x.lower().startswith("date:")]
         return " ".join(tokens)
@@ -41,8 +44,10 @@ class GelbooruSource(SourceClient):
     def is_media_url(self, url: str) -> bool:
         """仅允许 gelbooru.com 图床。
 
-        覆盖父类 ``common.SourceClient``；
-        引用：``routes/booru.py`` 缩略图代理白名单校验。
+        覆盖父类 ``common.SourceClient``。
+
+        Callers:
+            - `routes/booru.py` 缩略图代理白名单检查
         """
         return "gelbooru.com" in url
 
@@ -50,8 +55,10 @@ class GelbooruSource(SourceClient):
     def normalize(post: BooruPost) -> BooruPost | None:
         """Gelbooru 原始帖补充 ``source`` 和回退 URL。
 
-        覆盖父类 ``common.SourceClient``；
-        引用：``sources.py:GelbooruSource.search``。
+        覆盖父类 ``common.SourceClient``。
+
+        Callers:
+            - `sources.py:GelbooruSource.search`
         """
         if not post.file_url:
             return None
@@ -63,8 +70,10 @@ class GelbooruSource(SourceClient):
     async def fetch_meta(self, out_dir: Path, pid: str, proxy: str | None) -> None:
         """拉取 Gelbooru 帖元数据并写入磁盘。
 
-        实现 ``common.SourceClient.fetch_meta``；
-        引用：``common.SourceClient._write_meta`` / ``routes/booru._run_refresh``。
+        实现 ``common.SourceClient.fetch_meta``。
+
+        Callers:
+            - `routes/booru.py:_run_refresh`
         """
         api = make_gelbooru(proxy)
         raw = await api.getPost(int(pid))
@@ -74,8 +83,10 @@ class GelbooruSource(SourceClient):
                      proxy: str | None, **auth) -> tuple[list[BooruPost], bool]:
         """搜索 Gelbooru 帖。
 
-        实现 ``common.SourceClient.search``；
-        引用：``common.search_posts`` / ``routes/booru.booru_search``。
+        实现 ``common.SourceClient.search``。
+
+        Callers:
+            - `common.py:search_posts` / `routes/booru.py:booru_search`
         """
         from services.models import BooruPost
 
@@ -109,8 +120,10 @@ class GelbooruSource(SourceClient):
                        include_meta_tags: bool = False, keep_underscores: bool = False) -> dict:
         """下载 Gelbooru 原图并写旁路标签。
 
-        实现 ``common.SourceClient.download``；
-        引用：``booru_batch.download_one``。
+        实现 ``common.SourceClient.download``。
+
+        Callers:
+            - `booru_batch.py:download_one`
         """
         from services.booru_client.media import _categorize_gelbooru_tags
         from services.booru_client.utils import convert_path_to_png
@@ -154,8 +167,10 @@ class DanbooruSource(SourceClient):
     def preview_url(self, post: BooruPost) -> str:
         """Danbooru 帖缩略图 URL，优先 720x720 webp。
 
-        覆盖父类 ``common.SourceClient``；
-        引用：``routes/booru`` 搜索结果列表。
+        覆盖父类 ``common.SourceClient``。
+
+        Callers:
+            - `routes/booru.py` 搜索结果列表
         """
         return danbooru_preview_url(post)  # type: ignore[arg-type]
 
@@ -163,8 +178,10 @@ class DanbooruSource(SourceClient):
     def normalize(post: BooruPost) -> BooruPost | None:
         """Danbooru 原始帖补充 ``source`` 和预览 URL。
 
-        覆盖父类 ``common.SourceClient``；
-        引用：``sources.py:DanbooruSource.search``。
+        覆盖父类 ``common.SourceClient``。
+
+        Callers:
+            - `sources.py:DanbooruSource.search`
         """
         if post.is_banned or post.is_deleted or not post.file_url:
             return None
@@ -176,8 +193,10 @@ class DanbooruSource(SourceClient):
     async def fetch_meta(self, out_dir: Path, pid: str, proxy: str | None) -> None:
         """拉取 Danbooru 帖元数据并写入磁盘。
 
-        实现 ``common.SourceClient.fetch_meta``；
-        引用：``common.SourceClient._write_meta`` / ``routes/booru._run_refresh``。
+        实现 ``common.SourceClient.fetch_meta``。
+
+        Callers:
+            - `routes/booru.py:_run_refresh`
         """
         meta = await danbooru_get(
             f"https://danbooru.donmai.us/posts/{pid}.json",
@@ -191,8 +210,10 @@ class DanbooruSource(SourceClient):
                      proxy: str | None, **auth) -> tuple[list[BooruPost], bool]:
         """搜索 Danbooru 帖。
 
-        实现 ``common.SourceClient.search``；
-        引用：``common.search_posts`` / ``routes/booru.booru_search``。
+        实现 ``common.SourceClient.search``。
+
+        Callers:
+            - `common.py:search_posts` / `routes/booru.py:booru_search`
         """
         from services.models import BooruPost
 
@@ -224,8 +245,10 @@ class DanbooruSource(SourceClient):
                        include_meta_tags: bool = False, keep_underscores: bool = False) -> dict:
         """下载 Danbooru 原图并写旁路标签。
 
-        实现 ``common.SourceClient.download``；
-        引用：``booru_batch.download_one``。
+        实现 ``common.SourceClient.download``。
+
+        Callers:
+            - `booru_batch.py:download_one`
         """
         from services.booru_client.media import _danbooru_fetch_image_bytes as _fetch
         from services.models import BooruPost

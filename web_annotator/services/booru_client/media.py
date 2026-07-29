@@ -47,13 +47,21 @@ _tag_types_cache: dict[str, int] = {}
 
 
 def _cache_files(kind: str, post_id: str) -> tuple[Path, Path]:
-    """磁盘缓存路径。引用：fetch_gelbooru_bytes。"""
+    """磁盘缓存路径。
+
+    Callers:
+        - `media.py:fetch_gelbooru_bytes`
+    """
     base = _CACHE_ROOT / kind / post_id
     return base.with_suffix(".bin"), base.with_suffix(".ctype")
 
 
 def _assert_gelbooru_url(url: str) -> str:
-    """校验 Gelbooru 图床。引用：fetch_gelbooru_bytes。"""
+    """校验 Gelbooru 图床 URL。
+
+    Callers:
+        - `media.py:fetch_gelbooru_bytes`
+    """
     u = urlparse((url or "").strip())
     if u.scheme not in ("http", "https") or not u.hostname:
         raise ValueError("非法媒体地址")
@@ -64,7 +72,11 @@ def _assert_gelbooru_url(url: str) -> str:
 
 
 async def _shared_client(proxy: str | None) -> httpx.AsyncClient:
-    """按代理复用连接池。引用：fetch_gelbooru_bytes。"""
+    """按代理复用 HTTP 连接池。
+
+    Callers:
+        - `media.py:fetch_gelbooru_bytes`
+    """
     key = proxy_or_none(proxy) or ""
     c = _clients.get(key)
     if c is not None and not c.is_closed:
@@ -90,7 +102,11 @@ async def _download_gelbooru(
     *,
     proxy: str | None,
 ) -> tuple[bytes, str]:
-    """真正拉 CDN 并写缓存。引用：fetch_gelbooru_bytes。"""
+    """从 CDN 下载并写入磁盘缓存。
+
+    Callers:
+        - `media.py:fetch_gelbooru_bytes`
+    """
     timeout = 30.0 if kind == "thumb" else 45.0
     client = await _shared_client(proxy)
     resp = await client.get(media_url, timeout=timeout)
@@ -248,7 +264,8 @@ async def _categorize_gelbooru_tags(post: dict, api) -> dict:
     Returns:
         含 tag_string_* 字段的新 dict。
 
-    引用：``media.download_post``（Gelbooru 下载时调用）。
+    Callers:
+        - `media.py:download_post`
     """
     all_names = str(post.get("tags") or "").split()
     if not all_names:
@@ -392,7 +409,11 @@ async def download_post(
 
 
 def local_rel_path(root: Path, abs_path: str | Path) -> str:
-    """绝对路径转数据集相对路径。引用：routes.booru.booru_download。"""
+    """绝对路径转数据集相对路径。
+
+    Callers:
+        - `routes/booru.py:booru_download`
+    """
     p = Path(abs_path).resolve()
     return str(p.relative_to(root.resolve())).replace("\\", "/")
 
@@ -415,7 +436,8 @@ async def regenerate_captions(
     Returns:
         成功重生成的 txt 数量。
 
-    引用：``routes.booru.booru_regenerate_captions``。
+    Callers:
+        - `routes/booru.py:booru_regenerate_captions`
     """
     from services.booru_client.common import (
         META_SUBDIR, build_caption_from_meta, file_stem,

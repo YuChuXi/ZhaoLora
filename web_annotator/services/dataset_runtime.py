@@ -1,7 +1,8 @@
-"""
-单个任务数据集在运行时的服务句柄。
+"""单个任务数据集在运行时的服务句柄。
 
-引用：server.py 按需构建；routes/deps.py 按请求路径解析。
+Callers:
+    - `server.py` 按需构建
+    - `routes/deps.py` 按请求路径解析
 """
 
 from __future__ import annotations
@@ -11,8 +12,12 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Callable
 
 from services.dataset_layout import DatasetLayout, resolve_dataset_layout
+from services.models import JobSnapshot
 from services.state_manager import StateManager
 from services.thumbnailer import Thumbnailer
+
+if TYPE_CHECKING:
+    from services.jobs import JobManager
 
 if TYPE_CHECKING:
     from services.color_similarity import ColorIndex
@@ -31,41 +36,60 @@ class DatasetRuntime:
 
     @property
     def root(self) -> Path:
-        """任务根目录。引用：各路由 get_runtime。"""
+        """任务根目录。
+
+        Callers:
+            - 各路由 `get_runtime`
+        """
         return self.layout.root
 
     @property
     def main_dir(self) -> Path:
-        """main 图像目录。引用：各路由。"""
+        """main 图像目录。
+
+        Callers:
+            - 各路由
+        """
         return self.layout.main_dir
 
 
 @dataclass
 class DatasetRegistry:
-    """
-    按需缓存任务运行时。
+    """按需缓存任务运行时。
 
-    引用：server.py、中间件、routes/tasks.py 预览。
+    Callers:
+        - `server.py`
+        - 中间件
+        - `routes/tasks.py` 预览
     """
 
     task_root: Path
     thumbnail_size: int = 2560
+    job_manager: JobManager | None = None
     by_name: dict[str, DatasetRuntime] = field(default_factory=dict)
     _migrate: Callable[[Path, Path], None] | None = None
 
     def get(self, name: str) -> DatasetRuntime | None:
-        """按名取已加载运行时。引用：DatasetRegistry。"""
+        """按名取已加载运行时。
+
+        Callers:
+            - `DatasetRegistry`
+        """
         return self.by_name.get(name)
 
     def names(self) -> list[str]:
-        """已加载任务名列表。引用：管理接口。"""
+        """已加载任务名列表。
+
+        Callers:
+            - 管理接口
+        """
         return sorted(self.by_name.keys())
 
     def ensure(self, name: str) -> DatasetRuntime:
-        """
-        若尚未加载则解析 `{task_root}/{name}` 并缓存。
+        """若尚未加载则解析 ``{task_root}/{name}`` 并缓存，同时提交缩略图填充任务。
 
-        引用：中间件绑定；任务预览生成缩略图。
+        Callers:
+            - 中间件 `bind_dataset_middleware`
         """
         existing = self.by_name.get(name)
         if existing is not None:
@@ -87,4 +111,39 @@ class DatasetRegistry:
             mask_dir=mask_dir,
         )
         self.by_name[name] = rt
+        if self.job_manager is not None:
+            _submit_thumb_fill(self.job_manager, name, thumbnailer)
         return rt
+
+
+def _submit_thumb_fill(jobs: JobManager, dataset: str, thumb: Thumbnailer) -> None:
+    """通过 JobManager 提交后台缩略图填充任务。
+
+    Callers:
+        - `DatasetRegistry.ensure`
+    """
+    from services.models.jobs import JobSnapshot as Snap
+
+    def run(emit: Callable[[Snap], None]) -> None:
+        total = sum(
+            1 for d in thumb.data_dir.iterdir()
+            if d.is_dir() and d.name in ("main", "mask")
+            for f in d.iterdir()
+            if f.is_file() and f.suffix.lower() not in (".txt", ".json")
+        )
+        emit(Snap(
+            status="running", kind="thumbnail", dataset=dataset,
+            job_id="", done=0, total=total,
+        ))
+        ok = thumb.fill_missing()
+        emit(Snap(
+            status="done", kind="thumbnail", dataset=dataset,
+            job_id="", done=ok, total=total,
+        ))
+
+    jobs.submit(
+        kind="thumbnail",
+        group=f"thumb_{dataset}",
+        dataset=dataset,
+        run=run,
+    )

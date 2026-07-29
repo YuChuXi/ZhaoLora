@@ -1,6 +1,9 @@
 """Booru 图片/文件/标签工具。
 
-引用：``common.SourceClient`` / ``sources`` / ``media``。
+Callers:
+    - ``common.SourceClient``
+    - ``sources``
+    - ``media``
 """
 
 from __future__ import annotations
@@ -55,7 +58,9 @@ def find_existing(out_dir: Path, stem: str) -> Path | None:
 def find_downloaded(out_dir: Path, source: str, post_id: str, *, file_stem_fn) -> Path | None:
     """查找已下载帖图。
 
-    引用：``sources.GelbooruSource.download`` / ``sources.DanbooruSource.download``。
+    Callers:
+        - `sources.py:GelbooruSource.download`
+        - `sources.py:DanbooruSource.download`
     """
     for stem in stem_candidates(source, post_id, file_stem_fn=file_stem_fn):
         hit = find_existing(out_dir, stem)
@@ -66,7 +71,8 @@ def find_downloaded(out_dir: Path, source: str, post_id: str, *, file_stem_fn) -
 def is_downloaded(out_dir: Path, source: str, post_id: str, *, file_stem_fn) -> bool:
     """是否已下载。
 
-    引用：``booru_batch``。
+    Callers:
+        - `booru_batch.py`
     """
     return find_downloaded(out_dir, source, post_id, file_stem_fn=file_stem_fn) is not None
 
@@ -86,7 +92,11 @@ def _tags_to_caption(tags: str) -> str:
 
 # ---- 图片转换（供 sources / media 使用） ----
 def convert_path_to_png(src: Path, dest: Path) -> None:
-    """临时文件转 PNG。引用：``sources.GelbooruSource.download``。"""
+    """临时文件转 PNG。
+
+    Callers:
+        - `sources.py:GelbooruSource.download`
+    """
     from services.booru_client.common import SourceClient
     data = src.read_bytes()
     if src.is_file():

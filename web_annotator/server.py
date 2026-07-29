@@ -200,10 +200,11 @@ def dataset_root_redirect(dataset: str) -> RedirectResponse:
 
 @app.get("/d/{dataset}/thumb/{filename}")
 def dataset_thumb(request: Request, dataset: str, filename: str) -> FileResponse:
-    """
-    缩略图文件。
+    """返回数据集的 AVIF 缩略图文件，缺失时即时生成。
 
-    引用：前端 thumbnailUrl、任务卡片预览。
+    Callers:
+        - `static/js/home.js:211`
+        - `static/js/api.js:120`
     """
     store: TaskStore = request.app.state.task_store
     if not store.contains(dataset):
@@ -211,7 +212,12 @@ def dataset_thumb(request: Request, dataset: str, filename: str) -> FileResponse
     if "/" in filename or "\\" in filename or ".." in filename:
         raise HTTPException(400, "非法文件名")
     rt = request.app.state.datasets.ensure(dataset)
-    path = rt.thumbnailer.thumb_dir / filename
+    thumb = rt.thumbnailer
+    path = thumb.thumb_dir / filename
+    if not path.is_file():
+        rel = thumb.find_rel_path(filename)
+        if rel is not None:
+            thumb.generate(rel)
     if not path.is_file():
         raise HTTPException(404, "缩略图不存在")
     return FileResponse(path, media_type="image/avif", headers={"Cache-Control": "no-store"})
@@ -276,15 +282,17 @@ def main() -> int:
         return 1
 
     store = TaskStore(task_root)
+    jobs = JobManager()
     registry = DatasetRegistry(
         task_root=task_root,
         thumbnail_size=args.thumbnail_size,
+        job_manager=jobs,
         _migrate=_migrate_meta_to_root,
     )
 
     app.state.task_store = store
     app.state.datasets = registry
-    app.state.jobs = JobManager()
+    app.state.jobs = jobs
     app.state.booru_proxy = (args.booru_proxy or "").strip() or None
     app.state.danbooru_login = (args.danbooru_login or "").strip() or None
     app.state.danbooru_api_key = (args.danbooru_api_key or "").strip() or None

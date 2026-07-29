@@ -1,6 +1,8 @@
 """Booru 网络请求与来源特定辅助。
 
-引用：``sources`` / ``media``。
+Callers:
+    - ``sources``
+    - ``media``
 """
 
 from __future__ import annotations
@@ -86,16 +88,20 @@ async def danbooru_get(
 def make_gelbooru(proxy: str | None) -> Gelbooru:
     """构造 Gelbooru 客户端。
 
-    引用：``sources.GelbooruSource`` / ``media.fetch_gelbooru_bytes``。
+    Callers:
+        - `sources.py:GelbooruSource`
+        - `media.py:fetch_gelbooru_bytes`
     """
     p = proxy_or_none(proxy)
     return Gelbooru(proxy=p) if p else Gelbooru(proxy=None)  # type: ignore[arg-type]
 
 
 def danbooru_preview_url(post: BooruPost) -> str:
-    """优先 720x720 webp 预览；回退 file_url。
+    """Danbooru 帖的预览 URL，优先 720x720 webp，回退 file_url。
 
-    引用：``sources.DanbooruSource.preview_url`` / ``search.normalize_danbooru_post``。
+    Callers:
+        - `sources.py:DanbooruSource.preview_url`
+        - `search.py:normalize_danbooru_post`
     """
     if post.media_asset:
         variants = post.media_asset.get("variants") or []
