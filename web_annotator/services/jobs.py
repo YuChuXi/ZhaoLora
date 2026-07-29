@@ -1,7 +1,7 @@
 """
 长任务编排：asyncio.Lock 串行，整段 asyncio.to_thread，Server-Sent Events 推送进度。
 
-引用：routes/meta.py；routes/aesthetic.py、tagging.py、dedupe.py、tag_stats.py 通过 submit 提交。
+引用：routes/meta.py；routes/scoring.py、tagging.py、dedupe.py、tag_stats.py 通过 submit 提交。
 """
 
 from __future__ import annotations
@@ -92,7 +92,7 @@ class JobManager:
             cancel_fn: 协作取消回调。
 
         引用:
-            ``routes.aesthetic`` / ``tagging`` / ``dedupe`` / ``tag_stats``。
+            ``routes.scoring`` / ``tagging`` / ``dedupe`` / ``tag_stats``。
         """
         job_id = uuid.uuid4().hex
         job = Job(

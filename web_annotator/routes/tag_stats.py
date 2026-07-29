@@ -8,8 +8,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from routes.deps import get_runtime, jobs
-from services.aesthetic import load_scores
-from services.quality import load_quality_scores
+from services.scoring import load_score_json
 from services.jobs import EmitFn
 from services.models import JobSnapshot, JobSubmitResponse, TagCleanResult, TagStatsResult, TxtDirInfo
 from services.tag_clean import batch_edit_tags, clean_txt_dirs
@@ -128,7 +127,8 @@ async def tag_clean(request: Request, body: CleanBody) -> JobSubmitResponse:
     if not selected:
         raise HTTPException(400, "请选择目录")
 
-    scores = load_scores(root) if body.inject_pony_score else {}
+    scores = load_score_json(root, ".aesthetic_scores.json") if body.inject_pony_score else {}
+    quality_scores = load_score_json(root, ".quality_scores.json") if body.inject_quality_tag else {}
     payload = body
 
     def run(emit: EmitFn) -> TagCleanResult:
@@ -151,6 +151,8 @@ async def tag_clean(request: Request, body: CleanBody) -> JobSubmitResponse:
             inject_pony_score=payload.inject_pony_score,
             dataset_root=root,
             aesthetic_scores=scores,
+            inject_quality_tag=payload.inject_quality_tag,
+            quality_scores=quality_scores,
             dry_run=payload.dry_run,
             sample_limit=payload.sample_limit,
         )
@@ -211,7 +213,8 @@ async def tag_batch_edit(request: Request, body: BatchEditBody) -> JobSubmitResp
     if body.insert_mode not in ("top", "bottom", "random"):
         raise HTTPException(400, "insert_mode 须为 top / bottom / random")
 
-    scores = load_scores(root) if body.inject_pony_score else {}
+    scores = load_score_json(root, ".aesthetic_scores.json") if body.inject_pony_score else {}
+    quality_scores = load_score_json(root, ".quality_scores.json") if body.inject_quality_tag else {}
     payload = body
 
     def run(emit: EmitFn) -> TagCleanResult:
@@ -235,6 +238,8 @@ async def tag_batch_edit(request: Request, body: BatchEditBody) -> JobSubmitResp
             inject_pony_score=payload.inject_pony_score,
             dataset_root=root,
             aesthetic_scores=scores,
+            inject_quality_tag=payload.inject_quality_tag,
+            quality_scores=quality_scores,
             dry_run=payload.dry_run,
             sample_limit=payload.sample_limit,
         )

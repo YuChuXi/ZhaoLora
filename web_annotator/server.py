@@ -26,10 +26,9 @@ import uvicorn
 
 from routes.alpha_paint import router as paint_router
 from routes.annotations import router as annotations_router
-from routes.aesthetic import router as aesthetic_router
+from routes.scoring import router as scoring_router
 from routes.birefnet import router as birefnet_router
 from routes.booru import router as booru_router
-from routes.quality import router as quality_router
 from routes.crop import router as crop_router
 from routes.dedupe import router as dedupe_router
 from routes.docs import router as docs_router
@@ -58,7 +57,7 @@ app = FastAPI(title="Image Annotator", version="3.1.0")
 
 _PAGE_TEMPLATES = {
     "filter": "index.html",
-    "aesthetic": "aesthetic.html",
+    "scoring": "scoring.html",
     "dedupe": "dedupe.html",
     "crop": "crop.html",
     "paint": "paint.html",
@@ -174,13 +173,14 @@ dataset_api.include_router(images_router)
 dataset_api.include_router(annotations_router)
 dataset_api.include_router(paint_router)
 dataset_api.include_router(crop_router)
-dataset_api.include_router(aesthetic_router)
+dataset_api.include_router(scoring_router)
 dataset_api.include_router(tagging_router)
 dataset_api.include_router(tag_stats_router)
 dataset_api.include_router(dedupe_router)
 dataset_api.include_router(ready_router)
 dataset_api.include_router(booru_router)
-dataset_api.include_router(birefnet_router)    dataset_api.include_router(quality_router)
+dataset_api.include_router(birefnet_router)
+
 app.include_router(dataset_api)
 app.include_router(tasks_router)
 app.include_router(datasets_router)

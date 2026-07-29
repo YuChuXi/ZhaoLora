@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>评分</title>
+<link rel="stylesheet" href="/static/css/annotator.css">
+<style>
+  body { margin: 0; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+  .scoring-main { flex: 1; display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+
+  /* 结果标签 */
+  .result-tabs { display: flex; gap: 0; background: #1a1a2e; border-bottom: 1px solid #333; flex-shrink: 0; }
+  .result-tab { padding: 6px 16px; font-size: 13px; cursor: pointer; color: var(--text-dim); border: none; background: none; border-bottom: 2px solid transparent; display: flex; align-items: center; gap: 6px; }
+  .result-tab.active { color: var(--text); border-bottom-color: var(--accent, #4fc3f7); }
+  .tab-badge { font-size: 11px; background: rgba(255,255,255,0.1); padding: 1px 6px; border-radius: 8px; min-width: 16px; text-align: center; }
+
+  /* 工具栏 */
+  .toolbar.compact label {
+    display: flex; align-items: center; gap: 4px;
+    font-size: 12px; color: var(--text-dim); cursor: pointer; user-select: none;
+  }
+  .toolbar.compact select, .toolbar.compact input {
+    background: #0a1a30; color: var(--text);
+    border: 1px solid var(--border); border-radius: 4px; padding: 2px 6px; font-size: 12px;
+  }
+
+  /* 统计 */
+  .stats-bar {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
+    gap: 8px; padding: 10px 14px; background: rgba(255,255,255,0.02);
+    border-bottom: 1px solid rgba(255,255,255,0.06); flex-shrink: 0;
+  }
+  .stat-item { text-align: center; }
+  .stat-label { font-size: 0.65rem; color: #666; text-transform: uppercase; letter-spacing: 0.04em; }
+  .stat-value { font-size: 0.95rem; font-weight: 600; color: #ddd; }
+
+  /* 直方图 */
+  .hist-section { padding: 12px 14px; border-bottom: 1px solid rgba(255,255,255,0.06); flex-shrink: 0; }
+  .hist { display: flex; justify-content: center; align-items: flex-end; gap: 6px; height: 140px; }
+  .hist-col { display: flex; flex-direction: column; align-items: center; gap: 4px; flex: 0 0 48px; }
+  .hist-count { font-size: 0.7rem; font-weight: 600; color: #ccc; }
+  .hist-bar { width: 28px; border-radius: 4px 4px 0 0; min-height: 3px; }
+  .hist-label { font-size: 0.6rem; font-weight: 500; white-space: nowrap; }
+
+  /* 画廊 */
+  .gallery-wrap { flex: 1; overflow-y: auto; padding: 12px; }
+  .gallery {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 10px;
+  }
+  .gallery-empty {
+    flex: 1; display: flex; align-items: center; justify-content: center;
+    color: #555; font-size: 14px;
+  }
+  .card {
+    background: rgba(255,255,255,0.03);
+    border: 1px solid rgba(255,255,255,0.06);
+    border-radius: 12px;
+    overflow: hidden;
+    transition: transform 0.2s, box-shadow 0.2s;
+    position: relative;
+    cursor: pointer;
+  }
+  .card:hover { transform: translateY(-3px); box-shadow: 0 6px 24px rgba(0,0,0,0.5); border-color: rgba(255,255,255,0.14); }
+  .card-img { width: 100%; aspect-ratio: 1; overflow: hidden; display: flex; align-items: center; justify-content: center; background: #111; }
+  .card-img img { width: 100%; height: 100%; object-fit: cover; display: block; transition: transform 0.3s; }
+  .card:hover .card-img img { transform: scale(1.06); }
+  .card-badge {
+    position: absolute; top: 8px; right: 8px; z-index: 2;
+    color: #fff; font-size: 0.7rem; font-weight: 700;
+    padding: 3px 8px; border-radius: 16px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+    letter-spacing: 0.02em;
+  }
+  .card-score-val {
+    position: absolute; top: 8px; left: 8px; z-index: 2;
+    background: rgba(0,0,0,0.6); color: #aaa;
+    font-size: 0.65rem; font-weight: 500;
+    padding: 2px 6px; border-radius: 8px;
+  }
+  .card-path {
+    padding: 6px 8px; font-size: 0.65rem; color: #555;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    text-align: center;
+  }
+
+  /* 灯箱 */
+  .lightbox {
+    display: none; position: fixed; z-index: 9999; inset: 0;
+    background: rgba(0,0,0,0.94); flex-direction: column;
+    align-items: center; justify-content: center; cursor: zoom-out;
+  }
+  .lightbox.active { display: flex; }
+  .lightbox img {
+    max-width: 92vw; max-height: 78vh; object-fit: contain;
+    border-radius: 8px; box-shadow: 0 0 60px rgba(0,0,0,0.6); cursor: default;
+  }
+  .lightbox-close {
+    position: absolute; top: 18px; right: 26px; color: #aaa;
+    font-size: 2rem; cursor: pointer; line-height: 1; transition: color 0.2s; z-index: 10;
+  }
+  .lightbox-close:hover { color: #fff; }
+  .lightbox-nav {
+    position: absolute; top: 50%; transform: translateY(-50%);
+    color: #aaa; font-size: 2.4rem; cursor: pointer; padding: 10px;
+    transition: color 0.2s; user-select: none; z-index: 10;
+  }
+  .lightbox-nav:hover { color: #fff; }
+  .lightbox-prev { left: 14px; }
+  .lightbox-next { right: 14px; }
+  .lightbox-info {
+    display: flex; align-items: center; gap: 12px; margin-top: 12px;
+    color: #ccc; font-size: 0.85rem;
+  }
+  .lightbox-info .badge {
+    color: #fff; font-weight: 700; padding: 3px 10px; border-radius: 14px; font-size: 0.78rem;
+  }
+
+  ::-webkit-scrollbar { width: 6px; }
+  ::-webkit-scrollbar-track { background: #0d0d1a; }
+  ::-webkit-scrollbar-thumb { background: #333; border-radius: 3px; }
+</style>
+</head>
+<body>
+<nav class="app-tabs" id="app-tabs"></nav>
+
+<div class="toolbar compact">
+  <button class="btn green" id="btn-start">开始</button>
+  <button class="btn" id="btn-cancel" disabled>取消</button>
+  <span class="sep"></span>
+  <label>评分类型
+    <select id="score-type">
+      <option value="aesthetic">美学</option>
+      <option value="quality">质量</option>
+    </select>
+  </label>
+  <label>设备
+    <select id="device">
+      <option value="cpu">CPU</option>
+      <option value="cuda">CUDA</option>
+    </select>
+  </label>
+</div>
+
+<div class="job-progress compact" id="job-progress" hidden>
+  <div class="job-progress-track">
+    <div class="job-progress-fill aes" id="progress-fill"></div>
+  </div>
+  <span class="job-progress-pct" id="progress-pct">0%</span>
+</div>
+
+<div class="result-tabs">
+  <button class="result-tab active" data-type="aesthetic">
+    美学 <span class="tab-badge">0</span>
+  </button>
+  <button class="result-tab" data-type="quality">
+    质量 <span class="tab-badge">0</span>
+  </button>
+  <span style="flex:1"></span>
+  <span style="display:flex;align-items:center;gap:6px;padding-right:10px;font-size:11px;color:#666;">
+    共 <strong id="result-count" style="color:#ccc">0</strong> 张
+    <select id="sortSelect" style="background:#0a1a30;color:#ccc;border:1px solid #333;border-radius:4px;padding:2px 6px;font-size:11px;">
+      <option value="score">按分数</option>
+      <option value="path">按路径</option>
+    </select>
+    <button id="sortDir" style="background:none;border:none;color:#ccc;cursor:pointer;font-size:14px;padding:0 4px;">↓</button>
+  </span>
+</div>
+
+<div class="stats-bar" id="stats" style="display:none">
+  <div class="stat-item"><div class="stat-label">均值</div><div class="stat-value" style="color:#27ae60" id="stat-mean">-</div></div>
+  <div class="stat-item"><div class="stat-label">中位</div><div class="stat-value" style="color:#27ae60" id="stat-median">-</div></div>
+  <div class="stat-item"><div class="stat-label">标准差</div><div class="stat-value" style="color:#888" id="stat-std">-</div></div>
+  <div class="stat-item"><div class="stat-label">最低</div><div class="stat-value" style="color:#e74c3c" id="stat-min">-</div></div>
+  <div class="stat-item"><div class="stat-label">最高</div><div class="stat-value" style="color:#27ae60" id="stat-max">-</div></div>
+  <div class="stat-item"><div class="stat-label">总数</div><div class="stat-value" style="color:#888" id="stat-count">-</div></div>
+</div>
+
+<div class="hist-section">
+  <div class="hist" id="histogram"></div>
+</div>
+
+<div style="display:flex;align-items:center;gap:8px;padding:0 14px 8px;flex-shrink:0;">
+  <input type="text" id="searchBox" placeholder="搜索文件名..." style="flex:1;background:#0a1a30;color:#ccc;border:1px solid #333;border-radius:4px;padding:4px 8px;font-size:12px;outline:none;">
+  <select id="scoreFilter" style="background:#0a1a30;color:#ccc;border:1px solid #333;border-radius:4px;padding:4px 8px;font-size:12px;">
+    <option value="all">全部</option>
+  </select>
+</div>
+
+<div class="scoring-main">
+  <div class="gallery-empty" id="gallery-empty">暂无评分数据</div>
+  <div class="gallery-wrap">
+    <div class="gallery" id="gallery"></div>
+  </div>
+</div>
+
+<div class="lightbox" id="lightbox">
+  <span class="lightbox-close">&times;</span>
+  <span class="lightbox-nav lightbox-prev">&#8249;</span>
+  <span class="lightbox-nav lightbox-next">&#8250;</span>
+  <img id="lightboxImg" src="">
+  <div class="lightbox-info">
+    <span class="badge" id="lightboxScore">-</span>
+    <span class="badge" id="lightboxTag" style="font-size:0.72rem;opacity:0.8">-</span>
+    <span style="font-size:0.72rem;color:#888" id="lightboxPath">-</span>
+  </div>
+</div>
+
+<div class="status-bar" id="aes-status">
+  <span class="status-seg" id="seg-pos">就绪</span>
+  <span class="status-seg" id="seg-done">完成 0</span>
+  <span class="status-seg" id="seg-metric">进度 0/0</span>
+  <span class="status-seg" id="seg-extra">失败 0</span>
+</div>
+<div class="toast" id="toast"></div>
+
+<script src="/static/js/api.js"></script>
+<script src="/static/js/dir_picker.js"></script>
+<script src="/static/js/nav.js"></script>
+<script src="/static/js/scoring.js"></script>
+</body>
+</html>

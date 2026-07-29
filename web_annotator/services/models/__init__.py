@@ -87,6 +87,9 @@ from services.models.pages import (
     AestheticDirsResponse,
     AestheticStartResponse,
     AestheticActiveResponse,
+    ScoringDirsResponse,
+    ScoringStartResponse,
+    ScoringActiveResponse,
     TaggingDirsResponse,
     TaggingStartResponse,
 )

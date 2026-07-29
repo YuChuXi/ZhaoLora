@@ -1,4 +1,4 @@
-"""美学 / 打标页目录与启动回执。
+"""评分 / 打标页目录与启动回执。
 
 引用: ``services.models`` 包导出；各 routes / services。
 """
@@ -48,6 +48,50 @@ class AestheticActiveResponse(BaseModel):
 
     ok: bool = True
     job_id: str | None = None
+    status: JobSnapshot | None = None
+
+
+class ScoringDirsResponse(BaseModel):
+    """统一评分页目录与两类分数文件状态。
+
+    引用:
+        ``routes.scoring.scoring_dirs``。
+    """
+
+    root: str
+    dirs: list[WorkDirInfo]
+    cuda: bool
+    default_device: str
+    aesthetic_ready: bool
+    aesthetic_count: int = 0
+    quality_ready: bool
+    quality_count: int = 0
+
+
+class ScoringStartResponse(BaseModel):
+    """统一评分任务提交回执。
+
+    引用:
+        ``routes.scoring.scoring_start``。
+    """
+
+    ok: bool = True
+    job_id: str
+    kind: str
+    dirs: list[str]
+    device: str
+
+
+class ScoringActiveResponse(BaseModel):
+    """统一评分任务重连回执。
+
+    引用:
+        ``routes.scoring.scoring_active``。
+    """
+
+    ok: bool = True
+    job_id: str | None = None
+    kind: str | None = None
     status: JobSnapshot | None = None
 
 

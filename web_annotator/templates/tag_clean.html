@@ -103,7 +103,12 @@
     <label class="clean-pony-switch" title="数据源：数据集根目录 .aesthetic_scores.json">
       <input type="checkbox" id="clean-inject-pony">
       <span>写入 Pony 美学档位</span>
-      <span class="clean-pony-desc">根据原始美学分映射为 score_0…score_9，置于头部前置之前；并移除既有 score_0…score_9</span>
+      <span class="clean-pony-desc">根据原始美学分映射为 score_0…score_9；并移除既有 score_0…score_9</span>
+    </label>
+    <label class="clean-pony-switch" title="数据源：数据集根目录 .quality_scores.json">
+      <input type="checkbox" id="clean-inject-quality">
+      <span>写入质量标签</span>
+      <span class="clean-pony-desc">根据质量分映射为 masterpiece / best quality / … / worst quality；与美学标签随机排序置顶</span>
     </label>
     <label class="clean-pony-switch">
       <input type="checkbox" id="clean-separator">

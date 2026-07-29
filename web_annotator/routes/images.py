@@ -20,8 +20,7 @@ from services.models import (
     SimilarResponse,
 )
 from services.work_dir import list_work_dirs, parse_dir_names, resolve_subdir, resolve_subdirs
-from services.aesthetic import load_scores
-from services.quality import load_quality_scores
+from services.scoring import load_score_json
 from services.thumbnailer import Thumbnailer
 from services.state_manager import StateManager
 
@@ -82,8 +81,8 @@ def list_images(
     state = state_mgr.get()
     selected = set(state.selected.keys())
     trashed_state = set(state.trashed.keys())
-    scores = load_scores(root)
-    quality_scores = load_quality_scores(root)
+    scores = load_score_json(root, ".aesthetic_scores.json")
+    quality_scores = load_score_json(root, ".quality_scores.json")
     result: list[ImageListItem] = []
     seen: set[str] = set()
 

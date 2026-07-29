@@ -37,8 +37,12 @@
     var mode = data.dry_run ? '预览' : '已写入';
     var ponyBit = '';
     if (data.inject_pony_score) {
-      ponyBit = ' · 美学档位 ' + (data.pony_injected || 0) +
+      ponyBit += ' · 美学档位 ' + (data.pony_injected || 0) +
         (data.pony_missing ? '（无评分 ' + data.pony_missing + '）' : '');
+    }
+    if (data.inject_quality_tag) {
+      ponyBit += ' · 质量标签 ' + (data.quality_injected || 0) +
+        (data.quality_missing ? '（无评分 ' + data.quality_missing + '）' : '');
     }
     document.getElementById('clean-summary').textContent =
       mode + ' · 已变更 ' + data.changed + ' · 未变更 ' + data.unchanged +
@@ -76,6 +80,7 @@
       prepend: parseTagList(document.getElementById('clean-prepend').value),
       promote_separator: document.getElementById('clean-separator').checked,
       inject_pony_score: document.getElementById('clean-inject-pony').checked,
+      inject_quality_tag: document.getElementById('clean-inject-quality').checked,
       dry_run: !!dryRun,
       sample_limit: 60,
     };

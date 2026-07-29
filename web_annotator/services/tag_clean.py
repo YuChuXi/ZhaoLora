@@ -298,7 +298,7 @@ def clean_txt_dirs(
                 continue
             rel = rel_image_for_txt(path, root)
             if rel is not None and rel in q_scores:
-                from services.quality import quality_to_tag
+                from services.scoring import quality_to_tag
                 quality_tag_val = quality_to_tag(q_scores[rel])
                 quality_injected += 1
             else:
@@ -362,6 +362,8 @@ def batch_edit_tags(
     inject_pony_score: bool = False,
     dataset_root: Path | None = None,
     aesthetic_scores: dict[str, float] | None = None,
+    inject_quality_tag: bool = False,
+    quality_scores: dict[str, float] | None = None,
     dry_run: bool = True,
     sample_limit: int = 40,
 ) -> TagCleanResult:
@@ -376,9 +378,11 @@ def batch_edit_tags(
         insert_mode: ``"top"`` 置顶 / ``"bottom"`` 置底 / ``"random"`` 随机插入。
         conditional: 仅当文件中已有同名 tag 时才插入。
         keep_duplicates: 不删除已有重复标签。
-        inject_pony_score: 根据美学分注入 score_0…score_9，永远置于最前。
+        inject_pony_score: 根据美学分注入 score_0…score_9。
+        inject_quality_tag: 根据质量分注入质量标签。
         dataset_root: 数据集根目录（解析旁路图像路径）。
         aesthetic_scores: 相对路径 → 原始美学分 [0,1]。
+        quality_scores: 相对路径 → 质量分 [0,1]。
         dry_run: True 仅预览。
         sample_limit: 返回样本上限。
 
@@ -397,6 +401,7 @@ def batch_edit_tags(
 
     add_list = expand_cli_list(add_tags or [])
     scores = aesthetic_scores or {}
+    q_scores = quality_scores or {}
     root = dataset_root.resolve() if dataset_root is not None else None
 
     files: list[Path] = []
@@ -409,6 +414,8 @@ def batch_edit_tags(
     failed = 0
     pony_injected = 0
     pony_missing = 0
+    quality_injected = 0
+    quality_missing = 0
     samples: list[TagCleanSample] = []
 
     for path in files:
@@ -430,6 +437,16 @@ def batch_edit_tags(
             else:
                 pony_missing += 1
 
+        quality_tag_val: str | None = None
+        if inject_quality_tag and root is not None:
+            rel = rel_image_for_txt(path, root)
+            if rel is not None and rel in q_scores:
+                from services.scoring import quality_to_tag
+                quality_tag_val = quality_to_tag(q_scores[rel])
+                quality_injected += 1
+            else:
+                quality_missing += 1
+
         # 按 ||| 拆分
         raw_stripped = raw.strip()
         if "|||" in raw_stripped:
@@ -443,9 +460,12 @@ def batch_edit_tags(
         header = split_tags_line(header_str)
         body = split_tags_line(body_str)
 
-        # 移除既有 score_0…score_9
+        # 移除既有 score_0…score_9 与质量标签
+        QUALITY_TAG_KEYS = frozenset(tag_key(t) for t in ["masterpiece", "best quality", "good quality", "normal quality", "low quality", "worst quality"])
         header = [t for t in header if tag_key(t) not in SCORE_TAG_KEYS]
         body = [t for t in body if tag_key(t) not in SCORE_TAG_KEYS]
+        header = [t for t in header if tag_key(t) not in QUALITY_TAG_KEYS]
+        body = [t for t in body if tag_key(t) not in QUALITY_TAG_KEYS]
 
         # 删除
         if del_keys:
@@ -487,9 +507,15 @@ def batch_edit_tags(
                 else:  # bottom
                     body = body + to_add
 
-        # 重组：pony 评分永远在最前
+        # 重组：美学/质量标签随机排序后永远在最前
+        score_quality: list[str] = []
         if score_tag:
-            header = [score_tag] + header
+            score_quality.append(score_tag)
+        if quality_tag_val:
+            score_quality.append(quality_tag_val)
+        if len(score_quality) > 1:
+            _random.shuffle(score_quality)
+        header = score_quality + header
         if body:
             new = ", ".join(header) + " ||| " + ", ".join(body)
         else:
@@ -521,4 +547,7 @@ def batch_edit_tags(
         inject_pony_score=inject_pony_score,
         pony_injected=pony_injected,
         pony_missing=pony_missing,
+        inject_quality_tag=inject_quality_tag,
+        quality_injected=quality_injected,
+        quality_missing=quality_missing,
     )
