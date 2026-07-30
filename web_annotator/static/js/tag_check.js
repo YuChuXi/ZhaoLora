@@ -10,6 +10,9 @@
   var _toastTimer = null;
   var _colsKey = 'zhao_tagcheck_cols';
   var _manualCols = 0;
+  var _singleIndex = -1;
+  var _fitMode = 'contain';
+  var _busyPaths = {};
 
   // ---- 标签补全 ----
   var _acTags = [];          // [{tag, count, zh}] 按频次降序
@@ -57,10 +60,13 @@
    */
   function decorateCard(card, img) {
     card.classList.remove('tag-ok', 'tag-bad');
+    card.dataset.tagExists = '0';
     if (img.exists && img.position_ok) {
       card.classList.add('tag-ok');
+      card.dataset.tagExists = '1';
     } else if (img.exists && !img.position_ok) {
       card.classList.add('tag-bad');
+      card.dataset.tagExists = '1';
     }
     if (img.caption_preview) {
       card.title = img.caption_preview;
@@ -105,17 +111,25 @@
 
   /**
    * 点击卡片：标签存在则删除, 不存在则按当前位置模式添加。
-   * @param {object} img
+   *
+   * 使用 card.dataset.tagExists 判断当前标签状态, 避免闭包捕获的
+   * 旧 img 引用与 _items 更新不同步导致的重复点击行为错乱。
+   *
+   * @param {object} img  仅用于 path 定位
    * @param {HTMLElement} card
    */
   function onCardClick(img, card) {
     var tag = document.getElementById('check-tag').value.trim();
     if (!tag) { toast('请先输入标签'); return; }
+    if (_busyPaths[img.path]) return;
+
+    var exists = card.dataset.tagExists === '1';
 
     card.classList.add('jump-flash');
+    _busyPaths[img.path] = true;
 
     var endpoint, body;
-    if (img.exists) {
+    if (exists) {
       endpoint = API.apiPath('/tags/delete-one');
       body = JSON.stringify({ path: img.path, tag: tag });
     } else {
@@ -124,8 +138,8 @@
     }
 
     API.request(endpoint, { method: 'POST', body: body }).then(function (updated) {
-      for (var i = 0; i < _items.length; i++) {
-        if (_items[i].path === img.path) { _items[i] = updated; break; }
+      for (var j = 0; j < _items.length; j++) {
+        if (_items[j].path === img.path) { _items[j] = updated; break; }
       }
       decorateCard(card, updated);
       updateStats();
@@ -133,6 +147,7 @@
       toast('操作失败: ' + String(e.message || e));
     }).finally(function () {
       card.classList.remove('jump-flash');
+      delete _busyPaths[img.path];
     });
   }
 
@@ -153,6 +168,7 @@
         body: JSON.stringify({ dirs: dirs, tag: tag, position: position }),
       });
       _items = res.items || [];
+      hideSingle();
       Masonry.render(_items);
       updateStats();
     } finally {
@@ -374,6 +390,152 @@
     });
   }
 
+  // ==================== 单图模式 ====================
+
+  /**
+   * 对单图执行添加/删除标签操作。
+   * @param {string} action "add" | "delete"
+   */
+  function singleTagOp(action) {
+    var idx = _singleIndex;
+    if (idx < 0 || idx >= _items.length) return;
+    var tag = document.getElementById('check-tag').value.trim();
+    if (!tag) { toast('请先输入标签'); return; }
+
+    var img = _items[idx];
+    var endpoint, body;
+    if (action === 'delete' || img.exists) {
+      endpoint = API.apiPath('/tags/delete-one');
+      body = JSON.stringify({ path: img.path, tag: tag });
+    } else {
+      endpoint = API.apiPath('/tags/edit-one');
+      body = JSON.stringify({ path: img.path, tag: tag, position: getInsertPosition() });
+    }
+
+    API.request(endpoint, { method: 'POST', body: body }).then(function (updated) {
+      _items[idx] = updated;
+      renderSingle();
+    }).catch(function (e) {
+      toast('操作失败: ' + String(e.message || e));
+    });
+  }
+
+  /**
+   * 渲染当前单图（图片、stem、caption、着色边框）。
+   */
+  function renderSingle() {
+    var idx = _singleIndex;
+    if (idx < 0 || idx >= _items.length) return;
+    var img = _items[idx];
+    var imgEl = document.getElementById('single-img');
+    imgEl.src = API.imageUrl(img.path);
+    document.getElementById('single-stem').textContent = img.stem;
+    document.getElementById('single-counter').textContent = (idx + 1) + '/' + _items.length;
+    document.getElementById('single-caption').textContent = img.caption_preview || '(无 .txt)';
+
+    // 位置着色
+    var viewer = document.getElementById('single-viewer');
+    viewer.classList.remove('single-ok', 'single-bad');
+    if (img.exists && img.position_ok) {
+      viewer.classList.add('single-ok');
+    } else if (img.exists && !img.position_ok) {
+      viewer.classList.add('single-bad');
+    }
+  }
+
+  /**
+   * 进入单图模式，展示第 index 张。
+   * @param {number} index
+   */
+  function showSingle(index) {
+    if (index < 0 || index >= _items.length) return;
+    _singleIndex = index;
+    document.getElementById('masonry').hidden = true;
+    document.getElementById('single-viewer').hidden = false;
+    document.getElementById('check-hint').hidden = true;
+    document.getElementById('btn-single-mode').textContent = '网格';
+    applyFitMode();
+    renderSingle();
+  }
+
+  /** 退出单图模式。 */
+  function hideSingle() {
+    _singleIndex = -1;
+    document.getElementById('masonry').hidden = false;
+    document.getElementById('single-viewer').hidden = true;
+    document.getElementById('check-hint').hidden = false;
+    document.getElementById('btn-single-mode').textContent = '单图';
+  }
+
+  /** 切换 contain / cover。 */
+  function toggleFit() {
+    _fitMode = _fitMode === 'contain' ? 'cover' : 'contain';
+    applyFitMode();
+  }
+
+  function applyFitMode() {
+    var canvas = document.getElementById('single-canvas');
+    var btn = document.getElementById('btn-fit');
+    if (_fitMode === 'cover') {
+      canvas.classList.remove('contain');
+      canvas.classList.add('cover');
+      btn.textContent = '⊟';
+    } else {
+      canvas.classList.add('contain');
+      canvas.classList.remove('cover');
+      btn.textContent = '⊞';
+    }
+  }
+
+  /** 导航：delta = +1(下一张) / -1(上一张)。 */
+  function navigateSingle(delta) {
+    var n = _singleIndex + delta;
+    if (n < 0) n = _items.length - 1;
+    if (n >= _items.length) n = 0;
+    _singleIndex = n;
+    renderSingle();
+  }
+
+  // ---- 放大镜 ----
+
+  function magnifierInit() {
+    var canvas = document.getElementById('single-canvas');
+    var imgEl = document.getElementById('single-img');
+    var lens = document.getElementById('magnifier');
+    var lensW = lens.offsetWidth;
+    var lensH = lens.offsetHeight;
+    var zoom = 2;
+
+    canvas.addEventListener('mousemove', function (e) {
+      var rect = imgEl.getBoundingClientRect();
+      var x = e.clientX - rect.left;
+      var y = e.clientY - rect.top;
+      if (x < 0 || y < 0 || x > rect.width || y > rect.height) {
+        lens.classList.remove('show');
+        return;
+      }
+      lens.classList.add('show');
+
+      // 放大镜位置（跟随鼠标，偏移使其不遮挡光标）
+      var lx = e.clientX - canvas.getBoundingClientRect().left - lensW / 2;
+      var ly = e.clientY - canvas.getBoundingClientRect().top - lensH - 20;
+      if (ly < 0) ly = e.clientY - canvas.getBoundingClientRect().top + 20;
+      lens.style.left = lx + 'px';
+      lens.style.top = ly + 'px';
+
+      // 背景偏移：放大区域在图片上的实际位置
+      var bgX = -(x * zoom - lensW / 2);
+      var bgY = -(y * zoom - lensH / 2);
+      lens.style.backgroundImage = 'url(' + imgEl.src + ')';
+      lens.style.backgroundSize = (rect.width * zoom) + 'px ' + (rect.height * zoom) + 'px';
+      lens.style.backgroundPosition = bgX + 'px ' + bgY + 'px';
+    });
+
+    canvas.addEventListener('mouseleave', function () {
+      lens.classList.remove('show');
+    });
+  }
+
   function init() {
     Masonry.init('masonry', {
       getData: function () { return _items; },
@@ -381,6 +543,7 @@
       decorate: decorateCard,
     });
     acInit();
+    magnifierInit();
 
     var colsSlider = document.getElementById('cols-slider');
     var colsLabel = document.getElementById('cols-label');
@@ -420,6 +583,45 @@
     document.getElementById('check-position').addEventListener('change', function () {
       runCheck().catch(function (e) { toast('检查失败: ' + String(e.message || e)); });
     });
+
+    // ---- 单图模式事件 ----
+    document.getElementById('btn-single-mode').addEventListener('click', function () {
+      if (_singleIndex >= 0) {
+        hideSingle();
+      } else {
+        showSingle(0);
+      }
+    });
+
+    document.getElementById('btn-prev').addEventListener('click', function () { navigateSingle(-1); });
+    document.getElementById('btn-next').addEventListener('click', function () { navigateSingle(1); });
+    document.getElementById('btn-fit').addEventListener('click', toggleFit);
+    document.getElementById('btn-single-close').addEventListener('click', hideSingle);
+
+    // 单图点击：左键添加, 右键删除
+    document.getElementById('single-img').addEventListener('click', function (e) {
+      singleTagOp('add');
+    });
+    document.getElementById('single-img').addEventListener('contextmenu', function (e) {
+      e.preventDefault();
+      singleTagOp('delete');
+    });
+
+    // 单图键盘导航
+    document.addEventListener('keydown', function (e) {
+      if (_singleIndex < 0) return;
+      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+      if (e.key === 'ArrowLeft') { e.preventDefault(); navigateSingle(-1); }
+      if (e.key === 'ArrowRight') { e.preventDefault(); navigateSingle(1); }
+      if (e.key === 'Escape') { e.preventDefault(); hideSingle(); }
+    });
+
+    // cover 模式滚轮上下滚动
+    document.getElementById('single-canvas').addEventListener('wheel', function (e) {
+      if (_fitMode !== 'cover') return;
+      e.preventDefault();
+      this.scrollTop += e.deltaY;
+    }, { passive: false });
 
     DirPicker.onChange(function () {
       loadTags(DirPicker.getDirs());

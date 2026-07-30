@@ -43,6 +43,59 @@
   .ac-zh { color: var(--text-dim); font-size: 11px; max-width: 130px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .ac-count { color: var(--text-dim); font-size: 11px; margin-left: auto; white-space: nowrap; }
   .ac-empty { padding: 8px 10px; color: var(--text-dim); }
+
+  /* 单图模式 */
+  .single-viewer {
+    flex: 1; display: flex; flex-direction: column; min-height: 0;
+    background: #0a0f18;
+  }
+  .single-toolbar {
+    display: flex; align-items: center; gap: 8px;
+    padding: 6px 12px; background: var(--surface);
+    border-bottom: 1px solid var(--border); flex-shrink: 0;
+    font-size: 12px; color: var(--text-dim);
+  }
+  .single-counter { color: var(--text); font-variant-numeric: tabular-nums; min-width: 60px; }
+  .single-stem { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #5eb8ff; }
+  .single-canvas {
+    flex: 1; min-height: 0; overflow: hidden; display: flex;
+    align-items: center; justify-content: center; position: relative;
+    cursor: crosshair;
+  }
+  .single-canvas.contain #single-img {
+    object-fit: contain; max-width: 100%; max-height: 100%;
+  }
+  .single-canvas.cover {
+    display: block; overflow-y: auto; overflow-x: hidden;
+  }
+  .single-canvas.cover #single-img {
+    display: block; width: 100%; height: auto;
+    object-fit: cover;
+  }
+  .single-canvas img { user-select: none; -webkit-user-drag: none; }
+  .single-caption {
+    padding: 6px 14px; background: var(--surface); border-top: 1px solid var(--border);
+    font-size: 12px; color: var(--text-dim); font-family: ui-monospace, monospace;
+    white-space: pre-wrap; max-height: 80px; overflow: auto; flex-shrink: 0;
+  }
+  /* 放大镜 */
+  .magnifier {
+    position: absolute; pointer-events: none; z-index: 50;
+    border: 2px solid var(--accent); border-radius: 50%;
+    box-shadow: 0 0 12px rgba(233,69,96,0.4);
+    width: 180px; height: 180px;
+    background-repeat: no-repeat;
+    display: none;
+  }
+  .magnifier.show { display: block; }
+
+  /* 单图模式位置着色 */
+  .single-viewer.single-ok .single-canvas {
+    box-shadow: inset 0 0 0 3px var(--green), inset 0 0 40px rgba(74,222,128,0.15);
+  }
+  .single-viewer.single-bad .single-canvas {
+    box-shadow: inset 0 0 0 3px var(--accent), inset 0 0 40px rgba(233,69,96,0.15);
+  }
 </style>
 </head>
 <body>
@@ -70,9 +123,29 @@
     列数 <input type="range" id="cols-slider" min="0" max="16" value="0" step="1" style="width:90px;">
     <span id="cols-label">自动</span>
   </label>
+  <span class="sep"></span>
+  <button class="btn" type="button" id="btn-single-mode">单图</button>
 </div>
 
 <div class="masonry" id="masonry"></div>
+
+<!-- 单图模式 -->
+<div class="single-viewer" id="single-viewer" hidden>
+  <div class="single-toolbar">
+    <span class="single-counter" id="single-counter">0/0</span>
+    <span class="single-stem" id="single-stem"></span>
+    <button class="btn" type="button" id="btn-prev">◀</button>
+    <button class="btn" type="button" id="btn-next">▶</button>
+    <button class="btn" type="button" id="btn-fit" title="切换 contain/cover">⊞</button>
+    <button class="btn" type="button" id="btn-single-close">✕</button>
+  </div>
+  <div class="single-canvas" id="single-canvas">
+    <img id="single-img" src="" alt="" draggable="false">
+    <div class="magnifier" id="magnifier" hidden></div>
+  </div>
+  <div class="single-caption" id="single-caption"></div>
+</div>
+
 <div class="toast" id="toast"></div>
 <div class="hint" id="check-hint">输入标签并检查 · 绿色=位置符合 · 红色=位置不符 · 点击卡片添加/删除标签 · 无标签时显示全部图片</div>
 
