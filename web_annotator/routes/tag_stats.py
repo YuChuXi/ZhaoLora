@@ -24,7 +24,7 @@ from services.models import (
     TagStatsResult,
     TxtDirInfo,
 )
-from services.tagging.clean import add_tag_to_caption, batch_edit_tags, check_tag_in_caption, clean_txt_dirs
+from services.tagging.clean import add_tag_to_caption, batch_edit_tags, check_tag_in_caption, clean_txt_dirs, delete_tag_from_caption
 from services.tagging.stats import count_tags, list_txt_subdirs, load_translation_map, resolve_selected_dirs, translate_missing_tags
 
 router = APIRouter(prefix="/tags", tags=["tags"])
@@ -423,4 +423,44 @@ def tag_edit_one(request: Request, body: TagEditOneBody) -> TagCheckItem:
     dir_name = rel.split("/")[0] if "/" in rel else "."
     return _build_check_item(
         rel, stem, work_dir, dir_name, root, rt.thumbnailer, tag, body.position
+    )
+
+
+class TagDeleteOneBody(BaseModel):
+    """单文件标签删除请求. 引用: ``POST /tags/delete-one``."""
+
+    path: str = Field(..., description="图片相对数据集根的路径")
+    tag: str
+
+
+@router.post("/delete-one")
+def tag_delete_one(request: Request, body: TagDeleteOneBody) -> TagCheckItem:
+    """从单张图片旁路 ``.txt`` 中删除指定标签后返回最新检查结果.
+
+    引用: ``tag_check.js``.
+    """
+    rt = get_runtime(request)
+    root = rt.root
+    if not body.tag.strip():
+        raise HTTPException(400, "标签不能为空")
+
+    tag = body.tag.strip()
+    img_abs = resolve_path(root, body.path)
+    if not img_abs.is_file():
+        raise HTTPException(404, "图片不存在")
+
+    txt_path = img_abs.with_suffix(".txt")
+    raw = ""
+    if txt_path.is_file():
+        raw = txt_path.read_text(encoding="utf-8")
+
+    new_caption = delete_tag_from_caption(raw, tag)
+    txt_path.write_text(new_caption + "\n", encoding="utf-8")
+
+    stem = img_abs.stem
+    work_dir = img_abs.parent
+    rel = body.path.replace("\\", "/").lstrip("/")
+    dir_name = rel.split("/")[0] if "/" in rel else "."
+    return _build_check_item(
+        rel, stem, work_dir, dir_name, root, rt.thumbnailer, tag, "any"
     )

@@ -104,28 +104,33 @@
   }
 
   /**
-   * 点击卡片：调用 edit-one 添加标签，更新该卡片状态。
+   * 点击卡片：标签存在则删除, 不存在则按当前位置模式添加。
    * @param {object} img
    * @param {HTMLElement} card
    */
   function onCardClick(img, card) {
     var tag = document.getElementById('check-tag').value.trim();
-    var position = getInsertPosition();
     if (!tag) { toast('请先输入标签'); return; }
 
     card.classList.add('jump-flash');
-    API.request(API.apiPath('/tags/edit-one'), {
-      method: 'POST',
-      body: JSON.stringify({ path: img.path, tag: tag, position: position }),
-    }).then(function (updated) {
-      // 同步内存中的条目
+
+    var endpoint, body;
+    if (img.exists) {
+      endpoint = API.apiPath('/tags/delete-one');
+      body = JSON.stringify({ path: img.path, tag: tag });
+    } else {
+      endpoint = API.apiPath('/tags/edit-one');
+      body = JSON.stringify({ path: img.path, tag: tag, position: getInsertPosition() });
+    }
+
+    API.request(endpoint, { method: 'POST', body: body }).then(function (updated) {
       for (var i = 0; i < _items.length; i++) {
         if (_items[i].path === img.path) { _items[i] = updated; break; }
       }
       decorateCard(card, updated);
       updateStats();
     }).catch(function (e) {
-      toast('编辑失败: ' + String(e.message || e));
+      toast('操作失败: ' + String(e.message || e));
     }).finally(function () {
       card.classList.remove('jump-flash');
     });

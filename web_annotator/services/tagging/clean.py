@@ -188,6 +188,28 @@ def add_tag_to_caption(raw: str, tag: str, position: str) -> str:
     return join_tags_line(header)
 
 
+def delete_tag_from_caption(raw: str, tag: str) -> str:
+    """从 caption 中按 ``tag_key`` 移除指定标签的所有出现.
+
+    Args:
+        raw: 原始 caption 文本.
+        tag: 待删除的标签.
+
+    Returns:
+        删除后的 caption 字符串. 若标签不存在则返回原文.
+
+    Callers:
+        - ``routes/tag_stats.tag_delete_one``
+    """
+    header, body, has_sep = split_header_body(raw)
+    key = tag_key(tag)
+    header = [t for t in header if tag_key(t) != key]
+    body = [t for t in body if tag_key(t) != key]
+    if body:
+        return join_tags_line(header) + " ||| " + join_tags_line(body)
+    return join_tags_line(header)
+
+
 def raw_to_pony(raw: float) -> int:
     """原始美学分 [0,1] → score_0 … score_9. 
 
