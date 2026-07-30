@@ -8,7 +8,6 @@ from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import FileResponse
-from PIL import Image
 
 from routes.deps import get_runtime, resolve_path
 from services.core.scanner import scan_images
@@ -21,7 +20,7 @@ from services.models import (
 )
 from services.core.work_dir import list_work_dirs, parse_dir_names, resolve_subdir, resolve_subdirs
 from services.analysis.scoring import load_score_json
-from services.core.thumbnailer import Thumbnailer
+from services.core.thumbnailer import Thumbnailer, image_size
 from services.state.annotator import StateManager
 
 router = APIRouter(tags=["images"])
@@ -93,7 +92,7 @@ def list_images(
             if rel in trashed_state or rel in seen:
                 continue
             seen.add(rel)
-            w, h = _image_size(root / rel)
+            w, h = image_size(root / rel)
             result.append(
                 ImageListItem(
                     **img.model_dump(),
@@ -119,7 +118,7 @@ def list_images(
                     continue
                 seen.add(img.path)
                 tp = trash_dir / img.path
-                w, h = _image_size(tp)
+                w, h = image_size(tp)
                 result.append(
                     ImageListItem(
                         **img.model_dump(),
@@ -141,7 +140,7 @@ def list_images(
                 if not tp.is_file():
                     continue
                 seen.add(rel)
-                w, h = _image_size(tp)
+                w, h = image_size(tp)
                 result.append(
                     ImageListItem(
                         path=rel,
@@ -220,7 +219,7 @@ def similar_images(
     out: list[SimilarItem] = []
     for sim_rel, dist in hits:
         thumbnailer.ensure(sim_rel)
-        w, h = _image_size(root / sim_rel)
+        w, h = image_size(root / sim_rel)
         out.append(
             SimilarItem(
                 path=sim_rel,
@@ -234,32 +233,3 @@ def similar_images(
             )
         )
     return SimilarResponse(path=rel, similar=out)
-
-
-_size_cache: dict[str, tuple[float, int, int]] = {}
-
-
-def _image_size(path: Path) -> tuple[int, int]:
-    """读取图片宽高(仅打开文件头), 按路径与 ``mtime`` 缓存. 
-
-    Args:
-        path: 图片绝对路径. 
-
-    Returns:
-        ``(width, height)``. 
-
-    Raises:
-        OSError: 无法 ``stat`` 或打开文件. 
-
-    引用:
-        ``list_images`` / ``similar_images``. 
-    """
-    key = str(path)
-    mtime = path.stat().st_mtime
-    cached = _size_cache.get(key)
-    if cached is not None and cached[0] == mtime:
-        return cached[1], cached[2]
-    with Image.open(path) as im:
-        w, h = im.size
-    _size_cache[key] = (mtime, w, h)
-    return w, h

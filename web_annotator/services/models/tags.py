@@ -41,10 +41,10 @@ class TagStatsResult(BaseModel):
 
 
 class TagCleanSample(BaseModel):
-    """标签清洗样本对比. 
+    """标签清洗样本对比.
 
     引用:
-        ``tag_clean.clean_txt_dirs``. 
+        ``services.tagging.clean.clean_txt_dirs``.
     """
 
     path: str
@@ -54,10 +54,10 @@ class TagCleanSample(BaseModel):
 
 
 class TagCleanResult(BaseModel):
-    """标签清洗结果. 
+    """标签清洗结果.
 
     引用:
-        ``tag_clean.clean_txt_dirs``；``routes.tag_stats``. 
+        ``services.tagging.clean.clean_txt_dirs``；``routes.tag_stats``.
     """
 
     dry_run: bool
@@ -78,4 +78,57 @@ class TagCleanResult(BaseModel):
     quality_missing: int = 0
     dirs: list[str] = Field(default_factory=list)
     root: str = ""
+
+
+# 标签检查位置选项: any(任意) / top(置顶) / bottom(置底) / before-sep(在 ||| 前) / after-sep(在 ||| 后)
+TAG_CHECK_POSITIONS = frozenset({"any", "top", "bottom", "before-sep", "after-sep", "bottom-before", "random-before", "random-after", "random"})
+
+
+class TagCheckItem(BaseModel):
+    """单张图片的标签检查结果.
+
+    引用:
+        ``routes.tag_stats.tag_check`` / ``tag_edit_one``.
+    """
+
+    path: str
+    stem: str
+    width: int = 0
+    height: int = 0
+    thumbnail_hash: str
+    dir: str
+    exists: bool
+    position_ok: bool
+    caption_preview: str = ""
+
+
+class TagCheckResponse(BaseModel):
+    """标签检查批量响应.
+
+    引用:
+        ``routes.tag_stats.tag_check``.
+    """
+
+    tag: str
+    position: str
+    total: int
+    ok_count: int
+    bad_count: int
+    items: list[TagCheckItem] = Field(default_factory=list)
+
+
+class TagCheckBody(BaseModel):
+    """标签检查请求. 引用: ``POST /tags/check``."""
+
+    dirs: list[str] | None = Field(default=None, description="子目录名, 空/省略=全选")
+    tag: str = Field(default="", description="标签, 为空时返回全部图片(不检查)")
+    position: str = Field("any", description="any/top/bottom/before-sep/after-sep")
+
+
+class TagEditOneBody(BaseModel):
+    """单文件标签编辑请求. 引用: ``POST /tags/edit-one``."""
+
+    path: str = Field(..., description="图片相对数据集根的路径")
+    tag: str
+    position: str = Field("any", description="any/top/bottom/before-sep/after-sep")
 

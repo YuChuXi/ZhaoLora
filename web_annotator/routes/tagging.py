@@ -26,7 +26,7 @@ class StartBody(BaseModel):
     dirs: list[str] = Field(default_factory=list, description="子目录名")
     threshold: float = Field(default=DEFAULT_THRESHOLD, ge=0.0, le=1.0)
     disable_orig_tags: bool = True
-    force: bool = True
+    force: bool = False
 
 
 @router.get("/dirs")

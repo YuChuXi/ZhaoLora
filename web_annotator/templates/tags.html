@@ -98,9 +98,6 @@
   <button class="btn green" id="btn-batch-delete" type="button">批量删除</button>
   <button class="btn green" id="btn-refresh">统计</button>
   <button class="btn" id="btn-translate-missing">翻译缺失</button>
-  <button class="btn" id="btn-select-all-tags">全选</button>
-  <button class="btn" id="btn-clear-tags">清空</button>
-  <button class="btn" id="btn-copy">复制</button>
   <button class="btn" id="btn-export-en">导出英文</button>
   <button class="btn" id="btn-export-zh">导出中文</button>
 </div>
@@ -148,7 +145,7 @@
         <input type="number" id="threshold" value="0.1" min="0" max="1" step="0.01">
       </label>
       <label><input type="checkbox" id="chk-disable-orig" checked> 忽略已有</label>
-      <label><input type="checkbox" id="chk-force" checked> 覆盖</label>
+      <label><input type="checkbox" id="chk-force"> 覆盖</label>
       <span class="sep"></span>
       <span class="stat" id="stat-status">就绪</span>
       <span class="meta-inline" id="model-info"></span>
@@ -182,21 +179,34 @@
         要添加的标签（逗号分隔）
         <input type="text" id="batch-add-tags" placeholder="tag1, tag2" style="background:#0a1a30;color:var(--text);border:1px solid var(--border);border-radius:4px;padding:4px 8px;font-size:12px;">
       </label>
-      <div style="display:flex;flex-wrap:wrap;align-items:center;gap:8px 16px;font-size:12px;color:var(--text-dim);">
-        <span>放在</span>
-        <select id="batch-add-position" style="background:var(--card-bg);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:3px 6px;font-size:12px;">
-          <option value="after">||| 之后</option>
-          <option value="before">||| 之前</option>
-        </select>
-        <span>插入方式</span>
-        <select id="batch-add-mode" style="background:var(--card-bg);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:3px 6px;font-size:12px;">
-          <option value="bottom">置底</option>
-          <option value="top">置顶</option>
-          <option value="random">随机</option>
-        </select>
-        <label style="display:flex;align-items:center;gap:4px;cursor:pointer;"><input type="checkbox" id="batch-add-conditional"> 仅当已有同名标签时</label>
-        <label style="display:flex;align-items:center;gap:4px;cursor:pointer;"><input type="checkbox" id="batch-add-keep-dup"> 不删除已有重复</label>
-        <label style="display:flex;align-items:center;gap:4px;cursor:pointer;"><input type="checkbox" id="batch-add-inject-pony"> 注入 Pony 美学档位（最前）</label>
+      <div style="display:flex;flex-direction:column;gap:8px;font-size:12px;color:var(--text-dim);">
+        <div style="display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px;">
+          <span>分隔符</span>
+          <select id="batch-add-separator" style="background:var(--card-bg);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:2px 6px;font-size:12px;">
+            <option value="keep">保留 |||</option>
+            <option value="add">添加 |||</option>
+            <option value="remove">删除 |||</option>
+          </select>
+          <span>位置</span>
+          <select id="batch-add-position" style="background:var(--card-bg);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:3px 6px;font-size:12px;">
+            <option value="before">||| 之前</option>
+            <option value="after">||| 之后</option>
+          </select>
+          <span>方式</span>
+          <select id="batch-add-mode" style="background:var(--card-bg);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:3px 6px;font-size:12px;">
+            <option value="top">置顶</option>
+            <option value="bottom">置底</option>
+            <option value="random">随机</option>
+          </select>
+        </div>
+        <div style="display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px;">
+          <label style="display:flex;align-items:center;gap:4px;cursor:pointer;"><input type="checkbox" id="batch-add-conditional"> 仅当标签已存在时才插入</label>
+          <label style="display:flex;align-items:center;gap:4px;cursor:pointer;"><input type="checkbox" id="batch-add-keep-dup"> 插入前不移除已有同名标签</label>
+        </div>
+        <div style="display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px;">
+          <label style="display:flex;align-items:center;gap:4px;cursor:pointer;"><input type="checkbox" id="batch-add-inject-pony"> 注入美学档位</label>
+          <label style="display:flex;align-items:center;gap:4px;cursor:pointer;"><input type="checkbox" id="batch-add-inject-quality"> 注入质量标签</label>
+        </div>
       </div>
       <div style="display:flex;gap:8px;">
         <button class="btn" type="button" id="btn-batch-add-preview">预览</button>

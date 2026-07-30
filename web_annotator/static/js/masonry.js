@@ -10,8 +10,28 @@ var Masonry = (function() {
   var _io = null;
   var _LAZY_MARGIN = '400px 0px';
 
-  function init(containerId) {
+  // 可选配置: 非筛选页可通过 init 第二参数注入自定义数据源与交互
+  var _config = {
+    getData: null,   // function() → 图片数组; 用于 setColumns 触发的重绘
+    onClick: null,   // function(img, card, event); 覆盖默认 Store.toggle
+    decorate: null,  // function(card, img); 创建卡片后追加自定义样式/属性
+  };
+
+  /**
+   * 初始化瀑布流容器.
+   * @param {string} containerId
+   * @param {{getData?: function, onClick?: function, decorate?: function}} [config]
+   *   - getData: setColumns 重绘时的数据源; 省略则用 Store.getVisible
+   *   - onClick: 卡片点击回调; 省略则调用 Store.toggle
+   *   - decorate: 卡片创建后追加样式/属性的回调
+   */
+  function init(containerId, config) {
     _container = document.getElementById(containerId);
+    if (config) {
+      _config.getData = config.getData || null;
+      _config.onClick = config.onClick || null;
+      _config.decorate = config.decorate || null;
+    }
   }
 
   function setColumns(n) { _columns = n; renderAll(); }
@@ -93,6 +113,11 @@ var Masonry = (function() {
     if (img.trashed)  card.classList.add('trashed');
     card.dataset.path = img.path;
     card.addEventListener('click', function(e) {
+      if (_config.onClick) {
+        _config.onClick(img, card, e);
+        _lastClickedPath = img.path;
+        return;
+      }
       if (e.shiftKey && _lastClickedPath) {
         var lastCard = _container.querySelector('.card[data-path="' + _lastClickedPath.replace(/"/g, '\\"') + '"]');
         if (lastCard && card !== lastCard) {
@@ -121,6 +146,7 @@ var Masonry = (function() {
       _lastClickedPath = img.path;
     });
     if (typeof SimilarHover !== 'undefined') SimilarHover.bindCard(card, img.path);
+    if (_config.decorate) _config.decorate(card, img);
 
     var imgEl = document.createElement('img');
     imgEl.alt = img.stem;
@@ -192,12 +218,15 @@ var Masonry = (function() {
   }
 
   function renderAll() {
-    if (_container && _container.children.length > 0) {
-      // re-render from Store
-      var showTrash = document.getElementById('chk-show-trash');
-      var visible = Store.getVisible(showTrash ? showTrash.checked : false);
-      render(visible);
+    if (!_container || _container.children.length === 0) return;
+    if (_config.getData) {
+      render(_config.getData());
+      return;
     }
+    // 默认: 从 Store 取可见列表
+    var showTrash = document.getElementById('chk-show-trash');
+    var visible = Store.getVisible(showTrash ? showTrash.checked : false);
+    render(visible);
   }
 
   return {

@@ -246,22 +246,11 @@
     document.getElementById('btn-translate-missing').addEventListener('click', function () {
       translateMissing();
     });
-    document.getElementById('btn-select-all-tags').addEventListener('click', function () {
-      _tags.forEach(function (t) { _selected[t.tag] = true; });
-      renderTable();
-    });
-    document.getElementById('btn-clear-tags').addEventListener('click', function () {
-      _selected = {};
-      renderTable();
-    });
     document.getElementById('chk-head').addEventListener('change', function () {
       var on = document.getElementById('chk-head').checked;
       _selected = {};
       if (on) _tags.forEach(function (t) { _selected[t.tag] = true; });
       renderTable();
-    });
-    document.getElementById('btn-copy').addEventListener('click', function () {
-      exportList('en');
     });
     document.getElementById('btn-export-en').addEventListener('click', function () {
       exportList('en');
@@ -292,6 +281,9 @@
     });
     document.getElementById('btn-batch-add-apply').addEventListener('click', function () {
       runBatchEdit('add', false).catch(function (e) { toast(String(e.message || e)); });
+    });
+    document.getElementById('batch-add-separator').addEventListener('change', function () {
+      document.getElementById('batch-add-position').disabled = (this.value === 'remove');
     });
 
     // ---- 批量删除对话框 ----
@@ -349,6 +341,8 @@
       conditional: mode === 'add' ? document.getElementById('batch-add-conditional').checked : false,
       keep_duplicates: mode === 'add' ? document.getElementById('batch-add-keep-dup').checked : false,
       inject_pony_score: mode === 'add' ? document.getElementById('batch-add-inject-pony').checked : false,
+      inject_quality_tag: mode === 'add' ? document.getElementById('batch-add-inject-quality').checked : false,
+      separator_mode: mode === 'add' ? document.getElementById('batch-add-separator').value : 'keep',
       dry_run: !!dryRun,
       sample_limit: 40,
     };

@@ -13,11 +13,11 @@
     { page: 'crop', label: '裁剪' },
     { page: 'paint', label: '蒙版' },
     { page: 'tags', label: '标签' },
-    { page: 'tag-clean', label: '清洗' },
+    { page: 'tag-check', label: '标签检查' },
     { page: 'ready', label: '就绪' },
   ];
 
-  var HIDE_DIR = { filter: 0, crop: 1, paint: 1, ready: 1, scoring: 0, dedupe: 0, tags: 0, 'tag-clean': 0 };
+  var HIDE_DIR = { filter: 0, crop: 1, paint: 1, ready: 1, scoring: 0, dedupe: 0, tags: 0, 'tag-check': 0 };
 
   /**
    * @returns {{dataset: string|null, page: string}}
@@ -40,7 +40,7 @@
   function dirsApi(page) {
     if (page === 'dedupe') return API.apiPath('/dedupe/dirs');
     if (page === 'scoring') return API.apiPath('/scoring/dirs');
-    if (page === 'tags' || page === 'tag-clean') return API.apiPath('/tags/dirs');
+    if (page === 'tags' || page === 'tag-check') return API.apiPath('/tags/dirs');
     return API.apiPath('/dirs');
   }
 

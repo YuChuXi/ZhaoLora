@@ -17,6 +17,36 @@ THUMB_DIRNAME = ".thumbnails"
 DEFAULT_SIZE = 2560  # 长边像素(与 server --thumbnail-size 默认一致)
 DEFAULT_QUALITY = 50  # AVIF 质量 (0-100)
 
+_size_cache: dict[str, tuple[float, int, int]] = {}
+
+
+def image_size(path: Path) -> tuple[int, int]:
+    """读取图片宽高(仅打开文件头), 按路径与 ``mtime`` 缓存.
+
+    Args:
+        path: 图片绝对路径.
+
+    Returns:
+        ``(width, height)``.
+
+    Raises:
+        OSError: 无法 ``stat`` 或打开文件.
+
+    Callers:
+        - ``routes.images.list_images``
+        - ``routes.images.similar_images``
+        - ``routes.tag_stats.tag_check``
+    """
+    key = str(path)
+    mtime = path.stat().st_mtime
+    cached = _size_cache.get(key)
+    if cached is not None and cached[0] == mtime:
+        return cached[1], cached[2]
+    with Image.open(path) as im:
+        w, h = im.size
+    _size_cache[key] = (mtime, w, h)
+    return w, h
+
 
 def default_workers() -> int:
     """按 CPU 核数选取线程池大小, 范围 [1, 16]. 

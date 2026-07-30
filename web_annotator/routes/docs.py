@@ -25,7 +25,7 @@ _DOC_MAP: dict[str, str] = {
     "crop": "crop.md",
     "paint": "paint.md",
     "tags": "tags.md",
-    "tag-clean": "tag-clean.md",
+    "tag-check": "tag-check.md",
     "ready": "ready.md",
 }
 
@@ -38,7 +38,7 @@ _NAV: list[tuple[str, str]] = [
     ("crop", "裁剪"),
     ("paint", "蒙版"),
     ("tags", "标签"),
-    ("tag-clean", "清洗"),
+    ("tag-check", "标签检查"),
     ("ready", "就绪"),
 ]
 

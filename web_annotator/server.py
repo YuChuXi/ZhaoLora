@@ -62,7 +62,7 @@ _PAGE_TEMPLATES = {
     "crop": "crop.html",
     "paint": "paint.html",
     "tags": "tags.html",
-    "tag-clean": "tag_clean.html",
+    "tag-check": "tag_check.html",
     "ready": "ready.html",
 }
 

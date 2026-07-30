@@ -52,6 +52,11 @@ from services.models.tags import (
     TagStatsResult,
     TagCleanSample,
     TagCleanResult,
+    TAG_CHECK_POSITIONS,
+    TagCheckItem,
+    TagCheckResponse,
+    TagCheckBody,
+    TagEditOneBody,
 )
 from services.models.jobs import (
     AestheticSummary,
@@ -133,6 +138,11 @@ __all__ = [
     'TagStatsResult',
     'TagCleanSample',
     'TagCleanResult',
+    'TAG_CHECK_POSITIONS',
+    'TagCheckItem',
+    'TagCheckResponse',
+    'TagCheckBody',
+    'TagEditOneBody',
     'AestheticSummary',
     'JobSubmitResponse',
     'JobResult',

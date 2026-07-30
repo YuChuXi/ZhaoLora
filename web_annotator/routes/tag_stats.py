@@ -7,11 +7,24 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from routes.deps import get_runtime, jobs
+from routes.deps import get_runtime, jobs, resolve_path
 from services.analysis.scoring import load_score_json
 from services.core.jobs import EmitFn
-from services.models import JobSnapshot, JobSubmitResponse, TagCleanResult, TagStatsResult, TxtDirInfo
-from services.tagging.clean import batch_edit_tags, clean_txt_dirs
+from services.core.scanner import scan_images
+from services.core.thumbnailer import image_size
+from services.models import (
+    JobSnapshot,
+    JobSubmitResponse,
+    TAG_CHECK_POSITIONS,
+    TagCheckBody,
+    TagCheckItem,
+    TagCheckResponse,
+    TagCleanResult,
+    TagEditOneBody,
+    TagStatsResult,
+    TxtDirInfo,
+)
+from services.tagging.clean import add_tag_to_caption, batch_edit_tags, check_tag_in_caption, clean_txt_dirs
 from services.tagging.stats import count_tags, list_txt_subdirs, load_translation_map, resolve_selected_dirs, translate_missing_tags
 
 router = APIRouter(prefix="/tags", tags=["tags"])
@@ -116,10 +129,10 @@ async def translate_missing(request: Request, body: TranslateMissingBody) -> dic
 @router.post("/clean")
 async def tag_clean(request: Request, body: CleanBody) -> JobSubmitResponse:
     """
-    提交标签清洗长任务. 
+    提交标签清洗长任务.
 
-    返回 job_id；结束事件的 result 为清洗结果. 
-    引用: tag_clean.js. 
+    返回 job_id；结束事件的 result 为清洗结果.
+    引用: ``POST /tags/clean`` API.
     """
     rt = get_runtime(request)
     root = rt.root
@@ -183,11 +196,13 @@ class BatchEditBody(BaseModel):
     dirs: list[str] | None = Field(default=None, description="子目录名")
     delete_tags: list[str] = Field(default_factory=list, description="要删除的标签")
     add_tags: list[str] = Field(default_factory=list, description="要添加的标签")
-    position: str = Field("after", description="放在 ||| 前(before) 或 后(after)")
-    insert_mode: str = Field("bottom", description="置顶(top) / 置底(bottom) / 随机(random)")
+    position: str = Field("before", description="放在 ||| 前(before) 或 后(after)")
+    insert_mode: str = Field("top", description="置顶(top) / 置底(bottom) / 随机(random)")
     conditional: bool = Field(False, description="仅当已有同名标签时才插入")
     keep_duplicates: bool = Field(False, description="不删除已有重复标签")
     inject_pony_score: bool = Field(False, description="注入 Pony 美学档位, 永远置于最前")
+    inject_quality_tag: bool = Field(False, description="注入质量标签, 永远置于最前")
+    separator_mode: str = Field("keep", description="||| 分隔模式: keep(保留) | add(添加) | remove(删除)")
     dry_run: bool = True
     sample_limit: int = Field(default=40, ge=0, le=200)
 
@@ -195,10 +210,10 @@ class BatchEditBody(BaseModel):
 @router.post("/batch-edit")
 async def tag_batch_edit(request: Request, body: BatchEditBody) -> JobSubmitResponse:
     """
-    批量删除/添加标签. 
+    批量删除/添加标签.
 
-    返回 job_id；结束事件的 result 为清洗结果. 
-    引用: tag_clean.js. 
+    返回 job_id；结束事件的 result 为清洗结果.
+    引用: ``tags.js``.
     """
     rt = get_runtime(request)
     root = rt.root
@@ -240,6 +255,7 @@ async def tag_batch_edit(request: Request, body: BatchEditBody) -> JobSubmitResp
             aesthetic_scores=scores,
             inject_quality_tag=payload.inject_quality_tag,
             quality_scores=quality_scores,
+            use_separator=payload.separator_mode,
             dry_run=payload.dry_run,
             sample_limit=payload.sample_limit,
         )
@@ -262,3 +278,149 @@ async def tag_batch_edit(request: Request, body: BatchEditBody) -> JobSubmitResp
 
     job_id = jobs(request).submit(kind="tag_batch_edit", group="compute", dataset=rt.name, run=run)
     return JobSubmitResponse(ok=True, job_id=job_id)
+
+
+def _build_check_item(
+    img_path_rel: str,
+    stem: str,
+    work_dir: Path,
+    dir_name: str,
+    root: Path,
+    thumbnailer,
+    tag: str,
+    position: str,
+) -> TagCheckItem:
+    """为单张图片构建标签检查结果.
+
+    读取与图片同 stem 的旁路 ``.txt``, 调用 ``check_tag_in_caption`` 判断
+    标签存在性与位置, 并计算缩略图 hash 与图片宽高.
+
+    Args:
+        img_path_rel: 图片相对数据集根的路径(如 ``main/foo.png``).
+        stem: 图片 stem.
+        work_dir: 图片所在的绝对路径目录.
+        dir_name: 目录名(用于前端展示).
+        root: 数据集根目录.
+        thumbnailer: 缩略图管理器.
+        tag: 待检查的标签.
+        position: 位置选项.
+
+    Returns:
+        TagCheckItem: 检查结果项.
+
+    Callers:
+        - ``tag_check``
+        - ``tag_edit_one``
+    """
+    txt_path = work_dir / (stem + ".txt")
+    raw = ""
+    if txt_path.is_file():
+        raw = txt_path.read_text(encoding="utf-8")
+    exists, position_ok = check_tag_in_caption(raw, tag, position)
+    abs_img = root / img_path_rel
+    w, h = image_size(abs_img) if abs_img.is_file() else (0, 0)
+    return TagCheckItem(
+        path=img_path_rel,
+        stem=stem,
+        width=w,
+        height=h,
+        thumbnail_hash=thumbnailer.hash_for(img_path_rel),
+        dir=dir_name,
+        exists=exists,
+        position_ok=position_ok,
+        caption_preview=raw.strip().replace("\n", " ")[:200],
+    )
+
+
+@router.post("/check")
+def tag_check(request: Request, body: TagCheckBody) -> TagCheckResponse:
+    """批量检查目录内图片旁路 ``.txt`` 中标签的存在与位置.
+
+    引用: ``tag_check.js``.
+    """
+    rt = get_runtime(request)
+    root = rt.root
+    if body.position not in TAG_CHECK_POSITIONS:
+        raise HTTPException(400, f"position 非法: {body.position}")
+
+    tag = body.tag.strip()
+    check_enabled = bool(tag)
+    selected = resolve_selected_dirs(root, body.dirs)
+    if not selected:
+        raise HTTPException(400, "请选择目录")
+
+    thumbnailer = rt.thumbnailer
+    items: list[TagCheckItem] = []
+    for work in selected:
+        if work == root:
+            dir_name, prefix = ".", ""
+        else:
+            dir_name, prefix = work.name, work.name
+        for img in scan_images(work, path_prefix=prefix):
+            if check_enabled:
+                items.append(
+                    _build_check_item(
+                        img.path, img.stem, work, dir_name, root, thumbnailer, tag, body.position
+                    )
+                )
+            else:
+                abs_img = root / img.path
+                w, h = image_size(abs_img) if abs_img.is_file() else (0, 0)
+                items.append(
+                    TagCheckItem(
+                        path=img.path,
+                        stem=img.stem,
+                        width=w,
+                        height=h,
+                        thumbnail_hash=thumbnailer.hash_for(img.path),
+                        dir=dir_name,
+                        exists=False,
+                        position_ok=False,
+                        caption_preview="",
+                    )
+                )
+
+    ok_count = sum(1 for it in items if it.position_ok)
+    return TagCheckResponse(
+        tag=tag,
+        position=body.position,
+        total=len(items),
+        ok_count=ok_count,
+        bad_count=len(items) - ok_count,
+        items=items,
+    )
+
+
+@router.post("/edit-one")
+def tag_edit_one(request: Request, body: TagEditOneBody) -> TagCheckItem:
+    """编辑单张图片的旁路 ``.txt``, 在指定位置添加标签后返回最新检查结果.
+
+    引用: ``tag_check.js``.
+    """
+    rt = get_runtime(request)
+    root = rt.root
+    if body.position not in TAG_CHECK_POSITIONS:
+        raise HTTPException(400, f"position 非法: {body.position}")
+    if not body.tag.strip():
+        raise HTTPException(400, "标签不能为空")
+
+    tag = body.tag.strip()
+    img_abs = resolve_path(root, body.path)
+    if not img_abs.is_file():
+        raise HTTPException(404, "图片不存在")
+
+    txt_path = img_abs.with_suffix(".txt")
+    raw = ""
+    if txt_path.is_file():
+        raw = txt_path.read_text(encoding="utf-8")
+
+    new_caption = add_tag_to_caption(raw, tag, body.position)
+    txt_path.write_text(new_caption + "\n", encoding="utf-8")
+
+    stem = img_abs.stem
+    work_dir = img_abs.parent
+    rel = body.path.replace("\\", "/").lstrip("/")
+    dir_name = rel.split("/")[0] if "/" in rel else "."
+    return _build_check_item(
+        rel, stem, work_dir, dir_name, root, rt.thumbnailer, tag, body.position
+    )

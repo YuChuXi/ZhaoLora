@@ -12,6 +12,12 @@ from services.core.scanner import IMAGE_EXTS
 # 与 tag_key 一致: score_9 → "score 9"
 SCORE_TAG_KEYS = frozenset(f"score {i}" for i in range(10))
 
+# 质量标签 tag_key (已是小写无下划线, 与 tag_key() 输出一致)
+QUALITY_TAG_KEYS = frozenset({"masterpiece", "best quality", "good quality", "normal quality", "low quality", "worst quality"})
+
+# 始终置顶的标签 (分数 + 质量)
+PRIORITY_TAG_KEYS: frozenset[str] = SCORE_TAG_KEYS | QUALITY_TAG_KEYS
+
 
 def split_tags_line(s: str) -> list[str]:
     """按逗号 / ||| / 换行拆分 caption. 
@@ -24,13 +30,162 @@ def split_tags_line(s: str) -> list[str]:
 
 
 def join_tags_line(tags: list[str]) -> str:
-    """用逗号空格拼接 tag 列表. 
+    """用逗号空格拼接 tag 列表.
 
     Callers:
         - ``clean_caption``
         - ``batch_edit_tags``
+        - ``check_tag_in_caption``
+        - ``add_tag_to_caption``
     """
     return ", ".join(tags)
+
+
+def split_header_body(raw: str) -> tuple[list[str], list[str], bool]:
+    """将 caption 按 ``|||`` 拆分为头部与正文标签列表.
+
+    Args:
+        raw: 原始 caption 文本.
+
+    Returns:
+        ``(header, body, has_separator)``. 无 ``|||`` 时 body 为空列表、
+        has_separator 为 False.
+
+    Callers:
+        - ``check_tag_in_caption``
+        - ``add_tag_to_caption``
+    """
+    text = raw.strip()
+    if "|||" in text:
+        head_str, rest_str = text.split("|||", 1)
+        return split_tags_line(head_str), split_tags_line(rest_str), True
+    return split_tags_line(text), [], False
+
+
+def _first_content_index(tags: list[str], use_keys: bool = False) -> int:
+    """返回首个非优先标签(质量/分数)的索引.
+
+    优先标签 (PRIORITY_TAG_KEYS) 始终置顶, 内容标签从其后开始.
+    若全部为优先标签则返回列表长度.
+
+    Args:
+        tags: 标签原文列表或 tag_key 列表.
+        use_keys: True 时 tags 已是 tag_key 列表, 否则自动转换.
+
+    Callers:
+        - ``check_tag_in_caption`` (top 位置判定)
+        - ``add_tag_to_caption`` (top 位置插入)
+    """
+    for i, t in enumerate(tags):
+        k = t if use_keys else tag_key(t)
+        if k not in PRIORITY_TAG_KEYS:
+            return i
+    return len(tags)
+
+
+def check_tag_in_caption(raw: str, tag: str, position: str) -> tuple[bool, bool]:
+    """检查标签在 caption 中是否存在及位置是否匹配.
+
+    Args:
+        raw: 原始 caption 文本.
+        tag: 待检查的标签(按 ``tag_key`` 归一化比较).
+        position: 位置选项 — ``any`` / ``top`` / ``bottom`` /
+            ``before-sep`` / ``after-sep`` / ``bottom-before``.
+
+    Returns:
+        ``(exists, position_ok)``. 标签不存在时两者均为 False.
+
+    Callers:
+        - ``routes/tag_stats.tag_check``
+        - ``routes/tag_stats.tag_edit_one``
+    """
+    header, body, _ = split_header_body(raw)
+    key = tag_key(tag)
+    header_keys = [tag_key(t) for t in header]
+    body_keys = [tag_key(t) for t in body]
+    exists = key in header_keys or key in body_keys
+    if not exists:
+        return False, False
+
+    if position == "any":
+        return True, True
+    if position == "top":
+        first_idx = _first_content_index(header_keys)
+        return True, first_idx < len(header_keys) and header_keys[first_idx] == key
+    if position == "bottom":
+        all_tags = header + body
+        return True, len(all_tags) > 0 and tag_key(all_tags[-1]) == key
+    if position == "before-sep":
+        return True, key in header_keys
+    if position == "bottom-before":
+        return True, len(header_keys) > 0 and header_keys[-1] == key
+    if position == "after-sep":
+        return True, key in body_keys
+    return True, False
+
+
+def add_tag_to_caption(raw: str, tag: str, position: str) -> str:
+    """在 caption 指定位置添加标签(先按 ``tag_key`` 去重再插入).
+
+    Args:
+        raw: 原始 caption 文本.
+        tag: 待添加的标签原文.
+        position: 目标位置 — ``any`` / ``top`` / ``bottom`` /
+            ``before-sep`` / ``after-sep`` / ``random`` /
+            ``random-before`` / ``random-after``.
+            各位置插入策略:
+            - ``any``: 头部末尾(兼容旧调用, 不主动创建 ``|||``)
+            - ``top``: 头部首位(跳过质量/分数等优先标签后插入)
+            - ``bottom``: 有 ``|||`` 时追加到正文末尾, 否则头部末尾
+            - ``before-sep``: 头部末尾
+            - ``after-sep``: 正文首位(无 ``|||`` 时自动创建)
+            - ``random``: 全局随机位置(保留 ``|||``, 随机选头部或正文再随机插入)
+            - ``random-before``: 头部随机位置
+            - ``random-after``: 正文随机位置
+
+    Returns:
+        编辑后的 caption 字符串.
+
+    Callers:
+        - ``routes/tag_stats.tag_edit_one``
+    """
+    import random as _random
+    header, body, has_sep = split_header_body(raw)
+    key = tag_key(tag)
+    header = [t for t in header if tag_key(t) != key]
+    body = [t for t in body if tag_key(t) != key]
+
+    if position == "top":
+        idx = _first_content_index(header, use_keys=True)
+        header.insert(idx, tag)
+    elif position == "before-sep":
+        header.append(tag)
+    elif position == "random-before":
+        idx = _random.randint(0, len(header))
+        header.insert(idx, tag)
+    elif position == "after-sep":
+        body.insert(0, tag)
+    elif position == "random-after":
+        idx = _random.randint(0, len(body))
+        body.insert(idx, tag)
+    elif position == "bottom":
+        if has_sep:
+            body.append(tag)
+        else:
+            header.append(tag)
+    elif position == "random":
+        if _random.choice([True, False]):
+            idx = _random.randint(0, len(header))
+            header.insert(idx, tag)
+        else:
+            idx = _random.randint(0, len(body))
+            body.insert(idx, tag)
+    else:  # any (兼容旧调用, 等同于 before-sep)
+        header.append(tag)
+
+    if body:
+        return join_tags_line(header) + " ||| " + join_tags_line(body)
+    return join_tags_line(header)
 
 
 def raw_to_pony(raw: float) -> int:
@@ -234,7 +389,6 @@ def clean_caption(
     if pony_score_tag:
         kept = [t for t in kept if tag_key(t) not in SCORE_TAG_KEYS]
     if quality_tag:
-        QUALITY_TAG_KEYS = frozenset(tag_key(t) for t in ["masterpiece", "best quality", "good quality", "normal quality", "low quality", "worst quality"])
         kept = [t for t in kept if tag_key(t) not in QUALITY_TAG_KEYS]
 
     header: list[str] = []
@@ -417,6 +571,7 @@ def batch_edit_tags(
     aesthetic_scores: dict[str, float] | None = None,
     inject_quality_tag: bool = False,
     quality_scores: dict[str, float] | None = None,
+    use_separator: str = "keep",
     dry_run: bool = True,
     sample_limit: int = 40,
 ) -> TagCleanResult:
@@ -433,6 +588,7 @@ def batch_edit_tags(
         keep_duplicates: 不删除已有重复标签. 
         inject_pony_score: 根据美学分注入 score_0…score_9. 
         inject_quality_tag: 根据质量分注入质量标签. 
+        use_separator: ||| 分隔模式: "add"(添加) | "keep"(保留) | "remove"(删除). 
         dataset_root: 数据集根目录(解析旁路图像路径). 
         aesthetic_scores: 相对路径 → 原始美学分 [0,1]. 
         quality_scores: 相对路径 → 质量分 [0,1]. 
@@ -514,7 +670,6 @@ def batch_edit_tags(
         body = split_tags_line(body_str)
 
         # 移除既有 score_0…score_9 与质量标签
-        QUALITY_TAG_KEYS = frozenset(tag_key(t) for t in ["masterpiece", "best quality", "good quality", "normal quality", "low quality", "worst quality"])
         header = [t for t in header if tag_key(t) not in SCORE_TAG_KEYS]
         body = [t for t in body if tag_key(t) not in SCORE_TAG_KEYS]
         header = [t for t in header if tag_key(t) not in QUALITY_TAG_KEYS]
@@ -527,15 +682,14 @@ def batch_edit_tags(
 
         # 添加
         to_add: list[str] = []
+        n_added_head = 0
         for t in add_list:
             k = tag_key(t)
             if conditional:
-                # 检查文件中是否已有同名 tag
                 existing_keys = {tag_key(x) for x in header + body}
                 if k not in existing_keys:
                     continue
             if not keep_duplicates:
-                # 删除已有重复
                 header = [x for x in header if tag_key(x) != k]
                 body = [x for x in body if tag_key(x) != k]
             to_add.append(t)
@@ -544,6 +698,7 @@ def batch_edit_tags(
             if position == "before":
                 if insert_mode == "top":
                     header = to_add + header
+                    n_added_head = len(to_add)
                 elif insert_mode == "random":
                     for t in to_add:
                         idx = _random.randint(0, len(header)) if header else 0
@@ -569,8 +724,14 @@ def batch_edit_tags(
         if len(score_quality) > 1:
             _random.shuffle(score_quality)
         header = score_quality + header
+
+        n_head = len(score_quality) + n_added_head
         if body:
             new = ", ".join(header) + " ||| " + ", ".join(body)
+            if use_separator == "remove":
+                new = ", ".join(header + body)
+        elif use_separator == "add" and n_head > 0:
+            new = ", ".join(header[:n_head]) + " ||| " + ", ".join(header[n_head:])
         else:
             new = ", ".join(header)
 

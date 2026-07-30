@@ -28,7 +28,7 @@ python web_annotator/server.py --data-dir datasets
 4. [裁剪](?doc=crop) — 部位选区输出  
 5. [蒙版](?doc=paint) — 绘制 Alpha（可选）  
 6. [标签](?doc=tags) — WD14 自动生成 + 频率统计  
-7. [清洗](?doc=tag-clean) — 规范化旁路标签，可选写入 Pony 美学档位  
+7. [标签检查](?doc=tag-check) — 瀑布流检查标签存在性与位置，点击卡片补齐  
 8. [就绪](?doc=ready) — 生成训练用 TOML 片段  
 
 目录与元数据约定见 [目录约定](?doc=layout)。

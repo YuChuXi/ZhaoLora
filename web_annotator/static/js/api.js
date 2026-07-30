@@ -174,7 +174,7 @@ var API = (function () {
    * @param {string} jobId
    * @param {(ev: object) => void} onEvent
    * @returns {{ close: function }}
-   * 引用：aesthetic.js、tagging.js、dedupe.js、tag_clean.js。
+   * 引用：aesthetic.js、tagging.js、dedupe.js。
    */
   function watchJob(jobId, onEvent) {
     var es = new EventSource('/api/jobs/' + encodeURIComponent(jobId) + '/events');
