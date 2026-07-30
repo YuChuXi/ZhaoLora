@@ -95,6 +95,7 @@
   <span class="sep"></span>
   <button class="btn green" id="btn-auto-tag" type="button">自动生成</button>
   <button class="btn green" id="btn-batch-add" type="button">批量添加</button>
+  <button class="btn green" id="btn-batch-replace" type="button">批量替换</button>
   <button class="btn green" id="btn-batch-delete" type="button">批量删除</button>
   <button class="btn green" id="btn-refresh">统计</button>
   <button class="btn" id="btn-translate-missing">翻译缺失</button>
@@ -235,6 +236,35 @@
         <button class="btn danger" type="button" id="btn-batch-delete-apply">写入</button>
       </div>
       <div id="batch-delete-result" style="font-size:12px;color:var(--text-dim);background:#0a1a30;border:1px solid var(--border);border-radius:6px;padding:8px 10px;max-height:180px;overflow:auto;white-space:pre-wrap;font-family:ui-monospace,monospace;"></div>
+    </div>
+  </div>
+</div>
+
+<!-- 批量替换对话框 -->
+<div class="tagging-modal" id="batch-replace-modal" aria-hidden="true">
+  <div class="tagging-panel" role="dialog" style="height:auto;max-height:min(420px,72vh);">
+    <div class="tagging-panel-head">
+      <span class="title">批量替换标签</span>
+      <span class="spacer"></span>
+      <button class="btn" id="btn-batch-replace-close" type="button">关闭</button>
+    </div>
+    <div style="padding:12px;display:flex;flex-direction:column;gap:10px;overflow:auto;">
+      <div style="display:flex;gap:10px;align-items:flex-start;">
+        <label style="font-size:12px;color:var(--text-dim);display:flex;flex-direction:column;gap:3px;flex:1;">
+          原标签（逗号分隔）
+          <input type="text" id="batch-replace-from" placeholder="tag1, tag2" style="background:#0a1a30;color:var(--text);border:1px solid var(--border);border-radius:4px;padding:4px 8px;font-size:12px;">
+        </label>
+        <label style="font-size:12px;color:var(--text-dim);display:flex;flex-direction:column;gap:3px;flex:1;">
+          新标签（逗号分隔，按顺序对应）
+          <input type="text" id="batch-replace-to" placeholder="new1, new2" style="background:#0a1a30;color:var(--text);border:1px solid var(--border);border-radius:4px;padding:4px 8px;font-size:12px;">
+        </label>
+      </div>
+      <div style="font-size:12px;color:var(--text-dim);">原位置替换：原标签出现的位置改写为新标签，替换后整体去重。两个列表按顺序一一配对。</div>
+      <div style="display:flex;gap:8px;">
+        <button class="btn" type="button" id="btn-batch-replace-preview">预览</button>
+        <button class="btn danger" type="button" id="btn-batch-replace-apply">写入</button>
+      </div>
+      <div id="batch-replace-result" style="font-size:12px;color:var(--text-dim);background:#0a1a30;border:1px solid var(--border);border-radius:6px;padding:8px 10px;max-height:180px;overflow:auto;white-space:pre-wrap;font-family:ui-monospace,monospace;"></div>
     </div>
   </div>
 </div>

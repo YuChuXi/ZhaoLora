@@ -584,6 +584,7 @@ def batch_edit_tags(
     *,
     delete_tags: list[str] | None = None,
     add_tags: list[str] | None = None,
+    replace_pairs: list[tuple[str, str]] | None = None,
     position: str = "after",
     insert_mode: str = "bottom",
     conditional: bool = False,
@@ -629,6 +630,12 @@ def batch_edit_tags(
         k = tag_key(t)
         if k:
             del_keys.add(k)
+
+    replace_map: dict[str, str] = {}
+    for src, dst in (replace_pairs or []):
+        k = tag_key(src)
+        if k and dst.strip():
+            replace_map[k] = dst.strip()
 
     add_list = expand_cli_list(add_tags or [])
     scores = aesthetic_scores or {}
@@ -696,6 +703,28 @@ def batch_edit_tags(
         body = [t for t in body if tag_key(t) not in SCORE_TAG_KEYS]
         header = [t for t in header if tag_key(t) not in QUALITY_TAG_KEYS]
         body = [t for t in body if tag_key(t) not in QUALITY_TAG_KEYS]
+
+        # 原位置替换: tag_key(原) → 新标签; 替换后整体去重(保留首次出现)
+        if replace_map:
+            header = [replace_map.get(tag_key(t), t) for t in header]
+            body = [replace_map.get(tag_key(t), t) for t in body]
+            seen: set[str] = set()
+            dedup_h: list[str] = []
+            for t in header:
+                k = tag_key(t)
+                if k in seen:
+                    continue
+                seen.add(k)
+                dedup_h.append(t)
+            header = dedup_h
+            dedup_b: list[str] = []
+            for t in body:
+                k = tag_key(t)
+                if k in seen:
+                    continue
+                seen.add(k)
+                dedup_b.append(t)
+            body = dedup_b
 
         # 删除
         if del_keys:

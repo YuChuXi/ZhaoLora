@@ -12,6 +12,7 @@ from services.analysis.scoring import load_score_json
 from services.core.jobs import EmitFn
 from services.core.scanner import scan_images
 from services.core.thumbnailer import image_size
+from services.core.work_dir import list_work_dirs
 from services.models import (
     JobSnapshot,
     JobSubmitResponse,
@@ -22,19 +23,19 @@ from services.models import (
     TagCleanResult,
     TagEditOneBody,
     TagStatsResult,
-    TxtDirInfo,
+    WorkDirInfo,
 )
 from services.tagging.clean import add_tag_to_caption, batch_edit_tags, check_tag_in_caption, clean_txt_dirs, delete_tag_from_caption
-from services.tagging.stats import count_tags, list_txt_subdirs, load_translation_map, resolve_selected_dirs, translate_missing_tags
+from services.tagging.stats import count_tags, load_translation_map, resolve_selected_dirs, translate_missing_tags
 
 router = APIRouter(prefix="/tags", tags=["tags"])
 
 
 class TagDirsResponse(BaseModel):
-    """含 txt 的子目录列表. 引用: ``GET /tags/dirs``. """
+    """工作子目录列表. 引用: ``GET /tags/dirs``. """
 
     root: str
-    dirs: list[TxtDirInfo]
+    dirs: list[WorkDirInfo]
 
 
 def _root(request: Request) -> Path:
@@ -74,9 +75,9 @@ class CleanBody(BaseModel):
 
 @router.get("/dirs")
 def tag_dirs(request: Request) -> TagDirsResponse:
-    """列出含旁路 txt 的目录. 引用: 标签/清洗页. """
+    """列出工作子目录(含图片的一级子目录). 引用: 标签/标签检查页. """
     root = _root(request)
-    return TagDirsResponse(root=str(root), dirs=list_txt_subdirs(root))
+    return TagDirsResponse(root=str(root), dirs=list_work_dirs(root))
 
 
 @router.post("/stats")
@@ -196,6 +197,7 @@ class BatchEditBody(BaseModel):
     dirs: list[str] | None = Field(default=None, description="子目录名")
     delete_tags: list[str] = Field(default_factory=list, description="要删除的标签")
     add_tags: list[str] = Field(default_factory=list, description="要添加的标签")
+    replace_pairs: list[list[str]] = Field(default_factory=list, description="原位置替换 [[原标签, 新标签], ...]")
     position: str = Field("before", description="放在 ||| 前(before) 或 后(after)")
     insert_mode: str = Field("top", description="置顶(top) / 置底(bottom) / 随机(random)")
     conditional: bool = Field(False, description="仅当已有同名标签时才插入")
@@ -220,8 +222,8 @@ async def tag_batch_edit(request: Request, body: BatchEditBody) -> JobSubmitResp
     selected = resolve_selected_dirs(root, body.dirs)
     if not selected:
         raise HTTPException(400, "请选择目录")
-    if not body.delete_tags and not body.add_tags:
-        raise HTTPException(400, "请指定要删除或添加的标签")
+    if not body.delete_tags and not body.add_tags and not body.replace_pairs:
+        raise HTTPException(400, "请指定要删除、添加或替换的标签")
 
     if body.position not in ("before", "after"):
         raise HTTPException(400, "position 须为 before 或 after")
@@ -246,6 +248,7 @@ async def tag_batch_edit(request: Request, body: BatchEditBody) -> JobSubmitResp
             selected,
             delete_tags=payload.delete_tags,
             add_tags=payload.add_tags,
+            replace_pairs=[(p[0], p[1]) for p in payload.replace_pairs if len(p) >= 2],
             position=payload.position,
             insert_mode=payload.insert_mode,
             conditional=payload.conditional,

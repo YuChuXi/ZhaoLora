@@ -6,6 +6,20 @@
 <title>标签检查</title>
 <link rel="stylesheet" href="/static/css/annotator.css">
 <style>
+  /* body: 全屏 flex 列 (参考 paint), 两个视图通过 hidden 切换 */
+  body { margin: 0; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+  .view-multi, .view-single {
+    display: flex; flex-direction: column; flex: 1; min-height: 0;
+  }
+  .view-multi[hidden], .view-single[hidden] { display: none; }
+  /* 多图视图: masonry 占满剩余空间并滚动 */
+  .view-multi .masonry { flex: 1; overflow-y: auto; }
+  .view-multi .hint { flex-shrink: 0; }
+  /* 共享 toolbar: multi-only 默认显示, single-only 默认隐藏; 进入单图模式 body 加 mode-single 反转 */
+  .single-only { display: none !important; }
+  body.mode-single .multi-only { display: none !important; }
+  body.mode-single .single-only { display: inline-flex !important; }
+
   #check-tag {
     background: #0a1a30; color: var(--text);
     border: 1px solid var(--border); border-radius: 4px;
@@ -44,56 +58,48 @@
   .ac-count { color: var(--text-dim); font-size: 11px; margin-left: auto; white-space: nowrap; }
   .ac-empty { padding: 8px 10px; color: var(--text-dim); }
 
-  /* 单图模式 */
-  .single-viewer {
-    flex: 1; display: flex; flex-direction: column; min-height: 0;
-    background: #0a0f18;
+  /* 列数控件：紧凑内联 */
+  .cols-ctl {
+    display: flex; align-items: center; gap: 3px;
+    font-size: 12px; color: var(--text-dim); cursor: pointer; user-select: none;
   }
-  .single-toolbar {
-    display: flex; align-items: center; gap: 8px;
-    padding: 6px 12px; background: var(--surface);
-    border-bottom: 1px solid var(--border); flex-shrink: 0;
-    font-size: 12px; color: var(--text-dim);
-  }
-  .single-counter { color: var(--text); font-variant-numeric: tabular-nums; min-width: 60px; }
-  .single-stem { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #5eb8ff; }
-  .single-canvas {
-    flex: 1; min-height: 0; overflow: hidden; display: flex;
-    align-items: center; justify-content: center; position: relative;
+  .cols-ctl input[type="range"] { width: 64px; }
+
+  /* 单图视图: 页面级 flex 列 (参考 paint) */
+  /* stage: contain=object-fit 居中 letterbox 不滚动; cover=min-width/min-height:100% 保持比例覆盖, 溢出方向原生滚动 (仅一条滚动条) */
+  .single-stage {
+    flex: 1; min-height: 0; overflow: hidden; position: relative;
     cursor: crosshair;
   }
-  .single-canvas.contain #single-img {
-    object-fit: contain; max-width: 100%; max-height: 100%;
+  .single-stage.cover { overflow: auto; }
+  .single-stage #single-img {
+    display: block; user-select: none; -webkit-user-drag: none;
   }
-  .single-canvas.cover {
-    display: block; overflow-y: auto; overflow-x: hidden;
+  .single-stage.contain #single-img {
+    width: 100%; height: 100%; object-fit: contain;
   }
-  .single-canvas.cover #single-img {
-    display: block; width: 100%; height: auto;
-    object-fit: cover;
+  .single-stage.cover #single-img {
+    min-width: 100%; min-height: 100%;
   }
-  .single-canvas img { user-select: none; -webkit-user-drag: none; }
-  .single-caption {
-    padding: 6px 14px; background: var(--surface); border-top: 1px solid var(--border);
-    font-size: 12px; color: var(--text-dim); font-family: ui-monospace, monospace;
-    white-space: pre-wrap; max-height: 80px; overflow: auto; flex-shrink: 0;
-  }
-  /* 放大镜 */
+  /* 标签文本段: 占满剩余空间, 单行截断, 悬停看完整 */
+  #single-caption { flex: 1; max-width: none; font-family: ui-monospace, monospace; }
+  /* 放大镜: fixed 跟随鼠标, 光晕颜色随标签状态 (绿=符合 红=不符 灰=无标签) */
   .magnifier {
-    position: absolute; pointer-events: none; z-index: 50;
-    border: 2px solid var(--accent); border-radius: 50%;
-    box-shadow: 0 0 12px rgba(233,69,96,0.4);
-    width: 180px; height: 180px;
-    background-repeat: no-repeat;
+    position: fixed; pointer-events: none; z-index: 300;
+    width: 180px; height: 180px; overflow: hidden;
+    border: 2px solid var(--text-dim); border-radius: 50%;
+    box-shadow: 0 0 14px rgba(255,255,255,0.15);
     display: none;
   }
   .magnifier.show { display: block; }
-
-  /* 单图模式位置着色 */
-  .single-viewer.single-ok .single-canvas {
+  .magnifier-img { position: absolute; max-width: none; pointer-events: none; }
+  .view-single.single-ok .magnifier { border-color: var(--green); box-shadow: 0 0 16px rgba(74,222,128,0.6); }
+  .view-single.single-bad .magnifier { border-color: var(--accent); box-shadow: 0 0 16px rgba(233,69,96,0.6); }
+  /* 单图视图位置着色 (内阴影绘在 stage 上) */
+  .view-single.single-ok .single-stage {
     box-shadow: inset 0 0 0 3px var(--green), inset 0 0 40px rgba(74,222,128,0.15);
   }
-  .single-viewer.single-bad .single-canvas {
+  .view-single.single-bad .single-stage {
     box-shadow: inset 0 0 0 3px var(--accent), inset 0 0 40px rgba(233,69,96,0.15);
   }
 </style>
@@ -101,6 +107,7 @@
 <body>
 <nav class="app-tabs" id="app-tabs"></nav>
 
+<!-- 共享工具栏: 标签/位置/模式为两视图共用的操作目标; 检查/列数=多图专属; 导航/fit/返回=单图专属 -->
 <div class="toolbar">
   <input type="text" id="check-tag" placeholder="标签（如 1girl）" spellcheck="false">
   <select id="check-position">
@@ -113,41 +120,46 @@
     <option value="bottom">置底</option>
     <option value="random">任意</option>
   </select>
-  <button class="btn green" type="button" id="btn-check">检查</button>
-  <span class="sep"></span>
-  <span class="status-seg">共 <b id="stat-total">0</b></span>
-  <span class="status-seg">符合 <b id="stat-ok">0</b></span>
-  <span class="status-seg">不符 <b id="stat-bad">0</b></span>
-  <span class="sep"></span>
-  <label style="font-size:12px;color:var(--text-dim);display:flex;align-items:center;gap:4px;">
-    列数 <input type="range" id="cols-slider" min="0" max="16" value="0" step="1" style="width:90px;">
-    <span id="cols-label">自动</span>
-  </label>
-  <span class="sep"></span>
-  <button class="btn" type="button" id="btn-single-mode">单图</button>
+  <span class="sep multi-only"></span>
+  <button class="btn green multi-only" type="button" id="btn-check">检查</button>
+  <label class="cols-ctl multi-only" id="cols-ctl"><span>列</span><input type="range" id="cols-slider" min="0" max="16" value="0" step="1"><span id="cols-label">自动</span></label>
+  <button class="btn multi-only" type="button" id="btn-single-mode">单图</button>
+  <span class="sep single-only"></span>
+  <button class="btn single-only" type="button" id="btn-single-close" title="返回瀑布流 (Esc)">✕ 瀑布流</button>
+  <button class="btn single-only" type="button" id="btn-prev" title="上一张 (←)">◀</button>
+  <button class="btn single-only" type="button" id="btn-next" title="下一张 (→)">▶</button>
+  <button class="btn single-only" type="button" id="btn-fit" title="切换 contain/cover">⊞</button>
 </div>
 
-<div class="masonry" id="masonry"></div>
+<!-- 多图视图 (瀑布流) -->
+<div class="view-multi" id="view-multi">
+  <div class="masonry" id="masonry"></div>
+  <div class="hint" id="check-hint">输入标签并检查 · 绿色=位置符合 · 红色=位置不符 · 点击卡片添加/删除标签 · 右键卡片进入单图 · 无标签时显示全部图片</div>
+  <div class="status-bar" id="check-status">
+    <span class="status-seg">共<b id="stat-total">0</b></span>
+    <span class="status-seg">符合<b id="stat-ok">0</b></span>
+    <span class="status-seg">不符<b id="stat-bad">0</b></span>
+  </div>
+</div>
 
-<!-- 单图模式 -->
-<div class="single-viewer" id="single-viewer" hidden>
-  <div class="single-toolbar">
-    <span class="single-counter" id="single-counter">0/0</span>
-    <span class="single-stem" id="single-stem"></span>
-    <button class="btn" type="button" id="btn-prev">◀</button>
-    <button class="btn" type="button" id="btn-next">▶</button>
-    <button class="btn" type="button" id="btn-fit" title="切换 contain/cover">⊞</button>
-    <button class="btn" type="button" id="btn-single-close">✕</button>
-  </div>
-  <div class="single-canvas" id="single-canvas">
+<!-- 单图视图 (参考 paint: 主图区 + 底部状态栏) -->
+<div class="view-single" id="view-single" hidden>
+  <div class="single-stage contain" id="single-stage">
     <img id="single-img" src="" alt="" draggable="false">
-    <div class="magnifier" id="magnifier" hidden></div>
+    <div class="magnifier" id="magnifier" hidden>
+      <img class="magnifier-img" id="magnifier-img" alt="">
+    </div>
   </div>
-  <div class="single-caption" id="single-caption"></div>
+  <div class="status-bar">
+    <span class="status-seg" id="single-counter">0/0</span>
+    <span class="status-seg" id="single-stem">-</span>
+    <span class="status-seg" id="single-tag">-</span>
+    <span class="status-seg" id="single-size">-</span>
+    <span class="status-seg" id="single-caption">-</span>
+  </div>
 </div>
 
 <div class="toast" id="toast"></div>
-<div class="hint" id="check-hint">输入标签并检查 · 绿色=位置符合 · 红色=位置不符 · 点击卡片添加/删除标签 · 无标签时显示全部图片</div>
 
 <script src="/static/js/api.js"></script>
 <script src="/static/js/dir_picker.js"></script>

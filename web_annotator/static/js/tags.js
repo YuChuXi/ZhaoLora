@@ -303,6 +303,24 @@
       runBatchEdit('delete', false).catch(function (e) { toast(String(e.message || e)); });
     });
 
+    // ---- 批量替换对话框 ----
+    document.getElementById('btn-batch-replace').addEventListener('click', function () {
+      var sel = selectedTags();
+      document.getElementById('batch-replace-from').value = sel.map(function (t) { return t.tag; }).join(', ');
+      document.getElementById('batch-replace-to').value = '';
+      document.getElementById('batch-replace-result').textContent = '';
+      document.getElementById('batch-replace-modal').classList.add('open');
+    });
+    document.getElementById('btn-batch-replace-close').addEventListener('click', function () {
+      document.getElementById('batch-replace-modal').classList.remove('open');
+    });
+    document.getElementById('btn-batch-replace-preview').addEventListener('click', function () {
+      runBatchEdit('replace', true).catch(function (e) { toast(String(e.message || e)); });
+    });
+    document.getElementById('btn-batch-replace-apply').addEventListener('click', function () {
+      runBatchEdit('replace', false).catch(function (e) { toast(String(e.message || e)); });
+    });
+
     setTimeout(function () {
       refresh().catch(function (e) {
         document.getElementById('tag-body').innerHTML =
@@ -313,7 +331,7 @@
 
   /**
    * 提交批量编辑任务。
-   * @param {'add'|'delete'} mode
+   * @param {'add'|'delete'|'replace'} mode
    * @param {boolean} dryRun
    */
   async function runBatchEdit(mode, dryRun) {
@@ -323,12 +341,23 @@
     if (mode === 'add') {
       resultEl = document.getElementById('batch-add-result');
       tagsInput = document.getElementById('batch-add-tags');
-    } else {
+    } else if (mode === 'delete') {
       resultEl = document.getElementById('batch-delete-result');
       tagsInput = document.getElementById('batch-delete-tags');
+    } else {
+      resultEl = document.getElementById('batch-replace-result');
+      tagsInput = document.getElementById('batch-replace-from');
     }
     var tags = parseTagList(tagsInput.value);
     if (!tags.length) { toast('请指定标签'); return; }
+    var replacePairs = [];
+    if (mode === 'replace') {
+      var toTags = parseTagList(document.getElementById('batch-replace-to').value);
+      if (toTags.length !== tags.length) { toast('原标签与新标签数量须一致'); return; }
+      for (var i = 0; i < tags.length; i++) {
+        replacePairs.push([tags[i], toTags[i]]);
+      }
+    }
     if (!dryRun) {
       if (!confirm('将覆盖所选目录中的旁路 .txt，是否继续？')) return;
     }
@@ -336,6 +365,7 @@
       dirs: dirs,
       delete_tags: mode === 'delete' ? tags : [],
       add_tags: mode === 'add' ? tags : [],
+      replace_pairs: mode === 'replace' ? replacePairs : [],
       position: mode === 'add' ? document.getElementById('batch-add-position').value : 'after',
       insert_mode: mode === 'add' ? document.getElementById('batch-add-mode').value : 'bottom',
       conditional: mode === 'add' ? document.getElementById('batch-add-conditional').checked : false,
@@ -346,9 +376,11 @@
       dry_run: !!dryRun,
       sample_limit: 40,
     };
+    var previewBtn = mode === 'add' ? 'btn-batch-add-preview' : (mode === 'delete' ? 'btn-batch-delete-preview' : 'btn-batch-replace-preview');
+    var applyBtn = mode === 'add' ? 'btn-batch-add-apply' : (mode === 'delete' ? 'btn-batch-delete-apply' : 'btn-batch-replace-apply');
     resultEl.textContent = dryRun ? '预览中…' : '写入中…';
-    document.getElementById(mode === 'add' ? 'btn-batch-add-preview' : 'btn-batch-delete-preview').disabled = true;
-    document.getElementById(mode === 'add' ? 'btn-batch-add-apply' : 'btn-batch-delete-apply').disabled = true;
+    document.getElementById(previewBtn).disabled = true;
+    document.getElementById(applyBtn).disabled = true;
     try {
       var submitted = await API.request(API.apiPath('/tags/batch-edit'), {
         method: 'POST', body: JSON.stringify(body),
@@ -372,8 +404,8 @@
       toast((dryRun ? '预览' : '写入') + '完成 · 已变更 ' + data.changed);
       if (!dryRun) { await refresh(); }
     } finally {
-      document.getElementById(mode === 'add' ? 'btn-batch-add-preview' : 'btn-batch-delete-preview').disabled = false;
-      document.getElementById(mode === 'add' ? 'btn-batch-add-apply' : 'btn-batch-delete-apply').disabled = false;
+      document.getElementById(previewBtn).disabled = false;
+      document.getElementById(applyBtn).disabled = false;
     }
   }
 

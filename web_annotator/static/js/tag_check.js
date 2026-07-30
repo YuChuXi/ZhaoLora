@@ -13,6 +13,7 @@
   var _singleIndex = -1;
   var _fitMode = 'contain';
   var _busyPaths = {};
+  var _centerOnLoad = false;  // 进入单图/切换 fit 时置 true, img.load 时居中滚动, 切换图片不置 (保持偏移)
 
   // ---- 标签补全 ----
   var _acTags = [];          // [{tag, count, zh}] 按频次降序
@@ -394,7 +395,7 @@
 
   /**
    * 对单图执行添加/删除标签操作。
-   * @param {string} action "add" | "delete"
+   * @param {string} action "add" 强制添加(位置由下拉框决定), "delete" 强制删除
    */
   function singleTagOp(action) {
     var idx = _singleIndex;
@@ -404,7 +405,7 @@
 
     var img = _items[idx];
     var endpoint, body;
-    if (action === 'delete' || img.exists) {
+    if (action === 'delete') {
       endpoint = API.apiPath('/tags/delete-one');
       body = JSON.stringify({ path: img.path, tag: tag });
     } else {
@@ -414,7 +415,8 @@
 
     API.request(endpoint, { method: 'POST', body: body }).then(function (updated) {
       _items[idx] = updated;
-      renderSingle();
+      updateStats();
+      navigateSingle(1);  // 操作成功后自动跳到下一张
     }).catch(function (e) {
       toast('操作失败: ' + String(e.message || e));
     });
@@ -429,62 +431,83 @@
     var img = _items[idx];
     var imgEl = document.getElementById('single-img');
     imgEl.src = API.imageUrl(img.path);
-    document.getElementById('single-stem').textContent = img.stem;
+    var stemEl = document.getElementById('single-stem');
+    stemEl.textContent = img.stem;
+    stemEl.title = img.path;
     document.getElementById('single-counter').textContent = (idx + 1) + '/' + _items.length;
-    document.getElementById('single-caption').textContent = img.caption_preview || '(无 .txt)';
-
-    // 位置着色
-    var viewer = document.getElementById('single-viewer');
-    viewer.classList.remove('single-ok', 'single-bad');
-    if (img.exists && img.position_ok) {
-      viewer.classList.add('single-ok');
-    } else if (img.exists && !img.position_ok) {
-      viewer.classList.add('single-bad');
+    // 标签文本段: 有内容则显示并设 title 悬停看完整, 无内容显示 -
+    var capEl = document.getElementById('single-caption');
+    var cap = img.caption_preview || '';
+    capEl.textContent = cap || '-';
+    capEl.title = cap;
+    // 标签状态段 (对应 paint 的 seg-obj)
+    var tagEl = document.getElementById('single-tag');
+    if (!img.exists) {
+      tagEl.textContent = '无此标签';
+    } else if (img.position_ok) {
+      tagEl.textContent = '位置符合';
+    } else {
+      tagEl.textContent = '位置不符';
     }
+    // 尺寸段 (对应 paint 的 seg-metric)
+    document.getElementById('single-size').textContent =
+      (img.width && img.height) ? (img.width + '×' + img.height) : '-';
+
+    // 位置着色 (放大镜光晕与 stage 内阴影据此变色)
+    var view = document.getElementById('view-single');
+    view.classList.remove('single-ok', 'single-bad');
+    if (img.exists && img.position_ok) {
+      view.classList.add('single-ok');
+    } else if (img.exists && !img.position_ok) {
+      view.classList.add('single-bad');
+    }
+    applyFitMode();
   }
 
   /**
-   * 进入单图模式，展示第 index 张。
+   * 进入单图视图，展示第 index 张。
    * @param {number} index
    */
   function showSingle(index) {
     if (index < 0 || index >= _items.length) return;
     _singleIndex = index;
-    document.getElementById('masonry').hidden = true;
-    document.getElementById('single-viewer').hidden = false;
-    document.getElementById('check-hint').hidden = true;
-    document.getElementById('btn-single-mode').textContent = '网格';
-    applyFitMode();
+    _centerOnLoad = true;  // 进入单图: 首张居中显示
+    document.body.classList.add('mode-single');
+    document.getElementById('view-multi').hidden = true;
+    document.getElementById('view-single').hidden = false;
     renderSingle();
   }
 
-  /** 退出单图模式。 */
+  /** 退出单图视图，返回瀑布流。 */
   function hideSingle() {
     _singleIndex = -1;
-    document.getElementById('masonry').hidden = false;
-    document.getElementById('single-viewer').hidden = true;
-    document.getElementById('check-hint').hidden = false;
-    document.getElementById('btn-single-mode').textContent = '单图';
+    document.body.classList.remove('mode-single');
+    document.getElementById('view-single').hidden = true;
+    document.getElementById('view-multi').hidden = false;
+    document.getElementById('single-img').removeAttribute('src');
+    document.getElementById('magnifier').classList.remove('show');
   }
 
-  /** 切换 contain / cover。 */
+  /** 切换 contain / cover。切到 cover 时标记需居中。 */
   function toggleFit() {
     _fitMode = _fitMode === 'contain' ? 'cover' : 'contain';
+    if (_fitMode === 'cover') _centerOnLoad = true;
     applyFitMode();
   }
 
+  /**
+   * 应用 contain / cover 模式 (仅切换 stage class, 由 CSS 控制图片尺寸与滚动)。
+   *
+   * Callers:
+   * - `tag_check.js:renderSingle`: 渲染单图时调用。
+   * - `tag_check.js:toggleFit`: 点击 fit 按钮时调用。
+   */
   function applyFitMode() {
-    var canvas = document.getElementById('single-canvas');
+    var stage = document.getElementById('single-stage');
     var btn = document.getElementById('btn-fit');
-    if (_fitMode === 'cover') {
-      canvas.classList.remove('contain');
-      canvas.classList.add('cover');
-      btn.textContent = '⊟';
-    } else {
-      canvas.classList.add('contain');
-      canvas.classList.remove('cover');
-      btn.textContent = '⊞';
-    }
+    stage.classList.remove('contain', 'cover');
+    stage.classList.add(_fitMode);
+    btn.textContent = _fitMode === 'cover' ? '⊟' : '⊞';
   }
 
   /** 导航：delta = +1(下一张) / -1(上一张)。 */
@@ -498,42 +521,70 @@
 
   // ---- 放大镜 ----
 
+  /**
+   * 初始化跟随鼠标的圆形放大镜。
+   *
+   * 监听 stage 的 mousemove, 鼠标位于图片 object-fit 实际显示区域内时显示放大镜;
+   * 放大镜用内部 img 元素显示放大区域 (尺寸=实际显示区域×zoom, 偏移使鼠标点居中)。
+   * 位置默认在鼠标上方, 顶部不足翻下方, 并约束在视口内不脱离屏幕。
+   *
+   * Callers:
+   * - `tag_check.js:init`: 初始化时调用一次。
+   */
   function magnifierInit() {
-    var canvas = document.getElementById('single-canvas');
+    var stage = document.getElementById('single-stage');
     var imgEl = document.getElementById('single-img');
     var lens = document.getElementById('magnifier');
-    var lensW = lens.offsetWidth;
-    var lensH = lens.offsetHeight;
-    var zoom = 2;
+    var lensImg = document.getElementById('magnifier-img');
+    var LENS = 180;      // 放大镜直径 (与 CSS width/height 一致)
+    var ZOOM = 2;        // 放大倍数
+    var lastE = null;    // 最近一次 mousemove 事件, 供 scroll 时重算
 
-    canvas.addEventListener('mousemove', function (e) {
-      var rect = imgEl.getBoundingClientRect();
-      var x = e.clientX - rect.left;
-      var y = e.clientY - rect.top;
-      if (x < 0 || y < 0 || x > rect.width || y > rect.height) {
+    // 计算图片实际显示矩形 (相对视口): cover=图片元素直接; contain=object-fit 居中偏移
+    function fitRect() {
+      var r = imgEl.getBoundingClientRect();
+      if (_fitMode === 'cover') return { left: r.left, top: r.top, width: r.width, height: r.height };
+      var iw = imgEl.naturalWidth, ih = imgEl.naturalHeight;
+      if (!iw || !ih) return null;
+      var cw = r.width, ch = r.height;
+      var scale = Math.min(cw / iw, ch / ih);
+      var dw = iw * scale, dh = ih * scale;
+      return { left: r.left + (cw - dw) / 2, top: r.top + (ch - dh) / 2, width: dw, height: dh };
+    }
+
+    function update() {
+      if (!lastE) return;
+      var e = lastE;
+      var fr = fitRect();
+      if (!fr) { lens.classList.remove('show'); return; }
+      var x = e.clientX - fr.left;
+      var y = e.clientY - fr.top;
+      if (x < 0 || y < 0 || x > fr.width || y > fr.height) {
         lens.classList.remove('show');
         return;
       }
       lens.classList.add('show');
-
-      // 放大镜位置（跟随鼠标，偏移使其不遮挡光标）
-      var lx = e.clientX - canvas.getBoundingClientRect().left - lensW / 2;
-      var ly = e.clientY - canvas.getBoundingClientRect().top - lensH - 20;
-      if (ly < 0) ly = e.clientY - canvas.getBoundingClientRect().top + 20;
+      // 放大镜位置: 默认鼠标上方 16px, 顶部不足翻下方; 约束在视口内
+      var lx = e.clientX - LENS / 2;
+      var ly = e.clientY - LENS - 16;
+      if (ly < 0) ly = e.clientY + 16;
+      if (lx < 0) lx = 0;
+      if (lx + LENS > window.innerWidth) lx = window.innerWidth - LENS;
+      if (ly + LENS > window.innerHeight) ly = window.innerHeight - LENS;
       lens.style.left = lx + 'px';
       lens.style.top = ly + 'px';
+      // 放大图: 尺寸=实际显示区域×zoom, 偏移使鼠标点位于放大镜中心
+      lensImg.src = imgEl.src;
+      lensImg.style.width = (fr.width * ZOOM) + 'px';
+      lensImg.style.height = (fr.height * ZOOM) + 'px';
+      lensImg.style.left = (-x * ZOOM + LENS / 2) + 'px';
+      lensImg.style.top = (-y * ZOOM + LENS / 2) + 'px';
+    }
 
-      // 背景偏移：放大区域在图片上的实际位置
-      var bgX = -(x * zoom - lensW / 2);
-      var bgY = -(y * zoom - lensH / 2);
-      lens.style.backgroundImage = 'url(' + imgEl.src + ')';
-      lens.style.backgroundSize = (rect.width * zoom) + 'px ' + (rect.height * zoom) + 'px';
-      lens.style.backgroundPosition = bgX + 'px ' + bgY + 'px';
-    });
-
-    canvas.addEventListener('mouseleave', function () {
-      lens.classList.remove('show');
-    });
+    stage.addEventListener('mousemove', function (e) { lastE = e; update(); });
+    stage.addEventListener('mouseleave', function () { lens.classList.remove('show'); lastE = null; });
+    // cover 模式 stage 可滚动, 滚动时图片视口位置变化需重算放大镜
+    stage.addEventListener('scroll', update);
   }
 
   function init() {
@@ -585,11 +636,20 @@
     });
 
     // ---- 单图模式事件 ----
+    // 工具栏按钮: 打开单图(从第一张或当前选中张开始). 模态浮层会覆盖主工具栏, 关闭由模态内的 ✕ 或 Esc 负责.
     document.getElementById('btn-single-mode').addEventListener('click', function () {
-      if (_singleIndex >= 0) {
-        hideSingle();
-      } else {
-        showSingle(0);
+      if (_singleIndex >= 0) return;
+      showSingle(0);
+    });
+
+    // 瀑布流卡片右键: 进入该卡片的单图模式 (左键仍为添加/删除标签)
+    document.getElementById('masonry').addEventListener('contextmenu', function (e) {
+      var card = e.target.closest('.card');
+      if (!card) return;
+      e.preventDefault();
+      var path = card.dataset.path;
+      for (var i = 0; i < _items.length; i++) {
+        if (_items[i].path === path) { showSingle(i); return; }
       }
     });
 
@@ -599,7 +659,7 @@
     document.getElementById('btn-single-close').addEventListener('click', hideSingle);
 
     // 单图点击：左键添加, 右键删除
-    document.getElementById('single-img').addEventListener('click', function (e) {
+    document.getElementById('single-img').addEventListener('click', function () {
       singleTagOp('add');
     });
     document.getElementById('single-img').addEventListener('contextmenu', function (e) {
@@ -610,18 +670,19 @@
     // 单图键盘导航
     document.addEventListener('keydown', function (e) {
       if (_singleIndex < 0) return;
-      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
       if (e.key === 'ArrowLeft') { e.preventDefault(); navigateSingle(-1); }
-      if (e.key === 'ArrowRight') { e.preventDefault(); navigateSingle(1); }
-      if (e.key === 'Escape') { e.preventDefault(); hideSingle(); }
+      else if (e.key === 'ArrowRight') { e.preventDefault(); navigateSingle(1); }
+      else if (e.key === 'Escape') { e.preventDefault(); hideSingle(); }
     });
 
-    // cover 模式滚轮上下滚动
-    document.getElementById('single-canvas').addEventListener('wheel', function (e) {
-      if (_fitMode !== 'cover') return;
-      e.preventDefault();
-      this.scrollTop += e.deltaY;
-    }, { passive: false });
+    // cover 模式图片加载后居中显示溢出区域 (进入单图/切换 fit 时触发; 左右键切换不触发, 保持滚动偏移)
+    document.getElementById('single-img').addEventListener('load', function () {
+      if (_fitMode !== 'cover' || !_centerOnLoad) return;
+      var stage = document.getElementById('single-stage');
+      stage.scrollLeft = (stage.scrollWidth - stage.clientWidth) / 2;
+      stage.scrollTop = (stage.scrollHeight - stage.clientHeight) / 2;
+      _centerOnLoad = false;
+    });
 
     DirPicker.onChange(function () {
       loadTags(DirPicker.getDirs());

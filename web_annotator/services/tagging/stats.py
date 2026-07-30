@@ -9,7 +9,8 @@ from pathlib import Path
 
 import httpx
 
-from services.models import TagStatRow, TagStatsResult, TxtDirInfo
+from services.core.work_dir import list_work_dirs
+from services.models import TagStatRow, TagStatsResult
 
 _SHARED_CACHE_NAME = ".translation_cache.json"
 _BATCH_SIZE = 128
@@ -39,49 +40,14 @@ def normalize_tag(tag: str, *, lower: bool, underscores: bool) -> str:
     return t
 
 
-def list_txt_subdirs(root: Path) -> list[TxtDirInfo]:
-    """列出根下含 ``.txt`` 的一级子目录(``main`` 置顶). 
-
-    引用:
-        ``resolve_selected_dirs``；``routes/tag_stats.py``. 
-    """
-    root = root.resolve()
-    out: list[TxtDirInfo] = []
-    if not root.is_dir():
-        return out
-
-    root_txt = sorted(root.glob("*.txt"))
-    if root_txt:
-        out.append(TxtDirInfo(name=".", label="(根目录)", txt_count=len(root_txt)))
-
-    for p in sorted(root.iterdir()):
-        if not p.is_dir() or p.name.startswith("."):
-            continue
-        n = sum(1 for _ in p.glob("*.txt"))
-        if n > 0 or p.name == "main":
-            out.append(TxtDirInfo(name=p.name, label=p.name, txt_count=n))
-
-    root_item = [d for d in out if d.name == "."]
-    rest = [d for d in out if d.name != "."]
-    main = [d for d in rest if d.name == "main"]
-    others = [d for d in rest if d.name != "main"]
-    if not main and (root / "main").is_dir():
-        n = sum(1 for _ in (root / "main").glob("*.txt"))
-        main = [TxtDirInfo(name="main", label="main", txt_count=n)]
-    return root_item + main + others
-
-
 def resolve_selected_dirs(root: Path, names: list[str] | None) -> list[Path]:
-    """将选中的 txt 子目录名解析为路径；空则全选. 
+    """将选中的工作子目录名解析为路径；空则全选.
 
     引用:
-        ``routes/tag_stats.py``. 
+        ``routes/tag_stats.py``.
     """
     root = root.resolve()
-    available = {
-        d.name: root if d.name == "." else root / d.name
-        for d in list_txt_subdirs(root)
-    }
+    available = {d.name: root / d.name for d in list_work_dirs(root) if d.name != "."}
     if not names:
         return [available[k] for k in available]
     dirs: list[Path] = []

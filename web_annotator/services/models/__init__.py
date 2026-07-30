@@ -6,7 +6,6 @@
 from services.models.dataset import (
     ScannedImage,
     WorkDirInfo,
-    TxtDirInfo,
     AnnotatorState,
     ImageListItem,
     SimilarItem,
@@ -102,7 +101,6 @@ from services.models.pages import (
 __all__ = [
     'ScannedImage',
     'WorkDirInfo',
-    'TxtDirInfo',
     'AnnotatorState',
     'ImageListItem',
     'SimilarItem',

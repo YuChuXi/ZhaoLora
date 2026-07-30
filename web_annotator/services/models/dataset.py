@@ -34,18 +34,6 @@ class WorkDirInfo(BaseModel):
     image_count: int = Field(0, ge=0)
 
 
-class TxtDirInfo(BaseModel):
-    """含旁路 ``.txt`` 的子目录摘要. 
-
-    引用:
-        ``tag_stats.list_txt_subdirs``. 
-    """
-
-    name: str
-    label: str
-    txt_count: int = Field(0, ge=0)
-
-
 class AnnotatorState(BaseModel):
     """标注选中与回收站状态. 
 
