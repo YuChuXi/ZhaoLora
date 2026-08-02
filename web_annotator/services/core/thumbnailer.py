@@ -13,6 +13,8 @@ from pathlib import Path
 
 from PIL import Image, UnidentifiedImageError
 
+from services.dataset.layout import NON_BROWSABLE_DIRS
+
 THUMB_DIRNAME = ".thumbnails"
 DEFAULT_SIZE = 2560  # 长边像素(与 server --thumbnail-size 默认一致)
 DEFAULT_QUALITY = 50  # AVIF 质量 (0-100)
@@ -92,24 +94,50 @@ class Thumbnailer:
         self.quality = quality
         self.thumb_dir.mkdir(parents=True, exist_ok=True)
 
-    def fill_missing(self) -> int:
-        """扫描 main/ 与 mask/, 为所有缺失缩略图的图片批量生成. 
+    def _image_subdirs(self) -> list[Path]:
+        """返回数据集根下所有一级子目录(排除隐藏目录).
+
+        Callers:
+            - ``fill_missing``
+            - ``find_rel_path``
+            - ``count_images``
+        """
+        return [
+            d for d in self.data_dir.iterdir()
+            if d.is_dir() and not d.name.startswith(".") and d.name not in NON_BROWSABLE_DIRS
+        ]
+
+    def count_images(self) -> int:
+        """统计所有一级子目录中的图片文件数.
 
         Returns:
-            int: 本次成功生成的缩略图数量. 
+            int: 图片文件总数.
+
+        Callers:
+            - ``services/dataset/runtime.py:_submit_thumb_fill``
+        """
+        n = 0
+        for d in self._image_subdirs():
+            for f in d.iterdir():
+                if f.is_file() and f.suffix.lower() not in (".txt", ".json"):
+                    n += 1
+        return n
+
+    def fill_missing(self) -> int:
+        """扫描所有一级子目录, 为缺失缩略图的图片批量生成.
+
+        Returns:
+            int: 本次成功生成的缩略图数量.
 
         Callers:
             - ``services/dataset/runtime.py:_submit_thumb_fill``
         """
         rel_paths: list[str] = []
-        for sub in ("main", "mask"):
-            d = self.data_dir / sub
-            if not d.is_dir():
-                continue
+        for d in self._image_subdirs():
             for img in d.iterdir():
                 if not img.is_file() or img.suffix.lower() in (".txt", ".json"):
                     continue
-                rel_paths.append(f"{sub}/{img.name}")
+                rel_paths.append(f"{d.name}/{img.name}")
         if not rel_paths:
             return 0
         ok, _ = self.generate_many(rel_paths)
@@ -144,14 +172,11 @@ class Thumbnailer:
             - ``server.py:dataset_thumb``
         """
         target_hash = Path(thumb_filename).stem
-        for sub in ("main", "mask"):
-            d = self.data_dir / sub
-            if not d.is_dir():
-                continue
+        for d in self._image_subdirs():
             for img in d.iterdir():
                 if not img.is_file() or img.suffix.lower() in (".txt", ".json"):
                     continue
-                rel = f"{sub}/{img.name}"
+                rel = f"{d.name}/{img.name}"
                 if self.hash_for(rel) == target_hash:
                     return rel
         return None

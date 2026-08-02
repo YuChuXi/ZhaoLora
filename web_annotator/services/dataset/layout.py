@@ -29,6 +29,9 @@ RESERVED_DIR_NAMES = frozenset({
     "__pycache__",
 })
 
+# 保留目录中不含可浏览图片的(蒙版/报告/缓存/回收站); 派生自 RESERVED_DIR_NAMES
+NON_BROWSABLE_DIRS = RESERVED_DIR_NAMES - {"main", "crops"}
+
 
 @dataclass(frozen=True)
 class DatasetLayout:

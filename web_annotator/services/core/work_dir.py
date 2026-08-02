@@ -4,19 +4,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from services.dataset.layout import NON_BROWSABLE_DIRS
 from services.models import WorkDirInfo
 from services.core.scanner import IMAGE_EXTS
 from services.analysis.wd14 import list_image_subdirs
 
-# 不允许当作筛选目录的名字
-_BLOCKED = frozenset({
-    "mask",
-    "aesthetic_report",
-    ".trash",
-    ".thumbs",
-    ".thumbnails",
-    "__pycache__",
-})
+# 不允许当作筛选目录的名字(复用 layout 的不可浏览目录约定)
+_BLOCKED = NON_BROWSABLE_DIRS
 
 
 def resolve_under(root: Path, rel: str) -> Path:

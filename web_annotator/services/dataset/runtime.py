@@ -125,12 +125,7 @@ def _submit_thumb_fill(jobs: JobManager, dataset: str, thumb: Thumbnailer) -> No
     from services.models.jobs import JobSnapshot as Snap
 
     def run(emit: Callable[[Snap], None]) -> None:
-        total = sum(
-            1 for d in thumb.data_dir.iterdir()
-            if d.is_dir() and d.name in ("main", "mask")
-            for f in d.iterdir()
-            if f.is_file() and f.suffix.lower() not in (".txt", ".json")
-        )
+        total = thumb.count_images()
         emit(Snap(
             status="running", kind="thumbnail", dataset=dataset,
             job_id="", done=0, total=total,
