@@ -198,6 +198,7 @@ class BatchEditBody(BaseModel):
     delete_tags: list[str] = Field(default_factory=list, description="要删除的标签")
     add_tags: list[str] = Field(default_factory=list, description="要添加的标签")
     replace_pairs: list[list[str]] = Field(default_factory=list, description="原位置替换 [[原标签, 新标签], ...]")
+    match_mode: str = Field("exact", description="delete/replace 原标签匹配模式: exact | regex | danbooru")
     position: str = Field("before", description="放在 ||| 前(before) 或 后(after)")
     insert_mode: str = Field("top", description="置顶(top) / 置底(bottom) / 随机(random)")
     conditional: bool = Field(False, description="仅当已有同名标签时才插入")
@@ -229,6 +230,8 @@ async def tag_batch_edit(request: Request, body: BatchEditBody) -> JobSubmitResp
         raise HTTPException(400, "position 须为 before 或 after")
     if body.insert_mode not in ("top", "bottom", "random"):
         raise HTTPException(400, "insert_mode 须为 top / bottom / random")
+    if body.match_mode not in ("exact", "regex", "danbooru"):
+        raise HTTPException(400, "match_mode 须为 exact / regex / danbooru")
 
     scores = load_score_json(root, ".aesthetic_scores.json") if body.inject_pony_score else {}
     quality_scores = load_score_json(root, ".quality_scores.json") if body.inject_quality_tag else {}
@@ -249,6 +252,7 @@ async def tag_batch_edit(request: Request, body: BatchEditBody) -> JobSubmitResp
             delete_tags=payload.delete_tags,
             add_tags=payload.add_tags,
             replace_pairs=[(p[0], p[1]) for p in payload.replace_pairs if len(p) >= 2],
+            match_mode=payload.match_mode,
             position=payload.position,
             insert_mode=payload.insert_mode,
             conditional=payload.conditional,

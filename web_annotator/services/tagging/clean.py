@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import html
 import random
+import re
+from collections.abc import Callable
 from pathlib import Path
 
 from services.models import TagCleanResult, TagCleanSample
@@ -579,12 +581,102 @@ def clean_txt_dirs(
     )
 
 
+def _make_pattern_matchers(patterns: list[str], mode: str) -> list[tuple[str, Callable[[str], bool]]]:
+    """按匹配模式为每个模式构造独立命中函数(保留模式原文供统计).
+
+    Args:
+        patterns: 标签或模式列表. 仅 ``exact`` 模式下会按逗号二次展开. 
+        mode: 匹配模式, 语义同 ``_make_tag_matcher``. 
+
+    Returns:
+        ``[(模式原文, 命中函数)]``; 命中函数接受 ``tag_key`` 归一化字符串,
+        返回该模式是否命中. 
+
+    Callers:
+        - ``_make_tag_matcher``
+        - ``batch_edit_tags`` (模糊匹配命中统计)
+    """
+    if mode == "regex":
+        return [
+            (p, (lambda key, rx=re.compile(p): rx.search(key) is not None))
+            for p in patterns if p
+        ]
+    if mode == "danbooru":
+        out: list[tuple[str, Callable[[str], bool]]] = []
+        for p in patterns:
+            if not p:
+                continue
+            k = tag_key(p)
+            rx = re.compile(f"^{re.escape(k).replace('\\*', '.*')}$")
+            out.append((p, rx.search))
+        return out
+    out = []
+    for p in expand_cli_list(patterns):
+        k = tag_key(p)
+        if k:
+            out.append((p, (lambda key, kk=k: key == kk)))
+    return out
+
+
+_BACKREF_RE = re.compile(r"\\\d+|\$\d+")
+
+
+def _has_backref(template: str) -> bool:
+    """替换模板是否含分组占位符(``\\1`` 或 ``$1``). 
+
+    Callers:
+        - ``batch_edit_tags``
+    """
+    return _BACKREF_RE.search(template) is not None
+
+
+def _expand_template(match: re.Match[str], template: str) -> str:
+    """展开替换模板, 兼容 ``\\1`` 与 ``$1`` 两种分组占位符. 
+
+    Args:
+        match: 已命中的正则匹配对象. 
+        template: 替换模板, 可用 ``\\1`` / ``$1`` 引用捕获组. 
+
+    Returns:
+        展开后的替换文本. 
+
+    Callers:
+        - ``batch_edit_tags``
+    """
+    if "$" in template:
+        template = re.sub(r"\$(\d+)", r"\\g<\1>", template)
+    return match.expand(template)
+
+
+def _make_tag_matcher(patterns: list[str], mode: str) -> Callable[[str], bool]:
+    """按匹配模式构造标签命中判定函数(任一模式命中即命中).
+
+    Args:
+        patterns: 标签或模式列表. 仅 ``exact`` 模式下会按逗号二次展开
+            (兼容逗号分隔传入), 其余模式按原样使用. 
+        mode: 匹配模式 —
+            - ``exact``: tag_key 精确相等. 
+            - ``regex``: 模式按正则 ``search`` 匹配. 
+            - ``danbooru``: 模式先归一化, 其中 ``*`` 通配符匹配任意字符序列
+              (含空), 整体全匹配. 
+
+    Returns:
+        接受 ``tag_key`` 归一化字符串、返回是否命中的函数. 
+
+    Callers:
+        - ``batch_edit_tags``
+    """
+    matchers = _make_pattern_matchers(patterns, mode)
+    return lambda key: any(m(key) for _, m in matchers)
+
+
 def batch_edit_tags(
     dirs: list[Path],
     *,
     delete_tags: list[str] | None = None,
     add_tags: list[str] | None = None,
     replace_pairs: list[tuple[str, str]] | None = None,
+    match_mode: str = "exact",
     position: str = "after",
     insert_mode: str = "bottom",
     conditional: bool = False,
@@ -603,11 +695,14 @@ def batch_edit_tags(
 
     Args:
         dirs: 绝对路径目录列表(不递归). 
-        delete_tags: 要删除的标签列表(tag_key 精确匹配). 
+        delete_tags: 要删除的标签列表. 
         add_tags: 要添加的标签列表. 
+        replace_pairs: 原位置替换对 ``(原标签, 新标签)``. 
+        match_mode: 应用于删除、替换原标签及 conditional 判定的匹配模式:
+            ``exact``(tag_key 精确) | ``regex``(正则搜索) | ``danbooru``(* 通配). 
         position: ``"before"`` 放置在 ``|||`` 之前, ``"after"`` 之后. 
         insert_mode: ``"top"`` 置顶 / ``"bottom"`` 置底 / ``"random"`` 随机插入. 
-        conditional: 仅当文件中已有同名 tag 时才插入. 
+        conditional: 仅当文件中已有匹配标签(按 match_mode)时才插入. 
         keep_duplicates: 不删除已有重复标签. 
         inject_pony_score: 根据美学分注入 score_0…score_9. 
         inject_quality_tag: 根据质量分注入质量标签. 
@@ -625,17 +720,33 @@ def batch_edit_tags(
     """
     import random as _random
 
-    del_keys: set[str] = set()
-    for t in expand_cli_list(delete_tags or []):
-        k = tag_key(t)
-        if k:
-            del_keys.add(k)
+    del_pats = _make_pattern_matchers(delete_tags or [], match_mode)
 
-    replace_map: dict[str, str] = {}
+    # 正则替换支持 \1 / $1 分组占位符; 其余模式为整标签替换
+    regex_replacers: list[tuple[str, re.Pattern[str], str]] = []
+    replacers: list[tuple[list[tuple[str, Callable[[str], bool]]], str]] = []
     for src, dst in (replace_pairs or []):
-        k = tag_key(src)
-        if k and dst.strip():
-            replace_map[k] = dst.strip()
+        dst_t = dst.strip()
+        if not dst_t:
+            continue
+        if match_mode == "regex":
+            regex_replacers.append((src, re.compile(src), dst_t))
+        else:
+            replacers.append((_make_pattern_matchers([src], match_mode), dst_t))
+
+    matched_tags: dict[str, list[str]] = {}
+
+    def _replace_target(key: str) -> str | None:
+        """按首个命中的替换对返回新标签; 正则替换支持 ``\\1`` / ``$1`` 占位符. 
+        """
+        for _pat, rx, dst in regex_replacers:
+            m = rx.search(key)
+            if m is not None:
+                return _expand_template(m, dst) if _has_backref(dst) else dst
+        for pats, dst in replacers:
+            if any(m(key) for _, m in pats):
+                return dst
+        return None
 
     add_list = expand_cli_list(add_tags or [])
     scores = aesthetic_scores or {}
@@ -704,10 +815,29 @@ def batch_edit_tags(
         header = [t for t in header if tag_key(t) not in QUALITY_TAG_KEYS]
         body = [t for t in body if tag_key(t) not in QUALITY_TAG_KEYS]
 
-        # 原位置替换: tag_key(原) → 新标签; 替换后整体去重(保留首次出现)
-        if replace_map:
-            header = [replace_map.get(tag_key(t), t) for t in header]
-            body = [replace_map.get(tag_key(t), t) for t in body]
+        # 模糊匹配命中统计(仅非精确模式, 跨文件去重, 供预览展示)
+        if match_mode != "exact":
+            for pat, m in del_pats:
+                for t in header + body:
+                    k = tag_key(t)
+                    if m(k) and k not in matched_tags.setdefault(pat, []):
+                        matched_tags[pat].append(k)
+            for pat, rx, _dst in regex_replacers:
+                for t in header + body:
+                    k = tag_key(t)
+                    if rx.search(k) and k not in matched_tags.setdefault(pat, []):
+                        matched_tags[pat].append(k)
+            for pats, _dst in replacers:
+                for pat, m in pats:
+                    for t in header + body:
+                        k = tag_key(t)
+                        if m(k) and k not in matched_tags.setdefault(pat, []):
+                            matched_tags[pat].append(k)
+
+        # 原位置替换: 命中 match_mode 的原标签 → 新标签; 替换后整体去重(保留首次出现)
+        if replacers or regex_replacers:
+            header = [(_replace_target(tag_key(t)) or t) for t in header]
+            body = [(_replace_target(tag_key(t)) or t) for t in body]
             seen: set[str] = set()
             dedup_h: list[str] = []
             for t in header:
@@ -726,24 +856,30 @@ def batch_edit_tags(
                 dedup_b.append(t)
             body = dedup_b
 
-        # 删除
-        if del_keys:
-            header = [t for t in header if tag_key(t) not in del_keys]
-            body = [t for t in body if tag_key(t) not in del_keys]
+        # 删除(按 match_mode 命中)
+        header = [t for t in header if not any(m(tag_key(t)) for _, m in del_pats)]
+        body = [t for t in body if not any(m(tag_key(t)) for _, m in del_pats)]
 
         # 添加
         to_add: list[str] = []
         n_added_head = 0
+        existing = header + body
         for t in add_list:
-            k = tag_key(t)
             if conditional:
-                existing_keys = {tag_key(x) for x in header + body}
-                if k not in existing_keys:
+                add_matcher = _make_tag_matcher([t], match_mode)
+                hits = [x for x in existing if add_matcher(tag_key(x))]
+                if not hits:
                     continue
-            if not keep_duplicates:
-                header = [x for x in header if tag_key(x) != k]
-                body = [x for x in body if tag_key(x) != k]
-            to_add.append(t)
+                # 模糊匹配: 补入命中的实际标签; 精确匹配: 补入输入标签
+                insert_items = hits if match_mode != "exact" else [t]
+            else:
+                insert_items = [t]
+            for item in insert_items:
+                ik = tag_key(item)
+                if not keep_duplicates:
+                    header = [x for x in header if tag_key(x) != ik]
+                    body = [x for x in body if tag_key(x) != ik]
+                to_add.append(item)
 
         if to_add:
             if position == "before":
@@ -809,6 +945,7 @@ def batch_edit_tags(
         unchanged=unchanged,
         failed=failed,
         samples=samples,
+        matched_tags=matched_tags,
         inject_pony_score=inject_pony_score,
         pony_injected=pony_injected,
         pony_missing=pony_missing,

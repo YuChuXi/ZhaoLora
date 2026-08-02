@@ -285,6 +285,14 @@
     document.getElementById('batch-add-separator').addEventListener('change', function () {
       document.getElementById('batch-add-position').disabled = (this.value === 'remove');
     });
+    // 匹配方式仅在勾选「仅当已有匹配标签时才插入」时可用
+    var syncAddMatchMode = function () {
+      var on = document.getElementById('batch-add-conditional').checked;
+      document.getElementById('batch-add-match-mode').disabled = !on;
+      document.getElementById('batch-add-match-mode-wrap').style.opacity = on ? '1' : '.5';
+    };
+    document.getElementById('batch-add-conditional').addEventListener('change', syncAddMatchMode);
+    syncAddMatchMode();
 
     // ---- 批量删除对话框 ----
     document.getElementById('btn-batch-delete').addEventListener('click', function () {
@@ -366,6 +374,7 @@
       delete_tags: mode === 'delete' ? tags : [],
       add_tags: mode === 'add' ? tags : [],
       replace_pairs: mode === 'replace' ? replacePairs : [],
+      match_mode: document.getElementById(mode === 'add' ? 'batch-add-match-mode' : (mode === 'delete' ? 'batch-delete-mode' : 'batch-replace-mode')).value,
       position: mode === 'add' ? document.getElementById('batch-add-position').value : 'after',
       insert_mode: mode === 'add' ? document.getElementById('batch-add-mode').value : 'bottom',
       conditional: mode === 'add' ? document.getElementById('batch-add-conditional').checked : false,
@@ -395,6 +404,14 @@
       });
       var lines = [];
       lines.push((dryRun ? '预览完成' : '写入完成') + ' · 已变更 ' + data.changed + ' · 未变更 ' + data.unchanged);
+      var matched = data.matched_tags || {};
+      var matchedKeys = Object.keys(matched).filter(function (k) { return (matched[k] || []).length; });
+      if (matchedKeys.length) {
+        lines.push('匹配命中:');
+        matchedKeys.forEach(function (pat) {
+          lines.push('  ' + pat + ' → ' + matched[pat].join(', '));
+        });
+      }
       (data.samples || []).forEach(function (s) {
         lines.push('--- ' + (s.name || s.path));
         lines.push('- ' + s.before);

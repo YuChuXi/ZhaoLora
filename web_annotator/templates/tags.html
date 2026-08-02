@@ -201,8 +201,16 @@
           </select>
         </div>
         <div style="display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px;">
-          <label style="display:flex;align-items:center;gap:4px;cursor:pointer;"><input type="checkbox" id="batch-add-conditional"> 仅当标签已存在时才插入</label>
+          <label style="display:flex;align-items:center;gap:4px;cursor:pointer;"><input type="checkbox" id="batch-add-conditional"> 仅当已有匹配标签时才插入</label>
           <label style="display:flex;align-items:center;gap:4px;cursor:pointer;"><input type="checkbox" id="batch-add-keep-dup"> 插入前不移除已有同名标签</label>
+        </div>
+        <div id="batch-add-match-mode-wrap" style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-dim);opacity:.5;padding-left:18px;">
+          <span>匹配方式</span>
+          <select id="batch-add-match-mode" disabled style="background:var(--card-bg);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:2px 6px;font-size:12px;">
+            <option value="exact">精确</option>
+            <option value="danbooru">Danbooru 通配(*)</option>
+            <option value="regex">正则</option>
+          </select>
         </div>
         <div style="display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px;">
           <label style="display:flex;align-items:center;gap:4px;cursor:pointer;"><input type="checkbox" id="batch-add-inject-pony"> 注入美学档位</label>
@@ -231,6 +239,15 @@
         要删除的标签（逗号分隔）
         <input type="text" id="batch-delete-tags" placeholder="tag1, tag2" style="background:#0a1a30;color:var(--text);border:1px solid var(--border);border-radius:4px;padding:4px 8px;font-size:12px;">
       </label>
+      <div style="display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;font-size:12px;color:var(--text-dim);">
+        <span>匹配方式</span>
+        <select id="batch-delete-mode" style="background:var(--card-bg);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:2px 6px;font-size:12px;">
+          <option value="exact">精确</option>
+          <option value="danbooru">Danbooru 通配(*)</option>
+          <option value="regex">正则</option>
+        </select>
+        <span style="opacity:.75;">通配: * 匹配任意字符；正则作用于归一化标签(小写无下划线)</span>
+      </div>
       <div style="display:flex;gap:8px;">
         <button class="btn" type="button" id="btn-batch-delete-preview">预览</button>
         <button class="btn danger" type="button" id="btn-batch-delete-apply">写入</button>
@@ -260,6 +277,15 @@
         </label>
       </div>
       <div style="font-size:12px;color:var(--text-dim);">原位置替换：原标签出现的位置改写为新标签，替换后整体去重。两个列表按顺序一一配对。</div>
+      <div style="display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;font-size:12px;color:var(--text-dim);">
+        <span>原标签匹配方式</span>
+        <select id="batch-replace-mode" style="background:var(--card-bg);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:2px 6px;font-size:12px;">
+          <option value="exact">精确</option>
+          <option value="danbooru">Danbooru 通配(*)</option>
+          <option value="regex">正则</option>
+        </select>
+        <span style="opacity:.75;">通配: * 匹配任意字符；正则作用于归一化标签(小写无下划线)</span>
+      </div>
       <div style="display:flex;gap:8px;">
         <button class="btn" type="button" id="btn-batch-replace-preview">预览</button>
         <button class="btn danger" type="button" id="btn-batch-replace-apply">写入</button>

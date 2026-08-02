@@ -76,6 +76,7 @@ class TagCleanResult(BaseModel):
     inject_quality_tag: bool = False
     quality_injected: int = 0
     quality_missing: int = 0
+    matched_tags: dict[str, list[str]] = Field(default_factory=dict, description="模糊匹配模式 → 命中的 tag_key 列表(去重)")
     dirs: list[str] = Field(default_factory=list)
     root: str = ""
 
