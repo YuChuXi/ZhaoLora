@@ -74,10 +74,29 @@ async def danbooru_get(
     params: Mapping[str, str | int] | None = None,
     login: str | None = None, api_key: str | None = None,
 ) -> CurlResponse:
+    """请求 Danbooru API, 模拟 Chrome TLS 指纹绕过 Cloudflare. 
+
+    Args:
+        url: 目标 URL. 
+        proxy: 代理地址, 空串视为无代理. 
+        accept: Accept 请求头. 
+        timeout: 超时秒数. 
+        params: 查询参数. 
+        login / api_key: Danbooru API 认证, 两者需同时提供. 
+
+    Returns:
+        curl_cffi 响应对象. 
+
+    Callers:
+        - `sources.py:DanbooruSource.search`
+        - `sources.py:DanbooruSource.fetch_meta`
+        - `sources.py:DanbooruSource.download`
+        - `search.py:danbooru_get`
+    """
     p = dict(params) if params else {}
     if login and api_key:
         p["login"] = login; p["api_key"] = api_key
-    async with AsyncSession() as client:
+    async with AsyncSession(impersonate=_DANBOORU_IMPERSONATE) as client:
         return await client.get(
             url, params=p if p else None, headers=_danbooru_headers(accept=accept),
             proxies=_curl_proxies(proxy),  # type: ignore[arg-type]
