@@ -253,7 +253,7 @@ class Thumbnailer:
 
         try:
             img = Image.open(src_path)
-            img = img.convert("RGB")
+            img = img.convert("RGBA") if img.mode in ("RGBA", "LA", "P") else img.convert("RGB")
             w, h = img.size
             if max(w, h) > self.size:
                 ratio = self.size / max(w, h)
