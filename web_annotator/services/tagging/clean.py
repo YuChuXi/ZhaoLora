@@ -7,6 +7,7 @@ import random
 import re
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any, NamedTuple
 
 from services.models import TagCleanResult, TagCleanSample
 from services.core.scanner import IMAGE_EXTS
@@ -151,7 +152,6 @@ def add_tag_to_caption(raw: str, tag: str, position: str) -> str:
     Callers:
         - ``routes/tag_stats.tag_edit_one``
     """
-    import random as _random
     header, body, has_sep = split_header_body(raw)
     key = tag_key(tag)
     header = [t for t in header if tag_key(t) != key]
@@ -163,12 +163,12 @@ def add_tag_to_caption(raw: str, tag: str, position: str) -> str:
     elif position == "before-sep":
         header.append(tag)
     elif position == "random-before":
-        idx = _random.randint(0, len(header))
+        idx = random.randint(0, len(header))
         header.insert(idx, tag)
     elif position == "after-sep":
         body.insert(0, tag)
     elif position == "random-after":
-        idx = _random.randint(0, len(body))
+        idx = random.randint(0, len(body))
         body.insert(idx, tag)
     elif position == "bottom":
         if has_sep:
@@ -176,11 +176,11 @@ def add_tag_to_caption(raw: str, tag: str, position: str) -> str:
         else:
             header.append(tag)
     elif position == "random":
-        if _random.choice([True, False]):
-            idx = _random.randint(0, len(header))
+        if random.choice([True, False]):
+            idx = random.randint(0, len(header))
             header.insert(idx, tag)
         else:
-            idx = _random.randint(0, len(body))
+            idx = random.randint(0, len(body))
             body.insert(idx, tag)
     else:  # any (兼容旧调用, 等同于 before-sep)
         header.append(tag)
@@ -348,34 +348,31 @@ def apply_promote_tags(kept: list[str], promote_order_keys: list[str]) -> tuple[
         return kept, 0
 
     promote_set = frozenset(promote_order_keys)
-    first_text: dict[str, str] = {}
+    # 精确匹配: promote key → 首个匹配标签文本
+    exact: dict[str, str] = {}
     for t in kept:
         k = tag_key(t)
-        if k in promote_set and k not in first_text:
-            first_text[k] = t
-
-    consumed_tag_keys: set[str] = {tag_key(v) for v in first_text.values()}
-    substr_matched: dict[str, str] = {}
+        if k in promote_set and k not in exact:
+            exact[k] = t
+    # 子串匹配: promote key → 首个含该子串的标签
+    consumed = set(exact)
+    substr: dict[str, str] = {}
     for pk in promote_order_keys:
-        if pk in first_text:
+        if pk in exact:
             continue
         for t in kept:
             k = tag_key(t)
-            if k in consumed_tag_keys:
+            if k in consumed:
                 continue
             if pk in k:
-                substr_matched[pk] = t
-                consumed_tag_keys.add(k)
+                substr[pk] = t
+                consumed.add(k)
                 break
 
-    promoted: list[str] = []
-    for pk in promote_order_keys:
-        if pk in first_text:
-            promoted.append(first_text[pk])
-        elif pk in substr_matched:
-            promoted.append(substr_matched[pk])
-
-    remaining = [t for t in kept if tag_key(t) not in consumed_tag_keys]
+    # 按 promote 顺序收集提升的标签(先精确后子串)
+    promoted = [exact[pk] for pk in promote_order_keys if pk in exact]
+    promoted += [substr[pk] for pk in promote_order_keys if pk in substr]
+    remaining = [t for t in kept if tag_key(t) not in consumed]
     return promoted + remaining, len(promoted)
 
 
@@ -415,19 +412,10 @@ def clean_caption(
     if quality_tag:
         kept = [t for t in kept if tag_key(t) not in QUALITY_TAG_KEYS]
 
-    header: list[str] = []
-    # 美学标签与质量标签随机排序后置顶
-    score_quality: list[str] = []
-    if pony_score_tag and pony_score_tag.strip():
-        score_quality.append(pony_score_tag.strip())
-    if quality_tag and quality_tag.strip():
-        score_quality.append(quality_tag.strip())
-    if len(score_quality) > 1:
-        random.shuffle(score_quality)
-    header.extend(score_quality)
-
-    prep = [normalize_tag_underscores(t) for t in prepend_tags if t.strip()]
-    header.extend(prep)
+    # 头部: score/质量随机置顶 + prepend 前置
+    header = _priority_tags(pony_score_tag, quality_tag) + [
+        normalize_tag_underscores(t) for t in prepend_tags if t.strip()
+    ]
     if header:
         header_keys = {tag_key(t) for t in header}
         kept = [t for t in kept if tag_key(t) not in header_keys]
@@ -438,6 +426,167 @@ def clean_caption(
         return join_tags_line(kept[:n_promoted]) + " ||| " + join_tags_line(kept[n_promoted:])
 
     return join_tags_line(kept)
+
+
+def _collect_txt_files(dirs: list[Path]) -> list[Path]:
+    """收集目录下所有 ``*.txt``(不递归, 排序).
+
+    Callers:
+        - ``_run_batch_edit``
+    """
+    files: list[Path] = []
+    for d in dirs:
+        if d.is_dir():
+            files.extend(sorted(d.glob("*.txt")))
+    return files
+
+
+def _lookup_pony_quality(path: Path, root: Path | None, *,
+                         inject_pony_score: bool, scores: dict[str, float],
+                         inject_quality_tag: bool, q_scores: dict[str, float]) -> tuple[str | None, str | None, int, int, int, int]:
+    """按旁路图片得分查美学/质量档位标签并返回计数增量.
+
+    Args:
+        path: txt 文件路径.
+        root: 数据集根目录; None 时无法解析相对路径, 记缺失.
+        inject_pony_score: 是否注入美学档位.
+        scores: 相对路径 → 原始美学分 [0,1].
+        inject_quality_tag: 是否注入质量标签.
+        q_scores: 相对路径 → 质量分 [0,1].
+
+    Returns:
+        ``(score_tag, quality_tag_val, pony_injected, pony_missing,
+        quality_injected, quality_missing)``; 未注入的维度计数为 0.
+
+    Callers:
+        - ``_run_batch_edit``
+    """
+    score_tag: str | None = None
+    quality_tag_val: str | None = None
+    pony_injected = pony_missing = 0
+    quality_injected = quality_missing = 0
+
+    if inject_pony_score and root is not None:
+        rel = rel_image_for_txt(path, root)
+        if rel is not None and rel in scores:
+            score_tag = format_pony_score_tag(scores[rel])
+            pony_injected = 1
+        else:
+            pony_missing = 1
+    if inject_quality_tag and root is not None:
+        rel = rel_image_for_txt(path, root)
+        if rel is not None and rel in q_scores:
+            from services.analysis.scoring import quality_to_tag
+            quality_tag_val = quality_to_tag(q_scores[rel])
+            quality_injected = 1
+        else:
+            quality_missing = 1
+    return score_tag, quality_tag_val, pony_injected, pony_missing, quality_injected, quality_missing
+
+
+def _record_sample(raw: str, new: str, *, path: Path, dry_run: bool,
+                   samples: list[TagCleanSample], sample_limit: int) -> None:
+    """变更时追加前后对比样本并写文件.
+
+    Callers:
+        - ``_run_batch_edit``
+    """
+    if len(samples) < sample_limit:
+        samples.append(
+            TagCleanSample(
+                path=str(path),
+                name=path.name,
+                before=raw.strip()[:500],
+                after=new[:500],
+            )
+        )
+    if not dry_run:
+        path.write_text(new + "\n", encoding="utf-8")
+
+
+class _BatchStats(NamedTuple):
+    """批量处理统计与样本.
+
+    Callers:
+        - ``_run_batch_edit``
+    """
+    files: list[Path]
+    changed: int
+    unchanged: int
+    failed: int
+    pony_injected: int
+    pony_missing: int
+    quality_injected: int
+    quality_missing: int
+    samples: list[TagCleanSample]
+
+
+def _run_batch_edit(
+    dirs: list[Path],
+    *,
+    root: Path | None,
+    inject_pony_score: bool, scores: dict[str, float],
+    inject_quality_tag: bool, q_scores: dict[str, float],
+    dry_run: bool, sample_limit: int,
+    edit: Callable[[str, str | None, str | None], tuple[str, Any]],
+) -> tuple[_BatchStats, list[Any]]:
+    """通用批量编辑骨架: 遍历 txt、查分、编辑、统计并记录样本.
+
+    Args:
+        dirs: 绝对路径目录列表(不递归). 
+        root: 数据集根目录(解析旁路图片相对路径). 
+        inject_pony_score / scores: 美学档位注入开关与得分表. 
+        inject_quality_tag / q_scores: 质量标签注入开关与得分表. 
+        dry_run: True 仅预览, 不写文件. 
+        sample_limit: 返回样本上限. 
+        edit: 单文件编辑函数 ``(raw, score_tag, quality_tag_val) -> (new, extra)``,
+            ``extra`` 为编辑附带数据(无则为 None), 按文件顺序收集返回. 
+
+    Returns:
+        ``(_BatchStats, extras)``; extras 与 files 一一对应, 读取失败的文件为 None. 
+
+    Callers:
+        - ``clean_txt_dirs``
+        - ``batch_edit_tags``
+    """
+    files = _collect_txt_files(dirs)
+    changed = unchanged = failed = 0
+    pony_injected = pony_missing = 0
+    quality_injected = quality_missing = 0
+    samples: list[TagCleanSample] = []
+    extras: list[Any] = []
+
+    for path in files:
+        try:
+            raw = path.read_text(encoding="utf-8")
+        except OSError:
+            failed += 1
+            extras.append(None)
+            continue
+
+        score_tag, quality_tag_val, pi, pm, qi, qm = _lookup_pony_quality(
+            path, root,
+            inject_pony_score=inject_pony_score, scores=scores,
+            inject_quality_tag=inject_quality_tag, q_scores=q_scores,
+        )
+        pony_injected += pi
+        pony_missing += pm
+        quality_injected += qi
+        quality_missing += qm
+
+        new, extra = edit(raw, score_tag, quality_tag_val)
+        extras.append(extra)
+        if new == raw.strip():
+            unchanged += 1
+        else:
+            changed += 1
+            _record_sample(raw, new, path=path, dry_run=dry_run, samples=samples, sample_limit=sample_limit)
+
+    stats = _BatchStats(
+        files, changed, unchanged, failed,
+        pony_injected, pony_missing, quality_injected, quality_missing, samples,
+    )
+    return stats, extras
 
 
 def clean_txt_dirs(
@@ -489,53 +638,9 @@ def clean_txt_dirs(
     q_scores = quality_scores or {}
     root = dataset_root.resolve() if dataset_root is not None else None
 
-    files: list[Path] = []
-    for d in dirs:
-        if d.is_dir():
-            files.extend(sorted(d.glob("*.txt")))
-
-    changed = 0
-    unchanged = 0
-    failed = 0
-    pony_injected = 0
-    pony_missing = 0
-    quality_injected = 0
-    quality_missing = 0
-    samples: list[TagCleanSample] = []
-
-    for path in files:
-        try:
-            raw = path.read_text(encoding="utf-8")
-        except OSError:
-            failed += 1
-            continue
-
-        score_tag: str | None = None
-        if inject_pony_score:
-            if root is None:
-                failed += 1
-                continue
-            rel = rel_image_for_txt(path, root)
-            if rel is not None and rel in scores:
-                score_tag = format_pony_score_tag(scores[rel])
-                pony_injected += 1
-            else:
-                pony_missing += 1
-
-        quality_tag_val: str | None = None
-        if inject_quality_tag:
-            if root is None:
-                failed += 1
-                continue
-            rel = rel_image_for_txt(path, root)
-            if rel is not None and rel in q_scores:
-                from services.analysis.scoring import quality_to_tag
-                quality_tag_val = quality_to_tag(q_scores[rel])
-                quality_injected += 1
-            else:
-                quality_missing += 1
-
-        new = clean_caption(
+    def _edit(raw: str, score_tag: str | None, quality_tag_val: str | None) -> tuple[str, object]:
+        """单文件清洗. Callers: ``_run_batch_edit``. """
+        return clean_caption(
             raw,
             user_drop_exact=user_drop_exact,
             user_drop_contains=user_drop_contains,
@@ -544,78 +649,62 @@ def clean_txt_dirs(
             pony_score_tag=score_tag,
             quality_tag=quality_tag_val,
             use_promote_separator=promote_separator,
-        )
-        if new == raw.strip():
-            unchanged += 1
-            continue
-        changed += 1
-        if len(samples) < sample_limit:
-            samples.append(
-                TagCleanSample(
-                    path=str(path),
-                    name=path.name,
-                    before=raw.strip()[:500],
-                    after=new[:500],
-                )
-            )
-        if not dry_run:
-            path.write_text(new + "\n", encoding="utf-8")
+        ), None
 
+    st, _ = _run_batch_edit(
+        dirs, root=root,
+        inject_pony_score=inject_pony_score, scores=scores,
+        inject_quality_tag=inject_quality_tag, q_scores=q_scores,
+        dry_run=dry_run, sample_limit=sample_limit,
+        edit=_edit,
+    )
     return TagCleanResult(
         dry_run=dry_run,
-        file_count=len(files),
-        changed=changed,
-        unchanged=unchanged,
-        failed=failed,
-        samples=samples,
+        file_count=len(st.files),
+        changed=st.changed,
+        unchanged=st.unchanged,
+        failed=st.failed,
+        samples=st.samples,
         drop_exact_count=len(user_drop_exact),
         drop_contains=list(user_drop_contains),
         promote=list(promote_tags),
         prepend=list(prepend_tags),
         inject_pony_score=inject_pony_score,
-        pony_injected=pony_injected,
-        pony_missing=pony_missing,
+        pony_injected=st.pony_injected,
+        pony_missing=st.pony_missing,
         inject_quality_tag=inject_quality_tag,
-        quality_injected=quality_injected,
-        quality_missing=quality_missing,
+        quality_injected=st.quality_injected,
+        quality_missing=st.quality_missing,
     )
 
 
-def _make_pattern_matchers(patterns: list[str], mode: str) -> list[tuple[str, Callable[[str], bool]]]:
-    """按匹配模式为每个模式构造独立命中函数(保留模式原文供统计).
+def _classify(patterns: list[str], mode: str) -> tuple[set[str], dict[str, re.Pattern[str]]]:
+    """把标签/模式分类为 精确 key 集合 与 模式正则字典.
 
     Args:
-        patterns: 标签或模式列表. 仅 ``exact`` 模式下会按逗号二次展开. 
-        mode: 匹配模式, 语义同 ``_make_tag_matcher``. 
+        patterns: 标签或模式列表. 仅 ``exact`` 模式按逗号二次展开. 
+        mode: ``exact``(tag_key 精确) | ``regex``(正则搜索) | ``danbooru``(* 通配). 
 
     Returns:
-        ``[(模式原文, 命中函数)]``; 命中函数接受 ``tag_key`` 归一化字符串,
-        返回该模式是否命中. 
+        ``(exact_keys, pattern_re)``; exact_keys 为 ``set[str]``(归一化 tag_key),
+        pattern_re 为 ``dict[模式原文, re.Pattern]``; exact 模式 pattern_re 为空. 
 
     Callers:
         - ``_make_tag_matcher``
-        - ``batch_edit_tags`` (模糊匹配命中统计)
+        - ``batch_edit_tags``
     """
-    if mode == "regex":
-        return [
-            (p, (lambda key, rx=re.compile(p): rx.search(key) is not None))
-            for p in patterns if p
-        ]
-    if mode == "danbooru":
-        out: list[tuple[str, Callable[[str], bool]]] = []
-        for p in patterns:
-            if not p:
-                continue
+    if mode == "exact":
+        return {tag_key(p) for p in expand_cli_list(patterns)}, {}
+    out: dict[str, re.Pattern[str]] = {}
+    for p in patterns:
+        if not p:
+            continue
+        if mode == "regex":
+            out[p] = re.compile(p)
+        else:  # danbooru
             k = tag_key(p)
-            rx = re.compile(f"^{re.escape(k).replace('\\*', '.*')}$")
-            out.append((p, rx.search))
-        return out
-    out = []
-    for p in expand_cli_list(patterns):
-        k = tag_key(p)
-        if k:
-            out.append((p, (lambda key, kk=k: key == kk)))
-    return out
+            out[p] = re.compile(f"^{re.escape(k).replace('\\*', '.*')}$")
+    return set(), out
 
 
 _BACKREF_RE = re.compile(r"\\\d+|\$\d+")
@@ -648,26 +737,70 @@ def _expand_template(match: re.Match[str], template: str) -> str:
     return match.expand(template)
 
 
+def _regex_replace(key: str, rx: re.Pattern[str], template: str) -> str | None:
+    """正则替换: 命中返回展开模板(支持分组占位符), 未命中返回 None.
+
+    Callers:
+        - ``batch_edit_tags`` (replace_rules 构建)
+    """
+    m = rx.search(key)
+    if m is None:
+        return None
+    return _expand_template(m, template) if _has_backref(template) else template
+
+
 def _make_tag_matcher(patterns: list[str], mode: str) -> Callable[[str], bool]:
     """按匹配模式构造标签命中判定函数(任一模式命中即命中).
 
     Args:
         patterns: 标签或模式列表. 仅 ``exact`` 模式下会按逗号二次展开
             (兼容逗号分隔传入), 其余模式按原样使用. 
-        mode: 匹配模式 —
-            - ``exact``: tag_key 精确相等. 
-            - ``regex``: 模式按正则 ``search`` 匹配. 
-            - ``danbooru``: 模式先归一化, 其中 ``*`` 通配符匹配任意字符序列
-              (含空), 整体全匹配. 
+        mode: 匹配模式, 语义同 ``_classify``. 
 
     Returns:
         接受 ``tag_key`` 归一化字符串、返回是否命中的函数. 
 
     Callers:
+        - ``batch_edit_tags`` (conditional 添加判定)
+    """
+    keys, pats = _classify(patterns, mode)
+    return lambda key: key in keys or any(re_.search(key) for re_ in pats.values())
+
+
+def _priority_tags(score_tag: str | None, quality_tag: str | None) -> list[str]:
+    """收集 score/质量标签并随机排序(两者都存在时).
+
+    Callers:
+        - ``clean_caption``
+        - ``_compose_caption``
+    """
+    priority = [t.strip() for t in (score_tag, quality_tag) if t and t.strip()]
+    if len(priority) > 1:
+        random.shuffle(priority)
+    return priority
+
+
+def _compose_caption(header: list[str], body: list[str], *,
+                     score_tag: str | None, quality_tag_val: str | None,
+                     use_separator: str, n_added_head: int) -> str:
+    """重组(score/质量标签置顶)并按分隔符模式拼接 caption.
+
+    Callers:
         - ``batch_edit_tags``
     """
-    matchers = _make_pattern_matchers(patterns, mode)
-    return lambda key: any(m(key) for _, m in matchers)
+    priority = _priority_tags(score_tag, quality_tag_val)
+    header = priority + header
+
+    n_head = len(priority) + n_added_head
+    if body:
+        new = ", ".join(header) + " ||| " + ", ".join(body)
+        if use_separator == "remove":
+            new = ", ".join(header + body)
+    elif use_separator == "add" and n_head > 0:
+        new = ", ".join(header[:n_head]) + " ||| " + ", ".join(header[n_head:])
+    else:
+        new = ", ".join(header)
+    return new
 
 
 def batch_edit_tags(
@@ -718,151 +851,71 @@ def batch_edit_tags(
 
     引用: ``routes/tag_stats.py``. 
     """
-    import random as _random
+    del_keys, del_pats = _classify(delete_tags or [], match_mode)
 
-    del_pats = _make_pattern_matchers(delete_tags or [], match_mode)
-
-    # 正则替换支持 \1 / $1 分组占位符; 其余模式为整标签替换
-    regex_replacers: list[tuple[str, re.Pattern[str], str]] = []
-    replacers: list[tuple[list[tuple[str, Callable[[str], bool]]], str]] = []
+    # 替换: exact 用 key→新标签映射; 模式用 pattern→(编译正则, 新标签)
+    replace_map: dict[str, str] = {}
+    replace_pats: dict[str, tuple[re.Pattern[str], str]] = {}
     for src, dst in (replace_pairs or []):
         dst_t = dst.strip()
         if not dst_t:
             continue
         if match_mode == "regex":
-            regex_replacers.append((src, re.compile(src), dst_t))
-        else:
-            replacers.append((_make_pattern_matchers([src], match_mode), dst_t))
-
-    matched_tags: dict[str, list[str]] = {}
-
-    def _replace_target(key: str) -> str | None:
-        """按首个命中的替换对返回新标签; 正则替换支持 ``\\1`` / ``$1`` 占位符. 
-        """
-        for _pat, rx, dst in regex_replacers:
-            m = rx.search(key)
-            if m is not None:
-                return _expand_template(m, dst) if _has_backref(dst) else dst
-        for pats, dst in replacers:
-            if any(m(key) for _, m in pats):
-                return dst
-        return None
+            replace_pats[src] = (re.compile(src), dst_t)
+        elif match_mode == "danbooru":
+            k = tag_key(src)
+            replace_pats[src] = (re.compile(f"^{re.escape(k).replace('\\*', '.*')}$"), dst_t)
+        else:  # exact
+            replace_map[tag_key(src)] = dst_t
 
     add_list = expand_cli_list(add_tags or [])
     scores = aesthetic_scores or {}
     q_scores = quality_scores or {}
     root = dataset_root.resolve() if dataset_root is not None else None
 
-    files: list[Path] = []
-    for d in dirs:
-        if d.is_dir():
-            files.extend(sorted(d.glob("*.txt")))
+    def _edit(raw: str, score_tag: str | None, quality_tag_val: str | None) -> tuple[str, object]:
+        """单文件批量编辑: 整理食材 → for 生成头部/尾部 → 添加 → 重组拼接.
 
-    changed = 0
-    unchanged = 0
-    failed = 0
-    pony_injected = 0
-    pony_missing = 0
-    quality_injected = 0
-    quality_missing = 0
-    samples: list[TagCleanSample] = []
+        返回 ``(new, matched_file)``. Callers: ``_run_batch_edit``.
+        """
+        # 整理食材: 拆分并移除旧 score/质量标签
+        header, body, _ = split_header_body(raw)
+        priority = SCORE_TAG_KEYS | QUALITY_TAG_KEYS
+        header = [t for t in header if tag_key(t) not in priority]
+        body = [t for t in body if tag_key(t) not in priority]
+        matched_file: dict[str, list[str]] = {}
 
-    for path in files:
-        try:
-            raw = path.read_text(encoding="utf-8")
-        except OSError:
-            failed += 1
-            continue
+        def _record(pat: str, k: str) -> None:
+            """记录模式命中(仅非精确模式, 本文件去重). Callers: 本闭包. """
+            if match_mode != "exact" and k not in matched_file.setdefault(pat, []):
+                matched_file[pat].append(k)
 
-        raw_stripped = raw.strip()
+        def _transform(t: str) -> str | None:
+            """单个标签变换: 命中删除→None; 命中替换→新标签; 否则原样. Callers: 本闭包. """
+            k = tag_key(t)
+            if k in del_keys:
+                return None
+            for pat, re_ in del_pats.items():
+                if re_.search(k):
+                    _record(pat, k)
+                    return None
+            dst = replace_map.get(k)
+            if dst is not None:
+                return dst
+            for pat, (re_, dst_t) in replace_pats.items():
+                m = re_.search(k)
+                if m is not None:
+                    _record(pat, k)
+                    return _regex_replace(k, re_, dst_t)
+            return t
 
-        # Pony 美学档位: 注入到最前, 并移除既有 score_0…score_9
-        score_tag: str | None = None
-        if inject_pony_score and root is not None:
-            rel = rel_image_for_txt(path, root)
-            if rel is not None and rel in scores:
-                score_tag = format_pony_score_tag(scores[rel])
-                pony_injected += 1
-            else:
-                pony_missing += 1
+        # for 生成头部
+        header = [x for t in header if (x := _transform(t)) is not None]
+        # for 生成尾部
+        body = [x for t in body if (x := _transform(t)) is not None]
 
-        quality_tag_val: str | None = None
-        if inject_quality_tag and root is not None:
-            rel = rel_image_for_txt(path, root)
-            if rel is not None and rel in q_scores:
-                from services.analysis.scoring import quality_to_tag
-                quality_tag_val = quality_to_tag(q_scores[rel])
-                quality_injected += 1
-            else:
-                quality_missing += 1
-
-        # 按 ||| 拆分
-        raw_stripped = raw.strip()
-        if "|||" in raw_stripped:
-            parts = raw_stripped.split("|||", 1)
-            header_str = parts[0].strip()
-            body_str = parts[1].strip()
-        else:
-            header_str = raw_stripped
-            body_str = ""
-
-        header = split_tags_line(header_str)
-        body = split_tags_line(body_str)
-
-        # 移除既有 score_0…score_9 与质量标签
-        header = [t for t in header if tag_key(t) not in SCORE_TAG_KEYS]
-        body = [t for t in body if tag_key(t) not in SCORE_TAG_KEYS]
-        header = [t for t in header if tag_key(t) not in QUALITY_TAG_KEYS]
-        body = [t for t in body if tag_key(t) not in QUALITY_TAG_KEYS]
-
-        # 模糊匹配命中统计(仅非精确模式, 跨文件去重, 供预览展示)
-        if match_mode != "exact":
-            for pat, m in del_pats:
-                for t in header + body:
-                    k = tag_key(t)
-                    if m(k) and k not in matched_tags.setdefault(pat, []):
-                        matched_tags[pat].append(k)
-            for pat, rx, _dst in regex_replacers:
-                for t in header + body:
-                    k = tag_key(t)
-                    if rx.search(k) and k not in matched_tags.setdefault(pat, []):
-                        matched_tags[pat].append(k)
-            for pats, _dst in replacers:
-                for pat, m in pats:
-                    for t in header + body:
-                        k = tag_key(t)
-                        if m(k) and k not in matched_tags.setdefault(pat, []):
-                            matched_tags[pat].append(k)
-
-        # 原位置替换: 命中 match_mode 的原标签 → 新标签; 替换后整体去重(保留首次出现)
-        if replacers or regex_replacers:
-            header = [(_replace_target(tag_key(t)) or t) for t in header]
-            body = [(_replace_target(tag_key(t)) or t) for t in body]
-            seen: set[str] = set()
-            dedup_h: list[str] = []
-            for t in header:
-                k = tag_key(t)
-                if k in seen:
-                    continue
-                seen.add(k)
-                dedup_h.append(t)
-            header = dedup_h
-            dedup_b: list[str] = []
-            for t in body:
-                k = tag_key(t)
-                if k in seen:
-                    continue
-                seen.add(k)
-                dedup_b.append(t)
-            body = dedup_b
-
-        # 删除(按 match_mode 命中)
-        header = [t for t in header if not any(m(tag_key(t)) for _, m in del_pats)]
-        body = [t for t in body if not any(m(tag_key(t)) for _, m in del_pats)]
-
-        # 添加
+        # 添加: conditional 时仅当已有匹配标签才加入; 模糊模式补入命中的实际标签
         to_add: list[str] = []
-        n_added_head = 0
         existing = header + body
         for t in add_list:
             if conditional:
@@ -870,17 +923,21 @@ def batch_edit_tags(
                 hits = [x for x in existing if add_matcher(tag_key(x))]
                 if not hits:
                     continue
-                # 模糊匹配: 补入命中的实际标签; 精确匹配: 补入输入标签
-                insert_items = hits if match_mode != "exact" else [t]
+                if match_mode != "exact":
+                    for h in hits:
+                        _record(t, tag_key(h))
+                items = hits if match_mode != "exact" else [t]
             else:
-                insert_items = [t]
-            for item in insert_items:
+                items = [t]
+            for item in items:
                 ik = tag_key(item)
                 if not keep_duplicates:
                     header = [x for x in header if tag_key(x) != ik]
                     body = [x for x in body if tag_key(x) != ik]
                 to_add.append(item)
 
+        # 插入 to_add
+        n_added_head = 0
         if to_add:
             if position == "before":
                 if insert_mode == "top":
@@ -888,68 +945,55 @@ def batch_edit_tags(
                     n_added_head = len(to_add)
                 elif insert_mode == "random":
                     for t in to_add:
-                        idx = _random.randint(0, len(header)) if header else 0
-                        header.insert(idx, t)
-                else:  # bottom
+                        header.insert(random.randint(0, len(header)), t)
+                else:
                     header = header + to_add
-            else:  # after
+            else:
                 if insert_mode == "top":
                     body = to_add + body
                 elif insert_mode == "random":
                     for t in to_add:
-                        idx = _random.randint(0, len(body)) if body else 0
-                        body.insert(idx, t)
-                else:  # bottom
+                        body.insert(random.randint(0, len(body)), t)
+                else:
                     body = body + to_add
 
-        # 重组: 美学/质量标签随机排序后永远在最前
-        score_quality: list[str] = []
-        if score_tag:
-            score_quality.append(score_tag)
-        if quality_tag_val:
-            score_quality.append(quality_tag_val)
-        if len(score_quality) > 1:
-            _random.shuffle(score_quality)
-        header = score_quality + header
+        new = _compose_caption(
+            header, body,
+            score_tag=score_tag, quality_tag_val=quality_tag_val,
+            use_separator=use_separator, n_added_head=n_added_head,
+        )
+        return new, matched_file
 
-        n_head = len(score_quality) + n_added_head
-        if body:
-            new = ", ".join(header) + " ||| " + ", ".join(body)
-            if use_separator == "remove":
-                new = ", ".join(header + body)
-        elif use_separator == "add" and n_head > 0:
-            new = ", ".join(header[:n_head]) + " ||| " + ", ".join(header[n_head:])
-        else:
-            new = ", ".join(header)
+    st, extras = _run_batch_edit(
+        dirs, root=root,
+        inject_pony_score=inject_pony_score, scores=scores,
+        inject_quality_tag=inject_quality_tag, q_scores=q_scores,
+        dry_run=dry_run, sample_limit=sample_limit,
+        edit=_edit,
+    )
 
-        if new == raw_stripped:
-            unchanged += 1
+    # 聚合各文件命中到全局(跨文件去重)
+    matched_tags: dict[str, list[str]] = {}
+    for matched_file in extras:
+        if not matched_file:
             continue
-        changed += 1
-        if len(samples) < sample_limit:
-            samples.append(
-                TagCleanSample(
-                    path=str(path),
-                    name=path.name,
-                    before=raw_stripped[:500],
-                    after=new[:500],
-                )
-            )
-        if not dry_run:
-            path.write_text(new + "\n", encoding="utf-8")
+        for pat, tags in matched_file.items():
+            for k in tags:
+                if k not in matched_tags.setdefault(pat, []):
+                    matched_tags[pat].append(k)
 
     return TagCleanResult(
         dry_run=dry_run,
-        file_count=len(files),
-        changed=changed,
-        unchanged=unchanged,
-        failed=failed,
-        samples=samples,
+        file_count=len(st.files),
+        changed=st.changed,
+        unchanged=st.unchanged,
+        failed=st.failed,
+        samples=st.samples,
         matched_tags=matched_tags,
         inject_pony_score=inject_pony_score,
-        pony_injected=pony_injected,
-        pony_missing=pony_missing,
+        pony_injected=st.pony_injected,
+        pony_missing=st.pony_missing,
         inject_quality_tag=inject_quality_tag,
-        quality_injected=quality_injected,
-        quality_missing=quality_missing,
+        quality_injected=st.quality_injected,
+        quality_missing=st.quality_missing,
     )
