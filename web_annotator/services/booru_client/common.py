@@ -184,7 +184,7 @@ class SourceClient(ABC):
 
     def _clean_old_files(self, out_dir: Path, pid: str, keep: Path) -> None:
         from services.booru_client.utils import stem_candidates
-        for old in stem_candidates(self.name, pid, file_stem_fn=self.file_stem):
+        for old in stem_candidates(pid, file_stem_fn=self.file_stem):
             for ext in IMAGE_EXTS:
                 p = out_dir / f"{old}{ext}"
                 if p.is_file() and p.resolve() != keep.resolve():
@@ -297,8 +297,10 @@ def get_source(name: str) -> SourceClient:
         ValueError: 未知来源名. 
 
     Callers:
-        - `routes/booru.py` 所有端点
-        - `utils.py:find_downloaded`
+        - `routes/booru.py` 各端点
+        - `media.py:download_post`
+        - `media.py:remove_download`
+        - `services/booru.py`
     """
     src = _SOURCES.get(name)
     if src is None:
@@ -332,7 +334,7 @@ def file_stem(source: str, post_id: str) -> str:
 
     Callers:
         - `media.py:download_post`
-        - `media.py:is_downloaded`
+        - `media.py:regenerate_captions`
     """
     return get_source(source).file_stem(post_id)
 

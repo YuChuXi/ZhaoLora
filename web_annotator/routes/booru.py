@@ -107,7 +107,7 @@ async def booru_search(request: Request, body: SearchBody) -> BooruSearchResult:
 
     posts: list[BooruPost] = []
     for post in raw_posts:
-        post.downloaded = is_downloaded(out_dir, source, post.id, file_stem_fn=src.file_stem)
+        post.downloaded = is_downloaded(out_dir, post.id, file_stem_fn=src.file_stem)
         post.stem = src.file_stem(post.id)
         posts.append(post)
 

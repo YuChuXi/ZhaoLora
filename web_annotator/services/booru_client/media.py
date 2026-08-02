@@ -231,7 +231,7 @@ def remove_download(
         raise ValueError("非法 id")
 
     removed: list[str] = []
-    for stem in stem_candidates(source, pid, file_stem_fn=src.file_stem):
+    for stem in stem_candidates(pid, file_stem_fn=src.file_stem):
         img = find_existing(out_dir, stem)
         if img is not None:
             img.unlink()
@@ -315,7 +315,7 @@ async def download_post(
     stem = file_stem(source, pid)
     image_path = out_dir / f"{stem}.png"
     tags_path = out_dir / f"{stem}.txt"
-    existing = find_downloaded(out_dir, source, pid, file_stem_fn=get_source(source).file_stem)
+    existing = find_downloaded(out_dir, pid, file_stem_fn=get_source(source).file_stem)
 
     if source == "gelbooru":
         api = make_gelbooru(proxy)
@@ -339,7 +339,7 @@ async def download_post(
             _image_result = await api.getImage(int(pid), str(tmp_path))
             convert_path_to_png(tmp_path, image_path)
             # 清掉旧版纯 id / 其它后缀
-            for old in stem_candidates(source, pid, file_stem_fn=get_source(source).file_stem):
+            for old in stem_candidates(pid, file_stem_fn=get_source(source).file_stem):
                 for ext in IMAGE_EXTS:
                     p = out_dir / f"{old}{ext}"
                     if p.is_file() and p.resolve() != image_path.resolve():
@@ -387,7 +387,7 @@ async def download_post(
     tmp_path = out_dir / f"{stem}.tmp"
     tmp_path.write_bytes(data)
     convert_path_to_png(tmp_path, image_path)
-    for old in stem_candidates(source, pid, file_stem_fn=get_source(source).file_stem):
+    for old in stem_candidates(pid, file_stem_fn=get_source(source).file_stem):
         for ext in IMAGE_EXTS:
             p = out_dir / f"{old}{ext}"
             if p.is_file() and p.resolve() != image_path.resolve():

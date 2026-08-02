@@ -243,7 +243,7 @@ async def _run_async(
             return
         empty_streak = 0
         for p in posts:
-            if is_downloaded(out_dir, source, str(p.id), file_stem_fn=get_source(source).file_stem):
+            if is_downloaded(out_dir, str(p.id), file_stem_fn=get_source(source).file_stem):
                 progress.skipped += 1
             else:
                 buffer.append(p)
@@ -260,7 +260,7 @@ async def _run_async(
                 while buf_i < len(buffer):
                     p = buffer[buf_i]
                     buf_i += 1
-                    if is_downloaded(out_dir, source, str(p.id), file_stem_fn=get_source(source).file_stem):
+                    if is_downloaded(out_dir, str(p.id), file_stem_fn=get_source(source).file_stem):
                         progress.skipped += 1
                         push("")
                         continue

@@ -133,7 +133,7 @@ class GelbooruSource(SourceClient):
         stem = self.file_stem(pid)
         image_path = out_dir / f"{stem}.png"
         tags_path = out_dir / f"{stem}.txt"
-        existing = find_downloaded(out_dir, self.name, pid, file_stem_fn=self.file_stem)
+        existing = find_downloaded(out_dir, pid, file_stem_fn=self.file_stem)
 
         if not overwrite and existing is not None and tags_path.is_file():
             return {"skipped": True, "path": str(existing), "stem": stem, "id": pid}
@@ -256,7 +256,7 @@ class DanbooruSource(SourceClient):
         stem = self.file_stem(pid)
         image_path = out_dir / f"{stem}.png"
         tags_path = out_dir / f"{stem}.txt"
-        existing = find_downloaded(out_dir, self.name, pid, file_stem_fn=self.file_stem)
+        existing = find_downloaded(out_dir, pid, file_stem_fn=self.file_stem)
 
         meta = await danbooru_get(
             f"https://danbooru.donmai.us/posts/{pid}.json",

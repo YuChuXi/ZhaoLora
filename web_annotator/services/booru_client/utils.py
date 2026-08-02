@@ -42,9 +42,20 @@ def pil_can_open(data: bytes) -> bool:
         return False
 
 
-def stem_candidates(source: str, post_id: str, *, file_stem_fn) -> list[str]:
+def stem_candidates(post_id: str, *, file_stem_fn) -> list[str]:
+    """生成候选文件名 stem: 规范名 + 纯 id. 
+
+    Args:
+        post_id: 帖子 ID. 
+        file_stem_fn: 接受单个 id 返回 stem 的函数(绑定方法), 如 ``SourceClient.file_stem``. 
+
+    Callers:
+        - `common.py:SourceClient._clean_old_files`
+        - `media.py:remove_download`
+        - `media.py:download_post`
+    """
     pid = str(post_id).strip()
-    primary = file_stem_fn(source, pid)
+    primary = file_stem_fn(pid)
     return [primary] if pid == primary else [primary, pid]
 
 
@@ -55,26 +66,35 @@ def find_existing(out_dir: Path, stem: str) -> Path | None:
     return None
 
 
-def find_downloaded(out_dir: Path, source: str, post_id: str, *, file_stem_fn) -> Path | None:
+def find_downloaded(out_dir: Path, post_id: str, *, file_stem_fn) -> Path | None:
     """查找已下载帖图. 
+
+    Args:
+        post_id: 帖子 ID. 
+        file_stem_fn: 接受单个 id 返回 stem 的函数(绑定方法), 如 ``SourceClient.file_stem``. 
 
     Callers:
         - `sources.py:GelbooruSource.download`
         - `sources.py:DanbooruSource.download`
     """
-    for stem in stem_candidates(source, post_id, file_stem_fn=file_stem_fn):
+    for stem in stem_candidates(post_id, file_stem_fn=file_stem_fn):
         hit = find_existing(out_dir, stem)
         if hit is not None: return hit
     return None
 
 
-def is_downloaded(out_dir: Path, source: str, post_id: str, *, file_stem_fn) -> bool:
+def is_downloaded(out_dir: Path, post_id: str, *, file_stem_fn) -> bool:
     """是否已下载. 
 
+    Args:
+        post_id: 帖子 ID. 
+        file_stem_fn: 接受单个 id 返回 stem 的函数(绑定方法), 如 ``SourceClient.file_stem``. 
+
     Callers:
-        - ``services/booru.py``
+        - `routes/booru.py:booru_search`
+        - `services/booru.py`
     """
-    return find_downloaded(out_dir, source, post_id, file_stem_fn=file_stem_fn) is not None
+    return find_downloaded(out_dir, post_id, file_stem_fn=file_stem_fn) is not None
 
 
 _GENDER_TAGS: frozenset[str] = frozenset({
