@@ -77,8 +77,12 @@
   }
 
   // ---- 加载 ----
+  function currentDir() {
+    return (typeof API !== 'undefined' && API.getDir) ? API.getDir() : 'main';
+  }
+
   async function loadImages() {
-    var res = await (await api('/api/paint/images')).json();
+    var res = await (await api('/api/paint/images?dir=' + encodeURIComponent(currentDir()))).json();
     _images = res;
     if (_images.length > 0) loadIndex(0);
     else {
@@ -569,7 +573,7 @@
       fetch('/api/d/' + API.dataset() + '/birefnet-mask', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ mask_expand: expand, mask_shrink: shrink, mask_min: maskMin, mask_max: maskMax, skip_existing: skipExisting })
+        body: JSON.stringify({ dir: currentDir(), mask_expand: expand, mask_shrink: shrink, mask_min: maskMin, mask_max: maskMax, skip_existing: skipExisting })
       })
         .then(function (r) { return r.json(); })
         .then(function (resp) {
@@ -609,6 +613,14 @@
       }
     };
     evtSource.onerror = function () { evtSource.close(); };
+  }
+
+  if (typeof DirPicker !== 'undefined') {
+    // 蒙版页为单目录工作流: 一次只处理一个目录的蒙版
+    if (DirPicker.setSingle) DirPicker.setSingle(true);
+    DirPicker.onChange(function () {
+      loadImages().catch(function (e) { toast(String(e.message || e)); });
+    });
   }
 
   loadConfig().then(loadImages);

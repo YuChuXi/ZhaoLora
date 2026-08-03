@@ -19,6 +19,7 @@ router = APIRouter(tags=["birefnet"])
 class BirefnetStartBody(BaseModel):
     """BiRefNet 蒙版生成请求体. """
 
+    dir: str = Field("main", description="目标子目录名, 默认 main")
     mask_expand: int = Field(32, ge=0, le=200, description="蒙版向外扩展的像素数")
     mask_shrink: int = Field(0, ge=0, le=200, description="蒙版向内收缩的像素数")
     mask_min: int = Field(96, ge=0, le=255, description="蒙版值域下限 (0-255)")
@@ -41,7 +42,7 @@ async def birefnet_mask(request: Request, body: BirefnetStartBody) -> BirefnetSt
         - `static/js/api.js`
     """
     rt = get_runtime(request)
-    image_rel_paths = collect_images(rt.root)
+    image_rel_paths = collect_images(rt.root, subdir=body.dir)
     if not image_rel_paths:
         raise HTTPException(400, "没有可处理的图片")
 

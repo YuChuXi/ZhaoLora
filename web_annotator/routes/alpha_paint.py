@@ -26,20 +26,24 @@ class PaintConfigBody(BaseModel):
 
 
 def _services(request: Request) -> tuple[Path, Path]:
-    """返回 ``(main_dir, mask_dir)``. 引用: 本模块各接口. """
+    """返回 ``(root, mask_dir)``. 引用: 本模块各接口. """
     rt = get_runtime(request)
-    return rt.main_dir, rt.mask_dir
+    return rt.root, rt.mask_dir
 
 
 @router.get("/images")
-def list_paint_images(request: Request) -> list[PaintImageItem]:
-    """列出 main 下图片及 mask 是否存在. 
+def list_paint_images(request: Request, dir: str = "main") -> list[PaintImageItem]:
+    """列出指定子目录下图片及 mask 是否存在. 
+
+    Args:
+        dir: 子目录名, 默认 ``main``. 
 
     引用:
         ``paint.js``. 
     """
-    data_dir, mask_dir = _services(request)
-    images = scan_images(data_dir)
+    root, mask_dir = _services(request)
+    subdir = (dir or "main").strip().strip("/")
+    images = scan_images(root / subdir, path_prefix=subdir)
     result: list[PaintImageItem] = []
     for img in images:
         result.append(
@@ -58,13 +62,13 @@ def serve_original_image(request: Request, path: str = Query(...)) -> Response:
     """提供原图 AVIF 预览. 
 
     Args:
-        path: 相对 ``main`` 的路径. 
+        path: 相对数据集根的路径(含子目录名). 
 
     引用:
         ``paint.js``. 
     """
-    data_dir, _ = _services(request)
-    src = resolve_path(data_dir, path)
+    root, _ = _services(request)
+    src = resolve_path(root, path)
     if not src.is_file():
         raise HTTPException(404, f"Image not found: {path}")
     img = Image.open(src).convert("RGB")
@@ -78,11 +82,14 @@ def serve_original_image(request: Request, path: str = Query(...)) -> Response:
 def get_existing_mask(request: Request, path: str = Query(...)) -> Response:
     """返回已保存的灰度 mask PNG；不存在则 404. 
 
+    Args:
+        path: 相对数据集根的图片路径(含子目录名). 
+
     引用:
         ``paint.js``. 
     """
-    data_dir, mask_dir = _services(request)
-    src = resolve_path(data_dir, path)
+    root, mask_dir = _services(request)
+    src = resolve_path(root, path)
     if not src.is_file():
         raise HTTPException(404, "Image not found")
     rgb = Image.open(src)
@@ -104,14 +111,14 @@ async def upload_mask(
     """接收灰度 PNG 并写入 mask 目录. 
 
     Args:
-        path: 相对 ``main`` 的原图路径. 
+        path: 相对数据集根的图片路径(含子目录名). 
         format: ``alpha_bw`` 或 ``rgba``. 
 
     引用:
         ``paint.js``. 
     """
-    data_dir, mask_dir = _services(request)
-    src = resolve_path(data_dir, path)
+    root, mask_dir = _services(request)
+    src = resolve_path(root, path)
     if not src.is_file():
         raise HTTPException(404, f"Image not found: {path}")
     body = await request.body()

@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field
 
 from routes.deps import get_runtime
 from services.models import ReadyDirsResponse, ReadyTomlResult
-from services.ready import build_ready_toml, main_mask_stats
+from services.ready import build_ready_toml, subdir_mask_stats
 from services.core.work_dir import list_work_dirs
 
 router = APIRouter(prefix="/ready", tags=["ready"])
@@ -23,19 +23,22 @@ class ReadyBody(BaseModel):
 @router.get("/dirs")
 def ready_dirs(request: Request) -> ReadyDirsResponse:
     """
-    可导出工作目录与 main 蒙版统计. 
+    可导出工作目录与各目录蒙版统计. 
 
-    蒙版状态仅「无」或「完整」. 引用: ready.js. 
+    每目录蒙版状态仅「无」或「完整」. 引用: ready.js. 
     """
     root = get_runtime(request).root
-    mask = main_mask_stats(root)
+    dirs = list_work_dirs(root)
+    mask_stats = [subdir_mask_stats(root, d.name) for d in dirs]
+    main_mask = next((m for m in mask_stats if m.name == "main"), None)
     return ReadyDirsResponse(
         root=str(root),
-        dirs=list_work_dirs(root),
-        mask_status=mask.mask_status,
-        mask_complete=mask.mask_complete,
-        mask_none=mask.mask_none,
-        main_count=mask.main_count,
+        dirs=dirs,
+        mask_stats=mask_stats,
+        mask_status=main_mask.mask_status if main_mask else "无",
+        mask_complete=main_mask.mask_complete if main_mask else 0,
+        mask_none=main_mask.mask_none if main_mask else 0,
+        main_count=main_mask.main_count if main_mask else 0,
     )
 
 

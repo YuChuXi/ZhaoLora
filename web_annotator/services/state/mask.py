@@ -1,6 +1,7 @@
 """
 Mask 文件管理 —— alpha mask PNG. 
-存到独立的 out_dir, 文件名与原图对应, 后缀 .png. 
+存到独立的 mask 根目录, 路径与原图相对数据集根的路径对应, 后缀 .png. 
+例如 main 图 ``main/foo.png`` → ``mask/main/foo.png``, 部位图 ``head/foo.png`` → ``mask/head/foo.png``. 
 """
 
 from __future__ import annotations
@@ -14,11 +15,11 @@ from services.core.work_dir import resolve_under
 
 
 def mask_out_path(out_dir: Path, src_path: str) -> Path:
-    """计算 mask 输出路径: ``out_dir/<相对路径>.png``. 
+    """计算 mask 输出路径: ``out_dir/<相对数据集根路径>.png``. 
 
     Args:
         out_dir: mask 根目录. 
-        src_path: 相对原图路径(与 main 下一致). 
+        src_path: 相对数据集根的图片路径(含子目录名, 如 ``main/foo.png``). 
 
     Returns:
         位于 ``out_dir`` 下的绝对路径. 

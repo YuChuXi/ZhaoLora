@@ -14,6 +14,7 @@ var DirPicker = (function () {
   var _selected = {};
   var _listeners = [];
   var _disabled = false;
+  var _single = false;
   var _open = false;
 
   /**
@@ -189,6 +190,15 @@ var DirPicker = (function () {
       cb.checked = !!_selected[d.name];
       cb.disabled = _disabled;
       cb.addEventListener('change', function () {
+        if (_single) {
+          // 单选模式: 勾选即唯一, 取消后回落 main
+          _selected = {};
+          if (cb.checked) _selected[d.name] = true;
+          if (!Object.keys(_selected).length) _selected.main = true;
+          renderMenu();
+          emit();
+          return;
+        }
         if (cb.checked) {
           _selected[d.name] = true;
         } else {
@@ -229,17 +239,23 @@ var DirPicker = (function () {
   function fill(dirs) {
     _dirs = pinMain(dirs);
     var saved = loadSaved();
-    var set = {};
-    saved.forEach(function (n) { set[n] = true; });
     _selected = {};
-    var any = false;
-    _dirs.forEach(function (d) {
-      if (set[d.name]) {
-        _selected[d.name] = true;
-        any = true;
+    if (_single) {
+      // 单选模式仅恢复第一个已保存目录
+      for (var i = 0; i < _dirs.length; i++) {
+        if (saved.indexOf(_dirs[i].name) !== -1) {
+          _selected[_dirs[i].name] = true;
+          break;
+        }
       }
-    });
-    if (!any) _selected.main = true;
+    } else {
+      var set = {};
+      saved.forEach(function (n) { set[n] = true; });
+      _dirs.forEach(function (d) {
+        if (set[d.name]) _selected[d.name] = true;
+      });
+    }
+    if (!Object.keys(_selected).length) _selected.main = true;
     renderMenu();
     updateButton();
     emit();
@@ -299,6 +315,24 @@ var DirPicker = (function () {
     renderMenu();
   }
 
+  /**
+   * 切换单选模式(蒙版页一次只处理一个目录); 默认多选不受影响。
+   * @param {boolean} v
+   */
+  function setSingle(v) {
+    _single = !!v;
+    if (_single) {
+      // 折叠为单选: 仅保留第一个选中目录
+      var names = getDirs();
+      _selected = {};
+      if (names.length) _selected[names[0]] = true;
+      else _selected.main = true;
+      renderMenu();
+      updateButton();
+      emit();
+    }
+  }
+
   document.addEventListener('click', function () {
     if (_open) closeMenu();
   });
@@ -328,5 +362,6 @@ var DirPicker = (function () {
     load: load,
     bind: bind,
     setDisabled: setDisabled,
+    setSingle: setSingle,
   };
 })();

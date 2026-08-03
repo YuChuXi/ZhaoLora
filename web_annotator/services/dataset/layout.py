@@ -85,6 +85,28 @@ def resolve_dataset_layout(data_dir: Path) -> DatasetLayout:
 
     main_dir = data_dir / "main"
     main_dir.mkdir(parents=True, exist_ok=True)
-    (data_dir / "mask").mkdir(parents=True, exist_ok=True)
+    mask_dir = data_dir / "mask"
+    mask_dir.mkdir(parents=True, exist_ok=True)
+    _migrate_flat_masks(mask_dir)
 
-    return DatasetLayout(root=data_dir, main_dir=main_dir, mask_dir=data_dir / "mask", crops_dir=data_dir / "crops")
+    return DatasetLayout(root=data_dir, main_dir=main_dir, mask_dir=mask_dir, crops_dir=data_dir / "crops")
+
+
+def _migrate_flat_masks(mask_dir: Path) -> None:
+    """把 mask/ 下平铺的 PNG 迁入 mask/main/(统一带子目录前缀).
+
+    蒙版路径统一为 ``mask/<子目录>/<文件>.png``, 历史平铺的 main 蒙版
+    (``mask/<文件>.png``) 在此迁移.
+
+    Callers:
+        - ``resolve_dataset_layout``
+    """
+    main_mask = mask_dir / "main"
+    if not mask_dir.is_dir():
+        return
+    main_mask.mkdir(parents=True, exist_ok=True)
+    for p in mask_dir.iterdir():
+        if p.is_file() and p.suffix.lower() == ".png":
+            dest = main_mask / p.name
+            if not dest.exists():
+                p.rename(dest)

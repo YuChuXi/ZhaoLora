@@ -55,6 +55,8 @@
       list.innerHTML = '<div class="dir-item"><span class="meta">无含图目录</span></div>';
       return;
     }
+    var statsByDir = {};
+    (data.mask_stats || []).forEach(function (m) { statsByDir[m.name] = m; });
     dirs.forEach(function (d) {
       var row = document.createElement('div');
       row.className = 'dir-item';
@@ -62,8 +64,10 @@
       name.textContent = d.name;
       var meta = document.createElement('span');
       meta.className = 'meta';
-      meta.textContent = (d.image_count != null ? d.image_count : 0) + ' 张';
-      if (d.name === 'main') meta.textContent += ' · ' + status;
+      var m = statsByDir[d.name];
+      var txt = (d.image_count != null ? d.image_count : 0) + ' 张';
+      if (m) txt += ' · ' + m.mask_status + '（完整 ' + m.mask_complete + ' / 无 ' + m.mask_none + '）';
+      meta.textContent = txt;
       row.appendChild(name);
       row.appendChild(meta);
       list.appendChild(row);

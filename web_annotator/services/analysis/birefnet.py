@@ -135,20 +135,28 @@ def _remap_mask(mask: np.ndarray, lo: int, hi: int) -> np.ndarray:
     return np.clip(f * (hi - lo) + lo, 0, 255).astype(np.uint8)
 
 
-def collect_images(data_dir: Path) -> list[str]:
-    """收集 main/ 下所有图片的相对路径. 
+def collect_images(data_dir: Path, subdir: str = "main") -> list[str]:
+    """收集指定子目录下所有图片的相对数据集根路径(含子目录前缀). 
+
+    Args:
+        data_dir: 数据集根目录. 
+        subdir: 子目录名, 默认 ``main``. 
+
+    Returns:
+        相对数据集根的路径列表, 如 ``main/foo.png`` / ``head/foo.png``. 
 
     Callers:
         - ``routes/birefnet.py``
     """
+    subdir = (subdir or "main").strip().strip("/")
+    target = data_dir / subdir
+    if not target.is_dir():
+        return []
     paths: list[str] = []
-    main_dir = data_dir / "main"
-    if not main_dir.is_dir():
-        return paths
-    for img in sorted(main_dir.iterdir()):
+    for img in sorted(target.iterdir()):
         if not img.is_file() or img.suffix.lower() not in IMAGE_EXTS:
             continue
-        paths.append(f"main/{img.name}")
+        paths.append(f"{subdir}/{img.name}")
     return paths
 
 
@@ -193,10 +201,10 @@ def run_birefnet_mask(
     progress: BirefnetProgress | None = None,
     on_progress: Callable[[], None] | None = None,
 ) -> tuple[int, int]:
-    """对图片列表生成 BiRefNet 蒙版, 输出到 mask_dir. 
+    """对图片列表生成 BiRefNet 蒙版, 输出到 mask_dir(保留子目录结构). 
 
     Args:
-        image_rel_paths: main/ 下的相对路径列表. 
+        image_rel_paths: 相对数据集根的路径列表(含子目录前缀). 
         data_dir: 数据集根目录. 
         mask_dir: 蒙版输出目录. 
         device: 推理设备. 
@@ -228,7 +236,7 @@ def run_birefnet_mask(
             break
 
         src_path = data_dir / rel_path
-        out_path = mask_dir / f"{Path(rel_path).stem}.png"
+        out_path = mask_dir / Path(rel_path).with_suffix(".png")
 
         if skip_existing and out_path.is_file():
             if progress is not None:

@@ -1,4 +1,4 @@
-"""生成训练用 datasets TOML 片段, 并统计 main 蒙版状态. """
+"""生成训练用 datasets TOML 片段, 并按子目录统计蒙版状态. """
 
 from __future__ import annotations
 
@@ -17,17 +17,18 @@ def _has_images(d: Path) -> bool:
     return any(p.is_file() and p.suffix.lower() in IMAGE_EXTS for p in d.iterdir())
 
 
-def main_mask_stats(root: Path) -> MaskStats:
+def subdir_mask_stats(root: Path, subdir: str = "main") -> MaskStats:
     """
-    统计 main 相对蒙版状态: 每张图仅「无」或「完整」. 
+    统计指定子目录的蒙版状态: 每张图仅「无」或「完整」. 
 
     整体 status: 全部有蒙版 →「完整」；否则 →「无」. 
     引用: ``ready_dirs``、``build_ready_toml``；``routes/ready.py`` 侧栏. 
     """
     root = root.resolve()
-    main_dir = root / "main"
+    subdir = (subdir or "main").strip().strip("/")
+    image_dir = root / subdir
     mask_dir = root / "mask"
-    images = scan_images(main_dir) if main_dir.is_dir() else []
+    images = scan_images(image_dir, path_prefix=subdir) if image_dir.is_dir() else []
     complete = 0
     none = 0
     for img in images:
@@ -38,6 +39,7 @@ def main_mask_stats(root: Path) -> MaskStats:
     total = complete + none
     status = "完整" if total > 0 and none == 0 else "无"
     return MaskStats(
+        name=subdir,
         mask_status=status,
         mask_complete=complete,
         mask_none=none,
@@ -54,7 +56,7 @@ def build_ready_toml(
     """
     生成 TOML 文本与 subset 元数据. 
 
-    仅当 main 蒙版状态为「完整」时, main subset 附带 conditioning_data_dir. 
+    某子目录蒙版状态为「完整」时, 对应 subset 附带 conditioning_data_dir(指向 mask/子目录). 
     引用: ``routes/ready.py``. 
     """
     root = root.resolve()
@@ -69,13 +71,11 @@ def build_ready_toml(
         ordered.append("main")
     ordered.extend(sorted(n for n in names if n != "main"))
 
-    mask_stats = main_mask_stats(root)
-    use_mask = mask_stats.mask_status == "完整"
-    mask_dir = root / "mask"
     repeats = max(1, int(num_repeats))
 
     subsets: list[ReadySubset] = []
     blocks: list[str] = []
+    mask_stats: list[MaskStats] = []
     for name in ordered:
         image_dir = (root / name).resolve()
         if not _has_images(image_dir):
@@ -92,9 +92,12 @@ def build_ready_toml(
             "  [[datasets.subsets]]",
             f'  image_dir = "{image_dir}"',
         ]
-        if name == "main" and use_mask:
-            entry.conditioning_data_dir = str(mask_dir.resolve())
-            lines.append(f'  conditioning_data_dir = "{mask_dir.resolve()}"')
+        mstats = subdir_mask_stats(root, name)
+        mask_stats.append(mstats)
+        if mstats.mask_status == "完整":
+            cond = (root / "mask" / name).resolve()
+            entry.conditioning_data_dir = str(cond)
+            lines.append(f'  conditioning_data_dir = "{cond}"')
         lines.append(f"  num_repeats = {repeats}")
         blocks.append("\n".join(lines))
         subsets.append(entry)
@@ -102,15 +105,18 @@ def build_ready_toml(
     toml = "\n\n".join(blocks)
     if toml:
         toml += "\n"
+    main_ms = next((m for m in mask_stats if m.name == "main"),
+                   MaskStats(name="main", mask_status="无"))
     return ReadyTomlResult(
         root=str(root),
         toml=toml,
         subsets=subsets,
         dirs=list(available.values()),
-        mask=str(mask_dir.resolve()) if use_mask else None,
+        mask_stats=mask_stats,
+        mask=str((root / "mask").resolve()) if main_ms.mask_status == "完整" else None,
         num_repeats=repeats,
-        mask_status=mask_stats.mask_status,
-        mask_complete=mask_stats.mask_complete,
-        mask_none=mask_stats.mask_none,
-        main_count=mask_stats.main_count,
+        mask_status=main_ms.mask_status,
+        mask_complete=main_ms.mask_complete,
+        mask_none=main_ms.mask_none,
+        main_count=main_ms.main_count,
     )

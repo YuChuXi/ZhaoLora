@@ -13,12 +13,13 @@ from services.models.dataset import WorkDirInfo
 
 
 class MaskStats(BaseModel):
-    """main 蒙版统计. 
+    """单目录蒙版统计. 
 
     引用:
-        ``services/ready.py:main_mask_stats``. 
+        ``services/ready.py:subdir_mask_stats``. 
     """
 
+    name: str = "main"
     mask_status: Literal["完整", "无"]
     mask_complete: int = 0
     mask_none: int = 0
@@ -34,7 +35,8 @@ class ReadyDirsResponse(BaseModel):
 
     root: str
     dirs: list[WorkDirInfo]
-    mask_status: Literal["完整", "无"]
+    mask_stats: list[MaskStats] = Field(default_factory=list)
+    mask_status: Literal["完整", "无"] = "无"
     mask_complete: int = 0
     mask_none: int = 0
     main_count: int = 0
@@ -65,6 +67,7 @@ class ReadyTomlResult(BaseModel):
     toml: str
     subsets: list[ReadySubset]
     dirs: list[WorkDirInfo]
+    mask_stats: list[MaskStats] = Field(default_factory=list)
     mask: str | None = None
     num_repeats: int = 1
     mask_status: Literal["完整", "无"] = "无"
