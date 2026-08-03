@@ -995,4 +995,4 @@ def batch_edit_tags(
         inject_quality_tag=inject_quality_tag,
         quality_injected=st.quality_injected,
         quality_missing=st.quality_missing,
-    )d3607932.png
+    )
