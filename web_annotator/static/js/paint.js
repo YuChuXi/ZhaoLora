@@ -6,7 +6,7 @@
 
   var _images = [], _index = 0;
   var _origW = 0, _origH = 0;
-  var _alpha = null, _rgbImg = null, _scale = 1;
+  var _rgbImg = null, _scale = 1;
   var _viewW = 0, _viewH = 0, _dpr = 1;
   var _brushRadius = 80, _brushPct = 3, _defaultAlpha = 255;
   var _tool = 'brush', _isDrawing = false, _isTouch = false, _paintValue = 0;
@@ -91,6 +91,28 @@
     }
   }
 
+  /**
+   * 构建蒙版画布 _alphaOrigCanvas: 有蒙版时继承 _rgbImg 的 A 通道(蒙版),
+   * 无蒙版时填默认 alpha. 蒙版唯一权威为 _alphaOrigCanvas 的 A 通道.
+   * Callers: loadIndex(缓存命中与首次加载).
+   */
+  function _initAlphaCanvas(has_mask) {
+    _alphaOrigCanvas = document.createElement('canvas');
+    _alphaOrigCanvas.width = _origW; _alphaOrigCanvas.height = _origH;
+    var aoctx = _alphaOrigCanvas.getContext('2d');
+    if (has_mask) {
+      aoctx.drawImage(_rgbImg, 0, 0);
+    } else {
+      var value = parseInt(document.getElementById('default-alpha').value);
+      _defaultAlpha = Number.isNaN(value) ? 255 : value;
+      aoctx.clearRect(0, 0, _origW, _origH);
+      aoctx.globalAlpha = _defaultAlpha / 255;
+      aoctx.fillStyle = '#fff';
+      aoctx.fillRect(0, 0, _origW, _origH);
+      aoctx.globalAlpha = 1;
+    }
+  }
+
   async function loadIndex(idx) {
     if (_images.length === 0) return;
     _index = Math.max(0, Math.min(_images.length - 1, idx));
@@ -99,15 +121,10 @@
     var cached = _preloadCache[img.path];
     if (cached) {
       _rgbImg = cached.img; _origW = cached.w; _origH = cached.h;
-      if (cached.alpha) {
-        _alpha = new Uint8Array(cached.alpha);
-      } else {
-        _alpha = new Uint8Array(_origW * _origH);
-        _alpha.fill(_defaultAlpha);
-      }
+      _initAlphaCanvas(img.has_mask);
       _modified = false;
       _calcBrush(); _updateBrushUI();
-      invalidateScaledCache(); _alphaOrigCanvas = null;
+      invalidateScaledCache();
       fitCanvas(); _scheduleRender(); updateNav();
       _preloadNeighbors(_index);
       return;
@@ -122,27 +139,15 @@
     _rgbImg.onload = function() {
       _origW = _rgbImg.naturalWidth; _origH = _rgbImg.naturalHeight;
       URL.revokeObjectURL(url);
-      _alpha = new Uint8Array(_origW * _origH);
-      if (img.has_mask) {
-        // RGBA: A 通道即蒙版, 与上传侧一致
-        var tc = document.createElement('canvas'); tc.width = _origW; tc.height = _origH;
-        var tctx = tc.getContext('2d'); tctx.drawImage(_rgbImg, 0, 0);
-        var d = tctx.getImageData(0, 0, _origW, _origH).data;
-        for (var i = 0; i < _alpha.length; i++) _alpha[i] = d[i * 4 + 3];
-      } else {
-        var value = parseInt(document.getElementById('default-alpha').value);
-        _defaultAlpha = Number.isNaN(value) ? 255 : value;
-        _alpha.fill(_defaultAlpha);
-      }
+      _initAlphaCanvas(img.has_mask);
       _modified = false;
       _preloadCache[img.path] = {
         img: _rgbImg,
         w: _origW,
         h: _origH,
-        alpha: new Uint8Array(_alpha),
       };
       _calcBrush(); _updateBrushUI();
-      invalidateScaledCache(); _alphaOrigCanvas = null;
+      invalidateScaledCache();
       fitCanvas(); _scheduleRender(); updateNav();
       _preloadNeighbors(_index);
     };
@@ -218,14 +223,6 @@
       var entry = { img: el, w: el.naturalWidth, h: el.naturalHeight };
       _preloadCache[img.path] = entry;
       URL.revokeObjectURL(url);
-      if (img.has_mask) {
-        var tc = document.createElement('canvas'); tc.width = entry.w; tc.height = entry.h;
-        var tctx = tc.getContext('2d'); tctx.drawImage(el, 0, 0);
-        var d = tctx.getImageData(0, 0, entry.w, entry.h).data;
-        var a = new Uint8Array(entry.w * entry.h);
-        for (var i = 0; i < a.length; i++) a[i] = d[i * 4 + 3];
-        entry.alpha = a;
-      }
       updateStatusBar();
     };
     el.src = url;
@@ -281,6 +278,12 @@
     _rgbScaledCanvas.height = _origH;
     var rctx = _rgbScaledCanvas.getContext('2d');
     rctx.drawImage(_rgbImg, 0, 0);
+    // 只取原图 RGB: 有蒙版时 _rgbImg 是 mask RGBA(带蒙版 A),
+    // 强制 A=255 避免蒙版被 _alphaOrigCanvas 二次应用(两层 alpha)
+    var imgData = rctx.getImageData(0, 0, _origW, _origH);
+    var d = imgData.data;
+    for (var i = 3; i < d.length; i += 4) d[i] = 255;
+    rctx.putImageData(imgData, 0, 0);
   }
 
   function _ensureChecker() {
@@ -303,21 +306,9 @@
   }
 
   function _doRender() {
-    if (!_rgbImg || !_alpha) return;
+    if (!_rgbImg || !_alphaOrigCanvas) return;
     _ensureChecker();
     _ensureRgbFull();
-
-    if (!_alphaOrigCanvas) {
-      _alphaOrigCanvas = document.createElement('canvas');
-      _alphaOrigCanvas.width = _origW; _alphaOrigCanvas.height = _origH;
-      var aoctx = _alphaOrigCanvas.getContext('2d');
-      var imgData = aoctx.createImageData(_origW, _origH);
-      for (var i = 0; i < _alpha.length; i++) {
-        var a = _alpha[i], j = i * 4;
-        imgData.data[j] = a; imgData.data[j+1] = a; imgData.data[j+2] = a; imgData.data[j+3] = a;
-      }
-      aoctx.putImageData(imgData, 0, 0);
-    }
 
     if (!_compCanvas || _compCanvas.width !== _origW || _compCanvas.height !== _origH) {
       _compCanvas = document.createElement('canvas');
@@ -409,7 +400,7 @@
 
   // ---- 触屏 ----
   canvas.addEventListener('touchstart', function(e) {
-    e.preventDefault(); if (!_alpha || e.touches.length !== 1) return;
+    e.preventDefault(); if (!_alphaOrigCanvas || e.touches.length !== 1) return;
     _isDrawing = true; _isTouch = true;
     var t = e.touches[0];
     var pos = screenToOrig(t.clientX, t.clientY);
@@ -420,7 +411,7 @@
     _rectStart = pos; _scheduleRender();
   }, { passive: false });
   canvas.addEventListener('touchmove', function(e) {
-    e.preventDefault(); if (!_alpha || !_isDrawing) return;
+    e.preventDefault(); if (!_alphaOrigCanvas || !_isDrawing) return;
     var t = e.touches[0];
     _mouseScreen = [t.clientX, t.clientY];
     _updateBrushPreview();
@@ -429,14 +420,14 @@
     _scheduleRender();
   }, { passive: false });
   canvas.addEventListener('touchend', function(e) {
-    e.preventDefault(); if (!_isTouch || !_isDrawing || !_alpha) return;
+    e.preventDefault(); if (!_isTouch || !_isDrawing || !_alphaOrigCanvas) return;
     var t = e.changedTouches[0];
     if (_tool === 'rect' && _rectStart && t) { var pos = screenToOrig(t.clientX, t.clientY); fillRect(_rectStart[0], _rectStart[1], pos[0], pos[1], _paintValue); }
     _isDrawing = false; _isTouch = false; _rectStart = null; _brushPreview.style.display = 'none'; _modified = true; _scheduleRender();
   }, { passive: false });
   canvas.addEventListener('touchcancel', function() { _isDrawing = false; _isTouch = false; _rectStart = null; _mouseScreen = null; _brushPreview.style.display = 'none'; });
   // 防止触屏时触发对应的 mouse 事件
-  canvas.addEventListener('mousedown', function(e) { if (_isTouch) return; e.preventDefault(); if (!_alpha) return;
+  canvas.addEventListener('mousedown', function(e) { if (_isTouch) return; e.preventDefault(); if (!_alphaOrigCanvas) return;
     _isDrawing = true;
     var pos = screenToOrig(e.clientX, e.clientY);
     var swapped = document.getElementById('chk-swap-buttons').checked;
@@ -446,7 +437,7 @@
   });
   canvas.addEventListener('mousemove', function(e) {
     _mouseScreen = [e.clientX, e.clientY];
-    if (!_alpha) return;
+    if (!_alphaOrigCanvas) return;
     _updateBrushPreview();
     if (!_isDrawing) return;
     var pos = screenToOrig(e.clientX, e.clientY);
@@ -454,7 +445,7 @@
     _scheduleRender();
   });
   canvas.addEventListener('mouseup', function(e) {
-    if (!_isDrawing || !_alpha) return;
+    if (!_isDrawing || !_alphaOrigCanvas) return;
     if (_tool === 'rect' && _rectStart) { var pos = screenToOrig(e.clientX, e.clientY); fillRect(_rectStart[0], _rectStart[1], pos[0], pos[1], _paintValue); }
     _isDrawing = false; _rectStart = null; _brushPreview.style.display = 'none'; _modified = true; _scheduleRender();
   });
@@ -469,15 +460,23 @@
 
   // ---- 保存 ----
   async function doSave(force) {
-    if (!_alpha || !_alphaOrigCanvas) return;
+    if (!_alphaOrigCanvas) return;
     var img = _images[_index];
     // 全新图片即使没有动笔，也要写出当前默认 alpha mask。
     if (!force && !_modified && img.has_mask) return;
     var fmt = document.getElementById('save-format').value || 'alpha_bw';
-    // 从 canvas 回读 alpha 数组（保存时需要）
+    // 从蒙版画布读取 alpha(唯一权威), 供上传 RGB 纯色与缓存替换使用
     var aoctx = _alphaOrigCanvas.getContext('2d');
     var imgData = aoctx.getImageData(0, 0, _origW, _origH);
-    for (var i = 0; i < _alpha.length; i++) _alpha[i] = imgData.data[i * 4 + 3];
+    var alphaArr = new Uint8Array(_origW * _origH);
+    for (var i = 0; i < alphaArr.length; i++) alphaArr[i] = imgData.data[i * 4 + 3];
+    // 上传时把 RGB 统一为纯色(黑), 蒙版只在 A 通道(后端仅取 A), 避免传输混合 RGB
+    for (var i = 0; i < alphaArr.length; i++) {
+      imgData.data[i * 4] = 0;
+      imgData.data[i * 4 + 1] = 0;
+      imgData.data[i * 4 + 2] = 0;
+    }
+    aoctx.putImageData(imgData, 0, 0);
     return new Promise(function(resolve) {
       _alphaOrigCanvas.toBlob(function(blob) {
         if (!blob) { errshow('toBlob failed'); resolve(); return; }
@@ -488,7 +487,17 @@
           _images[_index].has_mask = true; updateNav();
           toast('已保存: ' + res.saved);
           var cached = _preloadCache[img.path];
-          if (cached) { cached.alpha = new Uint8Array(_alpha); cached.alphaCanvas = _alphaOrigCanvas; }
+          if (cached) {
+            // 保存后整个替换缓存 img: 原图 RGB + 新蒙版 A(缓存命中从 img 读 A)
+            var comp = document.createElement('canvas'); comp.width = _origW; comp.height = _origH;
+            var cctx = comp.getContext('2d');
+            cctx.drawImage(_rgbImg, 0, 0);
+            var compImg = cctx.getImageData(0, 0, _origW, _origH);
+            var cd = compImg.data;
+            for (var i = 0; i < alphaArr.length; i++) cd[i * 4 + 3] = alphaArr[i];
+            cctx.putImageData(compImg, 0, 0);
+            cached.img = comp;
+          }
           resolve();
         }).catch(function() { errshow('上传失败'); resolve(); });
       }, 'image/png');
@@ -507,12 +516,12 @@
   if (toolSel) toolSel.addEventListener('change', function() { _tool = this.value; });
   document.getElementById('brush-slider').addEventListener('input', function() { _brushPct = parseFloat(this.value); _calcBrush(); _updateBrushUI(); _updateBrushPreview(); });
   document.getElementById('btn-save').addEventListener('click', function() { doSave(true); });
-  document.getElementById('btn-clear').addEventListener('click', function() { if (_alpha && _alphaOrigCanvas) { _alpha.fill(0); _alphaOrigCanvas.getContext('2d').clearRect(0, 0, _origW, _origH); _modified = true; _scheduleRender(); } });
-  document.getElementById('btn-fill').addEventListener('click', function() { if (_alpha && _alphaOrigCanvas) { _alpha.fill(255); var fc = _alphaOrigCanvas.getContext('2d'); fc.fillStyle = '#fff'; fc.fillRect(0, 0, _origW, _origH); _modified = true; _scheduleRender(); } });
+  document.getElementById('btn-clear').addEventListener('click', function() { if (_alphaOrigCanvas) { _alphaOrigCanvas.getContext('2d').clearRect(0, 0, _origW, _origH); _modified = true; _scheduleRender(); } });
+  document.getElementById('btn-fill').addEventListener('click', function() { if (_alphaOrigCanvas) { var fc = _alphaOrigCanvas.getContext('2d'); fc.fillStyle = '#fff'; fc.fillRect(0, 0, _origW, _origH); _modified = true; _scheduleRender(); } });
   document.getElementById('btn-default').addEventListener('click', function() {
     var value = parseInt(document.getElementById('default-alpha').value);
     _defaultAlpha = Number.isNaN(value) ? 255 : value;
-    if (_alpha && _alphaOrigCanvas) { _alpha.fill(_defaultAlpha); var dc = _alphaOrigCanvas.getContext('2d'); dc.clearRect(0, 0, _origW, _origH); dc.globalAlpha = _defaultAlpha / 255; dc.fillStyle = '#fff'; dc.fillRect(0, 0, _origW, _origH); dc.globalAlpha = 1; _modified = true; _scheduleRender(); }
+    if (_alphaOrigCanvas) { var dc = _alphaOrigCanvas.getContext('2d'); dc.clearRect(0, 0, _origW, _origH); dc.globalAlpha = _defaultAlpha / 255; dc.fillStyle = '#fff'; dc.fillRect(0, 0, _origW, _origH); dc.globalAlpha = 1; _modified = true; _scheduleRender(); }
     saveConfig();
   });
   document.getElementById('default-alpha').addEventListener('change', saveConfig);
