@@ -877,11 +877,15 @@ def batch_edit_tags(
 
         返回 ``(new, matched_file)``. Callers: ``_run_batch_edit``.
         """
-        # 整理食材: 拆分并移除旧 score/质量标签
+        # 整理食材: 拆分; 仅在注入对应维度时移除旧 score/质量标签,
+        # 否则保留(除非用户明确指定删除, 由 _transform 处理)
         header, body, _ = split_header_body(raw)
-        priority = SCORE_TAG_KEYS | QUALITY_TAG_KEYS
-        header = [t for t in header if tag_key(t) not in priority]
-        body = [t for t in body if tag_key(t) not in priority]
+        if inject_pony_score:
+            header = [t for t in header if tag_key(t) not in SCORE_TAG_KEYS]
+            body = [t for t in body if tag_key(t) not in SCORE_TAG_KEYS]
+        if inject_quality_tag:
+            header = [t for t in header if tag_key(t) not in QUALITY_TAG_KEYS]
+            body = [t for t in body if tag_key(t) not in QUALITY_TAG_KEYS]
         matched_file: dict[str, list[str]] = {}
 
         def _record(pat: str, k: str) -> None:
