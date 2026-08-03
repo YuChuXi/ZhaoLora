@@ -81,8 +81,11 @@ class TagCleanResult(BaseModel):
     root: str = ""
 
 
-# 标签检查位置选项: any(任意) / top(置顶) / bottom(置底) / before-sep(在 ||| 前) / after-sep(在 ||| 后)
-TAG_CHECK_POSITIONS = frozenset({"any", "top", "bottom", "before-sep", "after-sep", "bottom-before", "random-before", "random-after", "random"})
+# 标签检查位置选项: any / top / bottom / before-sep / after-sep / bottom-before
+TAG_CHECK_POSITIONS = frozenset({"any", "top", "bottom", "before-sep", "after-sep", "bottom-before"})
+
+# 标签插入位置选项: top / bottom / before-sep / after-sep / random / random-before / random-after
+TAG_INSERT_POSITIONS = frozenset({"top", "bottom", "before-sep", "after-sep", "random", "random-before", "random-after"})
 
 
 class TagCheckItem(BaseModel):

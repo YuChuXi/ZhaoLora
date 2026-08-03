@@ -17,6 +17,7 @@ from services.models import (
     JobSnapshot,
     JobSubmitResponse,
     TAG_CHECK_POSITIONS,
+    TAG_INSERT_POSITIONS,
     TagCheckBody,
     TagCheckItem,
     TagCheckResponse,
@@ -406,7 +407,7 @@ def tag_edit_one(request: Request, body: TagEditOneBody) -> TagCheckItem:
     """
     rt = get_runtime(request)
     root = rt.root
-    if body.position not in TAG_CHECK_POSITIONS:
+    if body.position not in TAG_INSERT_POSITIONS:
         raise HTTPException(400, f"position 非法: {body.position}")
     if not body.tag.strip():
         raise HTTPException(400, "标签不能为空")

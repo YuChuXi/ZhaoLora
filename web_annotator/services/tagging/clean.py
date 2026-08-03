@@ -133,11 +133,10 @@ def add_tag_to_caption(raw: str, tag: str, position: str) -> str:
     Args:
         raw: 原始 caption 文本.
         tag: 待添加的标签原文.
-        position: 目标位置 — ``any`` / ``top`` / ``bottom`` /
-            ``before-sep`` / ``after-sep`` / ``random`` /
-            ``random-before`` / ``random-after``.
+        position: 目标位置 — ``top`` / ``bottom`` / ``before-sep`` /
+            ``after-sep`` / ``random`` / ``random-before`` /
+            ``random-after``.
             各位置插入策略:
-            - ``any``: 头部末尾(兼容旧调用, 不主动创建 ``|||``)
             - ``top``: 头部首位(跳过质量/分数等优先标签后插入)
             - ``bottom``: 有 ``|||`` 时追加到正文末尾, 否则头部末尾
             - ``before-sep``: 头部末尾
@@ -182,8 +181,8 @@ def add_tag_to_caption(raw: str, tag: str, position: str) -> str:
         else:
             idx = random.randint(0, len(body))
             body.insert(idx, tag)
-    else:  # any (兼容旧调用, 等同于 before-sep)
-        header.append(tag)
+    else:
+        raise ValueError(f"不支持的插入位置: {position!r}")
 
     if body:
         return join_tags_line(header) + " ||| " + join_tags_line(body)
@@ -720,7 +719,7 @@ def _has_backref(template: str) -> bool:
 
 
 def _expand_template(match: re.Match[str], template: str) -> str:
-    """展开替换模板, 兼容 ``\\1`` 与 ``$1`` 两种分组占位符. 
+    """展开替换模板, 支持 ``\\1`` 与 ``$1`` 两种分组占位符语法. 
 
     Args:
         match: 已命中的正则匹配对象. 
@@ -753,8 +752,8 @@ def _make_tag_matcher(patterns: list[str], mode: str) -> Callable[[str], bool]:
     """按匹配模式构造标签命中判定函数(任一模式命中即命中).
 
     Args:
-        patterns: 标签或模式列表. 仅 ``exact`` 模式下会按逗号二次展开
-            (兼容逗号分隔传入), 其余模式按原样使用. 
+        patterns: 标签或模式列表. 仅 ``exact`` 模式支持逗号分隔批量传入
+            (其余模式按原样使用, 逗号是模式字符). 
         mode: 匹配模式, 语义同 ``_classify``. 
 
     Returns:
@@ -996,4 +995,4 @@ def batch_edit_tags(
         inject_quality_tag=inject_quality_tag,
         quality_injected=st.quality_injected,
         quality_missing=st.quality_missing,
-    )
+    )d3607932.png

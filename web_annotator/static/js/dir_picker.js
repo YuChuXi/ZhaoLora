@@ -75,7 +75,7 @@ var DirPicker = (function () {
   }
 
   /**
-   * 取已选列表中的第一项（仅兼容旧调用）。
+   * 取已选列表中的第一项（单选语义, 供 paint.js 单目录工作流使用）。
    * @returns {string}
    */
   function getDir() {
