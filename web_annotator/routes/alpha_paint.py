@@ -123,12 +123,9 @@ async def upload_mask(
         raise HTTPException(404, f"Image not found: {path}")
     body = await request.body()
     mask_img = Image.open(io.BytesIO(body))
-    # 前端 canvas 导出 RGBA, 蒙版在 alpha 通道(笔刷绘制时 RGB 恒为白),
-    # 取 A 通道而非 convert("L") 的 RGB 亮度, 否则绘制后保存必为纯白.
-    if "A" in mask_img.getbands():
-        alpha = np.array(mask_img.getchannel("A"), dtype=np.uint8)
-    else:
-        alpha = np.array(mask_img.convert("L"), dtype=np.uint8)
+    # 前端 canvas 导出 RGBA, 蒙版在 alpha 通道(笔刷绘制时 RGB 恒白),
+    # 直接取 A 通道, 而非 convert("L") 的 RGB 亮度(否则绘制后保存必为纯白).
+    alpha = np.array(mask_img.getchannel("A"), dtype=np.uint8)
     dest = save_mask(mask_dir, path, alpha, src, save_format=format)
     return PaintSaveResponse(saved=str(dest), size=list(Image.open(src).size))
 
