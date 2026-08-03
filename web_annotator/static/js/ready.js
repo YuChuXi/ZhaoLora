@@ -93,13 +93,21 @@
   }
 
   async function copyText() {
-    var text = document.getElementById('toml-box').value;
+    var tb = document.getElementById('toml-box');
+    var text = tb.value;
     if (!text) {
       toast('无可复制内容');
       return;
     }
-    await navigator.clipboard.writeText(text);
-    toast('已复制');
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      await navigator.clipboard.writeText(text);
+      toast('已复制');
+      return;
+    }
+    // 非安全上下文(局域网 http 访问)下 clipboard API 不可用: 选中文本供手动复制
+    tb.select();
+    tb.setSelectionRange(0, tb.value.length);
+    toast('剪贴板不可用，已选中文本，请按 Ctrl+C');
   }
 
   document.getElementById('btn-gen').addEventListener('click', function () {
