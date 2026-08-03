@@ -159,8 +159,8 @@
         var tc = document.createElement('canvas'); tc.width = _origW; tc.height = _origH;
         var tctx = tc.getContext('2d'); tctx.drawImage(mi, 0, 0);
         var d = tctx.getImageData(0, 0, _origW, _origH).data;
-        // 蒙版统一走 alpha 通道(与上传侧对称)
-        for (var i = 0; i < _alpha.length; i++) _alpha[i] = d[i * 4 + 3];
+        // 下载为灰度蒙版, 取 R 通道(=L)
+        for (var i = 0; i < _alpha.length; i++) _alpha[i] = d[i * 4];
         resolve();
       };
       mi.onerror = resolve;
@@ -247,8 +247,8 @@
             var tctx = tc.getContext('2d'); tctx.drawImage(mi, 0, 0);
             var d = tctx.getImageData(0, 0, entry.w, entry.h).data;
             var a = new Uint8Array(entry.w * entry.h);
-            // 蒙版统一走 alpha 通道(与上传侧对称)
-            for (var i = 0; i < a.length; i++) a[i] = d[i * 4 + 3];
+            // 下载为灰度蒙版, 取 R 通道(=L)
+            for (var i = 0; i < a.length; i++) a[i] = d[i * 4];
             entry.alpha = a;
             entry.alphaCanvas = tc;
           }
