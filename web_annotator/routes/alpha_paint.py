@@ -97,7 +97,10 @@ def get_existing_mask(request: Request, path: str = Query(...)) -> Response:
     if alpha is None:
         raise HTTPException(404, "No mask saved")
     buf = io.BytesIO()
-    Image.fromarray(alpha, mode="L").save(buf, format="PNG")
+    # 与上传侧对称: 蒙版放 alpha 通道返回, 前端统一读 A 通道
+    out = Image.new("RGBA", alpha.shape[::-1], (0, 0, 0, 0))
+    out.putalpha(Image.fromarray(alpha, mode="L"))
+    out.save(buf, format="PNG")
     buf.seek(0)
     return Response(content=buf.read(), media_type="image/png")
 
