@@ -113,16 +113,27 @@
       return;
     }
 
-    var blob = await (await api('/api/paint/image?path=' + encodeURIComponent(img.path))).blob();
-    var url = URL.createObjectURL(blob);
+    // 有蒙版: 一次下载 RGBA(原图 RGB + 蒙版 A); 无蒙版: 下载原图
+    var imgBlob = img.has_mask
+      ? await (await api('/api/paint/mask?path=' + encodeURIComponent(img.path))).blob()
+      : await (await api('/api/paint/image?path=' + encodeURIComponent(img.path))).blob();
+    var url = URL.createObjectURL(imgBlob);
     _rgbImg = new Image();
     _rgbImg.onload = function() {
       _origW = _rgbImg.naturalWidth; _origH = _rgbImg.naturalHeight;
       URL.revokeObjectURL(url);
       _alpha = new Uint8Array(_origW * _origH);
-      var value = parseInt(document.getElementById('default-alpha').value);
-      _defaultAlpha = Number.isNaN(value) ? 255 : value;
-      _alpha.fill(_defaultAlpha);
+      if (img.has_mask) {
+        // RGBA: A 通道即蒙版, 与上传侧一致
+        var tc = document.createElement('canvas'); tc.width = _origW; tc.height = _origH;
+        var tctx = tc.getContext('2d'); tctx.drawImage(_rgbImg, 0, 0);
+        var d = tctx.getImageData(0, 0, _origW, _origH).data;
+        for (var i = 0; i < _alpha.length; i++) _alpha[i] = d[i * 4 + 3];
+      } else {
+        var value = parseInt(document.getElementById('default-alpha').value);
+        _defaultAlpha = Number.isNaN(value) ? 255 : value;
+        _alpha.fill(_defaultAlpha);
+      }
       _modified = false;
       _preloadCache[img.path] = {
         img: _rgbImg,
@@ -133,39 +144,10 @@
       _calcBrush(); _updateBrushUI();
       invalidateScaledCache(); _alphaOrigCanvas = null;
       fitCanvas(); _scheduleRender(); updateNav();
-      loadExistingMask(img.path).then(function() {
-        _alphaOrigCanvas = null;
-        var cached = _preloadCache[img.path];
-        if (cached) cached.alpha = new Uint8Array(_alpha);
-        _scheduleRender();
-        updateStatusBar();
-      });
       _preloadNeighbors(_index);
     };
     _rgbImg.onerror = function() { throw new Error('图片解码失败: ' + img.path); };
     _rgbImg.src = url;
-  }
-
-  async function loadExistingMask(path) {
-    var resp = await fetch(API.apiPath('/paint/mask') + '?path=' + encodeURIComponent(path));
-    if (!resp.ok) return;  // 404 = 无 mask, 正常
-    var blob = await resp.blob();
-    var url = URL.createObjectURL(blob);
-    await new Promise(function(resolve) {
-      var mi = new Image();
-      mi.onload = function() {
-        URL.revokeObjectURL(url);
-        if (mi.naturalWidth !== _origW || mi.naturalHeight !== _origH) { resolve(); return; }
-        var tc = document.createElement('canvas'); tc.width = _origW; tc.height = _origH;
-        var tctx = tc.getContext('2d'); tctx.drawImage(mi, 0, 0);
-        var d = tctx.getImageData(0, 0, _origW, _origH).data;
-        // 下载为灰度蒙版, 取 R 通道(=L)
-        for (var i = 0; i < _alpha.length; i++) _alpha[i] = d[i * 4];
-        resolve();
-      };
-      mi.onerror = resolve;
-      mi.src = url;
-    });
   }
 
   // ---- 预加载 ----
@@ -219,46 +201,34 @@
     var seq = ++_preloadSeq;
     for (var di = 1; di <= PRELOAD_RADIUS; di++) {
       if (seq !== _preloadSeq) return;
-      var ni = idx + di; if (ni < _images.length) await _preloadOne(_images[ni].path);
-      ni = idx - di; if (ni >= 0) await _preloadOne(_images[ni].path);
+      var ni = idx + di; if (ni < _images.length) await _preloadOne(_images[ni]);
+      ni = idx - di; if (ni >= 0) await _preloadOne(_images[ni]);
     }
   }
 
-  async function _preloadOne(path) {
-    if (_preloadCache[path]) return;
-    var blob = await fetch(API.apiPath('/paint/image') + '?path=' + encodeURIComponent(path)).then(function(r) { return r.blob(); });
-    var url = URL.createObjectURL(blob);
-    var img = new Image();
-    img.onload = function() {
-      var entry = { img: img, w: img.naturalWidth, h: img.naturalHeight };
-      _preloadCache[path] = entry;
+  async function _preloadOne(img) {
+    if (_preloadCache[img.path]) return;
+    // 有蒙版: 一次下载 RGBA(原图 RGB + 蒙版 A); 无蒙版: 下载原图
+    var imgBlob = img.has_mask
+      ? await fetch(API.apiPath('/paint/mask') + '?path=' + encodeURIComponent(img.path)).then(function(r) { return r.blob(); })
+      : await fetch(API.apiPath('/paint/image') + '?path=' + encodeURIComponent(img.path)).then(function(r) { return r.blob(); });
+    var url = URL.createObjectURL(imgBlob);
+    var el = new Image();
+    el.onload = function() {
+      var entry = { img: el, w: el.naturalWidth, h: el.naturalHeight };
+      _preloadCache[img.path] = entry;
       URL.revokeObjectURL(url);
+      if (img.has_mask) {
+        var tc = document.createElement('canvas'); tc.width = entry.w; tc.height = entry.h;
+        var tctx = tc.getContext('2d'); tctx.drawImage(el, 0, 0);
+        var d = tctx.getImageData(0, 0, entry.w, entry.h).data;
+        var a = new Uint8Array(entry.w * entry.h);
+        for (var i = 0; i < a.length; i++) a[i] = d[i * 4 + 3];
+        entry.alpha = a;
+      }
       updateStatusBar();
-      fetch(API.apiPath('/paint/mask') + '?path=' + encodeURIComponent(path)).then(function(r) {
-        if (!r.ok) return;
-        return r.blob();
-      }).then(function(b) {
-        if (!b) return;
-        var u = URL.createObjectURL(b);
-        var mi = new Image();
-        mi.onload = function() {
-          if (mi.naturalWidth === entry.w && mi.naturalHeight === entry.h) {
-            var tc = document.createElement('canvas'); tc.width = entry.w; tc.height = entry.h;
-            var tctx = tc.getContext('2d'); tctx.drawImage(mi, 0, 0);
-            var d = tctx.getImageData(0, 0, entry.w, entry.h).data;
-            var a = new Uint8Array(entry.w * entry.h);
-            // 下载为灰度蒙版, 取 R 通道(=L)
-            for (var i = 0; i < a.length; i++) a[i] = d[i * 4];
-            entry.alpha = a;
-            entry.alphaCanvas = tc;
-          }
-          URL.revokeObjectURL(u);
-          updateStatusBar();
-        };
-        mi.src = u;
-      });
     };
-    img.src = url;
+    el.src = url;
   }
   function _updateBrushUI() {
     document.getElementById('brush-label').textContent = _brushPct.toFixed(1) + '% ~' + _brushRadius + 'px';

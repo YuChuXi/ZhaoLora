@@ -73,6 +73,31 @@ def load_mask(out_dir: Path, src_path: str, size: tuple[int, int]) -> np.ndarray
     return np.array(rgba.getchannel("A"), dtype=np.uint8, copy=True)
 
 
+def compose_mask_rgba(image: Image.Image, alpha: np.ndarray) -> Image.Image:
+    """原图 alpha 合成到白色衬底后写入蒙版 A 通道, 生成预览 RGBA.
+
+    Args:
+        image: 原图(PIL Image). 
+        alpha: 蒙版数组 ``(H, W)`` ``uint8``. 
+
+    Returns:
+        RGBA 图: RGB=白底原图, A=蒙版. 
+
+    Raises:
+        ValueError: alpha 尺寸与原图不一致. 
+
+    引用:
+        ``save_mask`` (rgba 格式), ``routes.alpha_paint.get_existing_mask``. 
+    """
+    im = image.convert("RGBA")
+    bg = Image.new("RGB", im.size, (255, 255, 255))
+    bg.paste(im, mask=im.split()[3])
+    if alpha.shape[::-1] != bg.size:
+        raise ValueError(f"alpha shape {alpha.shape} != image size {bg.size}")
+    r, g, b = bg.split()
+    return Image.merge("RGBA", (r, g, b, Image.fromarray(alpha, mode="L")))
+
+
 def save_mask(
     out_dir: Path,
     src_path: str,
@@ -100,11 +125,5 @@ def save_mask(
     if save_format == "alpha_bw":
         Image.fromarray(alpha, mode="L").save(dest, format="PNG")
         return dest
-    im = Image.open(src_image_path).convert("RGBA")
-    bg = Image.new("RGB", im.size, (255, 255, 255))
-    bg.paste(im, mask=im.split()[3])
-    if alpha.shape[::-1] != bg.size:
-        raise ValueError(f"alpha shape {alpha.shape} != image size {bg.size}")
-    r, g, b = bg.split()
-    Image.merge("RGBA", (r, g, b, Image.fromarray(alpha, mode="L"))).save(dest, format="PNG")
+    compose_mask_rgba(Image.open(src_image_path), alpha).save(dest, format="PNG")
     return dest

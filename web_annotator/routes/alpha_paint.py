@@ -13,7 +13,7 @@ from PIL import Image
 
 from routes.deps import get_runtime, resolve_path
 from services.core.scanner import scan_images
-from services.state.mask import has_mask, load_mask, save_mask
+from services.state.mask import compose_mask_rgba, has_mask, load_mask, save_mask
 from services.models import DefaultAlphaResponse, PaintImageItem, PaintSaveResponse
 
 router = APIRouter(prefix="/paint", tags=["paint"])
@@ -97,9 +97,9 @@ def get_existing_mask(request: Request, path: str = Query(...)) -> Response:
     if alpha is None:
         raise HTTPException(404, "No mask saved")
     buf = io.BytesIO()
-    # 下载只传蒙版灰度: 前端已下载过原图, mask 响应不再重复携带原图 RGB.
-    # 上传受 canvas 约束走 A 通道; 下载最小化走灰度(L/R).
-    Image.fromarray(alpha, mode="L").save(buf, format="PNG")
+    # 原图 alpha 衬到白底后合入蒙版 A 通道(与 save_mask rgba 格式一致),
+    # 丢弃原图 alpha 后透明区域不变黑.
+    compose_mask_rgba(rgb, alpha).save(buf, format="PNG")
     buf.seek(0)
     return Response(content=buf.read(), media_type="image/png")
 
