@@ -20,10 +20,7 @@ def list_datasets(request: Request) -> DatasetsResponse:
     引用: nav.js boot. 
     """
     store = request.app.state.task_store
-    items = [
-        DatasetItem(name=name, root=str(store.root / name))
-        for name in store.active_names()
-    ]
+    items = [DatasetItem(name=name) for name in store.active_names()]
     return DatasetsResponse(datasets=items)
 
 

@@ -36,7 +36,6 @@ class TagStatsResult(BaseModel):
     per_sample: bool = True
     tags: list[TagStatRow] = Field(default_factory=list)
     dirs: list[str] = Field(default_factory=list)
-    root: str = ""
     zh_cache_size: int = 0
 
 

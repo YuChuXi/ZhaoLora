@@ -483,9 +483,12 @@ def _lookup_pony_quality(path: Path, root: Path | None, *,
     return score_tag, quality_tag_val, pony_injected, pony_missing, quality_injected, quality_missing
 
 
-def _record_sample(raw: str, new: str, *, path: Path, dry_run: bool,
+def _record_sample(raw: str, new: str, *, path: Path, root: Path | None, dry_run: bool,
                    samples: list[TagCleanSample], sample_limit: int) -> None:
-    """变更时追加前后对比样本并写文件.
+    """变更时追加前后对比样本并写文件; path 字段存相对数据集根的路径. 
+
+    Args:
+        root: 数据集根目录; 为 None 时无相对路径可用, 以文件名为标识. 
 
     Callers:
         - ``_run_batch_edit``
@@ -493,7 +496,7 @@ def _record_sample(raw: str, new: str, *, path: Path, dry_run: bool,
     if len(samples) < sample_limit:
         samples.append(
             TagCleanSample(
-                path=str(path),
+                path=str(path.relative_to(root)) if root is not None else path.name,
                 name=path.name,
                 before=raw.strip()[:500],
                 after=new[:500],
@@ -579,7 +582,7 @@ def _run_batch_edit(
             unchanged += 1
         else:
             changed += 1
-            _record_sample(raw, new, path=path, dry_run=dry_run, samples=samples, sample_limit=sample_limit)
+            _record_sample(raw, new, path=path, root=root, dry_run=dry_run, samples=samples, sample_limit=sample_limit)
 
     stats = _BatchStats(
         files, changed, unchanged, failed,

@@ -55,7 +55,6 @@ class TaskCard(BaseModel):
 
     name: str
     completed: bool
-    root: str = ""
     image_count: int = 0
     preview_hashes: list[str] = Field(default_factory=list)
     report_ready: bool = False
@@ -72,7 +71,6 @@ class TaskListResponse(BaseModel):
     """
 
     tasks: list[TaskCard]
-    root: str
 
 
 class TaskCandidatesResponse(BaseModel):
@@ -95,7 +93,6 @@ class TaskOkResponse(BaseModel):
     ok: bool = True
     name: str
     completed: bool
-    root: str | None = None
     note: str = ""
 
 
@@ -113,7 +110,6 @@ class DatasetItem(BaseModel):
     """
 
     name: str
-    root: str
 
 
 class DatasetsResponse(BaseModel):

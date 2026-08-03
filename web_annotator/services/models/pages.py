@@ -11,46 +11,6 @@ from services.models.dataset import WorkDirInfo
 from services.models.jobs import JobSnapshot
 
 
-class AestheticDirsResponse(BaseModel):
-    """美学页目录与报告状态. 
-
-    引用:
-        ``routes.aesthetic.aesthetic_dirs``. 
-    """
-
-    root: str
-    dirs: list[WorkDirInfo]
-    cuda: bool
-    default_device: str
-    report_ready: bool
-    report_url: str | None = None
-
-
-class AestheticStartResponse(BaseModel):
-    """美学任务提交回执. 
-
-    引用:
-        ``routes.aesthetic.aesthetic_start``. 
-    """
-
-    ok: bool = True
-    job_id: str
-    dirs: list[str]
-    device: str
-
-
-class AestheticActiveResponse(BaseModel):
-    """美学任务重连回执. 
-
-    引用:
-        ``routes.aesthetic.aesthetic_active``. 
-    """
-
-    ok: bool = True
-    job_id: str | None = None
-    status: JobSnapshot | None = None
-
-
 class ScoringDirsResponse(BaseModel):
     """统一评分页目录与两类分数文件状态. 
 
@@ -58,7 +18,6 @@ class ScoringDirsResponse(BaseModel):
         ``routes.scoring.scoring_dirs``. 
     """
 
-    root: str
     dirs: list[WorkDirInfo]
     cuda: bool
     default_device: str
@@ -102,7 +61,6 @@ class TaggingDirsResponse(BaseModel):
         ``routes.tagging.tagging_dirs``. 
     """
 
-    root: str
     dirs: list[WorkDirInfo]
     model_ready: bool
     model_path: str

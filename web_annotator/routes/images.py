@@ -59,7 +59,7 @@ def _resolve_image(root: Path, trash_dir: Path, rel: str) -> Path:
 def list_dirs(request: Request) -> DirsResponse:
     """列出工作子目录. 引用: 筛选页 DirPicker. """
     root = get_runtime(request).root
-    return DirsResponse(root=str(root), dirs=list_work_dirs(root), default="main")
+    return DirsResponse(dirs=list_work_dirs(root), default="main")
 
 
 @router.get("/images")

@@ -41,9 +41,6 @@ class CropPageConfig(BaseModel):
         ``routes.crop.get_config``. 
     """
 
-    root: str
-    main_dir: str
-    mask_dir: str
     parts: list[str]
 
 

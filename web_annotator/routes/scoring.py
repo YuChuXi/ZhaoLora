@@ -59,7 +59,6 @@ def scoring_dirs(request: Request) -> ScoringDirsResponse:
     qual_scores = load_score_json(root, QUALITY_SCORES)
 
     return ScoringDirsResponse(
-        root=str(root),
         dirs=list_image_subdirs(root),
         cuda=torch.cuda.is_available(),
         default_device="cuda" if torch.cuda.is_available() else "cpu",

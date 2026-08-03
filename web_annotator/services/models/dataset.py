@@ -102,7 +102,6 @@ class DirsResponse(BaseModel):
         ``routes.images`` / ``dedupe`` / ``ready`` / ``aesthetic`` / ``tagging``. 
     """
 
-    root: str
     dirs: list[WorkDirInfo]
     default: str = "main"
 

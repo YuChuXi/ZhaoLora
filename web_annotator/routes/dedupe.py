@@ -51,7 +51,7 @@ def _names(dirs: list[str] | None, legacy: str | None) -> list[str]:
 def dedupe_dirs(request: Request) -> DirsResponse:
     """列出可扫描工作目录. 引用: ``dedupe.js``. """
     rt = get_runtime(request)
-    return DirsResponse(root=str(rt.root), dirs=list_work_dirs(rt.root), default="main")
+    return DirsResponse(dirs=list_work_dirs(rt.root), default="main")
 
 
 @router.post("/scan")

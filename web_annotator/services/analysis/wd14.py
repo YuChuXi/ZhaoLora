@@ -164,14 +164,15 @@ def resolve_image_dirs(root: Path, names: list[str] | None) -> list[Path]:
 
 
 def model_ready() -> tuple[bool, str]:
-    """检查本地 WD14 权重是否齐全. 
+    """检查本地 WD14 权重是否齐全; 返回相对仓库根的模型目录路径. 
 
     Callers:
         - ``routes/tagging.py``
     """
+    rel = WD14_MODEL_DIR.relative_to(_REPO_ROOT).as_posix()
     if WD14_ONNX_PATH.is_file() and WD14_CSV_PATH.is_file():
-        return True, str(WD14_MODEL_DIR)
-    return False, f"找不到本地 WD14 模型: {WD14_MODEL_DIR}"
+        return True, rel
+    return False, f"找不到本地 WD14 模型: {rel}"
 
 
 def _get_wd14() -> tuple[InferenceSession, list[str]]:

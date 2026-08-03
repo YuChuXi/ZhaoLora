@@ -87,7 +87,6 @@ async def list_tasks(
             TaskCard(
                 name=name,
                 completed=entry.completed,
-                root=str(task_dir),
                 image_count=image_count,
                 preview_hashes=previews,
                 report_ready=report_ready,
@@ -107,7 +106,7 @@ async def list_tasks(
     elif sort_by == "created":
         items.sort(key=lambda t: t.created, reverse=reverse)
 
-    return TaskListResponse(tasks=items, root=str(store.root))
+    return TaskListResponse(tasks=items)
 
 
 @router.get("/candidates")
@@ -152,7 +151,6 @@ def add_task(request: Request, body: AddTaskBody) -> TaskOkResponse:
         ok=True,
         name=info.name,
         completed=info.completed,
-        root=info.root,
         note=info.note,
     )
 

@@ -206,6 +206,8 @@ async def booru_download(request: Request, body: DownloadBody) -> BooruDownloadR
             "dir": name,
             "rel_path": rel,
             "thumbnail_hash": thumb.hash_for(rel),
+            "path": rel,
+            "tags_path": local_rel_path(root, Path(result.tags_path)),
         }
     )
 

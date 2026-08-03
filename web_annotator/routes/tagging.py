@@ -36,7 +36,6 @@ def tagging_dirs(request: Request) -> TaggingDirsResponse:
     root = rt.root
     ok, model_path = model_ready()
     return TaggingDirsResponse(
-        root=str(root),
         dirs=list_image_subdirs(root),
         model_ready=ok,
         model_path=model_path,

@@ -158,9 +158,6 @@ def get_config(request: Request) -> CropPageConfig:
     """
     layout = _layout(request)
     return CropPageConfig(
-        root=str(layout.root),
-        main_dir=str(layout.main_dir),
-        mask_dir=str(layout.mask_dir),
         parts=[p.name for p in layout.list_part_dirs()],
     )
 

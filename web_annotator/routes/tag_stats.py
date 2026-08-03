@@ -35,7 +35,6 @@ router = APIRouter(prefix="/tags", tags=["tags"])
 class TagDirsResponse(BaseModel):
     """工作子目录列表. 引用: ``GET /tags/dirs``. """
 
-    root: str
     dirs: list[WorkDirInfo]
 
 
@@ -78,7 +77,7 @@ class CleanBody(BaseModel):
 def tag_dirs(request: Request) -> TagDirsResponse:
     """列出工作子目录(含图片的一级子目录). 引用: 标签/标签检查页. """
     root = _root(request)
-    return TagDirsResponse(root=str(root), dirs=list_work_dirs(root))
+    return TagDirsResponse(dirs=list_work_dirs(root))
 
 
 @router.post("/stats")
@@ -104,7 +103,6 @@ def tag_stats(request: Request, body: StatsBody) -> TagStatsResult:
     return result.model_copy(
         update={
             "dirs": [p.name if p != root else "." for p in selected],
-            "root": str(root),
             "zh_cache_size": len(zh_map),
         }
     )
@@ -174,7 +172,6 @@ async def tag_clean(request: Request, body: CleanBody) -> JobSubmitResponse:
         result = result.model_copy(
             update={
                 "dirs": [p.name if p != root else "." for p in selected],
-                "root": str(root),
             }
         )
         emit(
@@ -270,7 +267,6 @@ async def tag_batch_edit(request: Request, body: BatchEditBody) -> JobSubmitResp
         result = result.model_copy(
             update={
                 "dirs": [p.name if p != root else "." for p in selected],
-                "root": str(root),
             }
         )
         emit(
