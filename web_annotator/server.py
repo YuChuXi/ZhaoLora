@@ -90,43 +90,6 @@ async def _block_chinese_ua_middleware(
     return await call_next(request)
 
 
-def _migrate_meta_to_root(main_dir: Path, root: Path) -> None:
-    """将误放在 main/ 下的元数据迁到任务目录根. 引用: DatasetRegistry.ensure. """
-    import shutil
-
-    pairs = [
-        (main_dir / ".thumbnails", root / ".thumbnails"),
-        (main_dir / ".trash", root / ".trash"),
-        (main_dir / ".annotator_state.json", root / ".annotator_state.json"),
-    ]
-    for old, new in pairs:
-        if not old.exists():
-            continue
-        if not new.exists():
-            shutil.move(str(old), str(new))
-            print(f"已迁移: {old.name} → {root}/")
-            continue
-        if old.is_dir() and new.is_dir():
-            for child in old.iterdir():
-                dest = new / child.name
-                if not dest.exists():
-                    shutil.move(str(child), str(dest))
-            shutil.rmtree(old, ignore_errors=True)
-            print(f"已合并迁移: {old.name} → {root}/")
-        elif old.is_file() and new.is_file():
-            old.unlink(missing_ok=True)
-            print(f"已清理重复: {old}")
-
-    for nested in (main_dir / "aesthetic_report", root / "aesthetic_report"):
-        html = nested / "aesthetic_report.html"
-        dest = root / "aesthetic_report.html"
-        if html.is_file() and not dest.exists():
-            shutil.move(str(html), str(dest))
-            print(f"已迁移: aesthetic_report.html → {root}/")
-        if nested.is_dir():
-            shutil.rmtree(nested, ignore_errors=True)
-
-
 def _read_template(name: str) -> HTMLResponse:
     """读取 templates 下 HTML. 引用: home_page / dataset_page. """
     template = Path(__file__).parent / "templates" / name
@@ -289,7 +252,6 @@ def main() -> int:
         task_root=task_root,
         thumbnail_size=args.thumbnail_size,
         job_manager=jobs,
-        _migrate=_migrate_meta_to_root,
     )
 
     app.state.task_store = store

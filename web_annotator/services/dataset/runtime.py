@@ -67,7 +67,6 @@ class DatasetRegistry:
     thumbnail_size: int = 2560
     job_manager: JobManager | None = None
     by_name: dict[str, DatasetRuntime] = field(default_factory=dict)
-    _migrate: Callable[[Path, Path], None] | None = None
 
     def get(self, name: str) -> DatasetRuntime | None:
         """按名取已加载运行时. 
@@ -95,8 +94,6 @@ class DatasetRegistry:
         if existing is not None:
             return existing
         layout = resolve_dataset_layout(self.task_root / name)
-        if self._migrate is not None:
-            self._migrate(layout.main_dir, layout.root)
         thumbnailer = Thumbnailer(
             layout.root, size=self.thumbnail_size, meta_dir=layout.root
         )
