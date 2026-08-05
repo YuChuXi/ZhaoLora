@@ -38,8 +38,6 @@
   var _bgColorEl = document.getElementById('bg-color');
   if (_bgStyleEl) _bgStyle = _bgStyleEl.value;
   if (_bgColorEl) _bgColor = _bgColorEl.value;
-  // 选色器仅「自定义」时显示
-  if (_bgColorEl) _bgColorEl.hidden = _bgStyle !== 'custom';
   _applyBackdrop();
 
   /**
@@ -564,7 +562,6 @@
   document.getElementById('brush-slider').addEventListener('input', function() { _brushPct = parseFloat(this.value); _calcBrush(); _updateBrushUI(); _updateBrushPreview(); });
   document.getElementById('bg-style').addEventListener('change', function() {
     _bgStyle = this.value;
-    if (_bgColorEl) _bgColorEl.hidden = _bgStyle !== 'custom';
     _applyBackdrop();
   });
   document.getElementById('bg-color').addEventListener('change', function() { _bgColor = this.value; _applyBackdrop(); });
@@ -597,10 +594,12 @@
   if (birefnetBtn && birefnetDlg) {
     birefnetBtn.addEventListener('click', function () { birefnetDlg.hidden = false; });
     document.getElementById('birefnet-cancel').addEventListener('click', function () { birefnetDlg.hidden = true; });
-    document.getElementById('birefnet-batch').addEventListener('change', function () {
-      // 「跳过已有蒙版」是批量概念, 仅批量模式显示
-      document.getElementById('birefnet-skip-wrap').hidden = !this.checked;
-    });
+    // 「跳过已有蒙版」仅批量模式可用: 单图模式禁用(灰显由 CSS 派生), disabled 只能 JS 设
+    var syncSkipEnabled = function () {
+      document.getElementById('birefnet-skip').disabled = !document.getElementById('birefnet-batch').checked;
+    };
+    document.getElementById('birefnet-batch').addEventListener('change', syncSkipEnabled);
+    syncSkipEnabled();
     document.getElementById('birefnet-start').addEventListener('click', function () {
       var expand = parseInt(document.getElementById('birefnet-expand').value) || 32;
       var shrink = parseInt(document.getElementById('birefnet-shrink').value) || 0;

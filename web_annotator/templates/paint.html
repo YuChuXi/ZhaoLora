@@ -18,6 +18,11 @@
   .modal-row { display: flex; gap: 16px; margin-bottom: 16px; }
   .modal-row label { font-size: 13px; display: flex; flex-direction: column; gap: 4px; }
   .modal-row label.inline { flex-direction: row; align-items: center; gap: 6px; }
+  /* 「跳过已有蒙版」是批量概念: 单图模式灰显禁用(纯 CSS 视觉), 批量模式正常 */
+  .modal-row:has(#birefnet-batch:not(:checked)) #birefnet-skip-wrap { opacity: .5; }
+  /* 选色器仅「自定义」背景时显示 */
+  #bg-color { display: none; }
+  #bg-style:has(option[value="custom"]:checked) ~ #bg-color { display: inline-block; }
   .modal-row input { width: 80px; background: var(--input-bg, #333); color: var(--text, #ddd); border: 1px solid var(--border, #555); border-radius: 4px; padding: 4px 8px; font-size: 13px; }
   .modal-row input[type="checkbox"] { width: auto; margin: 0; }
   .modal-actions { display: flex; gap: 8px; justify-content: flex-end; }
@@ -57,7 +62,7 @@
       <option value="black">纯黑</option>
       <option value="custom">自定义</option>
     </select>
-    <input type="color" id="bg-color" value="#ffffff" title="自定义背景色" hidden
+    <input type="color" id="bg-color" value="#ffffff" title="自定义背景色"
       style="width:26px;height:22px;padding:0;border:1px solid var(--border);border-radius:4px;background:var(--card-bg);">
   </label>
 </div>
@@ -92,7 +97,7 @@
     </div>
     <div class="modal-row">
       <label class="inline"><input type="checkbox" id="birefnet-batch"> 批量处理整个目录</label>
-      <label class="inline" id="birefnet-skip-wrap" hidden><input type="checkbox" id="birefnet-skip" checked> 跳过已有蒙版</label>
+      <label class="inline" id="birefnet-skip-wrap"><input type="checkbox" id="birefnet-skip" checked> 跳过已有蒙版</label>
     </div>
     <div class="modal-actions">
       <button type="button" class="btn" id="birefnet-cancel">取消</button>
