@@ -217,7 +217,8 @@ def run_wd14_on_image_scored(img: Image.Image, threshold: float) -> list[tuple[s
     arr = arr[:, :, ::-1]
     input_data = arr[np.newaxis, ...]
     input_name = session.get_inputs()[0].name
-    probs = session.run(None, {input_name: input_data})[0][0]
+    # 模型输出声明为稀疏张量, 类型推断为 SparseTensor, 但运行时返回 numpy 数组; 显式转 ndarray.
+    probs = np.asarray(session.run(None, {input_name: input_data})[0])[0]
     scored: list[tuple[str, float]] = []
     for i, p in enumerate(probs):
         if i < len(labels) and float(p) >= threshold:

@@ -12,9 +12,9 @@ from curl_cffi.requests.exceptions import RequestException
 
 from services.booru import BooruBatchProgress, get_progress, register_progress, run_booru_batch
 from services.booru_client import (
-    build_search_query,
     download_post,
     fetch_gelbooru_bytes,
+    file_stem,
     get_source,
     is_downloaded,
     list_source_names,
@@ -174,7 +174,7 @@ async def booru_sample(
 async def booru_download(request: Request, body: DownloadBody) -> BooruDownloadResult:
     """下载帖子到工作目录. 引用: ``booru_filter.js``. """
     source = body.source.strip().lower()
-    if source not in SOURCES:
+    if source not in list_source_names():
         raise HTTPException(400, f"不支持的源: {body.source}")
     root = get_runtime(request).root
     try:
@@ -216,7 +216,7 @@ async def booru_download(request: Request, body: DownloadBody) -> BooruDownloadR
 def booru_undownload(request: Request, body: DownloadBody) -> BooruUndownloadResult:
     """删除工作目录中该帖已下载文件. 引用: ``booru_filter.js``. """
     source = body.source.strip().lower()
-    if source not in SOURCES:
+    if source not in list_source_names():
         raise HTTPException(400, f"不支持的源: {body.source}")
     root = get_runtime(request).root
     try:
@@ -395,26 +395,26 @@ async def booru_refresh_metadata(request: Request, body: RefreshMetadataBody) ->
     """
     rt = get_runtime(request)
     try:
-        _, out_dir = resolve_subdir(rt.root, body.dir)
+        resolve_subdir(rt.root, body.dir)  # 仅校验目录合法
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
 
     proxy = _proxy(request)
 
-    def run(emit: EmitFn) -> dict:
+    def run(emit: EmitFn) -> None:
         import asyncio as _asyncio
         loop = _asyncio.new_event_loop()
         try:
-            return loop.run_until_complete(_run_refresh(rt.root / body.dir if body.dir else rt.root, proxy, emit))
+            loop.run_until_complete(_run_refresh(rt.root / body.dir if body.dir else rt.root, proxy, emit))
         finally:
             loop.close()
 
-    async def _run_refresh(scan_dir: Path, proxy: str | None, emit: EmitFn) -> dict:
+    async def _run_refresh(scan_dir: Path, proxy: str | None, emit: EmitFn) -> None:
         from services.core.scanner import IMAGE_EXTS as _EXTS
         from services.booru_client.common import detect_source, get_source
 
         scan_dir = scan_dir.resolve()
-        files: list[tuple[str, str, str]] = []  # (source, pid, source_name)
+        files: list[tuple[str, str]] = []  # (source, pid)
         for f in sorted(scan_dir.iterdir()):
             if not f.is_file() or f.suffix.lower() not in _EXTS:
                 continue
@@ -442,7 +442,6 @@ async def booru_refresh_metadata(request: Request, body: RefreshMetadataBody) ->
         summary = ", ".join(f"{s}: {c}" for s, c in sorted(stats.items()))
         emit(JobSnapshot(status="done", phase="done", total=total, done=total, pct=100,
                          message=f"{summary}, 错误 {len(errors)}"))
-        return {"stats": stats, "errors": errors}
 
     job_id = jobs(request).submit(kind="refresh_meta", group="compute", dataset=rt.name, run=run)
     return JobSubmitResponse(ok=True, job_id=job_id)

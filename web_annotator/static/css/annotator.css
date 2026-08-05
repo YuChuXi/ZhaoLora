@@ -384,6 +384,31 @@ body {
   font-size: 12px;
   max-width: none;
 }
+/* 第一段(位置)可点击: 打开横排预览条 */
+#seg-pos { cursor: pointer; border-radius: 4px; padding: 2px 8px; margin-left: 2px; }
+#seg-pos:hover { background: rgba(255,255,255,0.08); }
+/* 横排图像预览条: 位于状态栏上方, 横向滚动, 当前项高亮 */
+.filmstrip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  overflow-x: auto;
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.filmstrip img {
+  height: 44px;
+  width: auto;
+  border-radius: 3px;
+  border: 2px solid transparent;
+  cursor: pointer;
+  flex-shrink: 0;
+  background: #0a1a30;
+}
+.filmstrip img:hover { border-color: var(--text-dim); }
+.filmstrip img.active { border-color: var(--green); }
 
 /* ---- 任务进度条（打标 / 美学）：仅未 hidden 时占位，避免 display:flex 顶掉 hidden ---- */
 .job-progress:not([hidden]) {

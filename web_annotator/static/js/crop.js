@@ -14,6 +14,7 @@
 
   var _images = [];
   var _index = 0;
+  var _strip = null; // 横排预览条控制器(Filmstrip)
   var _origW = 0;
   var _origH = 0;
   var _img = null;
@@ -716,6 +717,7 @@
     if (_autoParts.length) prefix += ' · 自动：' + _autoParts.join(', ');
     setExtraPrefix(prefix);
     updateLive(_selected >= 0 ? _crops[_selected] : null);
+    if (_strip) _strip.sync();
   }
 
   // ---- hit test（原图像素坐标）----
@@ -992,6 +994,7 @@
   async function loadImages() {
     var res = await (await api('/api/crop/images')).json();
     _images = res;
+    if (_strip) _strip.refresh();
     if (_images.length > 0) {
       var start = findNextUnfinished(-1);
       if (start < 0) {
@@ -1165,6 +1168,17 @@
     document.getElementById('btn-prev').addEventListener('click', goPrev);
     document.getElementById('btn-next').addEventListener('click', goNextUnfinished);
     document.getElementById('btn-skip').addEventListener('click', goNextUnfinished);
+    // 横排预览条: 点击第一段(位置)展开, 点击缩略图跳转
+    _strip = Filmstrip.create({
+      container: document.getElementById('filmstrip'),
+      getItems: function () { return _images; },
+      thumbSrc: function (it) {
+        return it.thumbnail_hash ? API.thumbnailUrl(it.thumbnail_hash) : API.imageUrl(it.path);
+      },
+      getActive: function () { return _index; },
+      onSelect: function (i) { loadIndex(i); },
+    });
+    document.getElementById('seg-pos').addEventListener('click', function () { _strip.toggle(); });
     document.getElementById('btn-save').addEventListener('click', function () {
       saveAndNext();
     });

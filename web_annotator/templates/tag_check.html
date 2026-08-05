@@ -82,7 +82,7 @@
     min-width: 100%; min-height: 100%;
   }
   /* 标签文本段: 占满剩余空间, 单行截断, 悬停看完整 */
-  #single-caption { flex: 1; max-width: none; font-family: ui-monospace, monospace; }
+  #single-status #seg-extra { flex: 1; max-width: none; font-family: ui-monospace, monospace; }
   /* 放大镜: fixed 跟随鼠标, 光晕颜色随标签状态 (绿=符合 红=不符 灰=无标签) */
   .magnifier {
     position: fixed; pointer-events: none; z-index: 300;
@@ -150,12 +150,14 @@
       <img class="magnifier-img" id="magnifier-img" alt="">
     </div>
   </div>
-  <div class="status-bar">
-    <span class="status-seg" id="single-counter">0/0</span>
-    <span class="status-seg" id="single-stem">-</span>
-    <span class="status-seg" id="single-tag">-</span>
-    <span class="status-seg" id="single-size">-</span>
-    <span class="status-seg" id="single-caption">-</span>
+  <div class="filmstrip" id="filmstrip" hidden></div>
+  <div class="status-bar" id="single-status">
+    <span class="status-seg" id="seg-pos">0/0</span>
+    <span class="status-seg" id="seg-done">符合 0</span>
+    <span class="status-seg" id="seg-name">-</span>
+    <span class="status-seg" id="seg-obj">-</span>
+    <span class="status-seg" id="seg-metric">-</span>
+    <span class="status-seg" id="seg-extra">-</span>
   </div>
 </div>
 
@@ -165,6 +167,7 @@
 <script src="/static/js/dir_picker.js"></script>
 <script src="/static/js/nav.js"></script>
 <script src="/static/js/masonry.js"></script>
+<script src="/static/js/filmstrip.js"></script>
 <script src="/static/js/tag_check.js"></script>
 </body>
 </html>

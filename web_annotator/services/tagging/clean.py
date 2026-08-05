@@ -65,23 +65,21 @@ def split_header_body(raw: str) -> tuple[list[str], list[str], bool]:
     return split_tags_line(text), [], False
 
 
-def _first_content_index(tags: list[str], use_keys: bool = False) -> int:
+def _first_content_index(tags: list[str]) -> int:
     """返回首个非优先标签(质量/分数)的索引.
 
     优先标签 (PRIORITY_TAG_KEYS) 始终置顶, 内容标签从其后开始.
     若全部为优先标签则返回列表长度.
 
     Args:
-        tags: 标签原文列表或 tag_key 列表.
-        use_keys: True 时 tags 已是 tag_key 列表, 否则自动转换.
+        tags: 标签原文列表.
 
     Callers:
         - ``check_tag_in_caption`` (top 位置判定)
         - ``add_tag_to_caption`` (top 位置插入)
     """
     for i, t in enumerate(tags):
-        k = t if use_keys else tag_key(t)
-        if k not in PRIORITY_TAG_KEYS:
+        if tag_key(t) not in PRIORITY_TAG_KEYS:
             return i
     return len(tags)
 
@@ -157,7 +155,7 @@ def add_tag_to_caption(raw: str, tag: str, position: str) -> str:
     body = [t for t in body if tag_key(t) != key]
 
     if position == "top":
-        idx = _first_content_index(header, use_keys=True)
+        idx = _first_content_index(header)
         header.insert(idx, tag)
     elif position == "before-sep":
         header.append(tag)

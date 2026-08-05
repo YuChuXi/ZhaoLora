@@ -32,6 +32,7 @@ class CropImageItem(BaseModel):
     path: str
     stem: str
     done: bool
+    thumbnail_hash: str = ""
 
 
 class CropPageConfig(BaseModel):

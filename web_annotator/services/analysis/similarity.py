@@ -20,7 +20,7 @@ _FP_SIZE = 32
 _H_BINS = 12
 _S_BINS = 6
 _V_BINS = 6
-_CACHE_NAME = "color_fp_v2.npz"
+_CACHE_NAME = "color_fp_v3.npz"
 _BUILD_WORKERS = 8
 
 
@@ -36,7 +36,7 @@ def fingerprint_image(im: Image.Image) -> np.ndarray:
     Callers:
         - ``fingerprint_file``
     """
-    small = im.resize((_FP_SIZE, _FP_SIZE), Image.BILINEAR)
+    small = im.resize((_FP_SIZE, _FP_SIZE), Image.Resampling.BILINEAR)
     arr = np.asarray(small, dtype=np.float32) * (1.0 / 255.0)
     r, g, b = arr[..., 0], arr[..., 1], arr[..., 2]
     mx = np.maximum(np.maximum(r, g), b)
@@ -57,12 +57,18 @@ def fingerprint_image(im: Image.Image) -> np.ndarray:
         hb = (4.0 + gc - rc) / 6.0
         h[mask] = np.where(mx[mask] == r[mask], hr, np.where(mx[mask] == g[mask], hg, hb))
 
-    h_hist, _ = np.histogram(h, bins=_H_BINS, range=(0.0, 1.0), density=True)
+    # 色相仅对彩色像素有意义: 按饱和度加权, 灰/白/黑像素(s≈0)不参与色相分布,
+    # 避免它们以 h=0 制造红色尖峰, 导致白色背景图被误判为彼此相似.
+    sat = float(s.sum())
+    h_hist, _ = np.histogram(h, bins=_H_BINS, range=(0.0, 1.0), weights=s)
+    if sat > 0:
+        h_hist = _H_BINS * h_hist / sat
     s_hist, _ = np.histogram(s, bins=_S_BINS, range=(0.0, 1.0), density=True)
     v_hist, _ = np.histogram(v, bins=_V_BINS, range=(0.0, 1.0), density=True)
+    h_mean = float((h * s).sum() / sat) if sat > 0 else 0.0
     mean = np.array(
         [float(r.mean()), float(g.mean()), float(b.mean()),
-         float(h.mean()), float(s.mean()), float(v.mean())],
+         h_mean, float(s.mean()), float(v.mean())],
         dtype=np.float32,
     )
     vec = np.concatenate([

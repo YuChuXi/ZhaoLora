@@ -46,6 +46,7 @@ def list_paint_images(request: Request, dir: str = "main") -> list[PaintImageIte
         ``paint.js``. 
     """
     root, mask_dir = _services(request)
+    thumbnailer = get_runtime(request).thumbnailer
     subdir = (dir or "main").strip().strip("/")
     images = scan_images(root / subdir, path_prefix=subdir)
     result: list[PaintImageItem] = []
@@ -58,6 +59,7 @@ def list_paint_images(request: Request, dir: str = "main") -> list[PaintImageIte
                 has_mask=has_mask(mask_dir, img.path),
                 width=w,
                 height=h,
+                thumbnail_hash=thumbnailer.hash_for(img.path),
             )
         )
     result.sort(key=lambda x: (1 if x.has_mask else 0))

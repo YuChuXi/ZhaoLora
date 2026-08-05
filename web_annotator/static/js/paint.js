@@ -8,6 +8,7 @@
   // 当前图片状态: 随图片切换的可变状态收敛于单一对象, 异步加载各自持有副本,
   // 完成后再交换到 _cur; 过期加载不会污染当前图(避免把上一张的蒙版保存到新图路径).
   var _cur = null; // { index, item, w, h, rgbImg, alpha, modified }
+  var _strip = null; // 横排预览条控制器(Filmstrip)
   var _scale = 1;
   var _viewW = 0, _viewH = 0, _dpr = 1;
   var _brushRadius = 80, _brushPct = 3, _defaultAlpha = 255;
@@ -95,6 +96,7 @@
   async function loadImages() {
     var res = await (await api('/api/paint/images?dir=' + encodeURIComponent(currentDir()))).json();
     _images = res;
+    if (_strip) _strip.refresh();
     if (_images.length > 0) loadIndex(0);
     else {
       updateNav();
@@ -216,6 +218,7 @@
     var buf = bufferStats();
     document.getElementById('seg-extra').textContent =
       '缓冲 ' + buf.ready + '/' + buf.want + '（缓存 ' + buf.total + '）';
+    if (_strip) _strip.sync();
   }
 
   async function _preloadNeighbors(idx) {
@@ -557,6 +560,17 @@
   document.getElementById('btn-prev').addEventListener('click', goPrev);
   document.getElementById('btn-next').addEventListener('click', goNext);
   document.getElementById('btn-skip').addEventListener('click', goSkip);
+  // 横排预览条: 点击第一段(位置)展开, 点击缩略图跳转
+  _strip = Filmstrip.create({
+    container: document.getElementById('filmstrip'),
+    getItems: function () { return _images; },
+    thumbSrc: function (it) {
+      return it.thumbnail_hash ? API.thumbnailUrl(it.thumbnail_hash) : API.imageUrl(it.path);
+    },
+    getActive: function () { return _cur ? _cur.index : 0; },
+    onSelect: function (i) { loadIndex(i); },
+  });
+  document.getElementById('seg-pos').addEventListener('click', function () { _strip.toggle(); });
   var toolSel = document.getElementById('tool-select');
   if (toolSel) toolSel.addEventListener('change', function() { _tool = this.value; });
   document.getElementById('brush-slider').addEventListener('input', function() { _brushPct = parseFloat(this.value); _calcBrush(); _updateBrushUI(); _updateBrushPreview(); });

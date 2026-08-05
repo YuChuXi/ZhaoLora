@@ -14,6 +14,7 @@
   var _fitMode = 'contain';
   var _busyPaths = {};
   var _centerOnLoad = false;  // 进入单图/切换 fit 时置 true, img.load 时居中滚动, 切换图片不置 (保持偏移)
+  var _strip = null;          // 横排预览条控制器(Filmstrip)
 
   // ---- 标签补全 ----
   var _acTags = [];          // [{tag, count, zh}] 按频次降序
@@ -169,6 +170,7 @@
         body: JSON.stringify({ dirs: dirs, tag: tag, position: position }),
       });
       _items = res.items || [];
+      if (_strip) _strip.refresh();
       hideSingle();
       Masonry.render(_items);
       updateStats();
@@ -423,7 +425,15 @@
   }
 
   /**
-   * 渲染当前单图（图片、stem、caption、着色边框）。
+   * 渲染当前单图（图片、stem、caption、着色边框、状态栏）。
+   *
+   * 状态栏与 paint / crop 页统一为 seg-* 六段：
+   * - seg-pos    : 当前位置 x/N
+   * - seg-done   : 位置符合的图片数（进度统计）
+   * - seg-name   : 文件名
+   * - seg-obj    : 标签状态（无此标签 / 位置符合 / 位置不符）
+   * - seg-metric : 图片尺寸
+   * - seg-extra  : 标签文本（悬停看完整）
    */
   function renderSingle() {
     var idx = _singleIndex;
@@ -431,27 +441,33 @@
     var img = _items[idx];
     var imgEl = document.getElementById('single-img');
     imgEl.src = API.imageUrl(img.path);
-    var stemEl = document.getElementById('single-stem');
+    // 位置段
+    document.getElementById('seg-pos').textContent = (idx + 1) + '/' + _items.length;
+    // 进度段: 位置符合的图片数
+    var ok = 0;
+    for (var i = 0; i < _items.length; i++) if (_items[i].position_ok) ok++;
+    document.getElementById('seg-done').textContent = '符合 ' + ok;
+    // 文件名段
+    var stemEl = document.getElementById('seg-name');
     stemEl.textContent = img.stem;
     stemEl.title = img.path;
-    document.getElementById('single-counter').textContent = (idx + 1) + '/' + _items.length;
-    // 标签文本段: 有内容则显示并设 title 悬停看完整, 无内容显示 -
-    var capEl = document.getElementById('single-caption');
+    // 目标状态段 (标签状态)
+    var objEl = document.getElementById('seg-obj');
+    if (!img.exists) {
+      objEl.textContent = '无此标签';
+    } else if (img.position_ok) {
+      objEl.textContent = '位置符合';
+    } else {
+      objEl.textContent = '位置不符';
+    }
+    // 尺寸段
+    document.getElementById('seg-metric').textContent =
+      (img.width && img.height) ? (img.width + '×' + img.height) : '-';
+    // 额外段: 标签文本, 有内容则显示并设 title 悬停看完整, 无内容显示 -
+    var capEl = document.getElementById('seg-extra');
     var cap = img.caption_preview || '';
     capEl.textContent = cap || '-';
     capEl.title = cap;
-    // 标签状态段 (对应 paint 的 seg-obj)
-    var tagEl = document.getElementById('single-tag');
-    if (!img.exists) {
-      tagEl.textContent = '无此标签';
-    } else if (img.position_ok) {
-      tagEl.textContent = '位置符合';
-    } else {
-      tagEl.textContent = '位置不符';
-    }
-    // 尺寸段 (对应 paint 的 seg-metric)
-    document.getElementById('single-size').textContent =
-      (img.width && img.height) ? (img.width + '×' + img.height) : '-';
 
     // 位置着色 (放大镜光晕与 stage 内阴影据此变色)
     var view = document.getElementById('view-single');
@@ -462,6 +478,7 @@
       view.classList.add('single-bad');
     }
     applyFitMode();
+    if (_strip) _strip.sync();
   }
 
   /**
@@ -481,6 +498,7 @@
   /** 退出单图视图，返回瀑布流。 */
   function hideSingle() {
     _singleIndex = -1;
+    if (_strip) _strip.close();
     document.body.classList.remove('mode-single');
     document.getElementById('view-single').hidden = true;
     document.getElementById('view-multi').hidden = false;
@@ -595,6 +613,19 @@
     });
     acInit();
     magnifierInit();
+    // 横排预览条: 点击第一段(位置)展开, 点击缩略图跳转
+    _strip = Filmstrip.create({
+      container: document.getElementById('filmstrip'),
+      getItems: function () { return _items; },
+      thumbSrc: function (it) {
+        return it.thumbnail_hash ? API.thumbnailUrl(it.thumbnail_hash) : API.imageUrl(it.path);
+      },
+      getActive: function () { return _singleIndex; },
+      onSelect: function (i) {
+        _singleIndex = i;
+        renderSingle();
+      },
+    });
 
     var colsSlider = document.getElementById('cols-slider');
     var colsLabel = document.getElementById('cols-label');
@@ -657,6 +688,8 @@
     document.getElementById('btn-next').addEventListener('click', function () { navigateSingle(1); });
     document.getElementById('btn-fit').addEventListener('click', toggleFit);
     document.getElementById('btn-single-close').addEventListener('click', hideSingle);
+    // 点击第一段(位置)切换横排预览条
+    document.getElementById('seg-pos').addEventListener('click', function () { _strip.toggle(); });
 
     // 单图点击：左键添加, 右键删除
     document.getElementById('single-img').addEventListener('click', function () {

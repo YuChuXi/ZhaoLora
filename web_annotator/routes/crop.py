@@ -107,14 +107,17 @@ def list_crop_images(request: Request) -> list[CropImageItem]:
         ``crop.js``. 
     """
     layout = _layout(request)
+    thumbnailer = get_runtime(request).thumbnailer
     images = scan_images(layout.main_dir)
     result: list[CropImageItem] = []
     for img in images:
+        rel = f"main/{img.path}"
         result.append(
             CropImageItem(
                 path=img.path,
                 stem=img.stem,
                 done=layout.stem_has_part_output(img.stem),
+                thumbnail_hash=thumbnailer.hash_for(rel),
             )
         )
     result.sort(key=lambda x: (1 if x.done else 0, x.path))

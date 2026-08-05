@@ -43,4 +43,5 @@ class PaintImageItem(BaseModel):
     has_mask: bool
     width: int = 0
     height: int = 0
+    thumbnail_hash: str = ""
 
