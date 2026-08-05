@@ -13,10 +13,13 @@ from PIL import Image
 
 from routes.deps import get_runtime, resolve_path
 from services.core.scanner import scan_images
-from services.state.mask import compose_mask_rgba, has_mask, load_mask, save_mask
+from services.state.mask import has_mask, load_mask, save_mask
 from services.models import DefaultAlphaResponse, PaintImageItem, PaintSaveResponse
 
 router = APIRouter(prefix="/paint", tags=["paint"])
+
+# 蒙版页视觉预览长边上限(px): 预览仅用于展示, 压缩后可大幅降低传输量; 蒙版仍按原分辨率
+_PAINT_PREVIEW_MAX = 2048
 
 
 class PaintConfigBody(BaseModel):
@@ -59,10 +62,13 @@ def list_paint_images(request: Request, dir: str = "main") -> list[PaintImageIte
 
 @router.get("/image")
 def serve_original_image(request: Request, path: str = Query(...)) -> Response:
-    """提供原图 AVIF 预览. 
+    """提供原图 AVIF 预览(透明区域衬白底, 长边压缩到 _PAINT_PREVIEW_MAX). 
 
     Args:
         path: 相对数据集根的路径(含子目录名). 
+
+    Response headers:
+        ``X-Original-Width`` / ``X-Original-Height``: 原图尺寸(压缩前), 供前端按原分辨率绘制蒙版. 
 
     引用:
         ``paint.js``. 
@@ -71,16 +77,25 @@ def serve_original_image(request: Request, path: str = Query(...)) -> Response:
     src = resolve_path(root, path)
     if not src.is_file():
         raise HTTPException(404, f"Image not found: {path}")
-    img = Image.open(src).convert("RGB")
+    rgba = Image.open(src).convert("RGBA")
+    bg = Image.new("RGB", rgba.size, (255, 255, 255))
+    bg.paste(rgba, mask=rgba.split()[3])
+    orig_w, orig_h = bg.size
+    if max(bg.size) > _PAINT_PREVIEW_MAX:
+        bg.thumbnail((_PAINT_PREVIEW_MAX, _PAINT_PREVIEW_MAX), Image.Resampling.LANCZOS)
     buf = io.BytesIO()
-    img.save(buf, format="AVIF", quality=85)
+    bg.save(buf, format="AVIF", quality=80)
     buf.seek(0)
-    return Response(content=buf.read(), media_type="image/avif")
+    return Response(
+        content=buf.read(),
+        media_type="image/avif",
+        headers={"X-Original-Width": str(orig_w), "X-Original-Height": str(orig_h)},
+    )
 
 
 @router.get("/mask")
 def get_existing_mask(request: Request, path: str = Query(...)) -> Response:
-    """返回已保存的灰度 mask PNG；不存在则 404. 
+    """返回原始蒙版(蒙版置入 A 通道的无损 PNG, RGB 恒白)；不存在或尺寸不符则 404. 
 
     Args:
         path: 相对数据集根的图片路径(含子目录名). 
@@ -92,14 +107,14 @@ def get_existing_mask(request: Request, path: str = Query(...)) -> Response:
     src = resolve_path(root, path)
     if not src.is_file():
         raise HTTPException(404, "Image not found")
-    rgb = Image.open(src)
-    alpha = load_mask(mask_dir, path, rgb.size)
+    alpha = load_mask(mask_dir, path, Image.open(src).size)
     if alpha is None:
         raise HTTPException(404, "No mask saved")
+    h, w = alpha.shape
+    white = Image.new("L", (w, h), 255)
+    mask_img = Image.merge("RGBA", (white, white, white, Image.fromarray(alpha, mode="L")))
     buf = io.BytesIO()
-    # 原图 alpha 衬到白底后合入蒙版 A 通道(与 save_mask rgba 格式一致),
-    # 丢弃原图 alpha 后透明区域不变黑.
-    compose_mask_rgba(rgb, alpha).save(buf, format="PNG")
+    mask_img.save(buf, format="PNG")
     buf.seek(0)
     return Response(content=buf.read(), media_type="image/png")
 

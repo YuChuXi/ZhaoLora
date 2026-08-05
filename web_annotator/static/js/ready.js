@@ -34,43 +34,47 @@
   }
 
   /**
-   * 刷新侧栏。引用：init、generate。
+   * 刷新侧栏工作目录表格：目录、张数、蒙版状态。引用：init、generate。
    * @param {object} data
    */
   function renderSide(data) {
-    var status = data.mask_status || '无';
-    var complete = data.mask_complete || 0;
-    var none = data.mask_none || 0;
-    var total = data.main_count || 0;
-    var box = document.getElementById('mask-summary');
-    box.innerHTML =
-      '<span class="status ' + (status === '完整' ? 'ok' : 'none') + '">' + status + '</span>' +
-      '完整 ' + complete + ' · 无 ' + none +
-      (total ? '（共 ' + total + '）' : '');
-
-    var list = document.getElementById('dir-list');
-    list.innerHTML = '';
+    var tbody = document.getElementById('dir-tbody');
+    tbody.innerHTML = '';
     var dirs = data.dirs || [];
     if (!dirs.length) {
-      list.innerHTML = '<div class="dir-item"><span class="meta">无含图目录</span></div>';
+      tbody.innerHTML = '<tr><td colspan="3" class="empty">无含图目录</td></tr>';
       return;
     }
     var statsByDir = {};
     (data.mask_stats || []).forEach(function (m) { statsByDir[m.name] = m; });
     dirs.forEach(function (d) {
-      var row = document.createElement('div');
-      row.className = 'dir-item';
-      var name = document.createElement('span');
-      name.textContent = d.name;
-      var meta = document.createElement('span');
-      meta.className = 'meta';
       var m = statsByDir[d.name];
-      var txt = (d.image_count != null ? d.image_count : 0) + ' 张';
-      if (m) txt += ' · ' + m.mask_status + '（完整 ' + m.mask_complete + ' / 无 ' + m.mask_none + '）';
-      meta.textContent = txt;
-      row.appendChild(name);
-      row.appendChild(meta);
-      list.appendChild(row);
+      var row = document.createElement('tr');
+
+      var nameCell = document.createElement('td');
+      nameCell.textContent = d.name;
+
+      var countCell = document.createElement('td');
+      countCell.textContent = (d.image_count != null ? d.image_count : 0) + ' 张';
+
+      var maskCell = document.createElement('td');
+      maskCell.className = 'mask';
+      if (m) {
+        var dot = document.createElement('span');
+        dot.className = 'status ' + (m.mask_status === '完整' ? 'ok' : 'none');
+        maskCell.appendChild(dot);
+        maskCell.title = '蒙版完成 / 图片总数';
+        maskCell.appendChild(document.createTextNode(
+          m.mask_complete + '/' + (m.mask_complete + m.mask_none)
+        ));
+      } else {
+        maskCell.textContent = '-';
+      }
+
+      row.appendChild(nameCell);
+      row.appendChild(countCell);
+      row.appendChild(maskCell);
+      tbody.appendChild(row);
     });
   }
 

@@ -56,6 +56,17 @@
       <option value="rgba">RGBA</option>
     </select>
   </label>
+  <label style="font-size:12px;color:var(--text-dim);display:flex;align-items:center;gap:4px;">
+    背景
+    <select id="bg-style" style="background:var(--card-bg);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:2px 4px;font-size:12px;">
+      <option value="checker" selected>棋盘格</option>
+      <option value="white">纯白</option>
+      <option value="black">纯黑</option>
+      <option value="custom">自定义</option>
+    </select>
+    <input type="color" id="bg-color" value="#ffffff" title="自定义背景色"
+      style="width:26px;height:22px;padding:0;border:1px solid var(--border);border-radius:4px;background:var(--card-bg);">
+  </label>
 </div>
 
 <div class="job-progress compact" id="birefnet-bar" hidden>

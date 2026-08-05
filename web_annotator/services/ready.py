@@ -56,7 +56,8 @@ def build_ready_toml(
     """
     生成 TOML 文本与 subset 元数据. 
 
-    某子目录蒙版状态为「完整」时, 对应 subset 附带 conditioning_data_dir(指向 mask/子目录). 
+    某子目录蒙版状态为「完整」时, 对应 subset 附带 conditioning_data_dir(指向 mask/子目录);
+    按是否带 conditioning_data_dir 分组, 每组渲染为一个 [[datasets]] 块. 
     引用: ``routes/ready.py``. 
     """
     root = root.resolve()
@@ -74,7 +75,6 @@ def build_ready_toml(
     repeats = max(1, int(num_repeats))
 
     subsets: list[ReadySubset] = []
-    blocks: list[str] = []
     mask_stats: list[MaskStats] = []
     for name in ordered:
         image_dir = (root / name).resolve()
@@ -87,20 +87,30 @@ def build_ready_toml(
             num_repeats=repeats,
             image_count=info.image_count,
         )
-        lines = [
-            "[[datasets]]",
-            "  [[datasets.subsets]]",
-            f'  image_dir = "{image_dir}"',
-        ]
         mstats = subdir_mask_stats(root, name)
         mask_stats.append(mstats)
         if mstats.mask_status == "完整":
-            cond = (root / "mask" / name).resolve()
-            entry.conditioning_data_dir = str(cond)
-            lines.append(f'  conditioning_data_dir = "{cond}"')
-        lines.append(f"  num_repeats = {repeats}")
-        blocks.append("\n".join(lines))
+            entry.conditioning_data_dir = str((root / "mask" / name).resolve())
         subsets.append(entry)
+
+    # 按是否带 conditioning_data_dir 分组(带蒙版在前), 组内保持原顺序;
+    # 每组渲染为一个 [[datasets]] 块, 其下所有 subset 均为 [[datasets.subsets]]
+    groups = [
+        [s for s in subsets if s.conditioning_data_dir],
+        [s for s in subsets if not s.conditioning_data_dir],
+    ]
+    blocks: list[str] = []
+    for group in groups:
+        if not group:
+            continue
+        lines = ["[[datasets]]"]
+        for s in group:
+            lines.append("  [[datasets.subsets]]")
+            lines.append(f'  image_dir = "{s.image_dir}"')
+            if s.conditioning_data_dir:
+                lines.append(f'  conditioning_data_dir = "{s.conditioning_data_dir}"')
+            lines.append(f"  num_repeats = {s.num_repeats}")
+        blocks.append("\n".join(lines))
 
     toml = "\n\n".join(blocks)
     if toml:
