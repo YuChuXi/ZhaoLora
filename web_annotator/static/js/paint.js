@@ -17,8 +17,7 @@
   var _renderScheduled = false;
   var _rgbScaledCanvas = null;
   var _compCanvas = null;
-  var _checkerCanvas = null;
-  // 画布背景: checker 棋盘格 / white 纯白 / black 纯黑 / custom 自定义色
+  // 画布背景: checker 棋盘格 / white 纯白 / black 纯黑 / custom 自定义色(CSS 背景实现)
   var _bgStyle = 'checker', _bgColor = '#ffffff';
   var PRELOAD_RADIUS = 15;
   // 加载令牌: 递增序号, 过期请求/过期 onload 据此丢弃, 保证只有最新一次切图生效
@@ -39,6 +38,7 @@
   var _bgColorEl = document.getElementById('bg-color');
   if (_bgStyleEl) _bgStyle = _bgStyleEl.value;
   if (_bgColorEl) _bgColor = _bgColorEl.value;
+  _applyBackdrop();
 
   /**
    * @param {string} msg
@@ -236,19 +236,6 @@
   }
 
   /**
-   * 下载视觉图并读取原图尺寸响应头(预览已压缩, 蒙版须按原尺寸绘制). Callers: _loadEntry.
-   */
-  async function _fetchImage(apiPath, imgPath) {
-    var res = await fetch(API.apiPath(apiPath) + '?path=' + encodeURIComponent(imgPath));
-    var blob = await res.blob();
-    return {
-      blob: blob,
-      origW: parseInt(res.headers.get('X-Original-Width'), 10) || 0,
-      origH: parseInt(res.headers.get('X-Original-Height'), 10) || 0,
-    };
-  }
-
-  /**
    * 将 blob 解码为 Image. Callers: _loadEntry.
    */
   function _decodeImage(blob) {
@@ -266,17 +253,13 @@
    * 前端合成. 返回 { img, mask, w, h }. Callers: loadIndex、_preloadOne.
    */
   async function _loadEntry(img) {
-    var visualP = _fetchImage('/paint/image', img.path);
+    var visualP = _fetchBlob('/paint/image', img.path);
     var maskP = img.has_mask ? _fetchBlob('/paint/mask', img.path) : Promise.resolve(null);
     var results = await Promise.all([visualP, maskP]);
-    var visual = results[0];
-    var maskBlob = results[1];
-    var visualEl = await _decodeImage(visual.blob);
-    var maskEl = maskBlob ? await _decodeImage(maskBlob) : null;
-    // 尺寸取原图响应头(预览已压缩); 头缺失时退回解码尺寸
-    var w = visual.origW || visualEl.naturalWidth;
-    var h = visual.origH || visualEl.naturalHeight;
-    return { img: visualEl, mask: maskEl, w: w, h: h };
+    var visualEl = await _decodeImage(results[0]);
+    var maskEl = results[1] ? await _decodeImage(results[1]) : null;
+    // 原图尺寸取自图片列表(预览已压缩, 蒙版须按原尺寸绘制)
+    return { img: visualEl, mask: maskEl, w: img.width, h: img.height };
   }
 
   async function _preloadOne(img) {
@@ -302,12 +285,9 @@
       canvas.height = _cur.h;
       invalidateScaledCache();
     }
+    // 居中由 .paint-canvas-wrap 的 flex 负责, JS 只算适配宽高
     canvas.style.width = _viewW + 'px';
     canvas.style.height = _viewH + 'px';
-    canvas.style.position = 'absolute';
-    canvas.style.left = ((cw - _viewW) / 2) + 'px';
-    canvas.style.top = ((ch - _viewH) / 2) + 'px';
-    canvas.style.margin = '0';
     canvas.style.imageRendering = 'auto';
   }
   window.addEventListener('resize', function() { if (_cur && _cur.rgbImg) { fitCanvas(); _scheduleRender(); } });
@@ -326,7 +306,6 @@
 
   function invalidateScaledCache() {
     _rgbScaledCanvas = null;
-    _checkerCanvas = null;
     _compCanvas = null;
   }
 
@@ -340,46 +319,31 @@
     _rgbScaledCanvas.height = cur.h;
     _rgbScaledCanvas._src = cur.rgbImg;
     var rctx = _rgbScaledCanvas.getContext('2d');
-    rctx.drawImage(cur.rgbImg, 0, 0);
+    // 预览已压缩(小于原尺寸), 必须缩放铺满画布, 否则只画在左上角
+    rctx.drawImage(cur.rgbImg, 0, 0, cur.w, cur.h);
   }
 
   /**
-   * 生成画布背景(蒙版透明区可见): 棋盘格按 _defaultAlpha 调暗, 纯色/自定义按所选颜色.
-   * Callers: _doRender.
+   * 以 CSS 背景实现画布背景(蒙版透明区透过): 棋盘格按默认 alpha 调暗, 屏幕固定 12px/格,
+   * 纯色/自定义按所选颜色. CSS 图案按屏幕像素渲染, 随显示缩放自动适配,
+   * 相比 JS 生成整幅原分辨率棋盘画布不占内存. Callers: 初始化、bg-style/bg-color/default-alpha 变化.
    */
-  function _ensureBackdrop() {
-    var cur = _cur;
-    if (!cur) return;
-    var key = _bgStyle + ':' + (_bgStyle === 'custom' ? _bgColor : '') + ':' + _defaultAlpha;
-    if (_checkerCanvas && _checkerCanvas.width === cur.w && _checkerCanvas.height === cur.h && _checkerCanvas._key === key) return;
-    _checkerCanvas = document.createElement('canvas');
-    _checkerCanvas.width = cur.w;
-    _checkerCanvas.height = cur.h;
-    _checkerCanvas._key = key;
-    var cc = _checkerCanvas.getContext('2d');
+  function _applyBackdrop() {
     if (_bgStyle === 'checker') {
-      var dk = _defaultAlpha / 255;
-      var c0 = Math.round(204 * dk), c1 = Math.round(153 * dk);
-      var cell = 12;
-      for (var y = 0; y < cur.h; y += cell) {
-        for (var x = 0; x < cur.w; x += cell) {
-          var isOdd = (Math.floor(x / cell) + Math.floor(y / cell)) % 2 === 1;
-          var v = isOdd ? c1 : c0;
-          cc.fillStyle = 'rgb(' + v + ',' + v + ',' + v + ')';
-          cc.fillRect(x, y, cell, cell);
-        }
-      }
+      var value = parseInt(document.getElementById('default-alpha').value);
+      var dk = (Number.isNaN(value) ? 255 : value) / 255;
+      var v0 = Math.round(204 * dk), v1 = Math.round(153 * dk);
+      canvas.style.background =
+        'repeating-conic-gradient(rgb(' + v0 + ',' + v0 + ',' + v0 + ') 0 25%, rgb(' + v1 + ',' + v1 + ',' + v1 + ') 0 50%) 0 0 / 24px 24px';
     } else {
       var color = _bgStyle === 'white' ? '#ffffff' : (_bgStyle === 'black' ? '#000000' : _bgColor);
-      cc.fillStyle = color;
-      cc.fillRect(0, 0, cur.w, cur.h);
+      canvas.style.background = color;
     }
   }
 
   function _doRender() {
     var cur = _cur;
     if (!cur || !cur.rgbImg || !cur.alpha) return;
-    _ensureBackdrop();
     _ensureRgbFull();
 
     if (!_compCanvas || _compCanvas.width !== cur.w || _compCanvas.height !== cur.h) {
@@ -396,7 +360,7 @@
 
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, cur.w, cur.h);
-    ctx.drawImage(_checkerCanvas, 0, 0);
+    // 蒙版透明区透过 CSS 背景显示(棋盘格/纯色), 画布只负责图像+蒙版合成
     ctx.drawImage(_compCanvas, 0, 0);
   }
 
@@ -539,7 +503,6 @@
     var img = cur.item;
     // 全新图片即使没有动笔，也要写出当前默认 alpha mask。
     if (!force && !cur.modified && img.has_mask) return;
-    var fmt = document.getElementById('save-format').value || 'alpha_bw';
     // 从蒙版画布读取 alpha(唯一权威), 供上传 RGB 纯色与缓存替换使用
     var ctx = cur.alpha.getContext('2d');
     var imgData = ctx.getImageData(0, 0, cur.w, cur.h);
@@ -555,7 +518,7 @@
     return new Promise(function(resolve) {
       cur.alpha.toBlob(function(blob) {
         if (!blob) { errshow('toBlob failed'); resolve(); return; }
-        fetch(API.apiPath('/paint/upload-mask') + '?path=' + encodeURIComponent(img.path) + '&format=' + fmt, {
+        fetch(API.apiPath('/paint/upload-mask') + '?path=' + encodeURIComponent(img.path), {
           method: 'POST', headers: { 'Content-Type': 'image/png' }, body: blob
         }).then(function(r) { return r.json(); }).then(function(res) {
           cur.modified = false;
@@ -593,8 +556,8 @@
   var toolSel = document.getElementById('tool-select');
   if (toolSel) toolSel.addEventListener('change', function() { _tool = this.value; });
   document.getElementById('brush-slider').addEventListener('input', function() { _brushPct = parseFloat(this.value); _calcBrush(); _updateBrushUI(); _updateBrushPreview(); });
-  document.getElementById('bg-style').addEventListener('change', function() { _bgStyle = this.value; _scheduleRender(); });
-  document.getElementById('bg-color').addEventListener('change', function() { _bgColor = this.value; _scheduleRender(); });
+  document.getElementById('bg-style').addEventListener('change', function() { _bgStyle = this.value; _applyBackdrop(); });
+  document.getElementById('bg-color').addEventListener('change', function() { _bgColor = this.value; _applyBackdrop(); });
   document.getElementById('btn-save').addEventListener('click', function() { doSave(true); });
   document.getElementById('btn-clear').addEventListener('click', function() { if (_cur && _cur.alpha) { _cur.alpha.getContext('2d').clearRect(0, 0, _cur.w, _cur.h); _cur.modified = true; _scheduleRender(); } });
   document.getElementById('btn-fill').addEventListener('click', function() { if (_cur && _cur.alpha) { var fc = _cur.alpha.getContext('2d'); fc.fillStyle = '#fff'; fc.fillRect(0, 0, _cur.w, _cur.h); _cur.modified = true; _scheduleRender(); } });
@@ -604,7 +567,7 @@
     if (_cur && _cur.alpha) { var dc = _cur.alpha.getContext('2d'); dc.clearRect(0, 0, _cur.w, _cur.h); dc.globalAlpha = _defaultAlpha / 255; dc.fillStyle = '#fff'; dc.fillRect(0, 0, _cur.w, _cur.h); dc.globalAlpha = 1; _cur.modified = true; _scheduleRender(); }
     saveConfig();
   });
-  document.getElementById('default-alpha').addEventListener('change', saveConfig);
+  document.getElementById('default-alpha').addEventListener('change', function() { saveConfig(); _applyBackdrop(); });
 
   document.addEventListener('keydown', function(e) {
     if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
@@ -630,11 +593,23 @@
       var maskMin = parseInt(document.getElementById('birefnet-min').value) || 96;
       var maskMax = parseInt(document.getElementById('birefnet-max').value) || 255;
       var skipExisting = document.getElementById('birefnet-skip').checked;
+      var batch = document.getElementById('birefnet-batch').checked;
+      var body = {
+        dir: currentDir(),
+        mask_expand: expand, mask_shrink: shrink,
+        mask_min: maskMin, mask_max: maskMax,
+        skip_existing: skipExisting,
+      };
+      // 默认单图: 仅处理当前图片; 勾选「批量」处理整个目录
+      if (!batch) {
+        if (!_cur || !_cur.item) { toast('当前没有图片'); return; }
+        body.path = _cur.item.path;
+      }
       birefnetDlg.hidden = true;
       fetch('/api/d/' + API.dataset() + '/birefnet-mask', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ dir: currentDir(), mask_expand: expand, mask_shrink: shrink, mask_min: maskMin, mask_max: maskMax, skip_existing: skipExisting })
+        body: JSON.stringify(body)
       })
         .then(function (r) { return r.json(); })
         .then(function (resp) {

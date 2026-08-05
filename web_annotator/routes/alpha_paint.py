@@ -13,6 +13,7 @@ from PIL import Image
 
 from routes.deps import get_runtime, resolve_path
 from services.core.scanner import scan_images
+from services.core.thumbnailer import image_size
 from services.state.mask import has_mask, load_mask, save_mask
 from services.models import DefaultAlphaResponse, PaintImageItem, PaintSaveResponse
 
@@ -49,11 +50,14 @@ def list_paint_images(request: Request, dir: str = "main") -> list[PaintImageIte
     images = scan_images(root / subdir, path_prefix=subdir)
     result: list[PaintImageItem] = []
     for img in images:
+        w, h = image_size(root / img.path)
         result.append(
             PaintImageItem(
                 path=img.path,
                 stem=img.stem,
                 has_mask=has_mask(mask_dir, img.path),
+                width=w,
+                height=h,
             )
         )
     result.sort(key=lambda x: (1 if x.has_mask else 0))
@@ -64,11 +68,10 @@ def list_paint_images(request: Request, dir: str = "main") -> list[PaintImageIte
 def serve_original_image(request: Request, path: str = Query(...)) -> Response:
     """提供原图 AVIF 预览(透明区域衬白底, 长边压缩到 _PAINT_PREVIEW_MAX). 
 
+    原图尺寸由 ``/paint/images`` 列表携带, 前端据此按原分辨率绘制蒙版. 
+
     Args:
         path: 相对数据集根的路径(含子目录名). 
-
-    Response headers:
-        ``X-Original-Width`` / ``X-Original-Height``: 原图尺寸(压缩前), 供前端按原分辨率绘制蒙版. 
 
     引用:
         ``paint.js``. 
@@ -80,17 +83,12 @@ def serve_original_image(request: Request, path: str = Query(...)) -> Response:
     rgba = Image.open(src).convert("RGBA")
     bg = Image.new("RGB", rgba.size, (255, 255, 255))
     bg.paste(rgba, mask=rgba.split()[3])
-    orig_w, orig_h = bg.size
     if max(bg.size) > _PAINT_PREVIEW_MAX:
         bg.thumbnail((_PAINT_PREVIEW_MAX, _PAINT_PREVIEW_MAX), Image.Resampling.LANCZOS)
     buf = io.BytesIO()
     bg.save(buf, format="AVIF", quality=80)
     buf.seek(0)
-    return Response(
-        content=buf.read(),
-        media_type="image/avif",
-        headers={"X-Original-Width": str(orig_w), "X-Original-Height": str(orig_h)},
-    )
+    return Response(content=buf.read(), media_type="image/avif")
 
 
 @router.get("/mask")
@@ -120,16 +118,11 @@ def get_existing_mask(request: Request, path: str = Query(...)) -> Response:
 
 
 @router.post("/upload-mask")
-async def upload_mask(
-    request: Request,
-    path: str = Query(...),
-    format: str = Query("alpha_bw"),
-) -> PaintSaveResponse:
-    """接收灰度 PNG 并写入 mask 目录. 
+async def upload_mask(request: Request, path: str = Query(...)) -> PaintSaveResponse:
+    """接收蒙版 RGBA PNG 并写入 mask 目录(取 A 通道). 
 
     Args:
         path: 相对数据集根的图片路径(含子目录名). 
-        format: ``alpha_bw`` 或 ``rgba``. 
 
     引用:
         ``paint.js``. 
@@ -140,10 +133,10 @@ async def upload_mask(
         raise HTTPException(404, f"Image not found: {path}")
     body = await request.body()
     mask_img = Image.open(io.BytesIO(body))
-    # 前端 canvas 导出 RGBA, 蒙版在 alpha 通道(笔刷绘制时 RGB 恒白),
-    # 直接取 A 通道, 而非 convert("L") 的 RGB 亮度(否则绘制后保存必为纯白).
+    # 前端 canvas 导出 RGBA, 蒙版在 alpha 通道(笔刷绘制时 RGB 恒黑),
+    # 直接取 A 通道, 而非 convert("L") 的 RGB 亮度(否则绘制后保存必为纯色).
     alpha = np.array(mask_img.getchannel("A"), dtype=np.uint8)
-    save_mask(mask_dir, path, alpha, src, save_format=format)
+    save_mask(mask_dir, path, alpha)
     # saved 返回相对数据集根的 mask 路径(镜像原图路径), 不暴露绝对路径
     return PaintSaveResponse(saved=str(Path(path).with_suffix(".png")), size=list(Image.open(src).size))
 

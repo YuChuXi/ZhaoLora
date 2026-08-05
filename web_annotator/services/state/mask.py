@@ -73,46 +73,13 @@ def load_mask(out_dir: Path, src_path: str, size: tuple[int, int]) -> np.ndarray
     return np.array(rgba.getchannel("A"), dtype=np.uint8, copy=True)
 
 
-def compose_mask_rgba(image: Image.Image, alpha: np.ndarray) -> Image.Image:
-    """原图 alpha 合成到白色衬底后写入蒙版 A 通道, 生成预览 RGBA.
-
-    Args:
-        image: 原图(PIL Image). 
-        alpha: 蒙版数组 ``(H, W)`` ``uint8``. 
-
-    Returns:
-        RGBA 图: RGB=白底原图, A=蒙版. 
-
-    Raises:
-        ValueError: alpha 尺寸与原图不一致. 
-
-    引用:
-        ``save_mask`` (rgba 格式), ``routes.alpha_paint.get_existing_mask``. 
-    """
-    im = image.convert("RGBA")
-    bg = Image.new("RGB", im.size, (255, 255, 255))
-    bg.paste(im, mask=im.split()[3])
-    if alpha.shape[::-1] != bg.size:
-        raise ValueError(f"alpha shape {alpha.shape} != image size {bg.size}")
-    r, g, b = bg.split()
-    return Image.merge("RGBA", (r, g, b, Image.fromarray(alpha, mode="L")))
-
-
-def save_mask(
-    out_dir: Path,
-    src_path: str,
-    alpha: np.ndarray,
-    src_image_path: Path,
-    save_format: str = "alpha_bw",
-) -> Path:
-    """保存 mask PNG. 
+def save_mask(out_dir: Path, src_path: str, alpha: np.ndarray) -> Path:
+    """保存 mask PNG(白底 RGB + 蒙版 A 通道, 无损). 
 
     Args:
         out_dir: mask 根目录. 
         src_path: 相对原图路径. 
         alpha: 单通道 ``uint8`` 数组. 
-        src_image_path: 原图绝对路径(``rgba`` 模式需要). 
-        save_format: ``alpha_bw`` 纯灰度, 或 ``rgba`` 白底 RGB+alpha. 
 
     Returns:
         写入的绝对路径. 
@@ -122,8 +89,7 @@ def save_mask(
     """
     dest = mask_out_path(out_dir, src_path)
     dest.parent.mkdir(parents=True, exist_ok=True)
-    if save_format == "alpha_bw":
-        Image.fromarray(alpha, mode="L").save(dest, format="PNG")
-        return dest
-    compose_mask_rgba(Image.open(src_image_path), alpha).save(dest, format="PNG")
+    h, w = alpha.shape
+    white = Image.new("L", (w, h), 255)
+    Image.merge("RGBA", (white, white, white, Image.fromarray(alpha, mode="L"))).save(dest, format="PNG")
     return dest

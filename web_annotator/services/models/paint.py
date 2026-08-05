@@ -32,6 +32,8 @@ class DefaultAlphaResponse(BaseModel):
 class PaintImageItem(BaseModel):
     """蒙版页图片列表项. 
 
+    ``width`` / ``height`` 为原图尺寸(视觉预览已压缩, 蒙版须按原尺寸绘制). 
+
     引用:
         ``routes.alpha_paint.list_paint_images``. 
     """
@@ -39,4 +41,6 @@ class PaintImageItem(BaseModel):
     path: str
     stem: str
     has_mask: bool
+    width: int = 0
+    height: int = 0
 
