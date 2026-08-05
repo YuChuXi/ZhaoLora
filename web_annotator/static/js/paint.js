@@ -38,6 +38,8 @@
   var _bgColorEl = document.getElementById('bg-color');
   if (_bgStyleEl) _bgStyle = _bgStyleEl.value;
   if (_bgColorEl) _bgColor = _bgColorEl.value;
+  // 选色器仅「自定义」时显示
+  if (_bgColorEl) _bgColorEl.hidden = _bgStyle !== 'custom';
   _applyBackdrop();
 
   /**
@@ -270,7 +272,11 @@
     updateStatusBar();
   }
   function _updateBrushUI() {
-    document.getElementById('brush-label').textContent = _brushPct.toFixed(1) + '% ~' + _brushRadius + 'px';
+    var labelEl = document.getElementById('brush-label');
+    if (labelEl) labelEl.textContent = _brushPct.toFixed(1) + '% ~' + _brushRadius + 'px';
+    // 同步滑动条位置: 滚轮/其它途径改笔刷时滑块跟随, 避免数值与滑块脱节
+    var sliderEl = document.getElementById('brush-slider');
+    if (sliderEl && parseFloat(sliderEl.value) !== _brushPct) sliderEl.value = _brushPct.toFixed(1);
   }
   function fitCanvas() {
     if (!_cur) return;
@@ -556,7 +562,11 @@
   var toolSel = document.getElementById('tool-select');
   if (toolSel) toolSel.addEventListener('change', function() { _tool = this.value; });
   document.getElementById('brush-slider').addEventListener('input', function() { _brushPct = parseFloat(this.value); _calcBrush(); _updateBrushUI(); _updateBrushPreview(); });
-  document.getElementById('bg-style').addEventListener('change', function() { _bgStyle = this.value; _applyBackdrop(); });
+  document.getElementById('bg-style').addEventListener('change', function() {
+    _bgStyle = this.value;
+    if (_bgColorEl) _bgColorEl.hidden = _bgStyle !== 'custom';
+    _applyBackdrop();
+  });
   document.getElementById('bg-color').addEventListener('change', function() { _bgColor = this.value; _applyBackdrop(); });
   document.getElementById('btn-save').addEventListener('click', function() { doSave(true); });
   document.getElementById('btn-clear').addEventListener('click', function() { if (_cur && _cur.alpha) { _cur.alpha.getContext('2d').clearRect(0, 0, _cur.w, _cur.h); _cur.modified = true; _scheduleRender(); } });
@@ -587,20 +597,25 @@
   if (birefnetBtn && birefnetDlg) {
     birefnetBtn.addEventListener('click', function () { birefnetDlg.hidden = false; });
     document.getElementById('birefnet-cancel').addEventListener('click', function () { birefnetDlg.hidden = true; });
+    document.getElementById('birefnet-batch').addEventListener('change', function () {
+      // 「跳过已有蒙版」是批量概念, 仅批量模式显示
+      document.getElementById('birefnet-skip-wrap').hidden = !this.checked;
+    });
     document.getElementById('birefnet-start').addEventListener('click', function () {
       var expand = parseInt(document.getElementById('birefnet-expand').value) || 32;
       var shrink = parseInt(document.getElementById('birefnet-shrink').value) || 0;
       var maskMin = parseInt(document.getElementById('birefnet-min').value) || 96;
       var maskMax = parseInt(document.getElementById('birefnet-max').value) || 255;
-      var skipExisting = document.getElementById('birefnet-skip').checked;
       var batch = document.getElementById('birefnet-batch').checked;
+      // 单图模式无「跳过已有蒙版」概念, 始终重新生成; 仅批量模式应用该选项
+      var skipExisting = batch ? document.getElementById('birefnet-skip').checked : false;
       var body = {
         dir: currentDir(),
         mask_expand: expand, mask_shrink: shrink,
         mask_min: maskMin, mask_max: maskMax,
         skip_existing: skipExisting,
       };
-      // 默认单图: 仅处理当前图片; 勾选「批量」处理整个目录
+      // 默认单图: 仅重新生成当前图片; 勾选「批量」处理整个目录
       if (!batch) {
         if (!_cur || !_cur.item) { toast('当前没有图片'); return; }
         body.path = _cur.item.path;
