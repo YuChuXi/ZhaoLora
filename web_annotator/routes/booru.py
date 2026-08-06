@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -194,9 +195,29 @@ async def booru_image(
     )
 
 
+async def _cancel_on_disconnect(request: Request, task: asyncio.Task) -> None:
+    """客户端断开时取消正在执行的下载任务.
+
+    下载网络 IO 全部位于 await 点, task.cancel() 会在此抛 CancelledError;
+    同步写文件块要么完整执行要么未执行, 不会留下半截目标文件.
+
+    Args:
+        request: 请求对象, 用于探测连接是否已断开.
+        task: 封装的下载协程.
+
+    Callers:
+        - `routes/booru.py:booru_download`
+    """
+    while not task.done():
+        if await request.is_disconnected():
+            task.cancel()
+            return
+        await asyncio.sleep(0.2)
+
+
 @router.post("/download")
 async def booru_download(request: Request, body: DownloadBody) -> BooruDownloadResult:
-    """下载帖子到工作目录. 引用: ``booru_filter.js``. """
+    """下载帖子到工作目录; 客户端断开时取消下载. 引用: ``booru_filter.js``. """
     source = body.source.strip().lower()
     if source not in list_source_names():
         raise HTTPException(400, f"不支持的源: {body.source}")
@@ -206,14 +227,20 @@ async def booru_download(request: Request, body: DownloadBody) -> BooruDownloadR
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
 
-    try:
-        result = await download_post(
+    task = asyncio.create_task(
+        download_post(
             source,
             body.id.strip(),
             out_dir,
             proxy=_proxy(request),
             overwrite=body.overwrite,
         )
+    )
+    await _cancel_on_disconnect(request, task)
+    try:
+        result = task.result()
+    except asyncio.CancelledError:
+        raise HTTPException(499, "客户端已断开，下载已取消")
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
     except RuntimeError as e:

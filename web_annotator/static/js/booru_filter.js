@@ -18,9 +18,147 @@ var BooruFilter = (function () {
   }
 
   /**
-   * 远程来源注册表: 每个来源声明自己的工具栏 / 参数构建 / 媒体 URL /
-   * 原站地址与预览渲染。主逻辑只查询本表, 新增来源只需在此加一项并提供
-   * 对应工具栏 HTML, 无需改动业务主干。
+   * 工具栏 schema: 每个字段声明控件形态, renderToolbar() 据此生成 DOM。
+   * 类型: text / select / hidden / button / sep。
+   * button 用 role 区分 search(搜索) / batch(批量) / extra(条件弹窗)。
+   * 引用: renderToolbar / buildField / stateKeysFor。
+   */
+  var _BARS = {
+    booru: {
+      extra: 'booru',
+      fields: [
+        { type: 'text', id: 'booru-tags', placeholder: '标签，空格分隔' },
+        { type: 'select', id: 'booru-order', label: '排序',
+          options: [['', '默认'], ['score', '分数'], ['id', 'ID 新→旧'], ['id_asc', 'ID 旧→新']] },
+        { type: 'button', role: 'extra', id: 'btn-booru-extra', label: '条件',
+          title: '评级、分数、分辨率等', badge: true },
+        { type: 'hidden', id: 'booru-extra' },
+        { type: 'button', role: 'search', label: '搜索', cls: 'green' },
+        { type: 'button', role: 'batch', label: '批量下载', title: '按当前搜索结果批量下载' },
+        { type: 'sep' },
+      ],
+    },
+    bilibili: {
+      extra: 'bilibili',
+      fields: [
+        { type: 'text', id: 'bilibili-uid', placeholder: 'B站 UID' },
+        { type: 'button', role: 'extra', id: 'btn-bilibili-extra', label: '条件',
+          title: '类型、关键词、时间等', badge: true },
+        { type: 'hidden', id: 'bilibili-extra' },
+        { type: 'button', role: 'search', label: '搜索', cls: 'green' },
+        { type: 'button', role: 'batch', label: '批量下载', title: '按当前筛选批量下载' },
+        { type: 'sep' },
+      ],
+    },
+  };
+
+  /**
+   * 条件面板注册表: 每个 bar 声明其"条件"弹窗的字段形态与序列化方式。
+   * 字段类型: chips(评级单选) / range(成对上下限, date 为日期) / select /
+   *           text / date。parse/build 负责 extra 文本与扁平字段对象互转,
+   *           count/summarize 驱动"条件"按钮的标记与提示。
+   * 引用: curExtra / renderExtraPanel / readExtraDlg / fillExtraDlg /
+   *       clearExtraDlg / syncExtraBtn / syncCheatLink。
+   */
+  var _EXTRA_PANELS = {
+    booru: {
+      cheat: true,
+      fields: [
+        { type: 'chips', key: 'rating', label: '评级', multi: true,
+          options: function () {
+            // Gelbooru 仅 3 个评级(safe/questionable/explicit), Danbooru 4 个.
+            if (mode() === 'gelbooru') {
+              return [['s', '全年龄'], ['q', '可疑'], ['e', '露骨']];
+            }
+            return [['g', '全年龄'], ['s', '敏感'], ['q', '可疑'], ['e', '露骨']];
+          } },
+        { type: 'range', label: '分数', lo: 'scoreLo', hi: 'scoreHi' },
+        { type: 'range', label: '宽度', lo: 'widthLo', hi: 'widthHi' },
+        { type: 'range', label: '高度', lo: 'heightLo', hi: 'heightHi' },
+        { type: 'range', label: 'ID', lo: 'idLo', hi: 'idHi' },
+        { type: 'range', label: '日期', lo: 'dateLo', hi: 'dateHi', date: true, rowId: 'booru-extra-date-row' },
+        { type: 'text', key: 'user', label: '用户', placeholder: '上传者' },
+        { type: 'text', key: 'more', label: '附加', placeholder: '其它元标签，空格分隔' },
+      ],
+      parse: parseExtra,
+      build: buildExtra,
+      count: countExtra,
+      summarize: summarizeExtra,
+    },
+    bilibili: {
+      cheat: false,
+      fields: [
+        { type: 'chips', key: 'type', label: '类型', multi: true,
+          options: [['image', '图片'], ['video', '视频'], ['forward', '转发']] },
+        { type: 'text', key: 'keyword', label: '关键词', placeholder: '过滤正文关键词' },
+        { type: 'range', label: '日期', lo: 'dateLo', hi: 'dateHi', date: true },
+      ],
+      parse: _biliParseExtra,
+      build: _biliBuildExtra,
+      count: _biliCountExtra,
+      summarize: _biliSummarizeExtra,
+    },
+  };
+
+  /** 解析 B 站条件串为扁平字段对象; 类型为数组. 引用: _EXTRA_PANELS.bilibili. */
+  function _biliParseExtra(raw) {
+    var out = { type: [], keyword: '', dateLo: '', dateHi: '' };
+    String(raw || '').split(/\s+/).forEach(function (t) {
+      var m = /^(type|keyword|after|before):(.+)$/i.exec(t);
+      if (!m) return;
+      var k = m[1].toLowerCase();
+      if (k === 'after') out.dateLo = m[2];
+      else if (k === 'before') out.dateHi = m[2];
+      else if (k === 'type') out.type.push(m[2]);
+      else out[k] = m[2];
+    });
+    return out;
+  }
+
+  /** 序列化 B 站扁平字段对象为条件串; 多类型各输出一个 type: token. 引用: _EXTRA_PANELS.bilibili. */
+  function _biliBuildExtra(f) {
+    var parts = [];
+    (Array.isArray(f.type) ? f.type : (f.type ? [f.type] : [])).forEach(function (t) {
+      if (t) parts.push('type:' + t);
+    });
+    if (f.keyword) parts.push('keyword:' + f.keyword);
+    if (f.dateLo) parts.push('after:' + f.dateLo);
+    if (f.dateHi) parts.push('before:' + f.dateHi);
+    return parts.join(' ');
+  }
+
+  /** B 站条件计数(每类型计 1; 日期上下限分别计; 精确相等计 1). 引用: _EXTRA_PANELS.bilibili. */
+  function _biliCountExtra(f) {
+    var n = 0;
+    var types = Array.isArray(f.type) ? f.type : (f.type ? [f.type] : []);
+    n += types.length;
+    if (f.keyword) n += 1;
+    if (f.dateLo && f.dateHi && f.dateLo === f.dateHi) n += 1;
+    else {
+      if (f.dateLo) n += 1;
+      if (f.dateHi) n += 1;
+    }
+    return n;
+  }
+
+  /** B 站条件可读摘要. 引用: _EXTRA_PANELS.bilibili. */
+  function _biliSummarizeExtra(f) {
+    var bits = [];
+    var types = Array.isArray(f.type) ? f.type : (f.type ? [f.type] : []);
+    if (types.length) bits.push('类型:' + types.join('/'));
+    if (f.keyword) bits.push('关键词:' + f.keyword);
+    if (f.dateLo && f.dateHi && f.dateLo === f.dateHi) bits.push('日期=' + f.dateLo);
+    else {
+      if (f.dateLo) bits.push('日期≥' + f.dateLo);
+      if (f.dateHi) bits.push('日期≤' + f.dateHi);
+    }
+    return bits.join(' · ');
+  }
+
+  /**
+   * 远程来源注册表: 每个来源声明工具栏 schema / 请求构建 / 媒体 URL /
+   * 原站地址与预览渲染。主逻辑只需查本表并渲染 bar, 新增来源只需加一项
+   * 配置与对应 _BARS 字段, 无需改动业务主干。
    * 引用: isRemote / cur / thumbUrl / sampleUrl / cardLabel / postPageUrl /
    *       showPreview / syncToolbar / saveUiState / applyForm / init。
    */
@@ -28,13 +166,10 @@ var BooruFilter = (function () {
     local: { remote: false },
     gelbooru: {
       remote: true,
-      toolbarId: 'toolbar-booru',
-      searchBtn: 'btn-booru-search',
-      batchBtn: 'btn-booru-batch',
+      bar: 'booru',
       batchDialog: true,
       stemPrefix: 'g',
       nameLabel: 'Gelbooru',
-      stateKeys: ['booru-tags', 'booru-extra', 'booru-order'],
       buildRequest: _booruRequest,
       thumb: function (post) {
         return API.apiPath('/booru/thumb')
@@ -52,13 +187,10 @@ var BooruFilter = (function () {
     },
     danbooru: {
       remote: true,
-      toolbarId: 'toolbar-booru',
-      searchBtn: 'btn-booru-search',
-      batchBtn: 'btn-booru-batch',
+      bar: 'booru',
       batchDialog: true,
       stemPrefix: 'd',
       nameLabel: 'Danbooru',
-      stateKeys: ['booru-tags', 'booru-extra', 'booru-order'],
       buildRequest: _booruRequest,
       thumb: function (post) { return post.preview_url || post.sample_url || ''; },
       sample: function (post) { return post.sample_url || post.file_url || post.preview_url || ''; },
@@ -66,27 +198,14 @@ var BooruFilter = (function () {
     },
     bilibili: {
       remote: true,
-      toolbarId: 'toolbar-bilibili',
-      searchBtn: 'btn-bilibili-search',
-      batchBtn: 'btn-bilibili-batch',
+      bar: 'bilibili',
       batchDialog: false,
-      enterIds: ['bilibili-uid', 'bilibili-keyword'],
       stemPrefix: 'bi',
       nameLabel: 'Bilibili',
       requireTags: true,
       hintText: '输入 B站 UID 搜索 · 左键写入目录 · 右键大图',
-      stateKeys: ['bilibili-uid', 'bilibili-type', 'bilibili-keyword', 'bilibili-time-from', 'bilibili-time-to'],
       buildRequest: function () {
-        var parts = [];
-        var type = _val('bilibili-type');
-        if (type) parts.push('type:' + type);
-        var kw = _val('bilibili-keyword');
-        if (kw.trim()) parts.push('keyword:' + kw.trim());
-        var from = _val('bilibili-time-from');
-        if (from) parts.push('after:' + from);
-        var to = _val('bilibili-time-to');
-        if (to) parts.push('before:' + to);
-        return { tags: _val('bilibili-uid').trim(), extra: parts.join(' '), order: '' };
+        return { tags: _val('bilibili-uid').trim(), extra: _val('bilibili-extra').trim(), order: '' };
       },
       thumb: function (post) {
         return API.apiPath('/booru/image') + '?url=' + encodeURIComponent(post.preview_url || post.sample_url || '');
@@ -112,6 +231,189 @@ var BooruFilter = (function () {
     return _SOURCES[mode()] || _SOURCES.local;
   }
 
+  /** 当前来源的条件面板定义; 无则返回 null. 引用: 条件弹窗相关函数. */
+  function curExtra() {
+    var bar = cur().bar;
+    return (bar && _EXTRA_PANELS[bar]) || null;
+  }
+
+  /**
+   * 依据 schema 字段构建工具栏控件 DOM. 引用: renderToolbar.
+   * @param {object} f 字段定义
+   * @returns {HTMLElement|null}
+   */
+  function buildField(f) {
+    if (f.type === 'sep') {
+      var s = document.createElement('span');
+      s.className = 'sep';
+      return s;
+    }
+    if (f.type === 'hidden') {
+      var h = document.createElement('input');
+      h.type = 'hidden';
+      h.id = f.id;
+      h.value = f.value || '';
+      return h;
+    }
+    if (f.type === 'text') {
+      var i = document.createElement('input');
+      i.type = 'text';
+      if (f.id) i.id = f.id;
+      if (f.placeholder) i.placeholder = f.placeholder;
+      i.spellcheck = false;
+      return i;
+    }
+    if (f.type === 'select') {
+      var lab = document.createElement('label');
+      lab.style.cssText = 'font-size:12px;color:var(--text-dim);display:flex;align-items:center;gap:4px;';
+      lab.textContent = f.label;
+      var sel = document.createElement('select');
+      sel.id = f.id;
+      (f.options || []).forEach(function (o) {
+        var op = document.createElement('option');
+        op.value = o[0];
+        op.textContent = o[1];
+        sel.appendChild(op);
+      });
+      lab.appendChild(sel);
+      return lab;
+    }
+    if (f.type === 'button') {
+      var b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'btn' + (f.cls ? ' ' + f.cls : '');
+      b.textContent = f.label;
+      if (f.id) b.id = f.id;
+      if (f.title) { b.title = f.title; b.dataset.baseTitle = f.title; }
+      if (f.role) b.dataset.role = f.role;
+      if (f.badge) b.innerHTML = f.label + '<span class="booru-extra-badge" aria-hidden="true"></span>';
+      return b;
+    }
+    return null;
+  }
+
+  /**
+   * 依当前来源渲染工具栏到 #toolbar-source. 引用: syncToolbar / enterRemote.
+   */
+  function renderToolbar() {
+    var def = cur();
+    var bar = def.bar ? _BARS[def.bar] : null;
+    var wrap = document.getElementById('toolbar-source');
+    if (!wrap) return;
+    wrap.innerHTML = '';
+    if (!bar) return;
+    (bar.fields || []).forEach(function (f) {
+      var el = buildField(f);
+      if (el) wrap.appendChild(el);
+    });
+    syncExtraBtn();
+  }
+
+  /**
+   * 依条件面板字段构建一行控件. 引用: renderExtraPanel.
+   * @param {object} field 字段定义
+   * @returns {HTMLElement}
+   */
+  function buildExtraRow(field) {
+    var row = document.createElement('div');
+    row.className = 'booru-extra-row';
+    if (field.rowId) row.id = field.rowId;
+    var lab = document.createElement('span');
+    lab.className = 'label';
+    lab.textContent = field.label;
+    if (field.type === 'chips') {
+      row.dataset.exRow = field.key;
+      if (field.multi) row.dataset.multi = '1';
+      row.appendChild(lab);
+      var opts = typeof field.options === 'function' ? field.options() : (field.options || []);
+      opts.forEach(function (o) {
+        var b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'booru-rate-chip';
+        b.dataset.rate = o[0];
+        if (o[2]) b.title = o[2];
+        b.textContent = o[1];
+        row.appendChild(b);
+      });
+      return row;
+    }
+    if (field.type === 'range') {
+      row.appendChild(lab);
+      var lo = document.createElement('input');
+      var hi = document.createElement('input');
+      var mid = document.createElement('span');
+      if (field.date) {
+        lo.type = 'date';
+        lo.dataset.ex = field.lo;
+        hi.type = 'date';
+        hi.dataset.ex = field.hi;
+        mid.textContent = '≤ 日 ≤';
+      } else {
+        lo.type = 'number';
+        lo.dataset.ex = field.lo;
+        lo.placeholder = '下限';
+        hi.type = 'number';
+        hi.dataset.ex = field.hi;
+        hi.placeholder = '上限';
+        mid.textContent = '≤ ' + field.label + ' ≤';
+      }
+      row.appendChild(lo);
+      row.appendChild(mid);
+      row.appendChild(hi);
+      return row;
+    }
+    row.appendChild(lab);
+    var input = document.createElement('input');
+    if (field.type === 'select') {
+      input = document.createElement('select');
+      (field.options || []).forEach(function (o) {
+        var op = document.createElement('option');
+        op.value = o[0];
+        op.textContent = o[1];
+        input.appendChild(op);
+      });
+    } else {
+      input.type = field.type === 'date' ? 'date' : 'text';
+      if (field.type === 'text') input.spellcheck = false;
+      if (field.placeholder) input.placeholder = field.placeholder;
+    }
+    input.dataset.ex = field.key;
+    row.appendChild(input);
+    return row;
+  }
+
+  /**
+   * 依当前来源条件面板渲染弹窗字段区到 #booru-extra-fields. 引用: setExtraDlg.
+   */
+  function renderExtraPanel() {
+    var panel = curExtra();
+    var box = document.getElementById('booru-extra-fields');
+    if (!box) return;
+    box.innerHTML = '';
+    if (!panel) return;
+    (panel.fields || []).forEach(function (field) {
+      var row = buildExtraRow(field);
+      if (field.type === 'range' && field.date && mode() === 'gelbooru') row.hidden = true;
+      box.appendChild(row);
+    });
+  }
+
+  /**
+   * 收集来源 schema 中所有需持久化的输入控件 id. 引用: saveUiState / applyForm.
+   * @param {object} def 来源定义
+   * @returns {string[]}
+   */
+  function stateKeysFor(def) {
+    var bar = def.bar ? _BARS[def.bar] : null;
+    if (!bar) return [];
+    var keys = [];
+    (bar.fields || []).forEach(function (f) {
+      if (f.id) keys.push(f.id);
+      if (f.ids) keys = keys.concat(f.ids);
+    });
+    return keys;
+  }
+
   var _posts = [];
   var _page = 1;
   var _pageLo = 1;
@@ -123,6 +425,7 @@ var BooruFilter = (function () {
   var _dupSkip = 0;
   var _selected = {};
   var _status = {};
+  var _aborters = {};
   var _io = null;
   var _pageIo = null;
   var _toastTimer = null;
@@ -185,12 +488,9 @@ var BooruFilter = (function () {
       page: _page,
     };
     for (var skey in _SOURCES) {
-      var sdef = _SOURCES[skey];
-      if (!sdef.stateKeys) continue;
-      for (var si = 0; si < sdef.stateKeys.length; si++) {
-        var cid = sdef.stateKeys[si];
+      stateKeysFor(_SOURCES[skey]).forEach(function (cid) {
         payload[cid] = (document.getElementById(cid) || {}).value || '';
-      }
+      });
     }
     try {
       sessionStorage.setItem(STATE_KEY, JSON.stringify(payload));
@@ -219,13 +519,10 @@ var BooruFilter = (function () {
   function applyForm(st) {
     if (!st) return;
     for (var akey in _SOURCES) {
-      var adef = _SOURCES[akey];
-      if (!adef.stateKeys) continue;
-      for (var ai = 0; ai < adef.stateKeys.length; ai++) {
-        var cid = adef.stateKeys[ai];
+      stateKeysFor(_SOURCES[akey]).forEach(function (cid) {
         var ael = document.getElementById(cid);
         if (ael && st[cid] != null) ael.value = st[cid];
-      }
+      });
     }
     var start = document.getElementById('booru-start-page');
     var pg = parseInt(st.page != null ? st.page : st.startPage, 10);
@@ -248,7 +545,8 @@ var BooruFilter = (function () {
    */
   function countExtra(f) {
     var n = 0;
-    if (f.rating) n += 1;
+    var ratings = Array.isArray(f.rating) ? f.rating : (f.rating ? [f.rating] : []);
+    n += ratings.length;
     for (var i = 0; i < _EX_KEYS.length; i++) {
       var k = _EX_KEYS[i];
       var lo = f[k + 'Lo'] || '';
@@ -280,7 +578,8 @@ var BooruFilter = (function () {
    */
   function summarizeExtra(f) {
     var bits = [];
-    if (f.rating) bits.push('评级:' + f.rating);
+    var ratings = Array.isArray(f.rating) ? f.rating : (f.rating ? [f.rating] : []);
+    if (ratings.length) bits.push('评级:' + ratings.join('/'));
     for (var i = 0; i < _EX_KEYS.length; i++) {
       var k = _EX_KEYS[i];
       var lo = f[k + 'Lo'] || '';
@@ -304,20 +603,23 @@ var BooruFilter = (function () {
   }
 
   function syncExtraBtn() {
-    var btn = document.getElementById('btn-booru-extra');
-    var el = document.getElementById('booru-extra');
+    var panel = curExtra();
+    var bar = cur().bar;
+    if (!panel || !bar) return;
+    var btn = document.getElementById('btn-' + bar + '-extra');
+    var el = document.getElementById(bar + '-extra');
     if (!btn || !el) return;
-    var f = parseExtra(el.value.trim());
-    var n = countExtra(f);
-    var summary = summarizeExtra(f);
+    var f = panel.parse(el.value.trim());
+    var n = panel.count(f);
+    var summary = panel.summarize(f);
     btn.classList.toggle('has-extra', n > 0);
-    btn.title = n > 0 ? summary : '评级、分数、分辨率、日期、用户等';
+    btn.title = n > 0 ? summary : (btn.dataset.baseTitle || '');
     var badge = btn.querySelector('.booru-extra-badge');
     if (badge) badge.textContent = n > 0 ? String(n) : '';
   }
 
   function parseExtra(raw) {
-    var out = { rating: '', user: '', more: [], dateLo: '', dateHi: '' };
+    var out = { rating: [], user: '', more: [], dateLo: '', dateHi: '' };
     for (var i = 0; i < _EX_KEYS.length; i++) {
       out[_EX_KEYS[i] + 'Lo'] = '';
       out[_EX_KEYS[i] + 'Hi'] = '';
@@ -326,8 +628,13 @@ var BooruFilter = (function () {
     var tokens = String(raw || '').split(/\s+/).filter(Boolean);
     for (var j = 0; j < tokens.length; j++) {
       var t = tokens[j], m;
-      if ((m = /^rating:([gsqe])$/i.exec(t))) out.rating = m[1].toLowerCase();
-      else if ((m = /^(score|width|height|id):(>=|>|<=|<)?(-?\d+)$/i.exec(t))) {
+      if ((m = /^rating:([gsqe](?:,[gsqe])*)$/i.exec(t))) {
+        out.rating = m[1].split(',').map(function (x) { return x.toLowerCase(); });
+      } else if ((m = /^-rating:([gsqe])$/i.exec(t))) {
+        // Gelbooru 排除语法: 选剩余两个评级.
+        var gel = ['s', 'q', 'e'];
+        out.rating = gel.filter(function (x) { return x !== m[1].toLowerCase(); });
+      } else if ((m = /^(score|width|height|id):(>=|>|<=|<)?(-?\d+)$/i.exec(t))) {
         var k = m[1].toLowerCase(), op = m[2] || '=', v = m[3];
         if (op === '<=' || op === '<') out[k + 'Hi'] = v;
         else if (op === '=') { out[k + 'Lo'] = v; out[k + 'Hi'] = v; }
@@ -351,7 +658,22 @@ var BooruFilter = (function () {
 
   function buildExtra(f) {
     var parts = [];
-    if (f.rating) parts.push('rating:' + f.rating);
+    var ratings = Array.isArray(f.rating) ? f.rating : (f.rating ? [f.rating] : []);
+    if (ratings.length) {
+      if (mode() === 'gelbooru') {
+        // Gelbooru 仅 3 个评级(s/q/e): 选两个即排除剩余一个(官方支持 -rating: 排除).
+        var gel = ['s', 'q', 'e'];
+        if (ratings.length === 2) {
+          var excluded = gel.filter(function (x) { return ratings.indexOf(x) < 0; });
+          if (excluded.length === 1) parts.push('-rating:' + excluded[0]);
+        } else if (ratings.length === 1) {
+          parts.push('rating:' + ratings[0]);
+        }
+      } else {
+        // Danbooru 支持 rating:g,s 逗号 OR.
+        parts.push('rating:' + ratings.join(','));
+      }
+    }
     for (var i = 0; i < _EX_KEYS.length; i++) {
       var k = _EX_KEYS[i], lo = f[k + 'Lo'] || '', hi = f[k + 'Hi'] || '';
       if (lo && hi && lo === hi) parts.push(k + ':' + lo);
@@ -375,39 +697,59 @@ var BooruFilter = (function () {
   }
 
   function readExtraDlg() {
-    var f = parseExtra('');
-    var on = document.querySelector('#booru-extra-dlg .booru-rate-chip.on');
-    f.rating = on ? (on.dataset.rate || '') : '';
-    f.more = '';
-    var fields = document.querySelectorAll('#booru-extra-dlg [data-ex]');
+    var panel = curExtra();
+    var f = panel ? panel.parse('') : {};
+    var dlg = document.getElementById('booru-extra-dlg');
+    if (panel) {
+      (panel.fields || []).forEach(function (field) {
+        if (field.type !== 'chips') return;
+        var row = dlg.querySelector('[data-ex-row="' + field.key + '"]');
+        var on = row ? row.querySelectorAll('.booru-rate-chip.on') : [];
+        var vals = [];
+        for (var k = 0; k < on.length; k++) {
+          var r = on[k].dataset.rate;
+          if (r) vals.push(r);
+        }
+        f[field.key] = field.multi ? vals : (vals.length ? vals[0] : '');
+      });
+    }
+    var fields = dlg ? dlg.querySelectorAll('[data-ex]') : [];
     for (var i = 0; i < fields.length; i++) {
-      var el = fields[i], key = el.dataset.ex, raw = el.value.trim();
-      if (key === 'user' || key === 'more' || key === 'dateLo' || key === 'dateHi') {
-        f[key] = raw;
-        continue;
-      }
-      if (!raw) { f[key] = ''; continue; }
-      var n = parseInt(raw, 10);
-      f[key] = isNaN(n) ? '' : String(n);
+      var el = fields[i], key = el.dataset.ex;
+      f[key] = el.value.trim();
     }
     return f;
   }
 
   function fillExtraDlg() {
-    var f = parseExtra((document.getElementById('booru-extra') || {}).value || '');
-    var chips = document.querySelectorAll('#booru-extra-dlg .booru-rate-chip');
-    for (var i = 0; i < chips.length; i++) {
-      chips[i].classList.toggle('on', (chips[i].dataset.rate || '') === f.rating);
+    var panel = curExtra();
+    var bar = cur().bar;
+    if (!panel || !bar) return;
+    var src = document.getElementById(bar + '-extra');
+    var f = panel.parse((src || {}).value || '');
+    var dlg = document.getElementById('booru-extra-dlg');
+    if (panel) {
+      (panel.fields || []).forEach(function (field) {
+        if (field.type !== 'chips') return;
+        var row = dlg.querySelector('[data-ex-row="' + field.key + '"]');
+        var chips = row ? row.querySelectorAll('.booru-rate-chip') : [];
+        var val = f[field.key];
+        var arr = Array.isArray(val) ? val : (val ? [val] : []);
+        for (var c = 0; c < chips.length; c++) {
+          chips[c].classList.toggle('on', arr.indexOf(chips[c].dataset.rate) >= 0);
+        }
+      });
     }
-    var fields = document.querySelectorAll('#booru-extra-dlg [data-ex]');
+    var fields = dlg ? dlg.querySelectorAll('[data-ex]') : [];
     for (var j = 0; j < fields.length; j++) {
-      var el = fields[j], key = el.dataset.ex;
-      el.value = key === 'more' ? (f.more || []).join(' ') : (f[key] || '');
+      var el = fields[j], key = el.dataset.ex, v = f[key];
+      el.value = Array.isArray(v) ? v.join(' ') : (v == null ? '' : v);
     }
   }
 
   function setExtraDlg(show) {
     if (show) {
+      renderExtraPanel();
       syncCheatLink();
       fillExtraDlg();
     }
@@ -418,17 +760,21 @@ var BooruFilter = (function () {
   }
 
   function clearExtraDlg() {
-    var chips = document.querySelectorAll('#booru-extra-dlg .booru-rate-chip');
-    for (var i = 0; i < chips.length; i++) {
-      chips[i].classList.toggle('on', !chips[i].dataset.rate);
-    }
-    var fields = document.querySelectorAll('#booru-extra-dlg [data-ex]');
+    var dlg = document.getElementById('booru-extra-dlg');
+    if (!dlg) return;
+    var chips = dlg.querySelectorAll('.booru-rate-chip');
+    for (var i = 0; i < chips.length; i++) chips[i].classList.remove('on');
+    var fields = dlg.querySelectorAll('[data-ex]');
     for (var j = 0; j < fields.length; j++) fields[j].value = '';
   }
 
   function applyExtraDlg() {
-    var el = document.getElementById('booru-extra');
-    if (el) el.value = buildExtra(readExtraDlg());
+    var panel = curExtra();
+    var bar = cur().bar;
+    if (panel && bar) {
+      var el = document.getElementById(bar + '-extra');
+      if (el) el.value = panel.build(readExtraDlg());
+    }
     syncExtraBtn();
     setExtraDlg(false);
     saveUiState();
@@ -646,18 +992,15 @@ var BooruFilter = (function () {
     var remote = isRemote();
     var curDef = cur();
     var localBar = document.getElementById('toolbar-local');
+    var srcBar = document.getElementById('toolbar-source');
     var pageWrap = document.getElementById('remote-page-wrap');
     var loadedWrap = document.getElementById('stat-loaded-wrap');
     var selWrap = document.getElementById('stat-selected-wrap');
     var trashWrap = document.getElementById('stat-trashed-wrap');
     if (localBar) localBar.classList.toggle('is-off', remote);
-    // 依注册表切换各来源工具栏: 仅当前远程来源显示。
-    // gelbooru/danbooru 共用 toolbar-booru, 按 toolbarId 而非对象引用比较, 避免共用工具栏被覆盖.
-    for (var skey in _SOURCES) {
-      var sdef = _SOURCES[skey];
-      if (!sdef.toolbarId) continue;
-      var bar = document.getElementById(sdef.toolbarId);
-      if (bar) bar.classList.toggle('is-off', !(remote && sdef.toolbarId === curDef.toolbarId));
+    if (srcBar) {
+      srcBar.classList.toggle('is-off', !remote);
+      if (remote) renderToolbar();
     }
     if (pageWrap) pageWrap.classList.toggle('is-off', !remote);
     if (loadedWrap) loadedWrap.hidden = !remote;
@@ -682,7 +1025,7 @@ var BooruFilter = (function () {
   function cardLabel(post) {
     var st = _status[post.key] || '';
     var stLabel = st === 'downloading' ? '保存中…'
-      : (st === 'done' || post.downloaded) ? '已保存'
+      : st === 'done' ? '已保存'
       : st === 'error' ? '失败'
       : '未保存';
     var rs = resText(post);
@@ -842,7 +1185,7 @@ var BooruFilter = (function () {
     img.src = sample;
 
     var res = resText(post) || '-';
-    var st = _status[post.key] === 'done' || post.downloaded ? '已保存' : '未保存';
+    var st = _status[post.key] === 'done' ? '已保存' : '未保存';
     var srcName = ((_SOURCES[post.source] || {}).nameLabel) || post.source;
     meta.innerHTML =
       '<div><b>' + srcName + '</b> · ' +
@@ -852,7 +1195,7 @@ var BooruFilter = (function () {
       '<div>状态 <b>' + st + '</b></div>';
 
     if (open) open.href = postPageUrl(post);
-    if (dl) dl.textContent = (post.downloaded || _status[post.key] === 'done') ? '移除' : '下载';
+    if (dl) dl.textContent = (_status[post.key] === 'done') ? '移除' : '下载';
 
     tagsEl.innerHTML = '';
     var rpt = (_SOURCES[post.source] || {}).renderPreviewTags;
@@ -997,18 +1340,29 @@ var BooruFilter = (function () {
   }
 
   async function downloadOne(post) {
+    var ctrl = new AbortController();
+    _aborters[post.key] = ctrl;
     _status[post.key] = 'downloading';
     updateCard(post.key);
-    var res = await fetch(API.apiPath('/booru/download'), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        source: post.source,
-        id: String(post.id),
-        dir: destDir(),
-        overwrite: false,
-      }),
-    });
+    var res;
+    try {
+      res = await fetch(API.apiPath('/booru/download'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          source: post.source,
+          id: String(post.id),
+          dir: destDir(),
+          overwrite: false,
+        }),
+        signal: ctrl.signal,
+      });
+    } catch (e) {
+      if (e && e.name === 'AbortError') return; // 主动取消, 状态已由 cancelDownload 清理
+      throw e;
+    } finally {
+      delete _aborters[post.key];
+    }
     if (!res.ok) {
       var t = await res.text();
       var err = new Error(t || res.statusText);
@@ -1020,7 +1374,6 @@ var BooruFilter = (function () {
     }
     var data = await res.json();
     _status[post.key] = 'done';
-    post.downloaded = true;
     if (data.stem) post.stem = data.stem;
     updateCard(post.key);
     await refreshDiskCount();
@@ -1352,26 +1705,39 @@ var BooruFilter = (function () {
       throw new Error(t || res.statusText);
     }
     delete _status[post.key];
-    post.downloaded = false;
     updateCard(post.key);
     await refreshDiskCount();
     return res.json();
   }
 
+  /**
+   * 取消进行中的下载: 中断前端请求并清理本地状态与可能已写入的文件.
+   * 引用: onCardClick.
+   * @param {object} post
+   */
+  function cancelDownload(post) {
+    var ctrl = _aborters[post.key];
+    delete _selected[post.key];
+    delete _status[post.key];
+    updateCard(post.key);
+    if (ctrl) ctrl.abort();
+    // 后端检测断开会取消下载协程; 若文件已原子写入, 一并清理目录
+    undownloadOne(post).catch(function () {});
+    toast('已取消');
+  }
+
   function onCardClick(post) {
-    var isOn = !!_selected[post.key] || post.downloaded || _status[post.key] === 'done';
-    if (isOn) {
-      if (_status[post.key] === 'downloading') {
-        toast('正在保存，稍后再移除');
-        return;
-      }
+    if (_status[post.key] === 'downloading') {
+      cancelDownload(post);
+      return;
+    }
+    if (_selected[post.key]) {
       delete _selected[post.key];
       updateCard(post.key);
       undownloadOne(post).then(function (data) {
         toast(data.count ? ('已移除 ' + (post.stem || post.id)) : ('目录无文件 ' + (post.stem || post.id)));
       }).catch(function (e) {
           _selected[post.key] = true;
-        if (post.downloaded) _status[post.key] = 'done';
         updateCard(post.key);
         toast('移除失败: ' + (e.message || e));
       });
@@ -1380,7 +1746,7 @@ var BooruFilter = (function () {
     _selected[post.key] = true;
     updateCard(post.key);
     downloadOne(post).then(function (data) {
-      toast(data.skipped ? ('已存在 ' + (data.stem || post.id)) : ('已保存 ' + (data.stem || post.id) + '.png'));
+      if (data) toast(data.skipped ? ('已存在 ' + (data.stem || post.id)) : ('已保存 ' + (data.stem || post.id) + '.png'));
     }).catch(function (e) {
       delete _selected[post.key];
       updateCard(post.key);
@@ -1389,18 +1755,24 @@ var BooruFilter = (function () {
   }
 
   function syncCheatLink() {
+    var panel = curExtra();
     var a = document.getElementById('booru-cheat');
-    if (!a) return;
-    a.href = mode() === 'danbooru'
-      ? 'https://danbooru.donmai.us/wiki_pages/help:cheatsheet'
-      : 'https://gelbooru.com/index.php?page=help&topic=cheatsheet';
+    if (a) {
+      a.hidden = !(panel && panel.cheat);
+      if (panel && panel.cheat) {
+        a.href = mode() === 'danbooru'
+          ? 'https://danbooru.donmai.us/wiki_pages/help:cheatsheet'
+          : 'https://gelbooru.com/index.php?page=help&topic=cheatsheet';
+      }
+    }
     var dateRow = document.getElementById('booru-extra-date-row');
     if (dateRow) dateRow.hidden = mode() === 'gelbooru';
     // 去掉已保存的 date:（Gelbooru 无效）
-    if (mode() === 'gelbooru') {
-      var el = document.getElementById('booru-extra');
+    if (mode() === 'gelbooru' && panel) {
+      var bar = cur().bar;
+      var el = document.getElementById(bar + '-extra');
       if (el && el.value) {
-        var next = buildExtra(parseExtra(el.value));
+        var next = panel.build(panel.parse(el.value));
         if (next !== el.value) el.value = next;
       }
       syncExtraBtn();
@@ -1437,7 +1809,8 @@ var BooruFilter = (function () {
     saveUiState();
     _loading = true;
     updatePageStatus();
-    var btn = document.getElementById('btn-booru-search');
+    var srcBar = document.getElementById('toolbar-source');
+    var btn = srcBar ? srcBar.querySelector('button[data-role="search"]') : null;
     if (btn) btn.disabled = true;
     var autoNext = false;
     var autoPrev = false;
@@ -1547,6 +1920,7 @@ var BooruFilter = (function () {
     opts = opts || {};
     syncToolbar();
     syncCheatLink();
+    applyForm(loadUiState());
     _source = mode();
     _posts = [];
     var start = startPageFromInput();
@@ -1576,6 +1950,17 @@ var BooruFilter = (function () {
     saveUiState();
   }
 
+  /** 渲染本地流水: 加载 Store 并按回收站开关显示可见项. 引用: init / mode change. */
+  function renderLocal() {
+    if (typeof Store === 'undefined') return;
+    Store.load().then(function () {
+      if (typeof Masonry !== 'undefined') {
+        var showTrash = document.getElementById('chk-show-trash');
+        Masonry.render(Store.getVisible(showTrash ? showTrash.checked : false));
+      }
+    });
+  }
+
   function init() {
     var modeEl = document.getElementById('filter-mode');
     if (!modeEl) return;
@@ -1583,14 +1968,15 @@ var BooruFilter = (function () {
     var saved = loadUiState();
     if (saved && (saved.mode === 'gelbooru' || saved.mode === 'danbooru' || saved.mode === 'bilibili' || saved.mode === 'local')) {
       modeEl.value = saved.mode;
-      applyForm(saved);
     }
 
-    syncToolbar();
     syncCheatLink();
-
     if (isRemote()) {
       enterRemote({ autoSearch: true });
+    } else {
+      syncToolbar();
+      applyForm(saved);
+      renderLocal();
     }
 
     modeEl.addEventListener('change', function () {
@@ -1599,50 +1985,37 @@ var BooruFilter = (function () {
         enterRemote({ autoSearch: true });
       } else {
         leaveRemote();
-        if (typeof Store !== 'undefined') {
-          Store.load().then(function () {
-            if (typeof Masonry !== 'undefined') {
-              var showTrash = document.getElementById('chk-show-trash');
-              Masonry.render(Store.getVisible(showTrash ? showTrash.checked : false));
-            }
-          });
-        }
+        syncToolbar();
+        applyForm(loadUiState());
+        renderLocal();
       }
       saveUiState();
     });
 
-    // 依注册表绑定各来源工具栏: 搜索按钮 / 批量按钮 / Enter 触发
-    for (var skey in _SOURCES) {
-      (function (sdef) {
-        if (!sdef.toolbarId) return;
-        var sbtn = document.getElementById(sdef.searchBtn);
-        if (sbtn) {
-          sbtn.addEventListener('click', function () {
-            search(true).catch(function (e) { toast(String(e.message || e)); });
-          });
+    // 工具栏交互采用事件委托: 渲染后无需重新绑定, 重渲染也保持生效
+    var srcBar = document.getElementById('toolbar-source');
+    if (srcBar) {
+      srcBar.addEventListener('click', function (e) {
+        var btn = e.target.closest('button[data-role]');
+        if (!btn) return;
+        var role = btn.dataset.role;
+        if (role === 'search') {
+          search(true).catch(function (err) { toast(String(err.message || err)); });
+        } else if (role === 'batch') {
+          if (!isRemote()) { toast('请先切换到图站模式'); return; }
+          if (cur().batchDialog) setBatchDlg(true);
+          else runBatch().catch(function (err) { toast(String(err.message || err)); });
+        } else if (role === 'extra') {
+          setExtraDlg(true);
         }
-        var bbtn = document.getElementById(sdef.batchBtn);
-        if (bbtn) {
-          bbtn.addEventListener('click', function () {
-            if (!isRemote()) { toast('请先切换到图站模式'); return; }
-            if (sdef.batchDialog) setBatchDlg(true);
-            else runBatch().catch(function (e) { toast(String(e.message || e)); });
-          });
+      });
+      srcBar.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' && e.target && e.target.tagName === 'INPUT') {
+          e.preventDefault();
+          search(true).catch(function (err) { toast(String(err.message || err)); });
         }
-        if (sdef.enterIds) {
-          for (var ei = 0; ei < sdef.enterIds.length; ei++) {
-            var eel = document.getElementById(sdef.enterIds[ei]);
-            if (!eel) continue;
-            eel.addEventListener('keydown', function (ev) {
-              if (ev.key === 'Enter') {
-                ev.preventDefault();
-                search(true).catch(function (err) { toast(String(err.message || err)); });
-              }
-            });
-            eel.addEventListener('change', saveUiState);
-          }
-        }
-      })(_SOURCES[skey]);
+      });
+      srcBar.addEventListener('change', saveUiState);
     }
     var batchDlg = document.getElementById('booru-batch-dlg');
     if (batchDlg) {
@@ -1684,28 +2057,13 @@ var BooruFilter = (function () {
         refreshMetadata().catch(function (e) { toast(String(e.message || e)); });
       });
     }
-    function onSearchKey(e) {
-      if (e.key === 'Enter') {
-        e.preventDefault();
-        search(true).catch(function (err) { toast(String(err.message || err)); });
-      }
-    }
-    var tagsInput = document.getElementById('booru-tags');
-    if (tagsInput) {
-      tagsInput.addEventListener('keydown', onSearchKey);
-      tagsInput.addEventListener('change', saveUiState);
-    }
-    var extraBtn = document.getElementById('btn-booru-extra');
-    if (extraBtn) extraBtn.addEventListener('click', function () { setExtraDlg(true); });
     var extraDlg = document.getElementById('booru-extra-dlg');
     if (extraDlg) {
       extraDlg.addEventListener('click', function (e) {
         if (e.target === extraDlg) { setExtraDlg(false); return; }
         var chip = e.target.closest('.booru-rate-chip');
         if (chip) {
-          var all = extraDlg.querySelectorAll('.booru-rate-chip');
-          for (var j = 0; j < all.length; j++) all[j].classList.remove('on');
-          chip.classList.add('on');
+          chip.classList.toggle('on');
           return;
         }
         var act = e.target.closest('[data-ex-act]');
@@ -1716,12 +2074,15 @@ var BooruFilter = (function () {
       });
     }
     syncExtraBtn();
-    var orderEl = document.getElementById('booru-order');
-    if (orderEl) orderEl.addEventListener('change', saveUiState);
     var startEl = document.getElementById('booru-start-page');
     if (startEl) {
       startEl.addEventListener('change', saveUiState);
-      startEl.addEventListener('keydown', onSearchKey);
+      startEl.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          search(true).catch(function (err) { toast(String(err.message || err)); });
+        }
+      });
     }
     var prevBtn = document.getElementById('btn-booru-page-prev');
     if (prevBtn) prevBtn.addEventListener('click', function () { loadMore(true); });

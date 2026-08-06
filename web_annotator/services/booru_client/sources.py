@@ -31,9 +31,11 @@ class GelbooruSource(SourceClient):
     valid_orders = ("score", "id", "id_asc")
 
     def filter_extra(self, extra: str) -> str:
-        """Gelbooru 忽略 date: 元标签. 
+        """Gelbooru 忽略 date: 元标签, 并合并多评级为 OR. 
 
-        覆盖父类 ``common.SourceClient``. 
+        Gelbooru 的多评级用 ``(rating:a) OR (rating:b)`` 逐项括号大写
+        连接(与 danbooru 的小写 ``or`` 连写不同)。覆盖父类
+        ``common.SourceClient`` 。
 
         Callers:
             - `common.SourceClient:build_search_query`

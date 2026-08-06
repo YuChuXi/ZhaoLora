@@ -55,6 +55,9 @@ class BilibiliSource(SourceClient):
     def parse_query(self, tags: str, extra: str) -> dict[str, str]:
         """解析 B 站查询串: ``tags`` 为 UID, ``extra`` 为 ``type:``/``after:``/``before:``/``keyword:``.
 
+        类型可多选, 以多个 ``type:`` token 表达, 结果以逗号分隔去重保序
+        (字符串, 可直接用作分页缓存键)。
+
         Callers:
             - `BilibiliSource.search`
         """
@@ -65,11 +68,18 @@ class BilibiliSource(SourceClient):
             "before": "",
             "keyword": "",
         }
+        types: list[str] = []
         for token in (extra or "").split():
             for key in ("type", "after", "before", "keyword"):
                 if token.startswith(key + ":"):
-                    out[key] = token[len(key) + 1:].strip()
+                    val = token[len(key) + 1:].strip()
+                    if key == "type":
+                        if val:
+                            types.append(val)
+                    else:
+                        out[key] = val
                     break
+        out["type"] = ",".join(dict.fromkeys(types))
         return out
 
     def _matches(self, record: DynamicRecord, f: dict[str, str]) -> bool:
@@ -79,7 +89,7 @@ class BilibiliSource(SourceClient):
             - `BilibiliSource.search`
         """
         ttype = _TYPE_MAP.get(record.type or "", "other")
-        if f["type"] and ttype != f["type"]:
+        if f["type"] and ttype not in f["type"].split(","):
             return False
         if f["keyword"] and f["keyword"].lower() not in record.text.lower():
             return False

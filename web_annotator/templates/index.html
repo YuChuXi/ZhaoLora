@@ -11,19 +11,10 @@
     border: 1px solid var(--border); border-radius: 4px; padding: 4px 8px; font-size: 12px;
     width: min(220px, 28vw);
   }
-  #bilibili-uid, #bilibili-keyword {
+  #bilibili-uid {
     background: #0a1a30; color: var(--text);
     border: 1px solid var(--border); border-radius: 4px; padding: 4px 8px; font-size: 12px;
     width: min(130px, 16vw);
-  }
-  #bilibili-keyword { width: min(150px, 18vw); }
-  #bilibili-type, #bilibili-time-from, #bilibili-time-to {
-    background: var(--card-bg); color: var(--text);
-    border: 1px solid var(--border); border-radius: 4px; padding: 3px 6px; font-size: 12px;
-  }
-  .bili-time-row {
-    font-size: 12px; color: var(--text-dim);
-    display: inline-flex; align-items: center; gap: 4px; white-space: nowrap;
   }
   .booru-page-wrap {
     display: inline-flex; align-items: stretch;
@@ -128,7 +119,8 @@
   .booru-extra-row > span.label { min-width: 2.5em; color: var(--text-dim); }
   .booru-extra-row input[type="number"],
   .booru-extra-row input[type="text"],
-  .booru-extra-row input[type="date"] {
+  .booru-extra-row input[type="date"],
+  .booru-extra-row select {
     background: #0a1a30; color: var(--text);
     border: 1px solid var(--border); border-radius: 4px;
     padding: 4px 8px; font-size: 12px;
@@ -198,43 +190,7 @@
   <span class="status-seg" id="stat-trashed-wrap">回收站 <b id="stat-trashed">0</b></span>
   <span class="sep"></span>
 
-  <div id="toolbar-booru" class="toolbar-group is-off">
-    <input type="text" id="booru-tags" placeholder="标签，空格分隔" spellcheck="false">
-    <label style="font-size:12px;color:var(--text-dim);display:flex;align-items:center;gap:4px;">
-      排序
-      <select id="booru-order">
-        <option value="">默认</option>
-        <option value="score">分数</option>
-        <option value="id">ID 新→旧</option>
-        <option value="id_asc">ID 旧→新</option>
-      </select>
-    </label>
-    <button type="button" class="btn" id="btn-booru-extra" title="评级、分数、分辨率等">条件<span class="booru-extra-badge" aria-hidden="true"></span></button>
-    <input type="hidden" id="booru-extra" value="">
-    <button class="btn green" id="btn-booru-search" type="button">搜索</button>
-    <button class="btn" id="btn-booru-batch" type="button" title="按当前搜索结果批量下载">批量下载</button>
-    <span class="sep"></span>
-  </div>
-
-  <div id="toolbar-bilibili" class="toolbar-group is-off">
-    <input type="text" id="bilibili-uid" placeholder="B站 UID" spellcheck="false">
-    <select id="bilibili-type">
-      <option value="">全部类型</option>
-      <option value="image">图片</option>
-      <option value="video">视频</option>
-      <option value="forward">转发</option>
-    </select>
-    <input type="text" id="bilibili-keyword" placeholder="关键词" spellcheck="false">
-    <label class="bili-time-row" title="发布时间区间">
-      时间
-      <input type="date" id="bilibili-time-from">
-      <span>~</span>
-      <input type="date" id="bilibili-time-to">
-    </label>
-    <button class="btn green" id="btn-bilibili-search" type="button">搜索</button>
-    <button class="btn" id="btn-bilibili-batch" type="button" title="按当前筛选批量下载">批量下载</button>
-    <span class="sep"></span>
-  </div>
+  <div id="toolbar-source" class="toolbar-group is-off"></div>
 
   <label class="toolbar-group is-off bili-time-row" id="remote-page-wrap" title="当前页；两侧可加载上/下一页">
     页
@@ -307,53 +263,8 @@
 
 <div class="booru-extra-dlg" id="booru-extra-dlg" aria-hidden="true">
   <div class="booru-extra-panel" role="dialog" aria-labelledby="booru-extra-title">
-    <h3 id="booru-extra-title">附加条件</h3>
-    <div class="booru-extra-row">
-      <span class="label">评级</span>
-      <button type="button" class="booru-rate-chip on" data-rate="">不限</button>
-      <button type="button" class="booru-rate-chip" data-rate="g" title="General">全年龄</button>
-      <button type="button" class="booru-rate-chip" data-rate="s" title="Sensitive">敏感</button>
-      <button type="button" class="booru-rate-chip" data-rate="q" title="Questionable">可疑</button>
-      <button type="button" class="booru-rate-chip" data-rate="e" title="Explicit">露骨</button>
-    </div>
-    <div class="booru-extra-row">
-      <span class="label">分数</span>
-      <input type="number" data-ex="scoreLo" step="1" placeholder="下限">
-      <span>≤ 分数 ≤</span>
-      <input type="number" data-ex="scoreHi" step="1" placeholder="上限">
-    </div>
-    <div class="booru-extra-row">
-      <span class="label">宽度</span>
-      <input type="number" data-ex="widthLo" min="0" step="1" placeholder="下限">
-      <span>≤ 宽 ≤</span>
-      <input type="number" data-ex="widthHi" min="0" step="1" placeholder="上限">
-    </div>
-    <div class="booru-extra-row">
-      <span class="label">高度</span>
-      <input type="number" data-ex="heightLo" min="0" step="1" placeholder="下限">
-      <span>≤ 高 ≤</span>
-      <input type="number" data-ex="heightHi" min="0" step="1" placeholder="上限">
-    </div>
-    <div class="booru-extra-row">
-      <span class="label">ID</span>
-      <input type="number" data-ex="idLo" min="1" step="1" placeholder="下限">
-      <span>≤ ID ≤</span>
-      <input type="number" data-ex="idHi" min="1" step="1" placeholder="上限">
-    </div>
-    <div class="booru-extra-row" id="booru-extra-date-row" title="上传日期（仅 Danbooru）">
-      <span class="label">日期</span>
-      <input type="date" data-ex="dateLo">
-      <span>≤ 日 ≤</span>
-      <input type="date" data-ex="dateHi">
-    </div>
-    <div class="booru-extra-row">
-      <span class="label">用户</span>
-      <input type="text" data-ex="user" placeholder="上传者" spellcheck="false">
-    </div>
-    <div class="booru-extra-row">
-      <span class="label">附加</span>
-      <input type="text" data-ex="more" placeholder="其它元标签，空格分隔" spellcheck="false">
-    </div>
+    <h3 id="booru-extra-title">条件</h3>
+    <div id="booru-extra-fields"></div>
     <div class="booru-extra-actions">
       <a id="booru-cheat" href="https://gelbooru.com/index.php?page=help&topic=cheatsheet" target="_blank" rel="noopener">cheatsheet</a>
       <button type="button" class="btn" data-ex-act="clear">清空</button>

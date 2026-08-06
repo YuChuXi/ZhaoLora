@@ -168,9 +168,6 @@ class SourceClient(ABC):
         """过滤额外元标签；子类可覆盖. 
 
         Callers:
-            - `common.py:SourceClient.filter_extra`
-
-        Callers:
             - `common.py:SourceClient.build_search_query`
         """
         return extra.strip()
