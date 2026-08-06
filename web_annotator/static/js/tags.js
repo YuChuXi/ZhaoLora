@@ -141,6 +141,7 @@
       underscores: document.getElementById('opt-underscores').checked,
       per_sample: document.getElementById('opt-per-sample').checked,
       min_count: Math.max(1, parseInt(document.getElementById('opt-min').value, 10) || 1),
+      section: document.getElementById('opt-section').value,
     };
     var data = await api(API.apiPath('/tags/stats'), {
       method: 'POST',
@@ -242,6 +243,22 @@
   function init() {
     document.getElementById('btn-refresh').addEventListener('click', function () {
       refresh().catch(function (e) { toast(String(e.message || e)); });
+    });
+
+    // ---- 统计条件对话框 ----
+    var OPT_MODAL = 'stats-options-modal';
+    document.getElementById('btn-stats-options').addEventListener('click', function () {
+      document.getElementById(OPT_MODAL).classList.add('open');
+    });
+    document.getElementById('btn-stats-options-close').addEventListener('click', function () {
+      document.getElementById(OPT_MODAL).classList.remove('open');
+    });
+    document.getElementById('btn-stats-options-apply').addEventListener('click', function () {
+      document.getElementById(OPT_MODAL).classList.remove('open');
+      refresh().catch(function (e) { toast(String(e.message || e)); });
+    });
+    document.getElementById(OPT_MODAL).addEventListener('click', function (e) {
+      if (e.target.id === OPT_MODAL) document.getElementById(OPT_MODAL).classList.remove('open');
     });
     document.getElementById('btn-translate-missing').addEventListener('click', function () {
       translateMissing();

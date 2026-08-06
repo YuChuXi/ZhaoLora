@@ -68,7 +68,8 @@
     display: flex; align-items: center; gap: 4px;
     font-size: 12px; color: var(--text-dim); cursor: pointer; user-select: none;
   }
-  .tagging-panel-head input[type="number"] {
+  .tagging-panel-head input[type="number"],
+  .tagging-panel-actions input[type="number"] {
     width: 56px; background: #0a1a30; color: var(--text);
     border: 1px solid var(--border); border-radius: 4px; padding: 2px 4px; font-size: 12px;
   }
@@ -77,6 +78,18 @@
   }
   .tagging-panel-head .meta-inline b { color: var(--text); font-weight: 600; }
   .tagging-panel-head .spacer { flex: 1; min-width: 8px; }
+  .tagging-panel-actions {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    padding: 8px 12px 10px; border-bottom: 1px solid var(--border); background: var(--surface);
+  }
+  .tagging-panel-actions label {
+    display: flex; align-items: center; gap: 4px;
+    font-size: 12px; color: var(--text-dim); cursor: pointer; user-select: none;
+  }
+  .tagging-panel-foot {
+    display: flex; align-items: center; justify-content: flex-end; gap: 8px;
+    padding: 10px 12px; border-top: 1px solid var(--border); background: var(--surface);
+  }
   .model-warn {
     color: #e94560; font-size: 12px; padding: 4px 12px;
     border-bottom: 1px solid var(--border);
@@ -97,6 +110,7 @@
   <button class="btn green" id="btn-batch-add" type="button">批量添加</button>
   <button class="btn green" id="btn-batch-replace" type="button">批量替换</button>
   <button class="btn green" id="btn-batch-delete" type="button">批量删除</button>
+  <button class="btn" id="btn-stats-options" type="button">条件</button>
   <button class="btn green" id="btn-refresh">统计</button>
   <button class="btn" id="btn-translate-missing">翻译缺失</button>
   <button class="btn" id="btn-export-en">导出英文</button>
@@ -106,10 +120,6 @@
 <div class="tags-main">
   <div class="tags-content">
     <div class="tags-toolbar2">
-      <label><input type="checkbox" id="opt-lower" checked> 忽略大小写</label>
-      <label><input type="checkbox" id="opt-underscores" checked> 统一空格</label>
-      <label><input type="checkbox" id="opt-per-sample" checked> 按图去重</label>
-      <label>最少出现 <input type="number" id="opt-min" value="1" min="1" style="width:52px;background:#0a1a30;color:var(--text);border:1px solid var(--border);border-radius:4px;padding:2px 4px;"></label>
       <span id="sel-count">已选 0</span>
     </div>
     <div class="tags-scroll">
@@ -139,9 +149,8 @@
   <div class="tagging-panel" role="dialog" aria-labelledby="tagging-title">
     <div class="tagging-panel-head">
       <span class="title" id="tagging-title">自动生成</span>
-      <button class="btn green" id="btn-start" type="button">开始</button>
-      <button class="btn" id="btn-cancel" type="button" disabled>取消</button>
-      <span class="sep"></span>
+    </div>
+    <div class="tagging-panel-actions">
       <label>置信度
         <input type="number" id="threshold" value="0.1" min="0" max="1" step="0.01">
       </label>
@@ -153,8 +162,6 @@
       <span class="meta-inline"><b id="m-done">0</b>/<b id="m-total">0</b></span>
       <span class="meta-inline">跳过 <b id="m-skip">0</b></span>
       <span class="meta-inline">失败 <b id="m-fail">0</b></span>
-      <span class="spacer"></span>
-      <button class="btn" id="btn-tagging-close" type="button">关闭</button>
     </div>
     <div class="job-progress compact" id="job-progress" hidden>
       <div class="job-progress-track">
@@ -164,6 +171,41 @@
     </div>
     <div id="model-warn" class="model-warn" hidden></div>
     <div class="tagging-log" id="log-box"></div>
+    <div class="tagging-panel-foot">
+      <button class="btn" id="btn-tagging-close" type="button">关闭</button>
+      <button class="btn" id="btn-cancel" type="button" disabled>取消</button>
+      <button class="btn green" id="btn-start" type="button">开始</button>
+    </div>
+  </div>
+</div>
+
+<!-- 统计条件对话框 -->
+<div class="tagging-modal" id="stats-options-modal" aria-hidden="true">
+  <div class="tagging-panel" role="dialog" aria-labelledby="stats-options-title" style="width:min(420px,92vw);height:auto;max-height:min(360px,64vh);">
+    <div class="tagging-panel-head">
+      <span class="title" id="stats-options-title">统计条件</span>
+    </div>
+    <div style="padding:14px 16px;display:flex;flex-direction:column;gap:12px;font-size:12px;color:var(--text-dim);">
+      <div style="display:flex;flex-direction:column;gap:6px;">
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;"><input type="checkbox" id="opt-lower" checked> 忽略大小写</label>
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;"><input type="checkbox" id="opt-underscores" checked> 统一空格</label>
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;"><input type="checkbox" id="opt-per-sample" checked> 按图去重</label>
+      </div>
+      <label style="display:flex;align-items:center;gap:6px;">最少出现
+        <input type="number" id="opt-min" value="1" min="1" style="width:60px;background:#0a1a30;color:var(--text);border:1px solid var(--border);border-radius:4px;padding:2px 4px;">
+      </label>
+      <div style="display:flex;align-items:center;gap:6px;">统计范围
+        <select id="opt-section" style="background:var(--card-bg);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:2px 6px;font-size:12px;">
+          <option value="all">全部</option>
+          <option value="before">||| 前</option>
+          <option value="after">||| 后</option>
+        </select>
+      </div>
+    </div>
+    <div class="tagging-panel-foot">
+      <button class="btn" id="btn-stats-options-close" type="button">关闭</button>
+      <button class="btn green" id="btn-stats-options-apply" type="button">确定</button>
+    </div>
   </div>
 </div>
 
@@ -172,8 +214,6 @@
   <div class="tagging-panel" role="dialog" style="height:auto;max-height:min(480px,80vh);">
     <div class="tagging-panel-head">
       <span class="title">批量添加标签</span>
-      <span class="spacer"></span>
-      <button class="btn" id="btn-batch-add-close" type="button">关闭</button>
     </div>
     <div style="padding:12px;display:flex;flex-direction:column;gap:10px;overflow:auto;">
       <label style="font-size:12px;color:var(--text-dim);display:flex;flex-direction:column;gap:3px;">
@@ -217,11 +257,12 @@
           <label style="display:flex;align-items:center;gap:4px;cursor:pointer;"><input type="checkbox" id="batch-add-inject-quality"> 注入质量标签</label>
         </div>
       </div>
-      <div style="display:flex;gap:8px;">
-        <button class="btn" type="button" id="btn-batch-add-preview">预览</button>
-        <button class="btn danger" type="button" id="btn-batch-add-apply">写入</button>
-      </div>
       <div id="batch-add-result" style="font-size:12px;color:var(--text-dim);background:#0a1a30;border:1px solid var(--border);border-radius:6px;padding:8px 10px;max-height:180px;overflow:auto;white-space:pre-wrap;font-family:ui-monospace,monospace;"></div>
+    </div>
+    <div class="tagging-panel-foot">
+      <button class="btn" id="btn-batch-add-close" type="button">关闭</button>
+      <button class="btn" type="button" id="btn-batch-add-preview">预览</button>
+      <button class="btn danger" type="button" id="btn-batch-add-apply">写入</button>
     </div>
   </div>
 </div>
@@ -231,8 +272,6 @@
   <div class="tagging-panel" role="dialog" style="height:auto;max-height:min(400px,70vh);">
     <div class="tagging-panel-head">
       <span class="title">批量删除标签</span>
-      <span class="spacer"></span>
-      <button class="btn" id="btn-batch-delete-close" type="button">关闭</button>
     </div>
     <div style="padding:12px;display:flex;flex-direction:column;gap:10px;overflow:auto;">
       <label style="font-size:12px;color:var(--text-dim);display:flex;flex-direction:column;gap:3px;">
@@ -248,11 +287,12 @@
         </select>
         <span style="opacity:.75;">通配: * 匹配任意字符；正则作用于归一化标签(小写无下划线)</span>
       </div>
-      <div style="display:flex;gap:8px;">
-        <button class="btn" type="button" id="btn-batch-delete-preview">预览</button>
-        <button class="btn danger" type="button" id="btn-batch-delete-apply">写入</button>
-      </div>
       <div id="batch-delete-result" style="font-size:12px;color:var(--text-dim);background:#0a1a30;border:1px solid var(--border);border-radius:6px;padding:8px 10px;max-height:180px;overflow:auto;white-space:pre-wrap;font-family:ui-monospace,monospace;"></div>
+    </div>
+    <div class="tagging-panel-foot">
+      <button class="btn" id="btn-batch-delete-close" type="button">关闭</button>
+      <button class="btn" type="button" id="btn-batch-delete-preview">预览</button>
+      <button class="btn danger" type="button" id="btn-batch-delete-apply">写入</button>
     </div>
   </div>
 </div>
@@ -262,8 +302,6 @@
   <div class="tagging-panel" role="dialog" style="height:auto;max-height:min(420px,72vh);">
     <div class="tagging-panel-head">
       <span class="title">批量替换标签</span>
-      <span class="spacer"></span>
-      <button class="btn" id="btn-batch-replace-close" type="button">关闭</button>
     </div>
     <div style="padding:12px;display:flex;flex-direction:column;gap:10px;overflow:auto;">
       <div style="display:flex;gap:10px;align-items:flex-start;">
@@ -286,11 +324,12 @@
         </select>
         <span style="opacity:.75;">通配: * 匹配任意字符；正则作用于归一化标签(小写无下划线)</span>
       </div>
-      <div style="display:flex;gap:8px;">
-        <button class="btn" type="button" id="btn-batch-replace-preview">预览</button>
-        <button class="btn danger" type="button" id="btn-batch-replace-apply">写入</button>
-      </div>
       <div id="batch-replace-result" style="font-size:12px;color:var(--text-dim);background:#0a1a30;border:1px solid var(--border);border-radius:6px;padding:8px 10px;max-height:180px;overflow:auto;white-space:pre-wrap;font-family:ui-monospace,monospace;"></div>
+    </div>
+    <div class="tagging-panel-foot">
+      <button class="btn" id="btn-batch-replace-close" type="button">关闭</button>
+      <button class="btn" type="button" id="btn-batch-replace-preview">预览</button>
+      <button class="btn danger" type="button" id="btn-batch-replace-apply">写入</button>
     </div>
   </div>
 </div>

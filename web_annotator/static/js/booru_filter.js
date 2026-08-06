@@ -1217,7 +1217,7 @@ var BooruFilter = (function () {
               var input = document.getElementById('booru-tags');
               if (input) input.value = tag;
               hidePreview();
-              search(true).catch(function (e) { toast(String(e.message || e)); });
+              search(true, true).catch(function (e) { toast(String(e.message || e)); });
             });
             tagsEl.appendChild(chip);
           })(tags[i]);
@@ -1779,7 +1779,7 @@ var BooruFilter = (function () {
     }
   }
 
-  async function search(dir) {
+  async function search(dir, fromFirst) {
     if (_loading) return;
     var isReset = dir === true || dir === 'reset';
     var isUp = dir === 'up';
@@ -1791,7 +1791,7 @@ var BooruFilter = (function () {
     }
     _source = mode();
     if (isReset) {
-      var start = startPageFromInput();
+      var start = fromFirst ? 1 : startPageFromInput();
       _pageLo = start;
       _pageHi = start;
       _page = start;
@@ -2000,7 +2000,7 @@ var BooruFilter = (function () {
         if (!btn) return;
         var role = btn.dataset.role;
         if (role === 'search') {
-          search(true).catch(function (err) { toast(String(err.message || err)); });
+          search(true, true).catch(function (err) { toast(String(err.message || err)); });
         } else if (role === 'batch') {
           if (!isRemote()) { toast('请先切换到图站模式'); return; }
           if (cur().batchDialog) setBatchDlg(true);
@@ -2012,7 +2012,7 @@ var BooruFilter = (function () {
       srcBar.addEventListener('keydown', function (e) {
         if (e.key === 'Enter' && e.target && e.target.tagName === 'INPUT') {
           e.preventDefault();
-          search(true).catch(function (err) { toast(String(err.message || err)); });
+          search(true, true).catch(function (err) { toast(String(err.message || err)); });
         }
       });
       srcBar.addEventListener('change', saveUiState);

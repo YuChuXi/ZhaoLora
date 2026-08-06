@@ -104,12 +104,36 @@ def count_tags(
     html_unescape: bool = True,
     per_sample: bool = True,
     min_count: int = 1,
+    section: str = "all",
 ) -> TagStatsResult:
-    """统计若干目录内旁路 ``.txt`` 的标签频率. 
+    """统计若干目录内旁路 ``.txt`` 的标签频率.
+
+    ``section`` 限定统计范围:
+    - ``"all"``: 整行所有标签.
+    - ``"before"``: 只统计 ``|||`` 之前(头部)的标签.
+    - ``"after"``: 只统计 ``|||`` 之后(正文)的标签.
+
+    Args:
+        dirs: 待统计的工作目录列表.
+        zh_map: 中文译名缓存.
+        lower: 是否统一小写.
+        underscores: 是否将下划线归一为空格.
+        html_unescape: 是否反转义 HTML 实体.
+        per_sample: 是否按图去重.
+        min_count: 最少出现次数过滤.
+        section: 统计范围, ``"all"`` / ``"before"`` / ``"after"``.
+
+    Returns:
+        TagStatsResult: 统计结果.
+
+    Raises:
+        ValueError: ``section`` 非法.
 
     引用:
-        ``routes/tag_stats.py``. 
+        ``routes/tag_stats.py``.
     """
+    if section not in ("all", "before", "after"):
+        raise ValueError(f"section 非法: {section}")
     zh_map = zh_map or {}
     counter: Counter[str] = Counter()
     total_tag_occurrences = 0
@@ -130,6 +154,11 @@ def count_tags(
         text = raw.strip()
         if html_unescape:
             text = html.unescape(text)
+        if section == "before":
+            text = text.split("|||", 1)[0]
+        elif section == "after":
+            parts = text.split("|||", 1)
+            text = parts[1] if len(parts) > 1 else ""
         tags = split_tags_line(text)
         normed = [
             normalize_tag(t, lower=lower, underscores=underscores)

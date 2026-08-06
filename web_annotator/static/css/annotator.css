@@ -654,3 +654,55 @@ body {
   color: #555;
   pointer-events: none;
 }
+
+/* ---- 统一模态对话框组件 ---- */
+.modal {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 520;
+  align-items: center;
+  justify-content: center;
+  background: rgba(6, 8, 14, 0.72);
+  padding: 16px;
+}
+.modal.open,
+.modal.show { display: flex; }
+.modal-panel {
+  width: min(920px, 94vw);
+  height: min(720px, 88vh);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.modal-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+.modal-head .modal-title {
+  font-size: 14px;
+  font-weight: 600;
+}
+.modal-head .spacer { flex: 1; min-width: 8px; }
+.modal-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+.modal-foot {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 10px 12px;
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+}

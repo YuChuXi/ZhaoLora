@@ -52,6 +52,7 @@ class StatsBody(BaseModel):
     html_unescape: bool = True
     per_sample: bool = True
     min_count: int = 1
+    section: str = Field(default="all", description="统计范围: all | before | after")
 
 
 class CleanBody(BaseModel):
@@ -89,6 +90,8 @@ def tag_stats(request: Request, body: StatsBody) -> TagStatsResult:
         raise HTTPException(400, "请选择目录")
     if body.min_count < 1:
         raise HTTPException(400, "最少出现次数至少为 1")
+    if body.section not in ("all", "before", "after"):
+        raise HTTPException(400, "section 须为 all / before / after")
 
     zh_map = load_translation_map(root)
     result = count_tags(
@@ -99,6 +102,7 @@ def tag_stats(request: Request, body: StatsBody) -> TagStatsResult:
         html_unescape=body.html_unescape,
         per_sample=body.per_sample,
         min_count=body.min_count,
+        section=body.section,
     )
     return result.model_copy(
         update={
