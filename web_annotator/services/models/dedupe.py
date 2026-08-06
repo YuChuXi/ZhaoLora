@@ -22,6 +22,7 @@ class DedupeMember(BaseModel):
     blockiness: float
     area: int
     is_keep: bool
+    similarity: float | None = None
     thumbnail_hash: str = ""
 
 
@@ -50,9 +51,12 @@ class DedupeScanResult(BaseModel):
     image_count: int
     group_count: int
     duplicate_image_count: int
+    algorithm: str = "mse"
     mse_threshold: float
+    sim_threshold: float = 0.95
     similar_res_ratio: float
     groups: list[DedupeGroup]
+    histogram: str | None = None
 
 
 class DedupeMoveResponse(BaseModel):

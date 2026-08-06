@@ -6,7 +6,13 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from routes.deps import get_runtime, jobs
-from services.analysis.dedupe import find_duplicate_groups, load_records
+from services.analysis.dedupe import (
+    extract_fft_features,
+    extract_orb_features,
+    find_duplicate_groups,
+    load_records,
+    pairwise_values,
+)
 from services.core.jobs import EmitFn
 from services.models import (
     DedupeMoveResponse,
@@ -26,7 +32,9 @@ class ScanBody(BaseModel):
 
     dirs: list[str] = Field(default_factory=lambda: ["main"])
     dir: str | None = None
+    algorithm: str = Field(default="mse", description="mse | fft | orb")
     mse_threshold: float = Field(default=1e-4, gt=0, le=1)
+    sim_threshold: float = Field(default=0.95, ge=0.0, le=1.0)
     similar_res_ratio: float = Field(default=1.05, ge=1.0, le=10.0)
 
 
@@ -45,6 +53,85 @@ def _names(dirs: list[str] | None, legacy: str | None) -> list[str]:
     if legacy:
         return [legacy]
     return ["main"]
+
+
+def similarity_histogram(values, algorithm: str) -> str | None:
+    """两两相似度直方图, 以 base64 data URL 返回(MSE 用对数横轴).
+
+    依赖 matplotlib (Agg 后端). matplotlib 缺失或无可绘制数据时返回 None.
+
+    Args:
+        values: 两两相似度值数组.
+        algorithm: 相似度算法, ``"mse"`` / ``"fft"`` / ``"orb"``.
+
+    Returns:
+        str | None: ``data:image/png;base64,...``, 失败时 None.
+
+    Callers:
+        - `routes/dedupe.py:scan_duplicates`
+    """
+    try:
+        import matplotlib
+
+        matplotlib.use("Agg", force=True)
+        import matplotlib.pyplot as plt
+
+        plt.rcParams["font.sans-serif"] = [
+            "Microsoft YaHei",
+            "WenQuanYi Zen Hei",
+            "Noto Sans CJK SC",
+            "SimHei",
+            "DejaVu Sans",
+        ]
+        plt.rcParams["axes.unicode_minus"] = False
+    except ImportError:
+        return None
+
+    import base64
+    import io
+
+    import numpy as np
+
+    vals = np.asarray(values, dtype=float)
+    vals = vals[np.isfinite(vals)]
+    if vals.size == 0:
+        return None
+
+    fig, ax = plt.subplots(figsize=(9, 5))
+    if algorithm in ("mse", "orb"):
+        v = vals[vals > 0]
+        if v.size == 0:
+            plt.close(fig)
+            return None
+        bins = np.logspace(np.log10(v.min()), np.log10(v.max()), 100)
+        ax.hist(v, bins=bins, color="#777777", edgecolor="#111111")
+        ax.set_xscale("log")
+        if algorithm == "mse":
+            ax.set_xlabel("MSE (log)")
+            title = "MSE 两两相似度分布 (log)"
+        else:
+            ax.set_xlabel("匹配比例 (log)")
+            title = "ORB 匹配比例分布 (log)"
+    else:
+        ax.hist(vals, bins=100, color="#777777", edgecolor="#111111")
+        ax.set_xlabel("相似度")
+        title = "FFT 余弦相似度分布"
+    ax.set_yscale("log")
+    ax.set_ylabel("数量 (log)")
+    ax.set_title(title)
+    ax.text(
+        0.02,
+        0.95,
+        f"N={vals.size}  median={np.median(vals):.4g}  p95={np.quantile(vals, 0.95):.4g}",
+        transform=ax.transAxes,
+        va="top",
+        fontsize=9,
+    )
+    plt.tight_layout()
+    buf = io.BytesIO()
+    plt.savefig(buf, format="png", dpi=140)
+    plt.close(fig)
+    return "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode("ascii")
 
 
 @router.get("/dirs")
@@ -73,6 +160,8 @@ async def scan_duplicates(request: Request, body: ScanBody) -> JobSubmitResponse
 
     mse = body.mse_threshold
     ratio = body.similar_res_ratio
+    algorithm = "mse" if body.algorithm not in ("mse", "fft", "orb") else body.algorithm
+    sim = body.sim_threshold
 
     def run(emit: EmitFn) -> DedupeScanResult:
         """工作线程: 扫描重复组. 引用: ``JobManager.submit``. """
@@ -91,9 +180,41 @@ async def scan_duplicates(request: Request, body: ScanBody) -> JobSubmitResponse
                 r.rel = f"{sub}/{r.rel}" if not r.rel.startswith(sub + "/") else r.rel
             records.extend(part)
 
+        if algorithm in ("fft", "orb"):
+            from services.analysis.scoring import ScoreProgress
+
+            feat_p = ScoreProgress(
+                status="running",
+                phase=algorithm,
+                total=len(records),
+                message="提取 " + ("FFT" if algorithm == "fft" else "ORB") + " 特征中…",
+            )
+
+            def on_step(done: int, total: int) -> None:
+                """特征提取逐张进度上报. 引用: ``extract_*_features``. """
+                feat_p.done = done
+                if done % 10 == 0 or done == total:
+                    emit(feat_p.snapshot())
+
+            emit(feat_p.snapshot())
+            if algorithm == "fft":
+                extract_fft_features(records, progress=feat_p, on_step=on_step)
+            else:
+                extract_orb_features(records, progress=feat_p, on_step=on_step)
+
+        emit(
+            JobSnapshot(
+                status="running",
+                phase="comparing",
+                message="比较相似度中…",
+                pct=None,
+            )
+        )
         groups = find_duplicate_groups(
             records,
+            algorithm=algorithm,
             mse_threshold=mse,
+            sim_threshold=sim,
             similar_res_ratio=ratio,
         )
         for g in groups:
@@ -102,15 +223,20 @@ async def scan_duplicates(request: Request, body: ScanBody) -> JobSubmitResponse
                 if not thumbnailer.exists(m.path):
                     thumbnailer.generate(m.path)
 
+        histogram = similarity_histogram(pairwise_values(records, algorithm), algorithm)
+
         result = DedupeScanResult(
             dirs=[s for s, _ in pairs],
             dir=pairs[0][0],
             image_count=len(records),
             group_count=len(groups),
             duplicate_image_count=sum(g.size for g in groups),
+            algorithm=algorithm,
             mse_threshold=mse,
+            sim_threshold=sim,
             similar_res_ratio=ratio,
             groups=groups,
+            histogram=histogram,
         )
         emit(
             JobSnapshot(

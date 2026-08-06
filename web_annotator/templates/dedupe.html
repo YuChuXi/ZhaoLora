@@ -118,14 +118,40 @@
   }
   .dup-preview-meta b { color: var(--text); }
   .dup-preview-actions { margin-left: auto; display: flex; gap: 8px; }
+
+  .hist-panel {
+    margin: 0 16px 12px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--surface);
+    padding: 8px 12px;
+  }
+  .hist-panel img {
+    display: block; width: 100%; max-width: 720px; height: auto; margin: 0 auto;
+  }
+  .hist-head {
+    font-size: 12px; color: var(--text-dim); padding-bottom: 6px;
+  }
 </style>
 </head>
 <body>
 <nav class="app-tabs" id="app-tabs"></nav>
 <div class="toolbar">
   <label style="font-size:12px;color:var(--text-dim);display:flex;align-items:center;gap:4px;">
+    算法
+    <select id="dedupe-alg">
+      <option value="mse">MSE（像素）</option>
+      <option value="fft">FFT（低频）</option>
+      <option value="orb">ORB（局部）</option>
+    </select>
+  </label>
+  <label style="font-size:12px;color:var(--text-dim);display:flex;align-items:center;gap:4px;" id="mse-wrap">
     MSE
     <input type="number" id="mse-threshold" value="0.0001" min="0.0000001" max="1" step="0.0001">
+  </label>
+  <label style="font-size:12px;color:var(--text-dim);display:flex;align-items:center;gap:4px;display:none;" id="sim-wrap">
+    相似度
+    <input type="number" id="sim-threshold" value="0.95" min="0" max="1" step="0.01">
   </label>
   <label style="font-size:12px;color:var(--text-dim);display:flex;align-items:center;gap:4px;">
     分辨率比
@@ -139,6 +165,18 @@
   <button class="btn" id="btn-suggest">建议删除</button>
   <button class="btn" id="btn-deselect">全不选</button>
   <button class="btn danger" id="btn-apply">删除</button>
+</div>
+
+<div class="job-progress compact" id="job-progress" hidden>
+  <div class="job-progress-track">
+    <div class="job-progress-fill" id="progress-fill"></div>
+  </div>
+  <span class="job-progress-pct" id="progress-pct">0%</span>
+</div>
+
+<div class="hist-panel" id="hist-panel" hidden>
+  <div class="hist-head">两两相似度分布 <span id="hist-title"></span></div>
+  <img id="hist-img" alt="两两相似度直方图">
 </div>
 
 <div class="dedupe-main" id="dedupe-main">

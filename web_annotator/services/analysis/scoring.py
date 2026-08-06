@@ -158,6 +158,35 @@ def save_score_json(root: Path, filename: str, scores: dict[str, float]) -> None
 
 _AES_MODELS: dict[str, tuple] = {}
 _AES_LOCK = _th.Lock()
+_CLIP_CACHE: dict[str, tuple] = {}
+_CLIP_LOCK = _th.Lock()
+
+
+def load_clip_encoder(device: str) -> tuple:
+    """加载 CLIP ViT-L/14 视觉编码器, 按设备缓存.
+
+    美学评分复用同一份 CLIP 模型; 仅返回视觉编码器与预处理,
+    不加载美学评分头, 供评分流程直接提取图像特征向量.
+
+    Args:
+        device: 目标设备字符串, 若为 ``cuda`` 但不可用则回退 ``cpu``.
+
+    Returns:
+        tuple: ``(clip_model, preprocess_fn, actual_device)``.
+
+    Callers:
+        - `scoring.py:_load_aes_models`
+    """
+    device = "cuda" if device == "cuda" and torch.cuda.is_available() else "cpu"
+    with _CLIP_LOCK:
+        if device in _CLIP_CACHE:
+            return _CLIP_CACHE[device]
+        import clip
+        clip_model, preprocess = clip.load("ViT-L/14", device=device)
+        clip_model.eval()
+        tup = (clip_model, preprocess, device)
+        _CLIP_CACHE[device] = tup
+        return tup
 
 
 def _raw_to_bin(raw: float) -> int:
@@ -217,9 +246,7 @@ def _load_aes_models(device: str) -> tuple:
     with _AES_LOCK:
         if device in _AES_MODELS:
             return _AES_MODELS[device]
-        import clip
-        clip_model, preprocess = clip.load("ViT-L/14", device=device)
-        clip_model.eval()
+        clip_model, preprocess, device = load_clip_encoder(device)
         ckpt_path = hf_hub_download(repo_id="purplesmartai/aesthetic-classifier", filename="v2.ckpt")
         state_dict = torch.load(ckpt_path, map_location=device)["state_dict"]
         state_dict = {k.replace("model.", ""): v for k, v in state_dict.items()}

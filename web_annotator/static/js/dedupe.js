@@ -10,6 +10,7 @@
   var _previewMembers = [];
   var _previewIdx = 0;
   var _previewOpen = false;
+  var _algorithm = 'mse';
 
   function toast(msg) {
     var el = document.getElementById('toast');
@@ -32,6 +33,65 @@
 
   function getDirs() {
     return DirPicker.getDirs();
+  }
+
+  var _simValue = { fft: '0.95', orb: '0.05' };
+  var _lastAlg = 'mse';
+
+  function syncAlgorithmUI() {
+    var alg = document.getElementById('dedupe-alg').value;
+    var metric = alg === 'fft' || alg === 'orb';
+    document.getElementById('mse-wrap').style.display = alg === 'mse' ? 'flex' : 'none';
+    document.getElementById('sim-wrap').style.display = metric ? 'flex' : 'none';
+    // 恢复该算法各自保存的阈值, 避免 fft/orb 相互覆盖混淆
+    if (metric) document.getElementById('sim-threshold').value = _simValue[alg];
+  }
+
+  function updateProgress(s, main) {
+    var running = s.status === 'running' || s.status === 'queued';
+    var bar = document.getElementById('job-progress');
+    if (bar) bar.hidden = !running;
+    if (!running) {
+      if (main && s.status === 'running') {
+        main.innerHTML = '<div class="dedupe-empty">' + (s.message || '扫描中…') + '</div>';
+      }
+      return;
+    }
+
+    var fill = document.getElementById('progress-fill');
+    var pctEl = document.getElementById('progress-pct');
+    var waiting = s.status === 'queued';
+    var indeterminate = waiting || (s.phase !== 'fft' && s.phase !== 'orb');
+    fill.classList.toggle('indeterminate', indeterminate);
+    if (!indeterminate) {
+      var p = Math.min(100, (typeof s.pct === 'number')
+        ? s.pct
+        : (s.total > 0 ? (s.done / s.total) * 100 : 0));
+      fill.style.width = p + '%';
+      pctEl.textContent = Math.round(p) + '%';
+    } else {
+      pctEl.textContent = waiting ? '排队' : '…';
+    }
+    if (main && s.status === 'running') {
+      main.innerHTML = '<div class="dedupe-empty">' + (s.message || '扫描中…') + '</div>';
+    }
+  }
+
+  function simText(m) {
+    if (typeof m.similarity !== 'number') return '';
+    if (_algorithm === 'fft' || _algorithm === 'orb') return '相似 ' + Math.round(m.similarity * 100) + '%';
+    return 'MSE ' + m.similarity.toFixed(5);
+  }
+
+  function showHistogram(data) {
+    var panel = document.getElementById('hist-panel');
+    var img = document.getElementById('hist-img');
+    if (!data || !data.histogram) { panel.hidden = true; return; }
+    img.src = data.histogram;
+    var labels = { mse: 'MSE', fft: 'FFT 余弦', orb: 'ORB 匹配' };
+    document.getElementById('hist-title').textContent =
+      '（' + (labels[data.algorithm] || data.algorithm) + '）';
+    panel.hidden = false;
   }
 
   function thumbUrl(h) { return API.thumbnailUrl(h); }
@@ -193,7 +253,9 @@
         var meta = document.createElement('div');
         meta.className = 'meta';
         var res = (m.width && m.height) ? (m.width + '×' + m.height) : '';
-        meta.innerHTML = '<div>' + res + '</div><div class="name">' + (m.stem || m.path) + '</div>';
+        var sim = simText(m);
+        meta.innerHTML = '<div>' + [res, sim].filter(Boolean).join(' · ') +
+          '</div><div class="name">' + (m.stem || m.path) + '</div>';
 
         card.appendChild(im);
         card.appendChild(mark);
@@ -214,9 +276,12 @@
   async function scan() {
     var dirs = getDirs();
     if (!dirs.length) { toast('请选择目录'); return; }
+    var algorithm = document.getElementById('dedupe-alg').value;
     var mse = parseFloat(document.getElementById('mse-threshold').value);
+    var sim = parseFloat(document.getElementById('sim-threshold').value);
     var ratio = parseFloat(document.getElementById('res-ratio').value);
-    if (!(mse > 0)) { toast('MSE 无效'); return; }
+    if (algorithm === 'mse' && !(mse > 0)) { toast('MSE 无效'); return; }
+    if ((algorithm === 'fft' || algorithm === 'orb') && !(sim > 0 && sim <= 1)) { toast('相似度无效'); return; }
     if (!(ratio >= 1)) { toast('分辨率比无效'); return; }
 
     hidePreview();
@@ -228,16 +293,16 @@
         method: 'POST',
         body: JSON.stringify({
           dirs: dirs,
+          algorithm: algorithm,
           mse_threshold: mse,
+          sim_threshold: sim,
           similar_res_ratio: ratio
         }),
       });
       var data = await new Promise(function (resolve, reject) {
         API.watchJob(submitted.job_id, function (s) {
-          if (s.status === 'queued') {
-            main.innerHTML = '<div class="dedupe-empty">等待执行…</div>';
-            return;
-          }
+          updateProgress(s, main);
+          if (s.status === 'queued') return;
           if (s.status === 'running') {
             main.innerHTML = '<div class="dedupe-empty">' + (s.message || '扫描中…') + '</div>';
             return;
@@ -252,6 +317,8 @@
         });
       });
       _groups = data.groups || [];
+      _algorithm = data.algorithm || 'mse';
+      showHistogram(data);
       _selected = {};
       _groups.forEach(function (g) {
         (g.suggested_remove || []).forEach(function (p) { _selected[p] = true; });
@@ -312,6 +379,17 @@
   document.getElementById('btn-scan').addEventListener('click', function () {
     scan().catch(function (e) { toast(String(e.message || e)); });
   });
+  document.getElementById('dedupe-alg').addEventListener('change', function () {
+    // 切换前保存当前算法的阈值, 再切换到新算法对应的阈值
+    if (_lastAlg === 'fft' || _lastAlg === 'orb') {
+      _simValue[_lastAlg] = document.getElementById('sim-threshold').value;
+    }
+    syncAlgorithmUI();
+    _lastAlg = document.getElementById('dedupe-alg').value;
+  });
+  document.getElementById('sim-threshold').addEventListener('input', function () {
+    if (_lastAlg === 'fft' || _lastAlg === 'orb') _simValue[_lastAlg] = this.value;
+  });
   document.getElementById('btn-suggest').addEventListener('click', suggestAll);
   document.getElementById('btn-deselect').addEventListener('click', clearSel);
   document.getElementById('btn-apply').addEventListener('click', function () {
@@ -350,9 +428,12 @@
   DirPicker.onChange(function () {
     _groups = [];
     _selected = {};
+    document.getElementById('job-progress').hidden = true;
+    document.getElementById('hist-panel').hidden = true;
     document.getElementById('dedupe-main').innerHTML =
       '<div class="dedupe-empty">目录已切换</div>';
     updateStats();
   });
   updateStats();
+  syncAlgorithmUI();
 })();
