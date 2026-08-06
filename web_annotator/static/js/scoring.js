@@ -450,8 +450,8 @@
   document.querySelector('.lightbox-next').addEventListener('click', function (e) { e.stopPropagation(); navLightbox(1); });
   document.addEventListener('keydown', function (e) {
     if (e.key === 'Escape') closeLightbox();
-    if (e.key === 'ArrowLeft') navLightbox(-1);
-    if (e.key === 'ArrowRight') navLightbox(1);
+    if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') navLightbox(-1);
+    if (e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D') navLightbox(1);
   });
 
   // 暴露灯箱给 onclick

@@ -700,11 +700,12 @@
       singleTagOp('delete');
     });
 
-    // 单图键盘导航
+    // 单图键盘导航 (AD 与左右键等价)
     document.addEventListener('keydown', function (e) {
       if (_singleIndex < 0) return;
-      if (e.key === 'ArrowLeft') { e.preventDefault(); navigateSingle(-1); }
-      else if (e.key === 'ArrowRight') { e.preventDefault(); navigateSingle(1); }
+      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return;
+      if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') { e.preventDefault(); navigateSingle(-1); }
+      else if (e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D') { e.preventDefault(); navigateSingle(1); }
       else if (e.key === 'Escape') { e.preventDefault(); hideSingle(); }
     });
 

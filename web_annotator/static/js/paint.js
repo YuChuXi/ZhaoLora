@@ -592,8 +592,8 @@
 
   document.addEventListener('keydown', function(e) {
     if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
-    if (e.key === 'ArrowLeft') { e.preventDefault(); goPrev(); }
-    else if (e.key === 'ArrowRight') { e.preventDefault(); goNext(); }
+    if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') { e.preventDefault(); goPrev(); }
+    else if (e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D') { e.preventDefault(); goNext(); }
     else if (e.key === 's' || e.key === 'S') { e.preventDefault(); doSave(true); }
     else if (e.key === 'x' || e.key === 'X') { goSkip(); }
   });

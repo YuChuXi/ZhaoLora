@@ -1228,7 +1228,7 @@
       if (inField) return;
       if (e.ctrlKey || e.metaKey || e.altKey) return;
 
-      if (key === 'Delete' || key === 'Backspace' || key === 'd' || key === 'D' || code === 'KeyD') {
+      if (key === 'Delete' || key === 'Backspace' || key === 'e' || key === 'E' || code === 'KeyE') {
         e.preventDefault();
         delSelected();
       } else if (key === 's' || key === 'S' || code === 'KeyS') {
@@ -1237,13 +1237,13 @@
       } else if (key === ' ' || code === 'Space') {
         e.preventDefault();
         goNextUnfinished();
-      } else if (key === 'ArrowLeft') {
+      } else if (key === 'ArrowLeft' || key === 'a' || key === 'A' || code === 'KeyA') {
         e.preventDefault();
         goPrev();
-      } else if (key === 'ArrowRight') {
+      } else if (key === 'ArrowRight' || key === 'd' || key === 'D' || code === 'KeyD') {
         e.preventDefault();
         goNextUnfinished();
-      } else if (key === 'a' || key === 'A' || code === 'KeyA') {
+      } else if (key === 'q' || key === 'Q' || code === 'KeyQ') {
         e.preventDefault();
         addCrop();
       } else if (key === 'c' || key === 'C' || code === 'KeyC') {

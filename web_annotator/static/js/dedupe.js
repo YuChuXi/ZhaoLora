@@ -338,8 +338,8 @@
   document.addEventListener('keydown', function (e) {
     if (!_previewOpen) return;
     if (e.key === 'Escape') { e.preventDefault(); hidePreview(); }
-    else if (e.key === 'ArrowLeft') { e.preventDefault(); previewStep(-1); }
-    else if (e.key === 'ArrowRight') { e.preventDefault(); previewStep(1); }
+    else if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') { e.preventDefault(); previewStep(-1); }
+    else if (e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D') { e.preventDefault(); previewStep(1); }
     else if (e.key === ' ' || e.key === 'Enter') {
       e.preventDefault();
       var m = _previewMembers[_previewIdx];
