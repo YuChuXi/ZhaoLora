@@ -1452,7 +1452,6 @@ var BooruFilter = (function () {
           extra: extra,
           order: order,
           page: fetchPage,
-          limit: 40,
           dir: destDir(),
         }),
       });

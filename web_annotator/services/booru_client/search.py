@@ -173,7 +173,7 @@ async def search_danbooru(
 
 
 async def search_posts(
-    source: str, tags: str, *, page: int = 1, limit: int = 40, order: str = "",
+    source: str, tags: str, *, page: int = 1, order: str = "",
     extra: str = "", proxy: str | None = None,
     danbooru_login: str | None = None, danbooru_api_key: str | None = None,
 ) -> tuple[list[BooruPost], bool]:
@@ -181,7 +181,7 @@ async def search_posts(
     from services.booru_client.common import get_source
     src = get_source(source)
     raw, has_more = await src.search(
-        tags, page=page, limit=limit, order=order, extra=extra, proxy=proxy,
+        tags, page=page, order=order, extra=extra, proxy=proxy,
         danbooru_login=danbooru_login, danbooru_api_key=danbooru_api_key,
     )
     return raw, has_more

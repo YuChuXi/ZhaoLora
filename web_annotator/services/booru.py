@@ -15,7 +15,6 @@ from typing import Any
 from services.booru_client import download_post, get_source, is_downloaded, local_rel_path, search_posts
 from services.models import JobSnapshot
 
-PAGE_LIMIT = 40
 EMPTY_STREAK_MAX = 8
 EmitFn = Callable[[JobSnapshot], None]
 
@@ -226,7 +225,6 @@ async def _run_async(
             source,
             tags,
             page=page,
-            limit=PAGE_LIMIT,
             order=order,
             extra=extra,
             proxy=proxy,

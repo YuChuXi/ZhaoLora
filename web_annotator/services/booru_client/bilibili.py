@@ -11,8 +11,8 @@ Callers:
 
 from __future__ import annotations
 
+import asyncio
 import re
-import threading
 from datetime import date, datetime
 from pathlib import Path
 from typing import Any
@@ -25,9 +25,11 @@ from services.booru_client.common import SourceClient
 from services.booru_client.utils import find_downloaded
 from services.models import BooruPost
 
-# 图片卡片的进程内缓存: 键为 (uid, type, after, before, keyword), 值为帖子列表
-_listing_cache: dict[tuple[Any, ...], list[dict[str, Any]]] = {}
-_listing_lock = threading.Lock()
+# 游标分页状态: 键为 (uid, type, after, before, keyword),
+# 值为 {offsets: 各页请求游标, pages: 各页展开的帖子, has_more: 上游是否还有}
+_listing_state: dict[tuple[Any, ...], dict[str, Any]] = {}
+_listing_locks: dict[tuple[Any, ...], asyncio.Lock] = {}
+_state_guard = asyncio.Lock()
 
 # 动态类型 -> 筛选页展示语义
 _TYPE_MAP = {
@@ -121,7 +123,6 @@ class BilibiliSource(SourceClient):
         self,
         tags: str,
         page: int,
-        limit: int,
         order: str,
         extra: str,
         proxy: str | None,
@@ -129,8 +130,9 @@ class BilibiliSource(SourceClient):
     ) -> tuple[list[BooruPost], bool]:
         """按 UID 与筛选条件搜索动态图片, 返回 (posts, has_more).
 
-        首次请求 (page=1) 拉取该用户全部动态并构建图片帖子列表, 缓存后按
-        页码切片返回; 后续页码直接读缓存。
+        B 站 feed 是游标分页, 页大小由接口决定 (约 20 条动态)。按需拉取:
+        ``page=N`` 时若上游页尚未拉够, 才从游标继续拉取, 返回第 N 页动态
+        展开的图片; 已拉取的页缓存复用。
 
         Callers:
             - `common.py:search_posts` / `routes/booru.py:booru_search`
@@ -139,35 +141,47 @@ class BilibiliSource(SourceClient):
         uid = int(f["uid"])
         key = (uid, f["type"], f["after"], f["before"], f["keyword"])
 
-        with _listing_lock:
-            posts = _listing_cache.get(key)
-        if posts is None:
-            records = await fetch_dynamics(uid)
-            posts = [
-                post
-                for record in records
-                if self._matches(record, f)
-                for post in self._expand(record)
-            ]
-            with _listing_lock:
-                _listing_cache[key] = posts
+        async with _state_guard:
+            st = _listing_state.get(key)
+            if st is None:
+                st = {"offsets": [""], "pages": [], "has_more": True}
+                _listing_state[key] = st
+            lock = _listing_locks.get(key)
+            if lock is None:
+                lock = asyncio.Lock()
+                _listing_locks[key] = lock
 
-        start = (page - 1) * limit
-        end = start + limit
-        slice_posts = posts[start:end]
-        has_more = end < len(posts)
+        async with lock:
+            while len(st["pages"]) < page and st["has_more"]:
+                records, next_offset, has_more = await fetch_dynamics(
+                    uid, offset=st["offsets"][-1]
+                )
+                page_posts = [
+                    post
+                    for record in records
+                    if self._matches(record, f)
+                    for post in self._expand(record)
+                ]
+                st["pages"].append(page_posts)
+                st["offsets"].append(next_offset)
+                st["has_more"] = has_more
+
+        idx = min(page - 1, len(st["pages"]) - 1)
+        slice_posts = st["pages"][idx] if idx >= 0 else []
+        has_more = idx + 1 < len(st["pages"]) or st["has_more"]
 
         out: list[BooruPost] = []
         for p in slice_posts:
+            orig = p["url"]
             out.append(
                 BooruPost(
                     source=self.name,
                     id=p["id"],
                     width=p["width"],
                     height=p["height"],
-                    file_url=p["url"],
-                    preview_url=p["url"],
-                    sample_url=p["url"],
+                    file_url=orig,
+                    preview_url=orig + "@480w_480h_1e.webp",
+                    sample_url=orig + "@1280w_1280h_1e.webp",
                     tags=p["text"],
                 )
             )

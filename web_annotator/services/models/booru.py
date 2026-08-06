@@ -82,7 +82,6 @@ class BooruSearchResult(BaseModel):
     query: str
     dir: str
     page: int
-    limit: int
     count: int
     has_more: bool
     posts: list[BooruPost]

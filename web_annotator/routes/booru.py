@@ -55,7 +55,6 @@ class SearchBody(BaseModel):
     source: str = Field(..., description="gelbooru | danbooru")
     tags: str = ""
     page: int = Field(1, ge=1, le=10000)
-    limit: int = Field(40, ge=1, le=100)
     order: str = Field("", description="空 | score | id | id_asc")
     extra: str = Field("", description="额外元标签, 如 rating:g width:>=1920")
     dir: str = Field("main", description="用于标记已下载的工作子目录")
@@ -96,7 +95,7 @@ async def booru_search(request: Request, body: SearchBody) -> BooruSearchResult:
 
     try:
         raw_posts, has_more = await src.search(
-            body.tags, page=body.page, limit=body.limit,
+            body.tags, page=body.page,
             order=order, extra=body.extra or "", proxy=_proxy(request),
             danbooru_login=request.app.state.danbooru_login,
             danbooru_api_key=request.app.state.danbooru_api_key,
@@ -120,7 +119,6 @@ async def booru_search(request: Request, body: SearchBody) -> BooruSearchResult:
         query=query,
         dir=body.dir,
         page=body.page,
-        limit=body.limit,
         count=len(posts),
         has_more=has_more,
         posts=posts,

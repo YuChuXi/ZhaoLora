@@ -1,7 +1,7 @@
 """B 站动态拉取、解析与图片代理.
 
-基于专业库 ``bilibili-api`` (https://github.com/Nemo2011/bilibili-api) 免登录拉取
-用户的完整动态列表: ``User.get_dynamics_new`` (``web-dynamic/v1/feed/space``) 分页,
+基于专业库 ``bilibili-api`` (https://github.com/Nemo2011/bilibili-api) 免登录
+按游标分页拉取用户动态: ``User.get_dynamics_new`` (``web-dynamic/v1/feed/space``),
 库自动处理 buvid 会话、WBI 签名与 dm 设备指纹, 规避手写 requests 调用被
 -352/412 风控的问题。单条详情 (下载时需要按动态 ID 取图) 走桌面版接口
 ``web-dynamic/desktop/v1/detail``, 免登录稳定可用。
@@ -22,6 +22,7 @@ import re
 import time
 from typing import Any
 
+import curl_cffi.requests.exceptions
 import httpx
 import requests
 
@@ -149,11 +150,11 @@ async def _retry_coro(
     Raises:
         NetworkException: 重试耗尽后最后一次网络异常。
     """
-    last_exc: NetworkException | None = None
+    last_exc: Exception | None = None
     for attempt in range(1, retries + 1):
         try:
             return await factory()
-        except NetworkException as exc:
+        except (NetworkException, curl_cffi.requests.exceptions.RequestException) as exc:
             last_exc = exc
             if attempt < retries:
                 wait = base_sleep * (2 ** (attempt - 1))
@@ -391,55 +392,42 @@ def _parse_item(item: dict[str, Any], depth: int = 0) -> DynamicRecord | None:
 
 
 async def fetch_dynamics(
-    uid: int, *, limit: int = 0, sleep_seconds: float = 0.3
-) -> list[DynamicRecord]:
-    """分页拉取指定用户的全部动态并解析, 过滤直播推荐卡片.
+    uid: int, *, offset: str = ""
+) -> tuple[list[DynamicRecord], str, bool]:
+    """从指定游标拉取一页动态并解析, 过滤直播推荐卡片.
 
     解析结果会写入进程内 ``_dynamic_cache``, 供后续按 ID 下载取图。
+    每页条数由接口决定 (约 20 条), 页大小不由调用方指定。
 
     Args:
         uid (int): B 站用户 UID。
-        limit (int): 最大条数, 0 表示不限制。
-        sleep_seconds (float): 翻页间隔。
+        offset (str): 翻页游标, 首页传空字符串。
 
     Returns:
-        list[DynamicRecord]: 解析后的动态记录, 按发布时间倒序 (接口顺序)。
+        tuple[list[DynamicRecord], str, bool]: ``(本页动态, 下一页游标, 是否还有更多)``;
+        游标为空串表示已到末页。
     """
     u = user.User(uid=uid)
     records: list[DynamicRecord] = []
-    offset = ""
-    page = 0
-    empty_retries = 0
-    while True:
-        page += 1
-        data = await _retry_coro(lambda: u.get_dynamics_new(offset), what=f"动态第 {page} 页")
-        items = data.get("items") or []
-        if not items:
-            empty_retries += 1
-            if empty_retries >= MAX_EMPTY_RETRIES:
-                break
-            await asyncio.sleep(sleep_seconds * empty_retries)
-            continue
-        empty_retries = 0
-        for item in items:
+    data: dict[str, Any] = {}
+    # feed 接口偶发返回空 items 且 has_more=False (风控暂歇), 仅凭 items
+    # 非空即视为有效页, 空则退避重试同一游标
+    for _ in range(MAX_EMPTY_RETRIES):
+        data = await _retry_coro(lambda: u.get_dynamics_new(offset), what="动态一页")
+        records = []
+        for item in data.get("items") or []:
             if item.get("type") in FILTER_TYPES:
                 continue
             record = _parse_item(item)
             if record is not None:
                 _dynamic_cache[record.id] = record
                 records.append(record)
-                if limit > 0 and len(records) >= limit:
-                    return records[:limit]
-        if limit > 0 and len(records) >= limit:
-            return records[:limit]
-        next_offset = data.get("offset") or ""
-        if not data.get("has_more") or not next_offset:
+        if records:
             break
-        if next_offset == offset:
-            break
-        offset = next_offset
-        await asyncio.sleep(sleep_seconds)
-    return records
+        await asyncio.sleep(0.5)
+    next_offset = data.get("offset") or ""
+    has_more = bool(data.get("has_more")) and bool(next_offset) and next_offset != offset
+    return records, next_offset, has_more
 
 
 async def resolve_image(dynamic_id: str, index: int) -> tuple[str, str]:

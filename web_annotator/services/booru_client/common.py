@@ -49,9 +49,11 @@ class SourceClient(ABC):
             - `routes/booru.py:_run_refresh`
         """
     @abstractmethod
-    async def search(self, tags: str, page: int, limit: int, order: str, extra: str,
+    async def search(self, tags: str, page: int, order: str, extra: str,
                      proxy: str | None, **auth) -> tuple[list[BooruPost], bool]:
         """搜索帖子, 返回 (posts, has_more). 
+
+        每页条数由来源自行决定 (上游 API 语义), 调用方只传页码. 
 
         实现类应将 API 原始帖转为 ``BooruPost`` 后返回. 
 
@@ -358,7 +360,7 @@ def build_search_query(source: str, tags: str, *, order: str = "", extra: str = 
     return get_source(source).build_search_query(tags, order=order, extra=extra)
 
 async def search_posts(
-    source: str, tags: str, *, page: int = 1, limit: int = 40, order: str = "",
+    source: str, tags: str, *, page: int = 1, order: str = "",
     extra: str = "", proxy: str | None = None,
     danbooru_login: str | None = None, danbooru_api_key: str | None = None,
 ) -> tuple[list[BooruPost], bool]:
@@ -369,6 +371,6 @@ async def search_posts(
     """
     src = get_source(source)
     return await src.search(
-        tags, page=page, limit=limit, order=order, extra=extra, proxy=proxy,
+        tags, page=page, order=order, extra=extra, proxy=proxy,
         danbooru_login=danbooru_login, danbooru_api_key=danbooru_api_key,
     )

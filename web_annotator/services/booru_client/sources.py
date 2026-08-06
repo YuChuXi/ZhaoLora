@@ -79,11 +79,12 @@ class GelbooruSource(SourceClient):
         raw = await api.getPost(int(pid))
         self._write_meta(out_dir, pid, BooruPost.model_validate(raw))
 
-    async def search(self, tags: str, page: int, limit: int, order: str, extra: str,
+    async def search(self, tags: str, page: int, order: str, extra: str,
                      proxy: str | None, **auth) -> tuple[list[BooruPost], bool]:
         """搜索 Gelbooru 帖. 
 
-        实现 ``common.SourceClient.search``. 
+        每页 100 条由上游固定, 页大小不由调用方决定。实现
+        ``common.SourceClient.search``。
 
         Callers:
             - `common.py:search_posts` / `routes/booru.py:booru_search`
@@ -163,6 +164,8 @@ class DanbooruSource(SourceClient):
     prefix = "d"
     order_tags = {"score": "order:score", "id": "order:id_desc", "id_asc": "order:id"}
     valid_orders = ("score", "id", "id_asc")
+    # 每页条数: 上游 posts API 支持的 limit 上限内取固定值
+    _PAGE_SIZE = 40
 
     def preview_url(self, post: BooruPost) -> str:
         """Danbooru 帖缩略图 URL, 优先 720x720 webp. 
@@ -206,11 +209,12 @@ class DanbooruSource(SourceClient):
             raise RuntimeError(f"Danbooru HTTP {meta.status_code}")
         self._write_meta(out_dir, pid, BooruPost.model_validate(meta.json()))
 
-    async def search(self, tags: str, page: int, limit: int, order: str, extra: str,
+    async def search(self, tags: str, page: int, order: str, extra: str,
                      proxy: str | None, **auth) -> tuple[list[BooruPost], bool]:
         """搜索 Danbooru 帖. 
 
-        实现 ``common.SourceClient.search``. 
+        每页条数由本来源固定 (``_PAGE_SIZE``), 不随调用方变化。实现
+        ``common.SourceClient.search``。
 
         Callers:
             - `common.py:search_posts` / `routes/booru.py:booru_search`
@@ -218,11 +222,10 @@ class DanbooruSource(SourceClient):
         from services.models import BooruPost
 
         query = self.build_search_query(tags, order=order, extra=extra)
-        limit_used = max(1, min(limit, 100))
         resp = await danbooru_get(
             "https://danbooru.donmai.us/posts.json",
             proxy=proxy, accept="application/json, text/plain, */*", timeout=30.0,
-            params={"tags": query, "page": max(1, page), "limit": limit_used},
+            params={"tags": query, "page": max(1, page), "limit": self._PAGE_SIZE},
             login=auth.get("danbooru_login"), api_key=auth.get("danbooru_api_key"),
         )
         if resp.status_code != 200:
@@ -230,7 +233,7 @@ class DanbooruSource(SourceClient):
         data = resp.json()
         if not isinstance(data, list):
             return [], False
-        has_more = len(data) >= limit_used
+        has_more = len(data) >= self._PAGE_SIZE
         out: list[BooruPost] = []
         for raw_post in data:
             if not isinstance(raw_post, dict):
