@@ -23,11 +23,13 @@ from services.booru_client.media import (
     remove_download,
 )
 from services.booru_client.sources import DanbooruSource, GelbooruSource
+from services.booru_client.bilibili import BilibiliSource
 from services.booru_client.utils import is_downloaded
 
 # 注册内置来源
 register_source(GelbooruSource())
 register_source(DanbooruSource())
+register_source(BilibiliSource())
 
 __all__ = [
     "META_SUBDIR",

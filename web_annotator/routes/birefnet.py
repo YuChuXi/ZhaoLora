@@ -81,7 +81,7 @@ async def birefnet_mask(request: Request, body: BirefnetStartBody) -> BirefnetSt
         snap.status = "done"
         emit(snap)
 
-    job_id = jobs(request).submit(
+    job_id = await jobs(request).submit(
         kind="birefnet_mask",
         group="compute",
         dataset=rt.name,

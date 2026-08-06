@@ -170,7 +170,7 @@ async def scoring_start(request: Request, body: StartBody) -> ScoringStartRespon
         )
         on_update()
 
-    job_id = jobs(request).submit(
+    job_id = await jobs(request).submit(
         kind=kind,
         group="compute",
         dataset=rt.name,

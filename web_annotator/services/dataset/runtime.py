@@ -84,11 +84,19 @@ class DatasetRegistry:
         """
         return sorted(self.by_name.keys())
 
-    def ensure(self, name: str) -> DatasetRuntime:
-        """若尚未加载则解析 ``{task_root}/{name}`` 并缓存, 同时提交缩略图填充任务. 
+    async def ensure(self, name: str) -> DatasetRuntime:
+        """若尚未加载则解析 ``{task_root}/{name}`` 并缓存, 同时提交缩略图填充任务.
+
+        声明为协程: 内部经 ``_submit_thumb_fill`` → ``JobManager.submit`` 提交
+        后台任务, 后者要求事件循环上下文.
 
         Callers:
-            - 中间件 `bind_dataset_middleware`
+            - `server.py:bind_dataset_middleware`
+            - `server.py:dataset_thumb`
+            - `routes/scoring.py:scoring_results`
+            - `routes/images.py:similar_images`
+            - `routes/tasks.py:list_tasks` / `add_task`
+            - `routes/booru.py:booru_download`
         """
         existing = self.by_name.get(name)
         if existing is not None:
@@ -109,12 +117,12 @@ class DatasetRegistry:
         )
         self.by_name[name] = rt
         if self.job_manager is not None:
-            _submit_thumb_fill(self.job_manager, name, thumbnailer)
+            await _submit_thumb_fill(self.job_manager, name, thumbnailer)
         return rt
 
 
-def _submit_thumb_fill(jobs: JobManager, dataset: str, thumb: Thumbnailer) -> None:
-    """通过 JobManager 提交后台缩略图填充任务. 
+async def _submit_thumb_fill(jobs: JobManager, dataset: str, thumb: Thumbnailer) -> None:
+    """通过 JobManager 提交后台缩略图填充任务.
 
     Callers:
         - `DatasetRegistry.ensure`
@@ -133,7 +141,7 @@ def _submit_thumb_fill(jobs: JobManager, dataset: str, thumb: Thumbnailer) -> No
             job_id="", done=ok, total=total,
         ))
 
-    jobs.submit(
+    await jobs.submit(
         kind="thumbnail",
         group=f"thumb_{dataset}",
         dataset=dataset,

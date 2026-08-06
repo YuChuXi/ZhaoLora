@@ -115,7 +115,7 @@ async def bind_dataset_middleware(
         if not store.contains(name):
             return JSONResponse({"detail": f"未知任务: {name}"}, status_code=404)
         reg: DatasetRegistry = request.app.state.datasets
-        request.state.runtime = reg.ensure(name)
+        request.state.runtime = await reg.ensure(name)
     return await call_next(request)
 
 
@@ -164,8 +164,8 @@ def dataset_root_redirect(dataset: str) -> RedirectResponse:
 
 
 @app.get("/d/{dataset}/thumb/{filename}")
-def dataset_thumb(request: Request, dataset: str, filename: str) -> FileResponse:
-    """返回数据集的 AVIF 缩略图文件, 缺失时即时生成. 
+async def dataset_thumb(request: Request, dataset: str, filename: str) -> FileResponse:
+    """返回数据集的 AVIF 缩略图文件, 缺失时即时生成.
 
     Callers:
         - `static/js/home.js:211`
@@ -176,7 +176,7 @@ def dataset_thumb(request: Request, dataset: str, filename: str) -> FileResponse
         raise HTTPException(404, f"未知任务: {dataset}")
     if "/" in filename or "\\" in filename or ".." in filename:
         raise HTTPException(400, "非法文件名")
-    rt = request.app.state.datasets.ensure(dataset)
+    rt = await request.app.state.datasets.ensure(dataset)
     thumb = rt.thumbnailer
     path = thumb.thumb_dir / filename
     if not path.is_file():

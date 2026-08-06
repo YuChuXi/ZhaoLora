@@ -75,6 +75,17 @@ class SourceClient(ABC):
             - `booru_batch.py:download_one`
         """
 
+    def parse_query(self, tags: str, extra: str) -> dict[str, str]:
+        """把来源原始查询串解析为结构化条件.
+
+        默认将 ``tags``/``extra`` 原样返回；特殊参数语义的来源 (如 Bilibili
+        把 ``tags`` 作 UID、``extra`` 作筛选串) 覆盖此方法自行解析。
+
+        Callers:
+            - `common.py:SourceClient.search`
+        """
+        return {"tags": tags, "extra": extra}
+
     def preview_url(self, post: BooruPost) -> str:
         """从已规范化的帖模型提取缩略图 URL. 
 

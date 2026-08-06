@@ -185,7 +185,7 @@ async def tag_clean(request: Request, body: CleanBody) -> JobSubmitResponse:
         )
         return result
 
-    job_id = jobs(request).submit(kind="tag_clean", group="compute", dataset=rt.name, run=run)
+    job_id = await jobs(request).submit(kind="tag_clean", group="compute", dataset=rt.name, run=run)
     return JobSubmitResponse(ok=True, job_id=job_id)
 
 
@@ -280,7 +280,7 @@ async def tag_batch_edit(request: Request, body: BatchEditBody) -> JobSubmitResp
         )
         return result
 
-    job_id = jobs(request).submit(kind="tag_batch_edit", group="compute", dataset=rt.name, run=run)
+    job_id = await jobs(request).submit(kind="tag_batch_edit", group="compute", dataset=rt.name, run=run)
     return JobSubmitResponse(ok=True, job_id=job_id)
 
 

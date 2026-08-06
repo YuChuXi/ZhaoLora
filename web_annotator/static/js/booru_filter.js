@@ -7,6 +7,111 @@ var BooruFilter = (function () {
 
   var STATE_KEY = 'zhao_booru_filter_v1';
 
+  /** 读取输入控件值; 不存在时返回空串. 引用: _SOURCES.buildRequest. */
+  function _val(id) {
+    return (document.getElementById(id) || {}).value || '';
+  }
+
+  /** Gelbooru/Danbooru 共用: 从标签工具栏构建请求参数. 引用: _SOURCES. */
+  function _booruRequest() {
+    return { tags: _val('booru-tags').trim(), extra: _val('booru-extra').trim(), order: _val('booru-order') };
+  }
+
+  /**
+   * 远程来源注册表: 每个来源声明自己的工具栏 / 参数构建 / 媒体 URL /
+   * 原站地址与预览渲染。主逻辑只查询本表, 新增来源只需在此加一项并提供
+   * 对应工具栏 HTML, 无需改动业务主干。
+   * 引用: isRemote / cur / thumbUrl / sampleUrl / cardLabel / postPageUrl /
+   *       showPreview / syncToolbar / saveUiState / applyForm / init。
+   */
+  var _SOURCES = {
+    local: { remote: false },
+    gelbooru: {
+      remote: true,
+      toolbarId: 'toolbar-booru',
+      searchBtn: 'btn-booru-search',
+      batchBtn: 'btn-booru-batch',
+      batchDialog: true,
+      stemPrefix: 'g',
+      nameLabel: 'Gelbooru',
+      stateKeys: ['booru-tags', 'booru-extra', 'booru-order'],
+      buildRequest: _booruRequest,
+      thumb: function (post) {
+        return API.apiPath('/booru/thumb')
+          + '?id=' + encodeURIComponent(post.id)
+          + '&url=' + encodeURIComponent(post.preview_url || post.sample_url || '');
+      },
+      sample: function (post) {
+        return API.apiPath('/booru/sample')
+          + '?id=' + encodeURIComponent(post.id)
+          + '&url=' + encodeURIComponent(post.sample_url || post.file_url || post.preview_url || '');
+      },
+      pageUrl: function (post) {
+        return 'https://gelbooru.com/index.php?page=post&s=view&id=' + post.id;
+      },
+    },
+    danbooru: {
+      remote: true,
+      toolbarId: 'toolbar-booru',
+      searchBtn: 'btn-booru-search',
+      batchBtn: 'btn-booru-batch',
+      batchDialog: true,
+      stemPrefix: 'd',
+      nameLabel: 'Danbooru',
+      stateKeys: ['booru-tags', 'booru-extra', 'booru-order'],
+      buildRequest: _booruRequest,
+      thumb: function (post) { return post.preview_url || post.sample_url || ''; },
+      sample: function (post) { return post.sample_url || post.file_url || post.preview_url || ''; },
+      pageUrl: function (post) { return 'https://danbooru.donmai.us/posts/' + post.id; },
+    },
+    bilibili: {
+      remote: true,
+      toolbarId: 'toolbar-bilibili',
+      searchBtn: 'btn-bilibili-search',
+      batchBtn: 'btn-bilibili-batch',
+      batchDialog: false,
+      enterIds: ['bilibili-uid', 'bilibili-keyword'],
+      stemPrefix: 'bi',
+      nameLabel: 'Bilibili',
+      requireTags: true,
+      hintText: '输入 B站 UID 搜索 · 左键写入目录 · 右键大图',
+      stateKeys: ['bilibili-uid', 'bilibili-type', 'bilibili-keyword', 'bilibili-time-from', 'bilibili-time-to'],
+      buildRequest: function () {
+        var parts = [];
+        var type = _val('bilibili-type');
+        if (type) parts.push('type:' + type);
+        var kw = _val('bilibili-keyword');
+        if (kw.trim()) parts.push('keyword:' + kw.trim());
+        var from = _val('bilibili-time-from');
+        if (from) parts.push('after:' + from);
+        var to = _val('bilibili-time-to');
+        if (to) parts.push('before:' + to);
+        return { tags: _val('bilibili-uid').trim(), extra: parts.join(' '), order: '' };
+      },
+      thumb: function (post) {
+        return API.apiPath('/booru/image') + '?url=' + encodeURIComponent(post.preview_url || post.sample_url || '');
+      },
+      sample: function (post) {
+        return API.apiPath('/booru/image') + '?url=' + encodeURIComponent(post.sample_url || post.file_url || post.preview_url || '');
+      },
+      pageUrl: function (post) {
+        var i = post.id.lastIndexOf('_');
+        return 'https://t.bilibili.com/' + (i > 0 ? post.id.slice(0, i) : post.id);
+      },
+      renderPreviewTags: function (el, post) {
+        var para = document.createElement('div');
+        para.className = 'bili-preview-text';
+        para.textContent = post.tags || '(无正文)';
+        el.appendChild(para);
+      },
+    },
+  };
+
+  /** 当前来源定义. 引用: 各来源相关函数. */
+  function cur() {
+    return _SOURCES[mode()] || _SOURCES.local;
+  }
+
   var _posts = [];
   var _page = 1;
   var _pageLo = 1;
@@ -58,36 +163,35 @@ var BooruFilter = (function () {
   }
 
   function isRemote() {
-    return mode() === 'gelbooru' || mode() === 'danbooru';
+    return !!(cur() && cur().remote);
   }
 
-  /** Gelbooru 防盗链走后端；其余直链。 */
+  /** 媒体 URL 依来源查表. 引用: 卡片/预览. */
   function thumbUrl(post) {
-    var u = post.preview_url || post.sample_url || '';
-    if (post.source !== 'gelbooru') return u;
-    return API.apiPath('/booru/thumb')
-      + '?id=' + encodeURIComponent(post.id)
-      + '&url=' + encodeURIComponent(u);
+    var d = _SOURCES[post.source];
+    return d && d.thumb ? d.thumb(post) : (post.preview_url || post.sample_url || '');
   }
 
   function sampleUrl(post) {
-    var u = post.sample_url || post.file_url || post.preview_url || '';
-    if (post.source !== 'gelbooru') return u;
-    return API.apiPath('/booru/sample')
-      + '?id=' + encodeURIComponent(post.id)
-      + '&url=' + encodeURIComponent(u);
+    var d = _SOURCES[post.source];
+    return d && d.sample ? d.sample(post) : (post.sample_url || post.file_url || post.preview_url || '');
   }
 
   function saveUiState() {
     var payload = {
       mode: mode(),
-      tags: (document.getElementById('booru-tags') || {}).value || '',
-      extra: (document.getElementById('booru-extra') || {}).value || '',
-      order: (document.getElementById('booru-order') || {}).value || '',
       startPage: startPageFromInput(),
       source: _source,
       page: _page,
     };
+    for (var skey in _SOURCES) {
+      var sdef = _SOURCES[skey];
+      if (!sdef.stateKeys) continue;
+      for (var si = 0; si < sdef.stateKeys.length; si++) {
+        var cid = sdef.stateKeys[si];
+        payload[cid] = (document.getElementById(cid) || {}).value || '';
+      }
+    }
     try {
       sessionStorage.setItem(STATE_KEY, JSON.stringify(payload));
     } catch (e) { /* ignore quota */ }
@@ -114,13 +218,16 @@ var BooruFilter = (function () {
 
   function applyForm(st) {
     if (!st) return;
-    var tags = document.getElementById('booru-tags');
-    var extra = document.getElementById('booru-extra');
-    var order = document.getElementById('booru-order');
+    for (var akey in _SOURCES) {
+      var adef = _SOURCES[akey];
+      if (!adef.stateKeys) continue;
+      for (var ai = 0; ai < adef.stateKeys.length; ai++) {
+        var cid = adef.stateKeys[ai];
+        var ael = document.getElementById(cid);
+        if (ael && st[cid] != null) ael.value = st[cid];
+      }
+    }
     var start = document.getElementById('booru-start-page');
-    if (tags && st.tags != null) tags.value = st.tags;
-    if (extra && st.extra != null) extra.value = st.extra;
-    if (order && st.order != null) order.value = st.order;
     var pg = parseInt(st.page != null ? st.page : st.startPage, 10);
     if (!(pg > 0)) pg = 1;
     if (start) start.value = String(pg);
@@ -537,21 +644,29 @@ var BooruFilter = (function () {
    */
   function syncToolbar() {
     var remote = isRemote();
+    var curDef = cur();
     var localBar = document.getElementById('toolbar-local');
-    var booruBar = document.getElementById('toolbar-booru');
+    var pageWrap = document.getElementById('remote-page-wrap');
     var loadedWrap = document.getElementById('stat-loaded-wrap');
     var selWrap = document.getElementById('stat-selected-wrap');
     var trashWrap = document.getElementById('stat-trashed-wrap');
     if (localBar) localBar.classList.toggle('is-off', remote);
-    if (booruBar) booruBar.classList.toggle('is-off', !remote);
+    // 依注册表切换各来源工具栏: 仅当前远程来源显示
+    for (var skey in _SOURCES) {
+      var sdef = _SOURCES[skey];
+      if (!sdef.toolbarId) continue;
+      var bar = document.getElementById(sdef.toolbarId);
+      if (bar) bar.classList.toggle('is-off', !(remote && sdef === curDef));
+    }
+    if (pageWrap) pageWrap.classList.toggle('is-off', !remote);
     if (loadedWrap) loadedWrap.hidden = !remote;
     if (selWrap) selWrap.hidden = remote;
     if (trashWrap) trashWrap.hidden = remote;
     var hint = document.getElementById('filter-hint');
     if (hint) {
-      hint.textContent = remote
-        ? '左键写入目录 · 右键大图 · 上滑上一页 · 下滑下一页'
-        : '点击选中 · 右键相似 · Delete 删除';
+      hint.textContent = !remote
+        ? '点击选中 · 右键相似 · Delete 删除'
+        : (curDef.hintText || '左键写入目录 · 右键大图 · 上滑上一页 · 下滑下一页');
     }
     if (!remote) {
       stopPageObserve();
@@ -570,7 +685,7 @@ var BooruFilter = (function () {
       : st === 'error' ? '失败'
       : '未保存';
     var res = (post.width && post.height) ? (post.width + '×' + post.height + ' ') : '';
-    var stem = post.stem || ((post.source === 'danbooru' ? 'd' : 'g') + post.id);
+    var stem = post.stem || (((_SOURCES[post.source] || {}).stemPrefix || 'g') + post.id);
     return stLabel + ' · ' + res + stem;
   }
 
@@ -678,10 +793,8 @@ var BooruFilter = (function () {
   var _previewPost = null;
 
   function postPageUrl(post) {
-    if (post.source === 'danbooru') {
-      return 'https://danbooru.donmai.us/posts/' + post.id;
-    }
-    return 'https://gelbooru.com/index.php?page=post&s=view&id=' + post.id;
+    var d = _SOURCES[post.source];
+    return d && d.pageUrl ? d.pageUrl(post) : '#';
   }
 
   function parseTags(raw) {
@@ -716,8 +829,9 @@ var BooruFilter = (function () {
 
     var res = (post.width && post.height) ? (post.width + '×' + post.height) : '-';
     var st = _status[post.key] === 'done' || post.downloaded ? '已保存' : '未保存';
+    var srcName = ((_SOURCES[post.source] || {}).nameLabel) || post.source;
     meta.innerHTML =
-      '<div><b>' + (post.source === 'danbooru' ? 'Danbooru' : 'Gelbooru') + '</b> · ' +
+      '<div><b>' + srcName + '</b> · ' +
       (post.stem || post.id) + '</div>' +
       '<div>分辨率 ' + res + ' · 分数 ' + (post.score != null ? post.score : '-') +
       ' · rating ' + (post.rating || '-') + '</div>' +
@@ -727,25 +841,30 @@ var BooruFilter = (function () {
     if (dl) dl.textContent = (post.downloaded || _status[post.key] === 'done') ? '移除' : '下载';
 
     tagsEl.innerHTML = '';
-    var tags = parseTags(post.tags);
-    if (!tags.length) {
-      tagsEl.textContent = '无标签';
+    var rpt = (_SOURCES[post.source] || {}).renderPreviewTags;
+    if (rpt) {
+      rpt(tagsEl, post);
     } else {
-      for (var i = 0; i < tags.length; i++) {
-        (function (tag) {
-          var chip = document.createElement('button');
-          chip.type = 'button';
-          chip.className = 'booru-tag-chip';
-          chip.textContent = tag;
-          chip.title = '点击搜索此标签';
-          chip.addEventListener('click', function () {
-            var input = document.getElementById('booru-tags');
-            if (input) input.value = tag;
-            hidePreview();
-            search(true).catch(function (e) { toast(String(e.message || e)); });
-          });
-          tagsEl.appendChild(chip);
-        })(tags[i]);
+      var tags = parseTags(post.tags);
+      if (!tags.length) {
+        tagsEl.textContent = '无标签';
+      } else {
+        for (var i = 0; i < tags.length; i++) {
+          (function (tag) {
+            var chip = document.createElement('button');
+            chip.type = 'button';
+            chip.className = 'booru-tag-chip';
+            chip.textContent = tag;
+            chip.title = '点击搜索此标签';
+            chip.addEventListener('click', function () {
+              var input = document.getElementById('booru-tags');
+              if (input) input.value = tag;
+              hidePreview();
+              search(true).catch(function (e) { toast(String(e.message || e)); });
+            });
+            tagsEl.appendChild(chip);
+          })(tags[i]);
+        }
       }
     }
 
@@ -1137,14 +1256,17 @@ var BooruFilter = (function () {
       return;
     }
     var params = readBatchParams();
-    var tagsEl = document.getElementById('booru-tags');
-    var extraEl = document.getElementById('booru-extra');
-    var orderEl = document.getElementById('booru-order');
+    var req = cur().buildRequest();
+    var tags = req.tags, extra = req.extra || '', order = req.order || '';
+    if (cur().requireTags && !tags) {
+      toast('请先输入 ' + cur().nameLabel + ' 的查询条件');
+      return;
+    }
     var body = {
       source: mode(),
-      tags: tagsEl ? tagsEl.value.trim() : '',
-      extra: extraEl ? extraEl.value.trim() : '',
-      order: orderEl ? orderEl.value : '',
+      tags: tags,
+      extra: extra,
+      order: order,
       dir: destDir(),
       page: _pageLo > 0 ? _pageLo : 1,
       limit: params.limit,
@@ -1290,12 +1412,12 @@ var BooruFilter = (function () {
     if (_loading) return;
     var isReset = dir === true || dir === 'reset';
     var isUp = dir === 'up';
-    var input = document.getElementById('booru-tags');
-    var extraEl = document.getElementById('booru-extra');
-    var orderEl = document.getElementById('booru-order');
-    var tags = input ? input.value.trim() : '';
-    var extra = extraEl ? extraEl.value.trim() : '';
-    var order = orderEl ? orderEl.value : '';
+    var req = cur().buildRequest();
+    var tags = req.tags, extra = req.extra || '', order = req.order || '';
+    if (cur().requireTags && !tags) {
+      toast('请先输入 ' + cur().nameLabel + ' 的查询条件');
+      return;
+    }
     _source = mode();
     if (isReset) {
       var start = startPageFromInput();
@@ -1381,7 +1503,7 @@ var BooruFilter = (function () {
 
       if (!autoNext && !autoPrev && (isReset || fresh.length || dup)) {
         var head = isReset
-          ? ((_source === 'danbooru' ? 'Danbooru' : 'Gelbooru') + ' · +')
+          ? (((_SOURCES[_source] || {}).nameLabel || '') + ' · +')
           : (isUp ? '↑+' : '+');
         toast(head + fresh.length + (dup ? ' · 跳过重复 ' + dup : ''));
       }
@@ -1461,7 +1583,7 @@ var BooruFilter = (function () {
     if (!modeEl) return;
 
     var saved = loadUiState();
-    if (saved && (saved.mode === 'gelbooru' || saved.mode === 'danbooru' || saved.mode === 'local')) {
+    if (saved && (saved.mode === 'gelbooru' || saved.mode === 'danbooru' || saved.mode === 'bilibili' || saved.mode === 'local')) {
       modeEl.value = saved.mode;
       applyForm(saved);
     }
@@ -1491,18 +1613,38 @@ var BooruFilter = (function () {
       saveUiState();
     });
 
-    var searchBtn = document.getElementById('btn-booru-search');
-    if (searchBtn) {
-      searchBtn.addEventListener('click', function () {
-        search(true).catch(function (e) { toast(String(e.message || e)); });
-      });
-    }
-    var batchBtn = document.getElementById('btn-booru-batch');
-    if (batchBtn) {
-      batchBtn.addEventListener('click', function () {
-        if (!isRemote()) { toast('请先切换到图站模式'); return; }
-        setBatchDlg(true);
-      });
+    // 依注册表绑定各来源工具栏: 搜索按钮 / 批量按钮 / Enter 触发
+    for (var skey in _SOURCES) {
+      (function (sdef) {
+        if (!sdef.toolbarId) return;
+        var sbtn = document.getElementById(sdef.searchBtn);
+        if (sbtn) {
+          sbtn.addEventListener('click', function () {
+            search(true).catch(function (e) { toast(String(e.message || e)); });
+          });
+        }
+        var bbtn = document.getElementById(sdef.batchBtn);
+        if (bbtn) {
+          bbtn.addEventListener('click', function () {
+            if (!isRemote()) { toast('请先切换到图站模式'); return; }
+            if (sdef.batchDialog) setBatchDlg(true);
+            else runBatch().catch(function (e) { toast(String(e.message || e)); });
+          });
+        }
+        if (sdef.enterIds) {
+          for (var ei = 0; ei < sdef.enterIds.length; ei++) {
+            var eel = document.getElementById(sdef.enterIds[ei]);
+            if (!eel) continue;
+            eel.addEventListener('keydown', function (ev) {
+              if (ev.key === 'Enter') {
+                ev.preventDefault();
+                search(true).catch(function (err) { toast(String(err.message || err)); });
+              }
+            });
+            eel.addEventListener('change', saveUiState);
+          }
+        }
+      })(_SOURCES[skey]);
     }
     var batchDlg = document.getElementById('booru-batch-dlg');
     if (batchDlg) {

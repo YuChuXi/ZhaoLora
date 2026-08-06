@@ -22,6 +22,7 @@ from services.booru_client import (
     regenerate_captions,
     remove_download,
 )
+from services.bilibili import fetch_bili_bytes
 from routes.deps import get_runtime, jobs
 from services.core.jobs import EmitFn
 from services.models import (
@@ -163,6 +164,31 @@ async def booru_sample(
         raise HTTPException(400, str(e)) from e
     except _NETWORK_ERRORS as e:
         raise HTTPException(502, f"大图失败: {e}") from e
+    return Response(
+        content=data,
+        media_type=ctype,
+        headers={"Cache-Control": "public, max-age=86400"},
+    )
+
+
+@router.get("/image")
+async def booru_image(
+    request: Request,
+    url: str = Query(..., min_length=8, description="B 站图床原图 URL"),
+) -> Response:
+    """代理 B 站图片 (防盗链), 供搜索结果缩略图与大图. 引用: ``booru_filter.js``. """
+    from urllib.parse import urlparse
+
+    u = urlparse(url)
+    if u.scheme not in ("http", "https") or not u.hostname:
+        raise HTTPException(400, "非法地址")
+    host = u.hostname.lower()
+    if host != "i0.hdslb.com" and not host.endswith(".hdslb.com"):
+        raise HTTPException(400, "非 B 站图床")
+    try:
+        data, ctype = await fetch_bili_bytes(url)
+    except (httpx.HTTPError, OSError) as e:
+        raise HTTPException(502, f"图片拉取失败: {e}") from e
     return Response(
         content=data,
         media_type=ctype,
@@ -319,7 +345,7 @@ async def booru_batch_start(
             danbooru_api_key=danbooru_api_key,
         )
 
-    job_id = mgr.submit(
+    job_id = await mgr.submit(
         kind="booru_batch",
         group="network",
         dataset=rt.name,
@@ -443,5 +469,5 @@ async def booru_refresh_metadata(request: Request, body: RefreshMetadataBody) ->
         emit(JobSnapshot(status="done", phase="done", total=total, done=total, pct=100,
                          message=f"{summary}, 错误 {len(errors)}"))
 
-    job_id = jobs(request).submit(kind="refresh_meta", group="compute", dataset=rt.name, run=run)
+    job_id = await jobs(request).submit(kind="refresh_meta", group="compute", dataset=rt.name, run=run)
     return JobSubmitResponse(ok=True, job_id=job_id)

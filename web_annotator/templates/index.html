@@ -11,6 +11,20 @@
     border: 1px solid var(--border); border-radius: 4px; padding: 4px 8px; font-size: 12px;
     width: min(220px, 28vw);
   }
+  #bilibili-uid, #bilibili-keyword {
+    background: #0a1a30; color: var(--text);
+    border: 1px solid var(--border); border-radius: 4px; padding: 4px 8px; font-size: 12px;
+    width: min(130px, 16vw);
+  }
+  #bilibili-keyword { width: min(150px, 18vw); }
+  #bilibili-type, #bilibili-time-from, #bilibili-time-to {
+    background: var(--card-bg); color: var(--text);
+    border: 1px solid var(--border); border-radius: 4px; padding: 3px 6px; font-size: 12px;
+  }
+  .bili-time-row {
+    font-size: 12px; color: var(--text-dim);
+    display: inline-flex; align-items: center; gap: 4px; white-space: nowrap;
+  }
   .booru-page-wrap {
     display: inline-flex; align-items: stretch;
     border: 1px solid var(--border); border-radius: 4px;
@@ -86,6 +100,11 @@
     max-width: 100%; word-break: break-all;
   }
   .booru-tag-chip:hover { border-color: var(--accent); color: #fff; }
+  .bili-preview-text {
+    flex: 1 0 100%;
+    font-size: 12px; line-height: 1.7; color: var(--text);
+    white-space: pre-wrap; word-break: break-word;
+  }
 
   .booru-extra-dlg {
     position: fixed; inset: 0; z-index: 520;
@@ -169,6 +188,7 @@
       <option value="local">本地</option>
       <option value="gelbooru">Gelbooru</option>
       <option value="danbooru">Danbooru</option>
+      <option value="bilibili">Bilibili</option>
     </select>
   </label>
   <span class="sep"></span>
@@ -191,18 +211,39 @@
     </label>
     <button type="button" class="btn" id="btn-booru-extra" title="评级、分数、分辨率等">条件<span class="booru-extra-badge" aria-hidden="true"></span></button>
     <input type="hidden" id="booru-extra" value="">
-    <label style="font-size:12px;color:var(--text-dim);display:flex;align-items:center;gap:4px;" title="当前页；两侧可加载上/下一页">
-      页
-      <span class="booru-page-wrap">
-        <button type="button" class="booru-page-btn" id="btn-booru-page-prev" title="上一页" disabled>‹</button>
-        <input type="number" id="booru-start-page" min="1" max="10000" value="1" step="1">
-        <button type="button" class="booru-page-btn" id="btn-booru-page-next" title="下一页" disabled>›</button>
-      </span>
-    </label>
     <button class="btn green" id="btn-booru-search" type="button">搜索</button>
     <button class="btn" id="btn-booru-batch" type="button" title="按当前搜索结果批量下载">批量下载</button>
     <span class="sep"></span>
   </div>
+
+  <div id="toolbar-bilibili" class="toolbar-group is-off">
+    <input type="text" id="bilibili-uid" placeholder="B站 UID" spellcheck="false">
+    <select id="bilibili-type">
+      <option value="">全部类型</option>
+      <option value="image">图片</option>
+      <option value="video">视频</option>
+      <option value="forward">转发</option>
+    </select>
+    <input type="text" id="bilibili-keyword" placeholder="关键词" spellcheck="false">
+    <label class="bili-time-row" title="发布时间区间">
+      时间
+      <input type="date" id="bilibili-time-from">
+      <span>~</span>
+      <input type="date" id="bilibili-time-to">
+    </label>
+    <button class="btn green" id="btn-bilibili-search" type="button">搜索</button>
+    <button class="btn" id="btn-bilibili-batch" type="button" title="按当前筛选批量下载">批量下载</button>
+    <span class="sep"></span>
+  </div>
+
+  <label class="toolbar-group is-off bili-time-row" id="remote-page-wrap" title="当前页；两侧可加载上/下一页">
+    页
+    <span class="booru-page-wrap">
+      <button type="button" class="booru-page-btn" id="btn-booru-page-prev" title="上一页" disabled>‹</button>
+      <input type="number" id="booru-start-page" min="1" max="10000" value="1" step="1">
+      <button type="button" class="booru-page-btn" id="btn-booru-page-next" title="下一页" disabled>›</button>
+    </span>
+  </label>
 
   <div id="toolbar-local" class="toolbar-group">
     <label style="font-size:12px;color:var(--text-dim);display:flex;align-items:center;gap:4px;">

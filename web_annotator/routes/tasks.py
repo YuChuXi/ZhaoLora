@@ -79,7 +79,7 @@ async def list_tasks(
         previews: list[str] = []
         report_ready = False
         if (task_dir / "main").is_dir():
-            rt = reg.ensure(name)
+            rt = await reg.ensure(name)
             image_count = len(scan_images(rt.main_dir, path_prefix="main"))
             previews = _preview_hashes(rt, 4)
             report_ready = (rt.root / "aesthetic_report.html").is_file()
@@ -135,9 +135,12 @@ def list_candidates(request: Request) -> TaskCandidatesResponse:
 
 
 @router.post("")
-def add_task(request: Request, body: AddTaskBody) -> TaskOkResponse:
+async def add_task(request: Request, body: AddTaskBody) -> TaskOkResponse:
     """
     登记任务；必要时创建目录. 
+
+    须为协程: ``ensure`` 会经 JobManager.submit 提交后台缩略图任务, 而后者
+    依赖运行中的事件循环, 同步路由在线程池中执行会触发 no running event loop.
 
     引用: home.js. 
     """
@@ -146,7 +149,7 @@ def add_task(request: Request, body: AddTaskBody) -> TaskOkResponse:
         info = store.add(body.name)
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
-    registry(request).ensure(info.name)
+    await registry(request).ensure(info.name)
     return TaskOkResponse(
         ok=True,
         name=info.name,

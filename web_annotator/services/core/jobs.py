@@ -72,7 +72,7 @@ class JobManager:
             found = job
         return found
 
-    def submit(
+    async def submit(
         self,
         *,
         kind: str,
@@ -82,17 +82,30 @@ class JobManager:
         cancel_fn: Callable[[], None] | None = None,
     ) -> str:
         """
-        提交长任务, 立即返回 job_id. 
+        提交长任务, 立即返回 job_id.
+
+        声明为协程: 内部用 ``loop.create_task`` 注册后台执行, 须在事件循环中
+        调用; ``async`` 签名将此隐式契约显式化, 防止同步调用方在线程池中触发
+        ``no running event loop``.
 
         Args:
-            kind: 任务类型标识(aesthetic / tagging / dedupe_scan / tag_clean). 
-            group: 互斥分组名, 同组内任务串行执行. 
-            dataset: 数据集名称. 
-            run: 同步可调用对象, 签名 ``run(emit)``；``emit(JobSnapshot)`` 可从工作线程调用. 
-            cancel_fn: 协作取消回调. 
+            kind: 任务类型标识(aesthetic / tagging / dedupe_scan / tag_clean).
+            dataset: 数据集名称.
+            group: 互斥分组名, 同组内任务串行执行.
+            run: 同步可调用对象, 签名 ``run(emit)``；``emit(JobSnapshot)`` 可从工作线程调用.
+            cancel_fn: 协作取消回调.
 
-        引用:
-            ``routes/scoring.py`` / ``tagging.py`` / ``dedupe.py`` / ``tag_stats.py``. 
+        Returns:
+            str: 任务 ID.
+
+        Callers:
+            - `dataset/runtime.py:DatasetRegistry.ensure`
+            - `routes/scoring.py:scoring_start`
+            - `routes/tagging.py:tagging_start`
+            - `routes/dedupe.py:scan_duplicate`
+            - `routes/tag_stats.py:tag_clean` / `tag_batch_edit`
+            - `routes/booru.py:booru_batch_start` / `booru_refresh_metadata`
+            - `routes/birefnet.py:birefnet_mask`
         """
         job_id = uuid.uuid4().hex
         job = Job(

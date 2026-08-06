@@ -79,7 +79,7 @@ async def tagging_start(request: Request, body: StartBody) -> TaggingStartRespon
         )
         on_update()
 
-    job_id = jobs(request).submit(
+    job_id = await jobs(request).submit(
         kind="tagging",
         group="compute",
         dataset=rt.name,

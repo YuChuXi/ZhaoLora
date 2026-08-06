@@ -40,9 +40,7 @@ from services.booru_client.utils import (
 
 _CACHE_ROOT = Path(tempfile.gettempdir()) / "zhao_booru_media"
 _clients: dict[str, httpx.AsyncClient] = {}
-_client_lock = asyncio.Lock()
-_inflight: dict[str, asyncio.Future[tuple[bytes, str]]] = {}
-_inflight_lock = asyncio.Lock()
+_inflight: dict[str, asyncio.Task[tuple[bytes, str]]] = {}
 _tag_types_cache: dict[str, int] = {}
 
 
@@ -72,7 +70,7 @@ def _assert_gelbooru_url(url: str) -> str:
 
 
 async def _shared_client(proxy: str | None) -> httpx.AsyncClient:
-    """按代理复用 HTTP 连接池. 
+    """按代理复用 HTTP 连接池.
 
     Callers:
         - `media.py:fetch_gelbooru_bytes`
@@ -81,18 +79,14 @@ async def _shared_client(proxy: str | None) -> httpx.AsyncClient:
     c = _clients.get(key)
     if c is not None and not c.is_closed:
         return c
-    async with _client_lock:
-        c = _clients.get(key)
-        if c is not None and not c.is_closed:
-            return c
-        c = httpx.AsyncClient(
-            proxy=proxy_or_none(proxy),
-            headers=make_headers(referer="https://gelbooru.com/"),
-            limits=httpx.Limits(max_connections=32, max_keepalive_connections=16),
-            timeout=httpx.Timeout(45.0, connect=10.0),
-        )
-        _clients[key] = c
-        return c
+    c = httpx.AsyncClient(
+        proxy=proxy_or_none(proxy),
+        headers=make_headers(referer="https://gelbooru.com/"),
+        limits=httpx.Limits(max_connections=32, max_keepalive_connections=16),
+        timeout=httpx.Timeout(45.0, connect=10.0),
+    )
+    _clients[key] = c
+    return c
 
 
 async def _download_gelbooru(
@@ -144,30 +138,16 @@ async def fetch_gelbooru_bytes(
         return bin_path.read_bytes(), ctype_path.read_text(encoding="utf-8").strip()
 
     flight_key = f"{kind}:{pid}"
-    async with _inflight_lock:
-        existing = _inflight.get(flight_key)
-        if existing is not None:
-            leader = False
-            fut = existing
-        else:
-            leader = True
-            fut = asyncio.get_running_loop().create_future()
-            _inflight[flight_key] = fut
-
-    if not leader:
-        return await fut
+    task = _inflight.get(flight_key)
+    if task is None or task.done():
+        task = asyncio.create_task(_download_gelbooru(kind, pid, media_url, proxy=proxy))
+        _inflight[flight_key] = task
 
     try:
-        result = await _download_gelbooru(kind, pid, media_url, proxy=proxy)
-        fut.set_result(result)
-        return result
-    except Exception as e:
-        fut.set_exception(e)
-        raise
+        return await task
     finally:
-        async with _inflight_lock:
-            if _inflight.get(flight_key) is fut:
-                del _inflight[flight_key]
+        if task.done() and _inflight.get(flight_key) is task:
+            _inflight.pop(flight_key, None)
 
 
 async def _danbooru_fetch_image_bytes(
@@ -316,6 +296,17 @@ async def download_post(
     image_path = out_dir / f"{stem}.png"
     tags_path = out_dir / f"{stem}.txt"
     existing = find_downloaded(out_dir, pid, file_stem_fn=get_source(source).file_stem)
+
+    # 非 booru 来源委托给对应 SourceClient.download 实现
+    if source not in ("gelbooru", "danbooru"):
+        result = await get_source(source).download(
+            pid, out_dir, proxy,
+            overwrite=overwrite,
+            anima_format=anima_format,
+            include_meta_tags=include_meta_tags,
+            keep_underscores=keep_underscores,
+        )
+        return BooruDownloadResult(source=source, **result)
 
     if source == "gelbooru":
         api = make_gelbooru(proxy)
