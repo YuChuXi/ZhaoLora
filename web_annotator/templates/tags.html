@@ -44,40 +44,9 @@
   }
   .empty-hint { padding: 40px; text-align: center; color: var(--text-dim); }
 
-  /* 自动生成（打标）对话框 */
-  .tagging-modal {
-    display: none; position: fixed; inset: 0; z-index: 400;
-    align-items: center; justify-content: center;
-    background: rgba(0,0,0,0.55);
-  }
-  .tagging-modal.open { display: flex; }
-  .tagging-panel {
-    width: min(920px, 94vw); height: min(720px, 88vh);
-    background: var(--bg); border: 1px solid var(--border); border-radius: 10px;
-    box-shadow: 0 16px 48px rgba(0,0,0,0.5);
-    display: flex; flex-direction: column; overflow: hidden;
-  }
-  .tagging-panel-head {
-    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
-    padding: 10px 12px; border-bottom: 1px solid var(--border); background: var(--surface);
-  }
-  .tagging-panel-head .title {
-    font-size: 14px; font-weight: 600; margin-right: 4px;
-  }
-  .tagging-panel-head label {
-    display: flex; align-items: center; gap: 4px;
-    font-size: 12px; color: var(--text-dim); cursor: pointer; user-select: none;
-  }
-  .tagging-panel-head input[type="number"],
-  .tagging-panel-actions input[type="number"] {
-    width: 56px; background: #0a1a30; color: var(--text);
-    border: 1px solid var(--border); border-radius: 4px; padding: 2px 4px; font-size: 12px;
-  }
-  .tagging-panel-head .meta-inline {
-    font-size: 12px; color: var(--text-dim); white-space: nowrap;
-  }
-  .tagging-panel-head .meta-inline b { color: var(--text); font-weight: 600; }
-  .tagging-panel-head .spacer { flex: 1; min-width: 8px; }
+  /* 自动生成（打标）对话框：通用结构(遮罩/面板/头部/底部)复用公共 .modal 组件 */
+
+  /* 打标操作行（置信度/选项/状态），及日志等 tag 特有样式 */
   .tagging-panel-actions {
     display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
     padding: 8px 12px 10px; border-bottom: 1px solid var(--border); background: var(--surface);
@@ -86,10 +55,14 @@
     display: flex; align-items: center; gap: 4px;
     font-size: 12px; color: var(--text-dim); cursor: pointer; user-select: none;
   }
-  .tagging-panel-foot {
-    display: flex; align-items: center; justify-content: flex-end; gap: 8px;
-    padding: 10px 12px; border-top: 1px solid var(--border); background: var(--surface);
+  .tagging-panel-actions input[type="number"] {
+    width: 56px; background: #0a1a30; color: var(--text);
+    border: 1px solid var(--border); border-radius: 4px; padding: 2px 4px; font-size: 12px;
   }
+  .tagging-panel-actions .meta-inline {
+    font-size: 12px; color: var(--text-dim); white-space: nowrap;
+  }
+  .tagging-panel-actions .meta-inline b { color: var(--text); font-weight: 600; }
   .model-warn {
     color: #e94560; font-size: 12px; padding: 4px 12px;
     border-bottom: 1px solid var(--border);
@@ -145,10 +118,10 @@
   </div>
 </div>
 
-<div class="tagging-modal" id="tagging-modal" aria-hidden="true">
-  <div class="tagging-panel" role="dialog" aria-labelledby="tagging-title">
-    <div class="tagging-panel-head">
-      <span class="title" id="tagging-title">自动生成</span>
+<div class="modal" id="tagging-modal" aria-hidden="true">
+  <div class="modal-panel" role="dialog" aria-labelledby="tagging-title">
+    <div class="modal-head">
+      <span class="modal-title" id="tagging-title">自动生成</span>
     </div>
     <div class="tagging-panel-actions">
       <label>置信度
@@ -171,19 +144,19 @@
     </div>
     <div id="model-warn" class="model-warn" hidden></div>
     <div class="tagging-log" id="log-box"></div>
-    <div class="tagging-panel-foot">
-      <button class="btn" id="btn-tagging-close" type="button">关闭</button>
+    <div class="modal-foot">
       <button class="btn" id="btn-cancel" type="button" disabled>取消</button>
       <button class="btn green" id="btn-start" type="button">开始</button>
+      <button class="btn" id="btn-tagging-close" type="button">关闭</button>
     </div>
   </div>
 </div>
 
 <!-- 统计条件对话框 -->
-<div class="tagging-modal" id="stats-options-modal" aria-hidden="true">
-  <div class="tagging-panel" role="dialog" aria-labelledby="stats-options-title" style="width:min(420px,92vw);height:auto;max-height:min(360px,64vh);">
-    <div class="tagging-panel-head">
-      <span class="title" id="stats-options-title">统计条件</span>
+<div class="modal" id="stats-options-modal" aria-hidden="true">
+  <div class="modal-panel" role="dialog" aria-labelledby="stats-options-title" style="width:min(420px,92vw);height:auto;max-height:min(360px,64vh);">
+    <div class="modal-head">
+      <span class="modal-title" id="stats-options-title">统计条件</span>
     </div>
     <div style="padding:14px 16px;display:flex;flex-direction:column;gap:12px;font-size:12px;color:var(--text-dim);">
       <div style="display:flex;flex-direction:column;gap:6px;">
@@ -202,18 +175,18 @@
         </select>
       </div>
     </div>
-    <div class="tagging-panel-foot">
-      <button class="btn" id="btn-stats-options-close" type="button">关闭</button>
+    <div class="modal-foot">
       <button class="btn green" id="btn-stats-options-apply" type="button">确定</button>
+      <button class="btn" id="btn-stats-options-close" type="button">关闭</button>
     </div>
   </div>
 </div>
 
 <!-- 批量添加对话框 -->
-<div class="tagging-modal" id="batch-add-modal" aria-hidden="true">
-  <div class="tagging-panel" role="dialog" style="height:auto;max-height:min(480px,80vh);">
-    <div class="tagging-panel-head">
-      <span class="title">批量添加标签</span>
+<div class="modal" id="batch-add-modal" aria-hidden="true">
+  <div class="modal-panel" role="dialog" style="height:auto;max-height:min(480px,80vh);">
+    <div class="modal-head">
+      <span class="modal-title">批量添加标签</span>
     </div>
     <div style="padding:12px;display:flex;flex-direction:column;gap:10px;overflow:auto;">
       <label style="font-size:12px;color:var(--text-dim);display:flex;flex-direction:column;gap:3px;">
@@ -259,19 +232,19 @@
       </div>
       <div id="batch-add-result" style="font-size:12px;color:var(--text-dim);background:#0a1a30;border:1px solid var(--border);border-radius:6px;padding:8px 10px;max-height:180px;overflow:auto;white-space:pre-wrap;font-family:ui-monospace,monospace;"></div>
     </div>
-    <div class="tagging-panel-foot">
-      <button class="btn" id="btn-batch-add-close" type="button">关闭</button>
+    <div class="modal-foot">
       <button class="btn" type="button" id="btn-batch-add-preview">预览</button>
       <button class="btn danger" type="button" id="btn-batch-add-apply">写入</button>
+      <button class="btn" id="btn-batch-add-close" type="button">关闭</button>
     </div>
   </div>
 </div>
 
 <!-- 批量删除对话框 -->
-<div class="tagging-modal" id="batch-delete-modal" aria-hidden="true">
-  <div class="tagging-panel" role="dialog" style="height:auto;max-height:min(400px,70vh);">
-    <div class="tagging-panel-head">
-      <span class="title">批量删除标签</span>
+<div class="modal" id="batch-delete-modal" aria-hidden="true">
+  <div class="modal-panel" role="dialog" style="height:auto;max-height:min(400px,70vh);">
+    <div class="modal-head">
+      <span class="modal-title">批量删除标签</span>
     </div>
     <div style="padding:12px;display:flex;flex-direction:column;gap:10px;overflow:auto;">
       <label style="font-size:12px;color:var(--text-dim);display:flex;flex-direction:column;gap:3px;">
@@ -289,19 +262,19 @@
       </div>
       <div id="batch-delete-result" style="font-size:12px;color:var(--text-dim);background:#0a1a30;border:1px solid var(--border);border-radius:6px;padding:8px 10px;max-height:180px;overflow:auto;white-space:pre-wrap;font-family:ui-monospace,monospace;"></div>
     </div>
-    <div class="tagging-panel-foot">
-      <button class="btn" id="btn-batch-delete-close" type="button">关闭</button>
+    <div class="modal-foot">
       <button class="btn" type="button" id="btn-batch-delete-preview">预览</button>
       <button class="btn danger" type="button" id="btn-batch-delete-apply">写入</button>
+      <button class="btn" id="btn-batch-delete-close" type="button">关闭</button>
     </div>
   </div>
 </div>
 
 <!-- 批量替换对话框 -->
-<div class="tagging-modal" id="batch-replace-modal" aria-hidden="true">
-  <div class="tagging-panel" role="dialog" style="height:auto;max-height:min(420px,72vh);">
-    <div class="tagging-panel-head">
-      <span class="title">批量替换标签</span>
+<div class="modal" id="batch-replace-modal" aria-hidden="true">
+  <div class="modal-panel" role="dialog" style="height:auto;max-height:min(420px,72vh);">
+    <div class="modal-head">
+      <span class="modal-title">批量替换标签</span>
     </div>
     <div style="padding:12px;display:flex;flex-direction:column;gap:10px;overflow:auto;">
       <div style="display:flex;gap:10px;align-items:flex-start;">
@@ -326,10 +299,10 @@
       </div>
       <div id="batch-replace-result" style="font-size:12px;color:var(--text-dim);background:#0a1a30;border:1px solid var(--border);border-radius:6px;padding:8px 10px;max-height:180px;overflow:auto;white-space:pre-wrap;font-family:ui-monospace,monospace;"></div>
     </div>
-    <div class="tagging-panel-foot">
-      <button class="btn" id="btn-batch-replace-close" type="button">关闭</button>
+    <div class="modal-foot">
       <button class="btn" type="button" id="btn-batch-replace-preview">预览</button>
       <button class="btn danger" type="button" id="btn-batch-replace-apply">写入</button>
+      <button class="btn" id="btn-batch-replace-close" type="button">关闭</button>
     </div>
   </div>
 </div>

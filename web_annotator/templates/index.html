@@ -97,20 +97,7 @@
     white-space: pre-wrap; word-break: break-word;
   }
 
-  .booru-extra-dlg {
-    position: fixed; inset: 0; z-index: 520;
-    display: none; align-items: center; justify-content: center;
-    background: rgba(6, 8, 14, 0.72); padding: 16px;
-  }
-  .booru-extra-dlg.show { display: flex; }
-  .booru-extra-panel {
-    width: min(520px, 94vw); background: var(--card-bg);
-    border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px;
-    display: flex; flex-direction: column; gap: 12px;
-  }
-  .booru-extra-panel h3 {
-    margin: 0; font-size: 14px; font-weight: 600; color: var(--text);
-  }
+  /* 筛选页对话框复用公共 .modal 组件；以下为 booru 特有内容行样式 */
   .booru-extra-row {
     display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
     font-size: 12px; color: var(--text-dim);
@@ -134,7 +121,6 @@
     cursor: pointer;
   }
   .booru-rate-chip.on { border-color: var(--accent); background: #132a4a; color: #fff; }
-  .booru-extra-actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; align-items: center; margin-top: 4px; }
   .booru-batch-progress {
     flex-direction: column; align-items: stretch; gap: 6px;
   }
@@ -261,22 +247,29 @@
   </aside>
 </div>
 
-<div class="booru-extra-dlg" id="booru-extra-dlg" aria-hidden="true">
-  <div class="booru-extra-panel" role="dialog" aria-labelledby="booru-extra-title">
-    <h3 id="booru-extra-title">条件</h3>
-    <div id="booru-extra-fields"></div>
-    <div class="booru-extra-actions">
+<div class="modal" id="booru-extra-dlg" aria-hidden="true">
+  <div class="modal-panel" role="dialog" aria-labelledby="booru-extra-title" style="width:min(520px,94vw);height:auto;max-height:min(80vh,640px);">
+    <div class="modal-head">
+      <span class="modal-title" id="booru-extra-title">条件</span>
+    </div>
+    <div class="modal-body" style="padding:14px 16px;display:flex;flex-direction:column;gap:12px;">
+      <div id="booru-extra-fields"></div>
+    </div>
+    <div class="modal-foot">
       <a id="booru-cheat" href="https://gelbooru.com/index.php?page=help&topic=cheatsheet" target="_blank" rel="noopener">cheatsheet</a>
       <button type="button" class="btn" data-ex-act="clear">清空</button>
-      <button type="button" class="btn" data-ex-act="cancel">取消</button>
       <button type="button" class="btn green" data-ex-act="apply">确定</button>
+      <button type="button" class="btn" data-ex-act="cancel">取消</button>
     </div>
   </div>
 </div>
 
-<div class="booru-extra-dlg" id="booru-batch-dlg" aria-hidden="true">
-  <div class="booru-extra-panel" role="dialog" aria-labelledby="booru-batch-title">
-    <h3 id="booru-batch-title">批量下载</h3>
+<div class="modal" id="booru-batch-dlg" aria-hidden="true">
+  <div class="modal-panel" role="dialog" aria-labelledby="booru-batch-title" style="width:min(520px,94vw);height:auto;max-height:min(80vh,640px);">
+    <div class="modal-head">
+      <span class="modal-title" id="booru-batch-title">批量下载</span>
+    </div>
+    <div class="modal-body" style="padding:14px 16px;display:flex;flex-direction:column;gap:12px;">
     <div class="booru-extra-row">
       <span class="label">数量</span>
       <input type="number" id="booru-batch-limit" min="1" max="5000" value="50" step="1" title="最多下载张数（跳过已保存；运行中可改）">
@@ -314,12 +307,13 @@
       </div>
       <span id="booru-batch-progress-text">-</span>
     </div>
-    <div class="booru-extra-actions">
-      <button type="button" class="btn" id="booru-batch-close">关闭</button>
+    </div>
+    <div class="modal-foot">
       <button type="button" class="btn" id="booru-batch-regenerate" title="从 .danbooru_meta 重生成当前目录所有 txt">重生成 Caption</button>
       <button type="button" class="btn" id="booru-batch-refresh-meta" title="根据文件 ID 重新拉取 booru 元数据">刷新元数据</button>
       <button type="button" class="btn danger" id="booru-batch-stop" hidden>停止</button>
       <button type="button" class="btn green" id="booru-batch-start">开始</button>
+      <button type="button" class="btn" id="booru-batch-close">关闭</button>
     </div>
   </div>
 </div>
