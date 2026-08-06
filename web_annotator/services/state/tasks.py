@@ -14,7 +14,7 @@ from pathlib import Path
 from services.models import TaskEntry, TaskInfo, TaskListFile
 
 TASKS_FILE = ".annotator_tasks.json"
-_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
+_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_\-()\[\]]{0,63}$")
 
 
 def validate_task_name(name: str) -> str:
@@ -31,7 +31,7 @@ def validate_task_name(name: str) -> str:
     """
     name = (name or "").strip()
     if not name or not _NAME_RE.match(name):
-        raise ValueError("任务名须为字母、数字、下划线或连字符, 且不以符号开头")
+        raise ValueError("任务名须为字母、数字、下划线、连字符或括号, 且不以符号开头")
     if name in (".", ".."):
         raise ValueError("非法任务名")
     return name

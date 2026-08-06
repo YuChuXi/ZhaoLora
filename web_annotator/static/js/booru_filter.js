@@ -651,12 +651,13 @@ var BooruFilter = (function () {
     var selWrap = document.getElementById('stat-selected-wrap');
     var trashWrap = document.getElementById('stat-trashed-wrap');
     if (localBar) localBar.classList.toggle('is-off', remote);
-    // 依注册表切换各来源工具栏: 仅当前远程来源显示
+    // 依注册表切换各来源工具栏: 仅当前远程来源显示。
+    // gelbooru/danbooru 共用 toolbar-booru, 按 toolbarId 而非对象引用比较, 避免共用工具栏被覆盖.
     for (var skey in _SOURCES) {
       var sdef = _SOURCES[skey];
       if (!sdef.toolbarId) continue;
       var bar = document.getElementById(sdef.toolbarId);
-      if (bar) bar.classList.toggle('is-off', !(remote && sdef === curDef));
+      if (bar) bar.classList.toggle('is-off', !(remote && sdef.toolbarId === curDef.toolbarId));
     }
     if (pageWrap) pageWrap.classList.toggle('is-off', !remote);
     if (loadedWrap) loadedWrap.hidden = !remote;
@@ -684,9 +685,19 @@ var BooruFilter = (function () {
       : (st === 'done' || post.downloaded) ? '已保存'
       : st === 'error' ? '失败'
       : '未保存';
-    var res = (post.width && post.height) ? (post.width + '×' + post.height + ' ') : '';
+    var rs = resText(post);
     var stem = post.stem || (((_SOURCES[post.source] || {}).stemPrefix || 'g') + post.id);
-    return stLabel + ' · ' + res + stem;
+    return stLabel + ' · ' + (rs ? rs + ' ' : '') + stem;
+  }
+
+  /** 帖子是否有真实宽高. 引用: cardLabel / createCard / showPreview. */
+  function hasSize(post) {
+    return post.width > 0 && post.height > 0;
+  }
+
+  /** 分辨率文本; 无真实宽高时返回空串. 引用: cardLabel / showPreview. */
+  function resText(post) {
+    return hasSize(post) ? (post.width + '×' + post.height) : '';
   }
 
   function findCard(key) {
@@ -771,7 +782,10 @@ var BooruFilter = (function () {
     imgEl.dataset.src = thumbUrl(post);
     imgEl.style.width = '100%';
     imgEl.style.height = 'auto';
-    imgEl.style.aspectRatio = (post.width || 1) + ' / ' + (post.height || 1);
+    // 宽高已知时按真实比例占位, 避免加载前塌缩与加载后拉伸
+    if (hasSize(post)) {
+      imgEl.style.aspectRatio = post.width + ' / ' + post.height;
+    }
     imgEl.style.background = '#111';
     card.appendChild(imgEl);
 
@@ -827,7 +841,7 @@ var BooruFilter = (function () {
     img.alt = post.stem || post.id;
     img.src = sample;
 
-    var res = (post.width && post.height) ? (post.width + '×' + post.height) : '-';
+    var res = resText(post) || '-';
     var st = _status[post.key] === 'done' || post.downloaded ? '已保存' : '未保存';
     var srcName = ((_SOURCES[post.source] || {}).nameLabel) || post.source;
     meta.innerHTML =
@@ -878,10 +892,6 @@ var BooruFilter = (function () {
     onCardClick(post);
   }
 
-  function itemH(post) {
-    return _cw * (post.height || 1) / (post.width || 1) + 22;
-  }
-
   function pickCol(up) {
     var arr = up ? _colLo : _colHi;
     var c = 0;
@@ -892,21 +902,19 @@ var BooruFilter = (function () {
   }
 
   function place(card, post, up) {
-    var ih = itemH(post);
+    var container = document.getElementById('masonry');
     var c = pickCol(up);
-    var y;
-    if (up) {
-      _colLo[c] -= ih + _gap;
-      y = _colLo[c];
-    } else {
-      y = _colHi[c];
-      _colHi[c] = y + ih + _gap;
-    }
-    card.dataset.worldY = String(y);
     card.style.position = 'absolute';
     card.style.left = (_pad + c * (_cw + _gap)) + 'px';
-    card.style.top = (y - _minY) + 'px';
     card.style.width = _cw + 'px';
+    container.appendChild(card);
+    // 用真实渲染高度累加列高, 而非预估, 保证竖直空隙恒定 = _gap
+    var rh = card.offsetHeight;
+    var y = up ? (_colLo[c] - rh - _gap) : _colHi[c];
+    card.style.top = (y - _minY) + 'px';
+    card.dataset.worldY = String(y);
+    if (up) _colLo[c] = y;
+    else _colHi[c] = y + rh + _gap;
   }
 
   function syncOrigin() {
@@ -933,22 +941,15 @@ var BooruFilter = (function () {
       render();
       return;
     }
-    var frag = document.createDocumentFragment();
     if (up) {
       for (var i = fresh.length - 1; i >= 0; i--) {
-        var card = createCard(fresh[i], _cw);
-        place(card, fresh[i], true);
-        frag.appendChild(card);
+        place(createCard(fresh[i], _cw), fresh[i], true);
       }
-      container.appendChild(frag);
       syncOrigin();
     } else {
       for (var j = 0; j < fresh.length; j++) {
-        var c2 = createCard(fresh[j], _cw);
-        place(c2, fresh[j], false);
-        frag.appendChild(c2);
+        place(createCard(fresh[j], _cw), fresh[j], false);
       }
-      container.appendChild(frag);
       container.style.height = (Math.max.apply(null, _colHi) - _minY) + 'px';
     }
     observeNew(container);
@@ -986,9 +987,7 @@ var BooruFilter = (function () {
     _minY = 0;
 
     for (var j = 0; j < _posts.length; j++) {
-      var card = createCard(_posts[j], _cw);
-      place(card, _posts[j], false);
-      container.appendChild(card);
+      place(createCard(_posts[j], _cw), _posts[j], false);
     }
     container.style.height = (Math.max.apply(null, _colHi) - _minY) + 'px';
     observeNew(container);

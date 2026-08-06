@@ -30,6 +30,8 @@
   var _dragStart = null;
   var _dragBase = null;
   var _dragIdx = -1;
+  var _dragRaf = null; // onDrag 的 requestAnimationFrame 句柄, 合并高频 mousemove
+  var _baseCanvas = null; // 离屏底图缓存(checker+原图), 拖拽时免重复绘制
   var _toastTimer = null;
 
   var canvas = document.getElementById('crop-canvas');
@@ -510,15 +512,31 @@
     canvas.style.imageRendering = 'auto';
   }
 
-  function drawChecker(vw, vh) {
+  function drawChecker(vw, vh, c) {
+    c = c || ctx;
     var gs = 16;
     for (var y = 0; y < vh; y += gs) {
       for (var x = 0; x < vw; x += gs) {
         var light = ((x / gs + y / gs) % 2) === 0;
-        ctx.fillStyle = light ? '#cccccc' : '#eeeeee';
-        ctx.fillRect(x, y, Math.min(gs, vw - x), Math.min(gs, vh - y));
+        c.fillStyle = light ? '#cccccc' : '#eeeeee';
+        c.fillRect(x, y, Math.min(gs, vw - x), Math.min(gs, vh - y));
       }
     }
+  }
+
+  /** 构建离屏底图缓存(checker+原图), 使拖拽重绘免逐格画 checker. 引用: loadIndex. */
+  function buildBase() {
+    if (!_img || !_origW) return;
+    if (!_baseCanvas || _baseCanvas.width !== _origW || _baseCanvas.height !== _origH) {
+      _baseCanvas = document.createElement('canvas');
+      _baseCanvas.width = _origW;
+      _baseCanvas.height = _origH;
+    }
+    var bctx = _baseCanvas.getContext('2d');
+    bctx.setTransform(1, 0, 0, 1, 0, 0);
+    bctx.clearRect(0, 0, _origW, _origH);
+    drawChecker(_origW, _origH, bctx);
+    bctx.drawImage(_img, 0, 0);
   }
 
   function redraw() {
@@ -529,8 +547,12 @@
     ctx.fillRect(0, 0, cw, ch);
     if (!_img || !_origW) return;
 
-    drawChecker(_origW, _origH);
-    ctx.drawImage(_img, 0, 0);
+    if (_baseCanvas) {
+      ctx.drawImage(_baseCanvas, 0, 0);
+    } else {
+      drawChecker(_origW, _origH);
+      ctx.drawImage(_img, 0, 0);
+    }
 
     if (_noCrop) {
       updateLive(null);
@@ -879,8 +901,18 @@
 
   function onDrag(e) {
     if (!_img || !_dragMode || _noCrop) return;
+    var x = e.clientX, y = e.clientY;
+    // 高频 mousemove 合并到每帧一次, 避免拖拽时反复全量重绘
+    if (_dragRaf) return;
+    _dragRaf = requestAnimationFrame(function () {
+      _dragRaf = null;
+      doDrag(x, y);
+    });
+  }
+
+  function doDrag(clientX, clientY) {
     var rect = canvas.getBoundingClientRect();
-    var raw = cssToRaw(e.clientX - rect.left, e.clientY - rect.top);
+    var raw = cssToRaw(clientX - rect.left, clientY - rect.top);
     var iw = _origW, ih = _origH;
     var cand = null;
     var newBox = null;
@@ -912,7 +944,6 @@
         _crops[_dragIdx] = newBox;
       }
       redraw();
-      renderList();
       return;
     }
 
@@ -972,10 +1003,10 @@
     if (!cand) cand = chooseBest(base.x2 - base.x1, base.y2 - base.y1, base.x2 - base.x1, base.y2 - base.y1);
     _crops[_dragIdx] = applySnap(base, cand, _dragMode);
     redraw();
-    renderList();
   }
 
   function onRelease() {
+    if (_dragMode) renderList(); // 拖拽结束统一刷新列表, 避免拖拽中反复重建 DOM
     _dragMode = null;
     _dragBase = null;
     _dragStart = null;
@@ -1050,6 +1081,7 @@
     document.getElementById('part-name-wrap').style.display = 'none';
     initDefaultCrop();
     fitCanvas();
+    buildBase();
     redraw();
     renderList();
     updateNav();

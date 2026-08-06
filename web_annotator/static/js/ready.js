@@ -90,8 +90,12 @@
       body: JSON.stringify({ dirs: null, num_repeats: repeats })
     });
     document.getElementById('toml-box').value = data.toml || '';
+    var subsets = data.subsets || [];
+    var totalImages = subsets.reduce(function (sum, s) {
+      return sum + (s.image_count || 0);
+    }, 0);
     document.getElementById('stat-summary').textContent =
-      (data.subsets || []).length + ' 个 subset';
+      subsets.length + ' 个 subset · 共 ' + totalImages + ' 张图片';
     renderSide(data);
     toast('已生成');
   }

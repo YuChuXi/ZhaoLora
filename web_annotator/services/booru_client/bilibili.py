@@ -17,8 +17,6 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
-import httpx
-
 from services.bilibili.client import fetch_bili_bytes, fetch_dynamics, resolve_image
 from services.bilibili.models import DynamicRecord
 from services.booru_client.common import SourceClient
@@ -96,10 +94,14 @@ class BilibiliSource(SourceClient):
                 return False
         return True
 
-    def _expand(self, record: DynamicRecord) -> list[dict[str, Any]]:
-        """将一条动态展开为图片帖子列表.
+    def _expand(self, record: DynamicRecord) -> list[BooruPost]:
+        """将一条动态展开为 BooruPost 列表.
 
         转发动态取原文的图; 视频动态取封面; 无可用图片时返回空列表。
+        帖子 id 前缀用外层 ``record.id``, 避免原动态与转发动态并存时
+        展开出相同 id。缩略图 / 样图 URL 由原图 URL 加 B 站 CDN 后缀派生。
+        B 站视频封面为平台规范尺寸 1920x1080 (实测确认), 直接作为真实宽高,
+        不另做探测请求。
 
         Callers:
             - `BilibiliSource.search`
@@ -111,11 +113,20 @@ class BilibiliSource(SourceClient):
                 (img.url, img.width or 0, img.height or 0) for img in source.images
             ]
         elif source.video and source.video.cover:
-            items = [(source.video.cover, 0, 0)]
+            items = [(source.video.cover, 1920, 1080)]
         else:
             return []
         return [
-            {"id": f"{source.id}_{i}", "url": url, "width": w, "height": h, "text": text}
+            BooruPost(
+                source=self.name,
+                id=f"{record.id}_{i}",
+                width=w,
+                height=h,
+                file_url=url,
+                preview_url=url + "@480w_480h_1e.webp",
+                sample_url=url + "@1280w_1280h_1e.webp",
+                tags=text,
+            )
             for i, (url, w, h) in enumerate(items)
         ]
 
@@ -170,22 +181,7 @@ class BilibiliSource(SourceClient):
         slice_posts = st["pages"][idx] if idx >= 0 else []
         has_more = idx + 1 < len(st["pages"]) or st["has_more"]
 
-        out: list[BooruPost] = []
-        for p in slice_posts:
-            orig = p["url"]
-            out.append(
-                BooruPost(
-                    source=self.name,
-                    id=p["id"],
-                    width=p["width"],
-                    height=p["height"],
-                    file_url=orig,
-                    preview_url=orig + "@480w_480h_1e.webp",
-                    sample_url=orig + "@1280w_1280h_1e.webp",
-                    tags=p["text"],
-                )
-            )
-        return out, has_more
+        return slice_posts, has_more
 
     def _split_pid(self, pid: str) -> tuple[str, int]:
         """将 ``{动态ID}_{图片序号}`` 拆为 (动态ID, 序号).

@@ -87,14 +87,15 @@ var Masonry = (function() {
     for (var i = 0; i < images.length; i++) {
       var img = images[i];
       var card = _createCard(img, cw);
-      var ih = cw * (img.height || 1) / (img.width || 1) + 22; // 22px for info bar
       var col = _shortestCol(heights);
       card.style.position = 'absolute';
       card.style.left = (pad + col * (cw + gap)) + 'px';
-      card.style.top = heights[col] + 'px';
       card.style.width = cw + 'px';
-      heights[col] += ih + gap;
       _container.appendChild(card);
+      // 用真实渲染高度累加列高, 而非预估, 保证竖直空隙恒定 = gap
+      var rh = card.offsetHeight;
+      card.style.top = heights[col] + 'px';
+      heights[col] += rh + gap;
     }
     _container.style.height = Math.max.apply(null, heights) + 'px';
     _startLazy();
