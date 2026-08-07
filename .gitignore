@@ -17,3 +17,7 @@ Untitled*.ini
 .cursorindexingignore
 .specstory/**
 /.vscode/
+
+# 敏感配置: 认证 cookies / API Key
+web_annotator/.env
+*.env.local

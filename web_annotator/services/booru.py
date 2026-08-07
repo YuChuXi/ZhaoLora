@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from services.booru_client import download_post, get_source, is_downloaded, local_rel_path, search_posts
+from services.online_sources import download_post, get_source, is_downloaded, local_rel_path, search_posts
 from services.models import JobSnapshot
 
 EMPTY_STREAK_MAX = 8
@@ -114,8 +114,6 @@ def run_booru_batch(
     anima_format: bool = True,
     include_meta_tags: bool = False,
     keep_underscores: bool = False,
-    danbooru_login: str | None = None,
-    danbooru_api_key: str | None = None,
 ) -> None:
     """
     同步入口: 在工作线程内 ``asyncio.run`` 执行批量下载. 
@@ -140,8 +138,6 @@ def run_booru_batch(
                 anima_format=anima_format,
                 include_meta_tags=include_meta_tags,
                 keep_underscores=keep_underscores,
-                danbooru_login=danbooru_login,
-                danbooru_api_key=danbooru_api_key,
             )
         )
     finally:
@@ -164,8 +160,6 @@ async def _run_async(
     anima_format: bool = True,
     include_meta_tags: bool = False,
     keep_underscores: bool = False,
-    danbooru_login: str | None = None,
-    danbooru_api_key: str | None = None,
 ) -> None:
     """异步批量下载核心: 翻页搜索 + 并发下载, 含令牌桶限速与 429 退避. 
 
@@ -228,8 +222,6 @@ async def _run_async(
             order=order,
             extra=extra,
             proxy=proxy,
-            danbooru_login=danbooru_login,
-            danbooru_api_key=danbooru_api_key,
         )
         page += 1
         if not has_more:

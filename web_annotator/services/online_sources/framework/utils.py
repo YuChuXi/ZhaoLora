@@ -50,7 +50,7 @@ def stem_candidates(post_id: str, *, file_stem_fn) -> list[str]:
         file_stem_fn: 接受单个 id 返回 stem 的函数(绑定方法), 如 ``SourceClient.file_stem``. 
 
     Callers:
-        - `common.py:SourceClient._clean_old_files`
+        - `base.py:SourceClient._clean_old_files`
         - `media.py:remove_download`
         - `media.py:download_post`
     """
@@ -74,8 +74,8 @@ def find_downloaded(out_dir: Path, post_id: str, *, file_stem_fn) -> Path | None
         file_stem_fn: 接受单个 id 返回 stem 的函数(绑定方法), 如 ``SourceClient.file_stem``. 
 
     Callers:
-        - `sources.py:GelbooruSource.download`
-        - `sources.py:DanbooruSource.download`
+        - `gelbooru.py:GelbooruSource.download`
+        - `danbooru.py:DanbooruSource.download`
     """
     for stem in stem_candidates(post_id, file_stem_fn=file_stem_fn):
         hit = find_existing(out_dir, stem)
@@ -115,9 +115,9 @@ def convert_path_to_png(src: Path, dest: Path) -> None:
     """临时文件转 PNG. 
 
     Callers:
-        - `sources.py:GelbooruSource.download`
+        - `gelbooru.py:GelbooruSource.download`
     """
-    from services.booru_client.common import SourceClient
+    from services.online_sources.framework.base import SourceClient
     data = src.read_bytes()
     if src.is_file():
         src.unlink()

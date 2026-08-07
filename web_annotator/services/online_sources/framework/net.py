@@ -17,7 +17,7 @@ from curl_cffi.requests.models import Response as CurlResponse
 from services.core.scanner import IMAGE_EXTS
 from services.models.booru import BooruPost
 
-_REPO_ROOT = Path(__file__).resolve().parents[3]
+_REPO_ROOT = Path(__file__).resolve().parents[4]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
@@ -88,10 +88,10 @@ async def danbooru_get(
         curl_cffi 响应对象. 
 
     Callers:
-        - `sources.py:DanbooruSource.search`
-        - `sources.py:DanbooruSource.fetch_meta`
-        - `sources.py:DanbooruSource.download`
-        - `search.py:danbooru_get`
+        - `danbooru.py:DanbooruSource.search`
+        - `danbooru.py:DanbooruSource.fetch_meta`
+        - `danbooru.py:DanbooruSource.download`
+        - `media.py:_danbooru_fetch_image_bytes`
     """
     p = dict(params) if params else {}
     if login and api_key:
@@ -108,7 +108,7 @@ def make_gelbooru(proxy: str | None) -> Gelbooru:
     """构造 Gelbooru 客户端. 
 
     Callers:
-        - `sources.py:GelbooruSource`
+        - `gelbooru.py:GelbooruSource`
         - `media.py:fetch_gelbooru_bytes`
     """
     p = proxy_or_none(proxy)
@@ -119,8 +119,7 @@ def danbooru_preview_url(post: BooruPost) -> str:
     """Danbooru 帖的预览 URL, 优先 720x720 webp, 回退 file_url. 
 
     Callers:
-        - `sources.py:DanbooruSource.preview_url`
-        - `search.py:normalize_danbooru_post`
+        - `danbooru.py:DanbooruSource.preview_url`
     """
     if post.media_asset:
         variants = post.media_asset.get("variants") or []

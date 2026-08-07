@@ -22,7 +22,10 @@ from collections.abc import Awaitable, Callable
 from fastapi import APIRouter, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
+from dotenv import load_dotenv
 import uvicorn
+
+
 
 from routes.alpha_paint import router as paint_router
 from routes.annotations import router as annotations_router
@@ -205,6 +208,8 @@ def dataset_page(dataset: str, page: str) -> HTMLResponse | RedirectResponse:
 
 def main() -> int:
     """启动 uvicorn. 引用: ``python web_annotator/server.py``. """
+    load_dotenv()
+
     parser = argparse.ArgumentParser(description="网页图片标注工具")
     parser.add_argument(
         "--data-dir",
@@ -216,28 +221,10 @@ def main() -> int:
     parser.add_argument("--port", type=int, default=8765, help="监听端口")
     parser.add_argument("--thumbnail-size", type=int, default=2560, help="缩略图长边像素")
     parser.add_argument(
-        "--booru-proxy",
-        type=str,
-        default="http://127.0.0.1:7890",
-        help="Danbooru/Gelbooru 请求代理；空字符串表示直连",
-    )
-    parser.add_argument(
         "--block-chinese-ua",
         action="store_true",
         default=False,
         help="屏蔽 QQ/微信/国产浏览器(UC/360/搜狗/百度/夸克等)",
-    )
-    parser.add_argument(
-        "--danbooru-login",
-        type=str,
-        default=os.environ.get("DANBOORU_LOGIN", ""),
-        help="Danbooru 用户名(或环境变量 DANBOORU_LOGIN)",
-    )
-    parser.add_argument(
-        "--danbooru-api-key",
-        type=str,
-        default=os.environ.get("DANBOORU_API_KEY", ""),
-        help="Danbooru API Key(或环境变量 DANBOORU_API_KEY)",
     )
     args = parser.parse_args()
 
@@ -257,9 +244,7 @@ def main() -> int:
     app.state.task_store = store
     app.state.datasets = registry
     app.state.jobs = jobs
-    app.state.booru_proxy = (args.booru_proxy or "").strip() or None
-    app.state.danbooru_login = (args.danbooru_login or "").strip() or None
-    app.state.danbooru_api_key = (args.danbooru_api_key or "").strip() or None
+    app.state.upstream_proxy = os.environ.get("UPSTREAM_PROXY", "").strip() or None
     app.state.paint_default_alpha = 255
     app.state.block_chinese_ua = args.block_chinese_ua
 

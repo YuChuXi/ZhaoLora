@@ -15,13 +15,13 @@ import httpx
 
 from services.models import BooruPost, BooruDownloadResult, BooruUndownloadResult
 from services.core.scanner import IMAGE_EXTS
-from services.booru_client.common import (
+from services.online_sources.framework.base import (
     _SOURCES as SOURCES,
     build_caption_from_meta,
     file_stem,
     get_source,
 )
-from services.booru_client.net import (
+from services.online_sources.framework.net import (
     UNSUPPORTED_FILE_EXT,
     danbooru_get,
     ext_from_url,
@@ -29,7 +29,7 @@ from services.booru_client.net import (
     make_headers,
     proxy_or_none,
 )
-from services.booru_client.utils import (
+from services.online_sources.framework.utils import (
     convert_path_to_png,
     find_downloaded,
     find_existing,
@@ -430,7 +430,7 @@ async def regenerate_captions(
     Callers:
         - `routes/booru.py:booru_regenerate_captions`
     """
-    from services.booru_client.common import (
+    from services.online_sources.framework.base import (
         META_SUBDIR, build_caption_from_meta, file_stem,
     )
 

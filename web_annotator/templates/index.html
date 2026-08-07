@@ -6,16 +6,14 @@
 <title>筛选</title>
 <link rel="stylesheet" href="/static/css/annotator.css">
 <style>
-  #booru-tags {
+  .toolbar-input {
     background: #0a1a30; color: var(--text);
     border: 1px solid var(--border); border-radius: 4px; padding: 4px 8px; font-size: 12px;
-    width: min(220px, 28vw);
   }
-  #bilibili-uid {
-    background: #0a1a30; color: var(--text);
-    border: 1px solid var(--border); border-radius: 4px; padding: 4px 8px; font-size: 12px;
-    width: min(130px, 16vw);
-  }
+  #booru-tags   { width: min(220px, 28vw); }
+  #bilibili-uid { width: min(130px, 16vw); }
+  #x-user       { width: min(150px, 18vw); }
+  #pixiv-query  { width: min(180px, 22vw); }
   .booru-page-wrap {
     display: inline-flex; align-items: stretch;
     border: 1px solid var(--border); border-radius: 4px;
@@ -167,6 +165,8 @@
       <option value="gelbooru">Gelbooru</option>
       <option value="danbooru">Danbooru</option>
       <option value="bilibili">Bilibili</option>
+      <option value="x">X</option>
+      <option value="pixiv">Pixiv</option>
     </select>
   </label>
   <span class="sep"></span>

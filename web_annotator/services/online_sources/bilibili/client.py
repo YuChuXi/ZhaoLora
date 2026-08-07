@@ -6,12 +6,12 @@
 -352/412 风控的问题。单条详情 (下载时需要按动态 ID 取图) 走桌面版接口
 ``web-dynamic/desktop/v1/detail``, 免登录稳定可用。
 
-本模块是 ``services/bilibili`` 包的在线来源实现, 供筛选页的
+本模块是 ``services.online_sources.bilibili`` 子包的在线来源实现, 供筛选页的
 ``BilibiliSource`` 使用; 图片经 ``fetch_bili_bytes`` 带 B 站 Referer 拉取,
 兼容浏览器防盗链代理。
 
 Callers:
-    - ``services/booru_client/bilibili.py``
+    - ``services/online_sources/bilibili/source.py``
     - ``routes/booru.py`` (图片代理)
 """
 
@@ -29,7 +29,7 @@ import requests
 from bilibili_api import user
 from bilibili_api.exceptions import NetworkException
 
-from services.bilibili.models import (
+from services.online_sources.bilibili.models import (
     Author,
     DynamicRecord,
     ImageInfo,
@@ -185,7 +185,7 @@ def _norm_url(url: str | None) -> str | None:
 def _find_module(item: dict[str, Any], key: str) -> dict[str, Any] | None:
     """从动态条目中按模块名取模块, 兼容 dict 与 list 两种 modules 格式.
 
-    引用: ``services.bilibili.client._parse_item``。
+    引用: ``services.online_sources.bilibili.client._parse_item``。
     """
     modules = item.get("modules")
     if isinstance(modules, dict):
@@ -203,7 +203,7 @@ def _find_module(item: dict[str, Any], key: str) -> dict[str, Any] | None:
 def _extract_author(module_author: dict[str, Any] | None) -> Author | None:
     """提取作者信息 (mid / name / 发布时间), 兼容 v1 与 desktop 两种布局.
 
-    引用: ``services.bilibili.client._parse_item``。
+    引用: ``services.online_sources.bilibili.client._parse_item``。
     """
     if not isinstance(module_author, dict):
         return None
@@ -222,7 +222,7 @@ def _extract_author(module_author: dict[str, Any] | None) -> Author | None:
 def _extract_text(module_dynamic: dict[str, Any] | None) -> str:
     """提取动态正文文本, 兼容多种载体.
 
-    引用: ``services.bilibili.client._parse_item``。
+    引用: ``services.online_sources.bilibili.client._parse_item``。
     """
     text = ""
     if not isinstance(module_dynamic, dict):
@@ -241,7 +241,7 @@ def _extract_text(module_dynamic: dict[str, Any] | None) -> str:
 def _extract_images(module_dynamic: dict[str, Any] | None) -> list[ImageInfo]:
     """提取图片原图列表 (URL 无 ``@`` 缩略图后缀).
 
-    引用: ``services.bilibili.client._parse_item``。
+    引用: ``services.online_sources.bilibili.client._parse_item``。
     """
     if not isinstance(module_dynamic, dict):
         return []
@@ -271,7 +271,7 @@ def _extract_images(module_dynamic: dict[str, Any] | None) -> list[ImageInfo]:
 def _extract_video(module_dynamic: dict[str, Any] | None) -> VideoInfo | None:
     """提取视频动态的稿件信息.
 
-    引用: ``services.bilibili.client._parse_item``。
+    引用: ``services.online_sources.bilibili.client._parse_item``。
     """
     if not isinstance(module_dynamic, dict):
         return None
@@ -292,7 +292,7 @@ def _extract_video(module_dynamic: dict[str, Any] | None) -> VideoInfo | None:
 def _extract_topic(module_dynamic: dict[str, Any] | None) -> TopicInfo | None:
     """提取动态话题信息 (v1 格式, 话题在 module_dynamic.topic).
 
-    引用: ``services.bilibili.client._parse_item``。
+    引用: ``services.online_sources.bilibili.client._parse_item``。
     """
     if not isinstance(module_dynamic, dict):
         return None
@@ -309,7 +309,7 @@ def _extract_topic(module_dynamic: dict[str, Any] | None) -> TopicInfo | None:
 def _extract_stat(module_stat: dict[str, Any] | None) -> StatInfo | None:
     """提取点赞 / 评论 / 转发计数.
 
-    引用: ``services.bilibili.client._parse_item``。
+    引用: ``services.online_sources.bilibili.client._parse_item``。
     """
     if not isinstance(module_stat, dict):
         return None
@@ -329,7 +329,7 @@ def _extract_stat(module_stat: dict[str, Any] | None) -> StatInfo | None:
 def _forwarded_item(item: dict[str, Any]) -> dict[str, Any] | None:
     """定位转发动态的原始条目.
 
-    引用: ``services.bilibili.client._parse_item``。
+    引用: ``services.online_sources.bilibili.client._parse_item``。
     """
     orig = item.get("orig")
     if isinstance(orig, dict):

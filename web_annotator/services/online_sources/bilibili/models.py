@@ -1,10 +1,10 @@
 """B 站动态数据模型.
 
 与 ``bilibili_test/fetch_dynamics.py`` 采用同一套结构化模型, 供在线来源
-(``services/booru_client/bilibili.py``) 解析动态并将每张图映射为一张卡片.
+(``services/online_sources/bilibili/source.py``) 解析动态并将每张图映射为一张卡片.
 
 Callers:
-    - ``services.bilibili.client``
+    - ``services.online_sources.bilibili.client``
 """
 
 from __future__ import annotations

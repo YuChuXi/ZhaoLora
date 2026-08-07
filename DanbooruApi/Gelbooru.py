@@ -122,7 +122,7 @@ class Gelbooru(Danbooru):
     async def getImage(self, ID: int, path: str) -> dict:
         """下载原图；遇 HTTP 429 按 Retry-After / 指数退避重试。
 
-        引用: ``web_annotator.services.booru_client.media.download_post``。
+        引用: ``web_annotator.services.online_sources.framework.media.download_post``。
         """
         post = await self.getPost(ID)
         imageUrl = post["file_url"]

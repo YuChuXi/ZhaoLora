@@ -102,7 +102,7 @@ class BooruDownloadResult(BaseModel):
     """Booru 下载结果. 
 
     引用:
-        ``booru_client.download_post``；``routes.booru``. 
+        ``online_sources.download_post``；``routes.booru``. 
     """
 
     path: str
@@ -120,7 +120,7 @@ class BooruUndownloadResult(BaseModel):
     """Booru 移除本地下载结果. 
 
     引用:
-        ``booru_client.remove_download``；``routes.booru``. 
+        ``online_sources.remove_download``；``routes.booru``. 
     """
 
     id: str

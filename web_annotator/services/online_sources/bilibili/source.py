@@ -6,7 +6,7 @@
 分页返回; 下载时按 ``{动态ID}_{图片序号}`` 的 pid 解析原图 URL 并落盘。
 
 Callers:
-    - ``services.booru_client.__init__`` (注册)
+    - ``services.online_sources.__init__`` (注册)
 """
 
 from __future__ import annotations
@@ -17,10 +17,10 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
-from services.bilibili.client import fetch_bili_bytes, fetch_dynamics, resolve_image
-from services.bilibili.models import DynamicRecord
-from services.booru_client.common import SourceClient
-from services.booru_client.utils import find_downloaded
+from services.online_sources.framework.base import SourceClient
+from services.online_sources.bilibili.client import fetch_bili_bytes, fetch_dynamics, resolve_image
+from services.online_sources.bilibili.models import DynamicRecord
+from services.online_sources.framework.utils import find_downloaded
 from services.models import BooruPost
 
 # 游标分页状态: 键为 (uid, type, after, before, keyword),
@@ -41,7 +41,7 @@ _TYPE_MAP = {
 class BilibiliSource(SourceClient):
     """从 B 站用户动态拉取图片的来源客户端.
 
-    实现 ``common.SourceClient`` 的 ``search`` / ``download``。
+    实现 ``base.SourceClient`` 的 ``search`` / ``download``。
 
     Callers:
         - ``__init__.py:register_source``
@@ -156,7 +156,7 @@ class BilibiliSource(SourceClient):
         展开的图片; 已拉取的页缓存复用。
 
         Callers:
-            - `common.py:search_posts` / `routes/booru.py:booru_search`
+            - `base.py:search_posts` / `routes/booru.py:booru_search`
         """
         f = self.parse_query(tags, extra)
         uid = int(f["uid"])
@@ -208,7 +208,7 @@ class BilibiliSource(SourceClient):
     async def fetch_meta(self, out_dir: Path, pid: str, proxy: str | None) -> None:
         """按 pid 重新解析并写入帖元数据.
 
-        实现 ``common.SourceClient.fetch_meta``。当前 ``detect_source`` 不会
+        实现 ``base.SourceClient.fetch_meta``。当前 ``detect_source`` 不会
         匹配 bilibili 文件名 (pid 含 `_`), 故仅在手动调用时生效。
 
         Callers:
@@ -236,7 +236,7 @@ class BilibiliSource(SourceClient):
         """下载动态某张原图为 PNG, 并写旁路标签 (正文) 与 meta.
 
         Callers:
-            - `common.py:SourceClient.download` (经 ``media.download_post`` 委托)
+            - `base.py:SourceClient.download` (经 ``media.download_post`` 委托)
         """
         dynamic_id, index = self._split_pid(pid)
         url, text = await resolve_image(dynamic_id, index)

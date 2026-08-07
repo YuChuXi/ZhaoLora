@@ -12,9 +12,10 @@ import httpx
 from curl_cffi.requests.exceptions import RequestException
 
 from services.booru import BooruBatchProgress, get_progress, register_progress, run_booru_batch
-from services.booru_client import (
+from services.online_sources import (
     download_post,
     fetch_gelbooru_bytes,
+    fetch_pixiv_bytes,
     file_stem,
     get_source,
     is_downloaded,
@@ -23,7 +24,7 @@ from services.booru_client import (
     regenerate_captions,
     remove_download,
 )
-from services.bilibili import fetch_bili_bytes
+from services.online_sources.bilibili import fetch_bili_bytes
 from routes.deps import get_runtime, jobs
 from services.core.jobs import EmitFn
 from services.models import (
@@ -46,8 +47,8 @@ _NETWORK_ERRORS = (RuntimeError, OSError, httpx.HTTPError, RequestException)
 
 
 def _proxy(request: Request) -> str | None:
-    """读取进程级 Booru 代理配置. 引用: 本模块各网络接口. """
-    return getattr(request.app.state, "booru_proxy", None)
+    """读取进程级上游代理配置. 引用: 本模块各网络接口. """
+    return getattr(request.app.state, "upstream_proxy", None)
 
 
 class SearchBody(BaseModel):
@@ -98,8 +99,6 @@ async def booru_search(request: Request, body: SearchBody) -> BooruSearchResult:
         raw_posts, has_more = await src.search(
             body.tags, page=body.page,
             order=order, extra=body.extra or "", proxy=_proxy(request),
-            danbooru_login=request.app.state.danbooru_login,
-            danbooru_api_key=request.app.state.danbooru_api_key,
         )
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
@@ -126,21 +125,22 @@ async def booru_search(request: Request, body: SearchBody) -> BooruSearchResult:
     )
 
 
-@router.get("/thumb")
-async def booru_thumb(
+@router.get("/gelbooru-image")
+async def booru_gelbooru_image(
     request: Request,
     id: str = Query(..., min_length=1),
-    url: str = Query(..., min_length=8, description="搜索结果 preview_url"),
+    url: str = Query(..., min_length=8, description="搜索结果预览/大图 URL"),
+    kind: str = Query("thumb", description="thumb 或 sample"),
 ) -> Response:
-    """代理 Gelbooru 缩略图. 引用: ``booru_filter.js``. """
+    """代理 Gelbooru 图片, 供搜索结果缩略图与大图. 引用: ``booru_filter.js``. """
     try:
         data, ctype = await fetch_gelbooru_bytes(
-            "thumb", id, url=url, proxy=_proxy(request)
+            kind, id, url=url, proxy=_proxy(request)
         )
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
     except _NETWORK_ERRORS as e:
-        raise HTTPException(502, f"预览失败: {e}") from e
+        raise HTTPException(502, f"图片拉取失败: {e}") from e
     return Response(
         content=data,
         media_type=ctype,
@@ -148,29 +148,7 @@ async def booru_thumb(
     )
 
 
-@router.get("/sample")
-async def booru_sample(
-    request: Request,
-    id: str = Query(..., min_length=1),
-    url: str = Query(..., min_length=8, description="搜索结果 sample_url"),
-) -> Response:
-    """代理 Gelbooru 大图. 引用: ``booru_filter.js``. """
-    try:
-        data, ctype = await fetch_gelbooru_bytes(
-            "sample", id, url=url, proxy=_proxy(request)
-        )
-    except ValueError as e:
-        raise HTTPException(400, str(e)) from e
-    except _NETWORK_ERRORS as e:
-        raise HTTPException(502, f"大图失败: {e}") from e
-    return Response(
-        content=data,
-        media_type=ctype,
-        headers={"Cache-Control": "public, max-age=86400"},
-    )
-
-
-@router.get("/image")
+@router.get("/bili-image")
 async def booru_image(
     request: Request,
     url: str = Query(..., min_length=8, description="B 站图床原图 URL"),
@@ -186,6 +164,57 @@ async def booru_image(
         raise HTTPException(400, "非 B 站图床")
     try:
         data, ctype = await fetch_bili_bytes(url)
+    except (httpx.HTTPError, OSError) as e:
+        raise HTTPException(502, f"图片拉取失败: {e}") from e
+    return Response(
+        content=data,
+        media_type=ctype,
+        headers={"Cache-Control": "public, max-age=86400"},
+    )
+
+
+@router.get("/pixiv-image")
+async def booru_pixiv_image(
+    request: Request,
+    url: str = Query(..., min_length=8, description="pximg 图床原图 URL"),
+) -> Response:
+    """代理 pixiv 图片 (防盗链), 供搜索结果缩略图与大图. 引用: ``booru_filter.js``. """
+    from urllib.parse import urlparse
+
+    u = urlparse(url)
+    if u.scheme not in ("http", "https") or not u.hostname:
+        raise HTTPException(400, "非法地址")
+    host = u.hostname.lower()
+    if host != "i.pximg.net" and not host.endswith(".pximg.net"):
+        raise HTTPException(400, "非 pixiv 图床")
+    try:
+        data, ctype = await fetch_pixiv_bytes(url, proxy=_proxy(request))
+    except (httpx.HTTPError, OSError) as e:
+        raise HTTPException(502, f"图片拉取失败: {e}") from e
+    return Response(
+        content=data,
+        media_type=ctype,
+        headers={"Cache-Control": "public, max-age=86400"},
+    )
+
+
+@router.get("/x-image")
+async def booru_x_image(
+    request: Request,
+    url: str = Query(..., min_length=8, description="X 图床原图 URL"),
+) -> Response:
+    """代理 X/Twitter 图片, 供搜索结果缩略图与大图. 引用: ``booru_filter.js``. """
+    import httpx
+
+    try:
+        async with httpx.AsyncClient(
+            proxy=_proxy(request),
+            timeout=httpx.Timeout(30.0, connect=10.0),
+        ) as client:
+            resp = await client.get(url)
+            resp.raise_for_status()
+            data = resp.content
+            ctype = resp.headers.get("content-type", "image/jpeg")
     except (httpx.HTTPError, OSError) as e:
         raise HTTPException(502, f"图片拉取失败: {e}") from e
     return Response(
@@ -344,8 +373,6 @@ async def booru_batch_start(
     anima_format = bool(body.anima_format)
     include_meta_tags = bool(body.include_meta_tags)
     keep_underscores = bool(body.keep_underscores)
-    danbooru_login = request.app.state.danbooru_login
-    danbooru_api_key = request.app.state.danbooru_api_key
     job_box: dict[str, str] = {"id": ""}
 
     def run(emit: EmitFn) -> None:
@@ -366,8 +393,6 @@ async def booru_batch_start(
             anima_format=anima_format,
             include_meta_tags=include_meta_tags,
             keep_underscores=keep_underscores,
-            danbooru_login=danbooru_login,
-            danbooru_api_key=danbooru_api_key,
         )
 
     job_id = await mgr.submit(
@@ -462,7 +487,7 @@ async def booru_refresh_metadata(request: Request, body: RefreshMetadataBody) ->
 
     async def _run_refresh(scan_dir: Path, proxy: str | None, emit: EmitFn) -> None:
         from services.core.scanner import IMAGE_EXTS as _EXTS
-        from services.booru_client.common import detect_source, get_source
+        from services.online_sources.framework.base import detect_source, get_source
 
         scan_dir = scan_dir.resolve()
         files: list[tuple[str, str]] = []  # (source, pid)

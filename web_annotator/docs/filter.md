@@ -40,10 +40,11 @@
 
 来源差异前后端均已收敛为注册表，新增来源只需在固定位置补一项：
 
-后端（`services/booru_client/`）：
-1. `xxx.py` 继承 `SourceClient`，实现 `search` / `download` / `fetch_meta`；查询串特殊时覆盖 `parse_query`。
-2. `__init__.py` 中 `register_source(XXXSource())`。
-3. 若图床需防盗链代理，在 `routes/booru.py` 加对应图片代理端点。
+后端（`services/online_sources/`）：
+1. 若用 gallery-dl 驱动（X / pixiv 等），`xxx.py` 继承 `framework/gallerydl.py` 的 `GalleryDLSource`，并实现 `_search_key` / `_search_url` / `_detail_url` / `_split_pid` / `_post_from_item` / `_caption_from_item` / `_auth_overrides` 等钩子；`search` / `download` / `fetch_meta` 均由基类提供。
+2. 否则继承 `SourceClient`，自行实现 `search` / `download` / `fetch_meta`；查询串特殊时覆盖 `parse_query`。
+3. `__init__.py` 中 `register_source(XXXSource())`。
+4. 若图床需防盗链代理，在 `routes/booru.py` 加对应图片代理端点。
 
 前端（`templates/index.html` + `static/js/booru_filter.js`）：
 1. `index.html` 加一个 `<option>` 与对应 `toolbar-xxx` 工具栏（控件 id 与注册表 `stateKeys` 一致）。

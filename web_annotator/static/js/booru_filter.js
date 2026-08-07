@@ -50,6 +50,26 @@ var BooruFilter = (function () {
         { type: 'sep' },
       ],
     },
+    x: {
+      extra: null,
+      fields: [
+        { type: 'text', id: 'x-user', placeholder: 'X 用户名（不含 @）' },
+        { type: 'button', role: 'search', label: '搜索', cls: 'green' },
+        { type: 'button', role: 'batch', label: '批量下载', title: '按当前搜索结果批量下载' },
+        { type: 'sep' },
+      ],
+    },
+    pixiv: {
+      extra: null,
+      fields: [
+        { type: 'text', id: 'pixiv-query', placeholder: '画师 ID 或 标签' },
+        { type: 'select', id: 'pixiv-mode', label: '类型',
+          options: [['user', '画师'], ['tag', '标签']] },
+        { type: 'button', role: 'search', label: '搜索', cls: 'green' },
+        { type: 'button', role: 'batch', label: '批量下载', title: '按当前搜索结果批量下载' },
+        { type: 'sep' },
+      ],
+    },
   };
 
   /**
@@ -172,13 +192,13 @@ var BooruFilter = (function () {
       nameLabel: 'Gelbooru',
       buildRequest: _booruRequest,
       thumb: function (post) {
-        return API.apiPath('/booru/thumb')
-          + '?id=' + encodeURIComponent(post.id)
+        return API.apiPath('/booru/gelbooru-image')
+          + '?kind=thumb&id=' + encodeURIComponent(post.id)
           + '&url=' + encodeURIComponent(post.preview_url || post.sample_url || '');
       },
       sample: function (post) {
-        return API.apiPath('/booru/sample')
-          + '?id=' + encodeURIComponent(post.id)
+        return API.apiPath('/booru/gelbooru-image')
+          + '?kind=sample&id=' + encodeURIComponent(post.id)
           + '&url=' + encodeURIComponent(post.sample_url || post.file_url || post.preview_url || '');
       },
       pageUrl: function (post) {
@@ -208,10 +228,10 @@ var BooruFilter = (function () {
         return { tags: _val('bilibili-uid').trim(), extra: _val('bilibili-extra').trim(), order: '' };
       },
       thumb: function (post) {
-        return API.apiPath('/booru/image') + '?url=' + encodeURIComponent(post.preview_url || post.sample_url || '');
+        return API.apiPath('/booru/bili-image') + '?url=' + encodeURIComponent(post.preview_url || post.sample_url || '');
       },
       sample: function (post) {
-        return API.apiPath('/booru/image') + '?url=' + encodeURIComponent(post.sample_url || post.file_url || post.preview_url || '');
+        return API.apiPath('/booru/bili-image') + '?url=' + encodeURIComponent(post.sample_url || post.file_url || post.preview_url || '');
       },
       pageUrl: function (post) {
         var i = post.id.lastIndexOf('_');
@@ -221,6 +241,62 @@ var BooruFilter = (function () {
         var para = document.createElement('div');
         para.className = 'bili-preview-text';
         para.textContent = post.tags || '(无正文)';
+        el.appendChild(para);
+      },
+    },
+    x: {
+      remote: true,
+      bar: 'x',
+      batchDialog: false,
+      stemPrefix: 'x',
+      nameLabel: 'X',
+      requireTags: true,
+      hintText: '输入 X 用户名搜索 · 左键写入目录 · 右键大图',
+      buildRequest: function () {
+        return { tags: _val('x-user').trim(), extra: '', order: '' };
+      },
+      thumb: function (post) {
+        return API.apiPath('/booru/x-image') + '?url=' + encodeURIComponent(post.preview_url || post.sample_url || '');
+      },
+      sample: function (post) {
+        return API.apiPath('/booru/x-image') + '?url=' + encodeURIComponent(post.sample_url || post.file_url || post.preview_url || '');
+      },
+      pageUrl: function (post) {
+        var parts = post.id.split('_');
+        return 'https://x.com/' + parts[0] + '/status/' + parts[1];
+      },
+      renderPreviewTags: function (el, post) {
+        var para = document.createElement('div');
+        para.className = 'bili-preview-text';
+        para.textContent = post.tags || '(无正文)';
+        el.appendChild(para);
+      },
+    },
+    pixiv: {
+      remote: true,
+      bar: 'pixiv',
+      batchDialog: false,
+      stemPrefix: 'p',
+      nameLabel: 'Pixiv',
+      requireTags: true,
+      hintText: '输入画师 ID 或标签搜索 · 左键写入目录 · 右键大图',
+      buildRequest: function () {
+        return { tags: _val('pixiv-query').trim(), extra: 'mode:' + _val('pixiv-mode'), order: '' };
+      },
+      thumb: function (post) {
+        return API.apiPath('/booru/pixiv-image') + '?url=' + encodeURIComponent(post.preview_url || post.sample_url || '');
+      },
+      sample: function (post) {
+        return API.apiPath('/booru/pixiv-image') + '?url=' + encodeURIComponent(post.sample_url || post.file_url || post.preview_url || '');
+      },
+      pageUrl: function (post) {
+        var i = post.id.indexOf('_');
+        return 'https://www.pixiv.net/artworks/' + (i > 0 ? post.id.slice(0, i) : post.id);
+      },
+      renderPreviewTags: function (el, post) {
+        var para = document.createElement('div');
+        para.className = 'bili-preview-text';
+        para.textContent = post.tags || '(无标签)';
         el.appendChild(para);
       },
     },
@@ -258,6 +334,7 @@ var BooruFilter = (function () {
     if (f.type === 'text') {
       var i = document.createElement('input');
       i.type = 'text';
+      i.className = 'toolbar-input';
       if (f.id) i.id = f.id;
       if (f.placeholder) i.placeholder = f.placeholder;
       i.spellcheck = false;
