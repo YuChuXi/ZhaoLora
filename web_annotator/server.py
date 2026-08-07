@@ -185,7 +185,7 @@ async def dataset_thumb(request: Request, dataset: str, filename: str) -> FileRe
     if not path.is_file():
         rel = thumb.find_rel_path(filename)
         if rel is not None:
-            thumb.generate(rel)
+            await thumb.ensure_async(rel)
     if not path.is_file():
         raise HTTPException(404, "缩略图不存在")
     return FileResponse(path, media_type="image/avif", headers={"Cache-Control": "no-store"})

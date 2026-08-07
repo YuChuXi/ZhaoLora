@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from services.online_sources.framework.base import get_source, search_posts
+from services.online_sources.framework.base import search_posts
 from services.online_sources.framework.media import download_post, local_rel_path
 from services.online_sources.framework.utils import is_downloaded
 from services.models import JobSnapshot
@@ -231,7 +231,7 @@ async def _run_async(
             return
         empty_streak = 0
         for p in posts:
-            if is_downloaded(out_dir, str(p.id), file_stem_fn=get_source(source).file_stem):
+            if is_downloaded(out_dir, p.filename):
                 progress.skipped += 1
             else:
                 buffer.append(p)
@@ -248,7 +248,7 @@ async def _run_async(
                 while buf_i < len(buffer):
                     p = buffer[buf_i]
                     buf_i += 1
-                    if is_downloaded(out_dir, str(p.id), file_stem_fn=get_source(source).file_stem):
+                    if is_downloaded(out_dir, p.filename):
                         progress.skipped += 1
                         push("")
                         continue
@@ -273,7 +273,7 @@ async def _run_async(
                 try:
                     result = await download_post(
                         source,
-                        post.id,
+                        post,
                         out_dir,
                         overwrite=False,
                         anima_format=anima_format,
@@ -286,7 +286,7 @@ async def _run_async(
                         progress.done += 1
                         if thumbnailer is not None:
                             rel = local_rel_path(root, result.path)
-                            thumbnailer.ensure(rel)
+                            await thumbnailer.ensure_async(rel)
                     push("")
                     return
                 except RuntimeError as e:

@@ -86,8 +86,6 @@ class DanbooruSource(SourceClient):
     prefix = "d"
     order_tags = {"score": "order:score", "id": "order:id_desc", "id_asc": "order:id"}
     valid_orders = ("score", "id", "id_asc")
-    # 每页条数: 上游 posts API 支持的 limit 上限内取固定值
-    _PAGE_SIZE = 40
 
     def preview_url(self, post: BooruPost) -> str:
         """Danbooru 帖缩略图 URL, 优先 720x720 webp.
@@ -136,7 +134,6 @@ class DanbooruSource(SourceClient):
     async def search(self, tags: str, page: int, order: str, extra: str) -> tuple[list[BooruPost], bool]:
         """搜索 Danbooru 帖.
 
-        每页条数由本来源固定 (``_PAGE_SIZE``), 不随调用方变化。实现
         ``base.SourceClient.search``。
 
         Callers:
@@ -148,7 +145,7 @@ class DanbooruSource(SourceClient):
         resp = await _client.get(
             "https://danbooru.donmai.us/posts.json",
             accept="application/json, text/plain, */*", timeout=30.0,
-            params={"tags": query, "page": max(1, page), "limit": self._PAGE_SIZE},
+            params={"tags": query, "page": max(1, page)},
             login=os.environ.get("DANBOORU_LOGIN", "").strip() or None,
             api_key=os.environ.get("DANBOORU_API_KEY", "").strip() or None,
         )
@@ -157,7 +154,7 @@ class DanbooruSource(SourceClient):
         data = resp.json()
         if not isinstance(data, list):
             return [], False
-        has_more = len(data) >= self._PAGE_SIZE
+        has_more = len(data) > 0
         out: list[BooruPost] = []
         for raw_post in data:
             if not isinstance(raw_post, dict):
@@ -167,41 +164,34 @@ class DanbooruSource(SourceClient):
                 out.append(n)
         return out, has_more
 
-    async def download(self, pid: str, out_dir: Path, *,
+    async def download(self, post: BooruPost, out_dir: Path, *,
                        overwrite: bool = False, anima_format: bool = True,
                        include_meta_tags: bool = False, keep_underscores: bool = False) -> dict:
         """下载 Danbooru 原图并写旁路标签.
 
-        实现 ``base.SourceClient.download``。
+        直接使用 search 阶段已获取的完整 ``post`` (含原图 URL 与标签字段),
+        不再按 id 重新拉取 ``posts/{pid}.json``。实现 ``base.SourceClient.download``。
 
         Callers:
             - ``base.py:SourceClient.download``
         """
-        from services.models import BooruPost
-
-        stem = self.file_stem(pid)
-        image_path = out_dir / f"{stem}.png"
+        pid = post.id
+        stem = Path(post.filename).stem
+        image_path = out_dir / post.filename
         tags_path = out_dir / f"{stem}.txt"
-        existing = find_downloaded(out_dir, pid, file_stem_fn=self.file_stem)
+        existing = find_downloaded(out_dir, post.filename)
 
-        meta = await _client.get(
-            f"https://danbooru.donmai.us/posts/{pid}.json",
-            accept="application/json, text/plain, */*", timeout=60.0,
-        )
-        if meta.status_code != 200:
-            raise RuntimeError(f"Danbooru HTTP {meta.status_code}")
-        api_post = BooruPost.model_validate(meta.json())
-        if api_post.file_ext in UNSUPPORTED_FILE_EXT and not api_post.large_file_url:
-            raise ValueError(f"不支持的类型: .{api_post.file_ext}")
+        if post.file_ext in UNSUPPORTED_FILE_EXT and not post.large_file_url:
+            raise ValueError(f"不支持的类型: .{post.file_ext}")
 
         if not overwrite and existing is not None and tags_path.is_file():
-            self._write_meta(out_dir, pid, api_post)
+            self._write_meta(out_dir, pid, post)
             return {"skipped": True, "path": str(existing), "stem": stem, "id": pid, "tags_path": str(tags_path)}
 
-        data = await _fetch_image_bytes(api_post)
-        self._save_png(data, image_path)
+        data = await _fetch_image_bytes(post)
+        await self._save_png(data, image_path)
         self._clean_old_files(out_dir, pid, image_path)
-        caption = self._build_caption(api_post, anima_format=anima_format, include_meta_tags=include_meta_tags, keep_underscores=keep_underscores)
+        caption = self._build_caption(post, anima_format=anima_format, include_meta_tags=include_meta_tags, keep_underscores=keep_underscores)
         tags_path.write_text(caption + "\n", encoding="utf-8")
-        self._write_meta(out_dir, pid, api_post)
+        self._write_meta(out_dir, pid, post)
         return {"path": str(image_path), "stem": stem, "id": pid, "tags_path": str(tags_path)}

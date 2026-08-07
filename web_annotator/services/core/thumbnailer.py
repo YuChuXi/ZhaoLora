@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import os
 from collections.abc import Callable
@@ -221,11 +222,34 @@ class Thumbnailer:
             bool: 是否已存在或生成成功. 
 
         Callers:
-            - ``services/online_sources/batch.py``: 下载后确保缩略图存在
+            - `Thumbnailer.ensure_async`
         """
         if self.exists(image_rel_path):
             return True
         return self.generate(image_rel_path, src=src)
+
+    async def ensure_async(self, image_rel_path: str, *, src: Path | None = None) -> bool:
+        """异步确保缩略图存在；缺失则在线程池中生成.
+
+        生成缩略图是 CPU 密集的同步操作 (解码/缩放/AVIF 编码), 移入线程池
+        执行以避免阻塞事件循环；核心逻辑见 ``ensure``。
+
+        Args:
+            image_rel_path: 相对数据集根的图片路径. 
+            src: 可选源文件路径(如回收站路径). 
+
+        Returns:
+            bool: 是否已存在或生成成功. 
+
+        Callers:
+            - `online_sources/batch.py`: 下载后确保缩略图存在
+            - `routes/online_sources.py:download`
+            - `routes/tasks.py:random_tasks`
+            - `routes/scoring.py:scoring_results`
+            - `routes/images.py:similar_images`
+            - `server.py:dataset_thumb`
+        """
+        return await asyncio.to_thread(self.ensure, image_rel_path, src=src)
 
     def generate(self, image_rel_path: str, *, src: Path | None = None) -> bool:
         """生成单张 AVIF 缩略图. 已存在则跳过. 

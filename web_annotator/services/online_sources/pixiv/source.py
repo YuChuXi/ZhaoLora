@@ -24,8 +24,8 @@ from services.online_sources.framework.utils import find_downloaded
 from services.models import BooruPost
 from services.online_sources.pixiv.client import fetch_bytes, request_headers
 
-# 每页卡片数
-_PAGE_SIZE = 40
+# user 模式惰性分页: 每页拉取并展开的作品数
+_WORKS_PER_PAGE = 20
 
 # 仅保留的媒体类型 (0=illust, 1=manga; 排除 2=ugoira)
 _IMG_TYPES = frozenset({0, 1})
@@ -48,9 +48,11 @@ class PixivSource(SourceClient):
     def __init__(self) -> None:
         """初始化每查询缓存与并发锁。"""
         super().__init__()
-        self._cache: dict[tuple[str, str], list[BooruPost]] = {}
         self._locks: dict[tuple[str, str], asyncio.Lock] = {}
         self._guard = asyncio.Lock()
+        # user 模式: 画师全部作品 ID (profile/all 一次获取) 与逐页详情结果缓存
+        self._user_ids: dict[str, list[int]] = {}
+        self._user_pages: dict[str, dict[int, list[BooruPost]]] = {}
 
     def parse_query(self, tags: str, extra: str) -> dict[str, str]:
         """解析 pixiv 查询串: ``tags`` 为值, ``extra`` 里 ``mode:`` 指定模式.
@@ -89,8 +91,9 @@ class PixivSource(SourceClient):
             RuntimeError: API 返回 ``error: true``。
 
         Callers:
-            - `PixivSource._search_user`
-            - `PixivSource._search_tag_page`
+            - `PixivSource._fetch_user_ids`
+            - `PixivSource._fetch_work`
+            - `PixivSource._fetch_tag_page`
             - `PixivSource._fetch_pages`
             - `PixivSource._fetch_detail`
         """
@@ -112,8 +115,8 @@ class PixivSource(SourceClient):
             str: 标签文本。
 
         Callers:
-            - `PixivSource._search_user`
-            - `PixivSource._search_tag_page`
+            - `PixivSource._fetch_work`
+            - `PixivSource._fetch_tag_page`
         """
         tags = item.get("tags", [])
         if isinstance(tags, dict):
@@ -137,8 +140,8 @@ class PixivSource(SourceClient):
             list[BooruPost]: 卡片列表.
 
         Callers:
-            - `PixivSource._search_user`
-            - `PixivSource._search_tag_page`
+            - `PixivSource._fetch_work`
+            - `PixivSource._fetch_tag_page`
         """
         page_count = item.get("pageCount", 1)
         sample_url = urls.get("regular", "")
@@ -159,21 +162,17 @@ class PixivSource(SourceClient):
 
     # ---- 搜索 ----
 
-    async def _search_user(self, user_id: str) -> list[BooruPost]:
-        """拉取指定画师的全部作品, 展开为扁平卡片列表.
-
-        分两步: (1) 用 ``profile/all`` 获取全部作品 ID, (2) 逐幅
-        拉取作品详情后按多页展开。detail 请求以 5 并发数分批调用,
-        控制频率。
+    async def _fetch_user_ids(self, user_id: str) -> list[int]:
+        """经 ``profile/all`` 一次性获取画师全部作品 ID (该接口不分页).
 
         Args:
             user_id: 画师 ID。
 
         Returns:
-            list[BooruPost]: 按 ID 降序排列的卡片列表。
+            list[int]: 按 ID 降序排列的作品 ID 列表。
 
         Callers:
-            - `PixivSource.search`
+            - `PixivSource._serve_user_page`
         """
         data = await self._request(
             f"https://www.pixiv.net/ajax/user/{user_id}/profile/all",
@@ -181,29 +180,61 @@ class PixivSource(SourceClient):
         body = data.get("body", {})
         illust_ids = [int(k) for k in body.get("illusts", {})]
         manga_ids = [int(k) for k in body.get("manga", [])]
-        all_ids = sorted(illust_ids + manga_ids, reverse=True)
+        return sorted(illust_ids + manga_ids, reverse=True)
 
-        posts: list[BooruPost] = []
-        sem = asyncio.Semaphore(5)
-        batch_size = 20
+    async def _fetch_work(self, illust_id: int) -> list[BooruPost]:
+        """拉取单幅作品详情并按页数展开为卡片.
 
-        async def _fetch_one(iid: int) -> None:
-            async with sem:
-                detail = await self._request(
-                    f"https://www.pixiv.net/ajax/illust/{iid}",
-                )
-            item = detail.get("body", {})
-            if item.get("illustType") not in _IMG_TYPES:
-                return
-            posts.extend(self._to_posts(str(iid), item, item.get("urls", {})))
+        Args:
+            illust_id: 作品 ID。
 
-        for i in range(0, len(all_ids), batch_size):
-            batch = all_ids[i:i + batch_size]
-            await asyncio.gather(*[_fetch_one(iid) for iid in batch])
+        Returns:
+            list[BooruPost]: 该作品各分页的卡片, 非目标类型时为空。
 
-        return posts
+        Callers:
+            - `PixivSource._serve_user_page`
+        """
+        detail = await self._request(
+            f"https://www.pixiv.net/ajax/illust/{illust_id}",
+        )
+        item = detail.get("body", {})
+        if item.get("illustType") not in _IMG_TYPES:
+            return []
+        return self._to_posts(str(illust_id), item, item.get("urls", {}))
 
-    async def _search_tag_page(
+    async def _serve_user_page(
+        self, user_id: str, page: int,
+    ) -> tuple[list[BooruPost], bool]:
+        """惰性返回画师第 ``page`` 页作品展开的卡片.
+
+        详情仅在该页首次被访问时才按 ``_WORKS_PER_PAGE`` 批量拉取并展开,
+        避免全量急切拉取; 结果按页缓存复用。
+
+        Args:
+            user_id: 画师 ID。
+            page: 前端页码 (1-based)。
+
+        Returns:
+            tuple[list[BooruPost], bool]: (卡片列表, 是否还有下一页)。
+
+        Callers:
+            - `PixivSource.search`
+        """
+        ids = self._user_ids.get(user_id)
+        if ids is None:
+            ids = await self._fetch_user_ids(user_id)
+            self._user_ids[user_id] = ids
+        pages = self._user_pages.setdefault(user_id, {})
+        if page not in pages:
+            start = (page - 1) * _WORKS_PER_PAGE
+            batch = ids[start : start + _WORKS_PER_PAGE]
+            sem = asyncio.Semaphore(5)
+            results = await asyncio.gather(*[self._fetch_work(iid) for iid in batch])
+            pages[page] = [p for sub in results for p in sub]
+        has_more = page * _WORKS_PER_PAGE < len(ids)
+        return pages.get(page, []), has_more
+
+    async def _fetch_tag_page(
         self, tag: str, page: int,
     ) -> tuple[list[BooruPost], int]:
         """拉取一页标签搜索结果, 展开为扁平卡片列表.
@@ -213,13 +244,13 @@ class PixivSource(SourceClient):
 
         Args:
             tag: 标签词。
-            page: 页码 (1-based)。
+            page: API 页码 (1-based)。
 
         Returns:
-            tuple[list[BooruPost], int]: (卡片列表, 总结果数).
+            tuple[list[BooruPost], int]: (卡片列表, 本页作品数).
 
         Callers:
-            - `PixivSource.search`
+            - `PixivSource._serve_tag_page`
         """
         data = await self._request(
             f"https://www.pixiv.net/ajax/search/illustrations/{tag}"
@@ -228,7 +259,6 @@ class PixivSource(SourceClient):
         )
         illust = data.get("body", {}).get("illust", {})
         items = illust.get("data", [])
-        total = illust.get("total", 0)
         posts: list[BooruPost] = []
         for item in items:
             if item.get("illustType") not in _IMG_TYPES:
@@ -238,7 +268,28 @@ class PixivSource(SourceClient):
                 item,
                 {"regular": item.get("url", "")},
             ))
-        return posts, total
+        return posts, len(items)
+
+    async def _serve_tag_page(
+        self, tag: str, page: int,
+    ) -> tuple[list[BooruPost], bool]:
+        """按标签搜索 API 原生分页返回第 ``page`` 页展开的卡片.
+
+        直接取搜索 API 第 ``page`` 页, 拉到多少给多少; ``has_more`` 以
+        本页是否有内容判断, 翻到空页即结束 (前端对空页有容错)。
+
+        Args:
+            tag: 标签词。
+            page: 前端页码, 直接对应搜索 API 页码 (1-based)。
+
+        Returns:
+            tuple[list[BooruPost], bool]: (卡片列表, 是否还有下一页).
+
+        Callers:
+            - `PixivSource.search`
+        """
+        posts, count = await self._fetch_tag_page(tag, page)
+        return posts, count > 0
 
     async def search(
         self,
@@ -249,8 +300,8 @@ class PixivSource(SourceClient):
     ) -> tuple[list[BooruPost], bool]:
         """按查询键搜索, 返回 (posts, has_more)。
 
-        按画师时全量拉取后缓存; 按标签时逐页拉取搜索结果并缓存,
-        页大小固定为 ``_PAGE_SIZE``。
+        user 模式经 ``profile/all`` 缓存全部作品 ID 后惰性按页拉取详情;
+        tag 模式直接对应搜索 API 原生分页。两种模式均不依赖固定每页卡片数。
 
         Callers:
             - ``routes/online_sources.py:search``
@@ -268,19 +319,9 @@ class PixivSource(SourceClient):
                 self._locks[key] = lock
 
         async with lock:
-            cache = self._cache.get(key)
-            if cache is None:
-                if f["mode"] == "user":
-                    cache = await self._search_user(value)
-                else:
-                    cache, _ = await self._search_tag_page(value, 1)
-                self._cache[key] = cache
-
-        posts = cache
-        start = (page - 1) * _PAGE_SIZE
-        slice_posts = posts[start : start + _PAGE_SIZE]
-        has_more = start + _PAGE_SIZE < len(posts)
-        return slice_posts, has_more
+            if f["mode"] == "user":
+                return await self._serve_user_page(value, page)
+            return await self._serve_tag_page(value, page)
 
     # ---- 下载 / 元数据 ----
 
@@ -321,7 +362,7 @@ class PixivSource(SourceClient):
 
     async def download(
         self,
-        pid: str,
+        post: BooruPost,
         out_dir: Path,
         *,
         overwrite: bool = False,
@@ -331,15 +372,20 @@ class PixivSource(SourceClient):
     ) -> dict:
         """下载指定媒体为 PNG, 并写旁路标签与 meta.
 
+        标签直接取自 search 阶段已持有的 ``post.tags``; 原图 URL 需按作品
+        分页拉取 ``original`` (搜索仅返回 regular 缩略图)。实现
+        ``base.SourceClient.download``。
+
         Callers:
             - ``base.py:SourceClient.download``
         """
+        pid = post.id
         illust_id, num = self._split_pid(pid)
 
-        stem = self.file_stem(pid)
-        image_path = out_dir / f"{stem}.png"
+        stem = Path(post.filename).stem
+        image_path = out_dir / post.filename
         tags_path = out_dir / f"{stem}.txt"
-        existing = find_downloaded(out_dir, pid, file_stem_fn=self.file_stem)
+        existing = find_downloaded(out_dir, post.filename)
 
         if not overwrite and existing is not None and tags_path.is_file():
             return {
@@ -357,11 +403,10 @@ class PixivSource(SourceClient):
 
         data, _ = await fetch_bytes(target_url)
 
-        self._save_png(data, image_path)
+        await self._save_png(data, image_path)
         self._clean_old_files(out_dir, pid, image_path)
 
-        detail = await self._fetch_detail(illust_id)
-        caption = self._extract_tags(detail)
+        caption = (post.tags or "").strip()
         if include_meta_tags:
             caption = (caption + (" " + self.name) if caption else self.name).strip()
         tags_path.write_text(caption + "\n", encoding="utf-8")

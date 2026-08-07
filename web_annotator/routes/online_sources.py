@@ -22,6 +22,7 @@ from services.online_sources import (
     local_rel_path,
     regenerate_captions,
     remove_download,
+    search_posts,
 )
 from services.online_sources.framework import http
 from routes.deps import get_runtime, jobs
@@ -65,6 +66,7 @@ class DownloadBody(BaseModel):
     filename: str = ""
     dir: str = Field("main", description="数据集根下的工作子目录")
     overwrite: bool = False
+    post: dict | None = Field(None, description="前端搜索阶段持有的帖子, 供下载直接取用")
 
 
 @router.get("/sources")
@@ -92,8 +94,8 @@ async def search(request: Request, body: SearchBody) -> BooruSearchResult:
         raise HTTPException(400, str(e)) from e
 
     try:
-        raw_posts, has_more = await src.search(
-            body.tags, page=body.page,
+        raw_posts, has_more = await search_posts(
+            source, body.tags, page=body.page,
             order=order, extra=body.extra or "",
         )
     except ValueError as e:
@@ -103,9 +105,7 @@ async def search(request: Request, body: SearchBody) -> BooruSearchResult:
 
     posts: list[BooruPost] = []
     for post in raw_posts:
-        post.downloaded = is_downloaded(out_dir, post.id, file_stem_fn=src.file_stem)
-        post.stem = src.file_stem(post.id)
-        post.filename = f"{post.stem}.png"
+        post.downloaded = is_downloaded(out_dir, post.filename)
         posts.append(post)
 
     return BooruSearchResult(
@@ -185,10 +185,14 @@ async def download(request: Request, body: DownloadBody) -> BooruDownloadResult:
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
 
+    if not body.post:
+        raise HTTPException(400, "缺少帖子数据 post")
+    post = BooruPost.model_validate(body.post)
+
     task = asyncio.create_task(
         download_post(
             source,
-            body.id.strip(),
+            post,
             out_dir,
             overwrite=body.overwrite,
         )
@@ -208,7 +212,7 @@ async def download(request: Request, body: DownloadBody) -> BooruDownloadResult:
         raise HTTPException(502, f"下载失败: {e}") from e
     rel = local_rel_path(root, result.path)
     thumb = get_runtime(request).thumbnailer
-    thumb.ensure(rel)
+    await thumb.ensure_async(rel)
     return result.model_copy(
         update={
             "dir": name,

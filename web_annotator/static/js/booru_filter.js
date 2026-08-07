@@ -222,6 +222,7 @@ var BooruFilter = (function () {
       batchDialog: false,
       stemPrefix: 'bi',
       nameLabel: 'Bilibili',
+      noJump: true, // 游标式分页: 仅能顺序翻页, 禁用跳页
       requireTags: true,
       hintText: '输入 B站 UID 搜索 · 左键写入目录 · 右键大图',
       buildRequest: function () {
@@ -250,6 +251,7 @@ var BooruFilter = (function () {
       batchDialog: false,
       stemPrefix: 'x',
       nameLabel: 'X',
+      noJump: true, // 游标式分页: 仅能顺序翻页, 禁用跳页
       requireTags: true,
       hintText: '输入 X 用户名搜索 · 左键写入目录 · 右键大图',
       buildRequest: function () {
@@ -305,6 +307,11 @@ var BooruFilter = (function () {
   /** 当前来源定义. 引用: 各来源相关函数. */
   function cur() {
     return _SOURCES[mode()] || _SOURCES.local;
+  }
+
+  /** 当前来源是否禁用跳页(游标式分页, 仅能顺序翻页). 引用: startPageFromInput/applyForm/updatePageStatus. */
+  function noJump() {
+    return !!cur().noJump;
   }
 
   /** 当前来源的条件面板定义; 无则返回 null. 引用: 条件弹窗相关函数. */
@@ -586,6 +593,10 @@ var BooruFilter = (function () {
 
   function startPageFromInput() {
     var el = document.getElementById('booru-start-page');
+    if (noJump()) {
+      if (el) el.value = '1';
+      return 1;
+    }
     var n = el ? parseInt(el.value, 10) : 1;
     if (!n || n < 1) n = 1;
     if (n > 10000) n = 10000;
@@ -604,6 +615,7 @@ var BooruFilter = (function () {
     var start = document.getElementById('booru-start-page');
     var pg = parseInt(st.page != null ? st.page : st.startPage, 10);
     if (!(pg > 0)) pg = 1;
+    if (noJump()) pg = 1; // 游标式来源恢复时固定第一页
     if (start) start.value = String(pg);
     syncExtraBtn();
   }
@@ -862,8 +874,9 @@ var BooruFilter = (function () {
     var prev = document.getElementById('btn-booru-page-prev');
     var next = document.getElementById('btn-booru-page-next');
     var remote = isRemote();
+    if (start) start.disabled = !!noJump();
     if (start && remote && _page >= 1 && document.activeElement !== start) {
-      start.value = String(_page);
+      start.value = String(start.disabled ? 1 : _page);
     }
     if (prev) {
       prev.disabled = !remote || _loading || !_hasPrev;
@@ -1431,6 +1444,7 @@ var BooruFilter = (function () {
           id: String(post.id),
           dir: destDir(),
           overwrite: false,
+          post: post,
         }),
         signal: ctrl.signal,
       });
@@ -2045,7 +2059,7 @@ var BooruFilter = (function () {
     if (!modeEl) return;
 
     var saved = loadUiState();
-    if (saved && (saved.mode === 'gelbooru' || saved.mode === 'danbooru' || saved.mode === 'bilibili' || saved.mode === 'local')) {
+    if (saved && _SOURCES[saved.mode]) {
       modeEl.value = saved.mode;
     }
 

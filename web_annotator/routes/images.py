@@ -171,7 +171,7 @@ def get_image(request: Request, path: str = Query(...)) -> FileResponse:
 
 
 @router.get("/images/similar")
-def similar_images(
+async def similar_images(
     request: Request,
     path: str = Query(...),
     limit: int = Query(8, ge=1, le=24),
@@ -218,7 +218,7 @@ def similar_images(
 
     out: list[SimilarItem] = []
     for sim_rel, dist in hits:
-        thumbnailer.ensure(sim_rel)
+        await thumbnailer.ensure_async(sim_rel)
         w, h = image_size(root / sim_rel)
         out.append(
             SimilarItem(

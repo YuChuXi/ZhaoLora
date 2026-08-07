@@ -52,12 +52,11 @@ class GalleryDLSource(SourceClient):
     - ``_caption_from_item(kwdict)``: 从媒体元数据提取旁路标签文本。
     - ``_auth_overrides()``: 认证相关的临时配置项(默认空)。
 
-    子类可覆盖 ``_PAGE_SIZE``(每页卡片数)、
-    ``_INCR_BATCH``(单批增量条数; None 表示一次性全量拉取)。
+    子类可覆盖 ``_INCR_BATCH``(单批增量条数, 亦即每页卡片数;
+    None 表示一次性全量拉取并以单页返回全部)。
     """
 
     # 子类可覆盖
-    _PAGE_SIZE = 40
     _INCR_BATCH: int | None = None
 
     def __init__(self) -> None:
@@ -337,8 +336,9 @@ class GalleryDLSource(SourceClient):
     ) -> tuple[list[BooruPost], bool]:
         """按查询键搜索, 返回 (posts, has_more).
 
-        当请求页超出已缓存数且来源支持续拉时增量拉取(游标续拉或全量), 之后
-        从缓存按页切片返回; 页大小固定为 ``_PAGE_SIZE``。
+        每页对应一次增量拉取 (``_INCR_BATCH`` 条), 拉到多少返回多少:
+        增量来源 (``_INCR_BATCH`` 非 None) 按批续拉直到覆盖目标页, 全量来源
+        (``_INCR_BATCH`` 为 None) 一次性拉取并以单页返回全部。
 
         Callers:
             - `base.py:search_posts` / `routes/online_sources.py:search`
@@ -353,22 +353,22 @@ class GalleryDLSource(SourceClient):
                 lock = asyncio.Lock()
                 self._locks[key] = lock
 
-        need = max(page, 0) * self._PAGE_SIZE
+        batch = self._INCR_BATCH
         async with lock:
             cache = self._cache.get(key)
-            if cache is None or (cache.cursor is not None and len(cache.posts) < need):
+            if cache is None or (batch and cache.cursor is not None and len(cache.posts) < page * batch):
                 cache = await asyncio.to_thread(self._ensure_cached, key, cache)
                 self._cache[key] = cache
 
         posts = cache.posts
-        start = (page - 1) * self._PAGE_SIZE
-        slice_posts = posts[start : start + self._PAGE_SIZE]
-        has_more = start + self._PAGE_SIZE < len(posts)
-        return slice_posts, has_more
+        if not batch:
+            return posts, False
+        start = (page - 1) * batch
+        return posts[start : start + batch], cache.cursor is not None or start + batch < len(posts)
 
     async def download(
         self,
-        pid: str,
+        post: BooruPost,
         out_dir: Path,
         *,
         overwrite: bool = False,
@@ -378,19 +378,17 @@ class GalleryDLSource(SourceClient):
     ) -> dict:
         """下载指定媒体为 PNG, 并写旁路标签与 meta.
 
-        gallery-dl extractor 仅用于获取元数据与媒体 URL, 图片字节通过
-        ``http.get_bytes`` 直链下载, 不经过临时目录。
+        直接使用 search 阶段已持有的 ``post.file_url`` (原图 URL) 与
+        ``post.tags`` 落盘, 不再重新请求帖文元数据。
 
         Callers:
             - `base.py:SourceClient.download` (经 ``media.download_post`` 委托)
         """
-        parts = self._split_pid(pid)
-        num = parts[-1]
-
-        stem = self.file_stem(pid)
-        image_path = out_dir / f"{stem}.png"
+        pid = post.id
+        stem = Path(post.filename).stem
+        image_path = out_dir / post.filename
         tags_path = out_dir / f"{stem}.txt"
-        existing = find_downloaded(out_dir, pid, file_stem_fn=self.file_stem)
+        existing = find_downloaded(out_dir, post.filename)
 
         if not overwrite and existing is not None and tags_path.is_file():
             return {
@@ -401,25 +399,19 @@ class GalleryDLSource(SourceClient):
                 "tags_path": str(tags_path),
             }
 
-        items = await asyncio.to_thread(self._fetch_detail, parts)
-        target = next((it for it in items if it.get("num") == num), None)
-        if target is None:
-            raise ValueError(f"pid {pid} 无第 {num} 张媒体")
-
-        image_url = str(target.get("url") or "")
+        image_url = (post.file_url or "").strip()
         if not image_url:
             raise ValueError(f"pid {pid} 无媒体 URL")
-        data, _ = await http.get_bytes(image_url)
-
-        self._save_png(data, image_path)
-        self._clean_old_files(out_dir, pid, image_path)
-        caption = self._caption_from_item(target)
+        caption = (post.tags or "").strip()
         if include_meta_tags:
             caption = (caption + (" " + self.name) if caption else self.name).strip()
+        data, _ = await http.get_bytes(image_url)
+
+        await self._save_png(data, image_path)
+        self._clean_old_files(out_dir, pid, image_path)
         tags_path.write_text(caption + "\n", encoding="utf-8")
         self._write_meta(
-            out_dir,
-            pid,
+            out_dir, pid,
             BooruPost(source=self.name, id=pid, file_url=image_url, tags=caption),
         )
         return {

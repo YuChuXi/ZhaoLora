@@ -59,33 +59,34 @@ def stem_candidates(post_id: str, *, file_stem_fn) -> list[str]:
     return [primary] if pid == primary else [primary, pid]
 
 
-def find_downloaded(out_dir: Path, post_id: str, *, file_stem_fn) -> Path | None:
-    """查找已下载帖图. 下载输出统一为 {stem}.png, 文件名确定, 无需探测扩展名.
+def find_downloaded(out_dir: Path, filename: str) -> Path | None:
+    """查找已下载帖图. 以完整文件名（含扩展名）判断, 无需探测扩展名.
 
     Args:
-        post_id: 帖子 ID. 
-        file_stem_fn: 接受单个 id 返回 stem 的函数(绑定方法), 如 ``SourceClient.file_stem``. 
+        filename: 完整文件名，如 ``d12345.png``（来源在 search 阶段提供真实扩展名）.
 
     Callers:
-        - `gelbooru/source.py:GelbooruSource.download`
         - `danbooru/source.py:DanbooruSource.download`
+        - `gelbooru/source.py:GelbooruSource.download`
+        - `pixiv/source.py:PixivSource.download`
+        - `bilibili/source.py:BilibiliSource.download`
+        - `gallerydl.py:download`
     """
-    p = out_dir / f"{file_stem_fn(post_id)}.png"
+    p = out_dir / filename
     return p if p.is_file() else None
 
 
-def is_downloaded(out_dir: Path, post_id: str, *, file_stem_fn) -> bool:
-    """是否已下载. 
+def is_downloaded(out_dir: Path, filename: str) -> bool:
+    """是否已下载.
 
     Args:
-        post_id: 帖子 ID. 
-        file_stem_fn: 接受单个 id 返回 stem 的函数(绑定方法), 如 ``SourceClient.file_stem``. 
+        filename: 完整文件名，如 ``d12345.png``.
 
     Callers:
         - `routes/online_sources.py:search`
         - `services/online_sources/batch.py`
     """
-    return find_downloaded(out_dir, post_id, file_stem_fn=file_stem_fn) is not None
+    return find_downloaded(out_dir, filename) is not None
 
 
 _GENDER_TAGS: frozenset[str] = frozenset({
@@ -99,29 +100,3 @@ _GENDER_TAGS: frozenset[str] = frozenset({
 def _tags_to_caption(tags: str) -> str:
     parts = [t.strip() for t in tags.replace(",", " ").split() if t.strip()]
     return ", ".join(parts)
-
-
-# ---- 图片转换(供 sources / media 使用) ----
-def convert_path_to_png(src: Path, dest: Path) -> None:
-    """临时文件转 PNG. 
-
-    Callers:
-        - `gelbooru/source.py:GelbooruSource.download`
-    """
-    from services.online_sources.framework.base import SourceClient
-    data = src.read_bytes()
-    if src.is_file():
-        src.unlink()
-    # 使用 SourceClient._save_png 需要实例, 这里直接用内联逻辑
-    kind = sniff_image_kind(data)
-    if kind in ("html", "zip", "video", "webm"):
-        raise ValueError(f"不支持该文件类型({kind})")
-    if kind == "png":
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_bytes(data)
-        return
-    img = Image.open(io.BytesIO(data))
-    img.load()
-    out = img.convert("RGBA") if img.mode in ("RGBA", "LA", "P") else img.convert("RGB")
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    out.save(dest, format="PNG", optimize=True)

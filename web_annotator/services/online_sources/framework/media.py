@@ -8,7 +8,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from services.models import BooruDownloadResult, BooruUndownloadResult
+from services.models import BooruDownloadResult, BooruPost, BooruUndownloadResult
 from services.online_sources.framework.base import (
     META_SUBDIR,
     _SOURCES as SOURCES,
@@ -70,7 +70,7 @@ def remove_download(
 
 async def download_post(
     source: str,
-    post_id: str,
+    post: BooruPost,
     out_dir: Path,
     *,
     overwrite: bool = False,
@@ -85,7 +85,7 @@ async def download_post(
 
     Args:
         source: 来源名。
-        post_id: 帖子 ID。
+        post: 前端搜索阶段已持有的帖子 (含原图 URL 与标签)。
         out_dir: 输出目录。
         overwrite: 是否覆盖已下载文件。
         anima_format: 按 Anima 格式输出标签。
@@ -102,10 +102,9 @@ async def download_post(
     if source not in SOURCES:
         raise ValueError(f"不支持的源: {source}")
     out_dir.mkdir(parents=True, exist_ok=True)
-    pid = str(post_id).strip()
 
     result = await get_source(source).download(
-        pid, out_dir,
+        post, out_dir,
         overwrite=overwrite,
         anima_format=anima_format,
         include_meta_tags=include_meta_tags,

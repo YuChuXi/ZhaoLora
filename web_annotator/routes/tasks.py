@@ -37,7 +37,7 @@ def _store(request: Request) -> TaskStore:
     return request.app.state.task_store
 
 
-def _preview_hashes(rt: DatasetRuntime, limit: int = 4) -> list[str]:
+async def _preview_hashes(rt: DatasetRuntime, limit: int = 4) -> list[str]:
     """
     从 main 随机取最多 limit 张已有或可生成的缩略图 hash. 
 
@@ -53,7 +53,7 @@ def _preview_hashes(rt: DatasetRuntime, limit: int = 4) -> list[str]:
     hashes: list[str] = []
     for img in picks:
         rel = img.path
-        rt.thumbnailer.ensure(rel)
+        await rt.thumbnailer.ensure_async(rel)
         hashes.append(rt.thumbnailer.hash_for(rel))
     return hashes
 
@@ -81,7 +81,7 @@ async def list_tasks(
         if (task_dir / "main").is_dir():
             rt = await reg.ensure(name)
             image_count = len(scan_images(rt.main_dir, path_prefix="main"))
-            previews = _preview_hashes(rt, 4)
+            previews = await _preview_hashes(rt, 4)
             report_ready = (rt.root / "aesthetic_report.html").is_file()
         items.append(
             TaskCard(

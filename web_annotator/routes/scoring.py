@@ -70,7 +70,7 @@ def scoring_dirs(request: Request) -> ScoringDirsResponse:
 
 
 @router.get("/results")
-def scoring_results(
+async def scoring_results(
     request: Request,
     kind: str = Query(..., description="评分类型: 'aesthetic' | 'quality'"),
 ):
@@ -95,7 +95,7 @@ def scoring_results(
         encoded = quote(p, safe="/")
         r["image_url"] = f"/api/d/{ds}/image?path={encoded}"
         r["thumb_url"] = f"/d/{ds}/thumb/{rt.thumbnailer.hash_for(p)}.avif"
-        rt.thumbnailer.ensure(p)
+        await rt.thumbnailer.ensure_async(p)
 
     return {
         "kind": kind,

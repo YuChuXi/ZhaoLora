@@ -12,7 +12,6 @@ Callers:
 from __future__ import annotations
 
 import asyncio
-import re
 from datetime import date, datetime
 from pathlib import Path
 from typing import Any
@@ -224,7 +223,7 @@ class BilibiliSource(SourceClient):
 
     async def download(
         self,
-        pid: str,
+        post: BooruPost,
         out_dir: Path,
         *,
         overwrite: bool = False,
@@ -234,16 +233,17 @@ class BilibiliSource(SourceClient):
     ) -> dict:
         """下载动态某张原图为 PNG, 并写旁路标签 (正文) 与 meta.
 
+        直接使用 search 阶段已持有的 ``post.file_url`` 与 ``post.tags`` 落盘,
+        不再重新请求动态元数据。实现 ``base.SourceClient.download``。
+
         Callers:
             - `base.py:SourceClient.download` (经 ``media.download_post`` 委托)
         """
-        dynamic_id, index = self._split_pid(pid)
-        url, text = await resolve_image(dynamic_id, index)
-
-        stem = self.file_stem(pid)
-        image_path = out_dir / f"{stem}.png"
+        pid = post.id
+        stem = Path(post.filename).stem
+        image_path = out_dir / post.filename
         tags_path = out_dir / f"{stem}.txt"
-        existing = find_downloaded(out_dir, pid, file_stem_fn=self.file_stem)
+        existing = find_downloaded(out_dir, post.filename)
 
         if not overwrite and existing is not None and tags_path.is_file():
             return {
@@ -254,12 +254,16 @@ class BilibiliSource(SourceClient):
                 "tags_path": str(tags_path),
             }
 
-        data, _ = await fetch_bili_bytes(url)
-        self._save_png(data, image_path)
-        self._clean_old_files(out_dir, pid, image_path)
-        caption = re.sub(r"\s+", " ", (text or "").strip()).strip()
+        url = (post.file_url or "").strip()
+        if not url:
+            raise ValueError(f"pid {pid} 无媒体 URL")
+        caption = (post.tags or "").strip()
         if include_meta_tags:
             caption = (caption + (" " + self.name) if caption else self.name).strip()
+
+        data, _ = await fetch_bili_bytes(url)
+        await self._save_png(data, image_path)
+        self._clean_old_files(out_dir, pid, image_path)
         tags_path.write_text(caption + "\n", encoding="utf-8")
         self._write_meta(
             out_dir,

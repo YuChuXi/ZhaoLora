@@ -7,15 +7,12 @@ Callers:
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 from services.online_sources.framework import http
 from services.online_sources.framework.base import SourceClient
 from services.online_sources.framework.utils import find_downloaded
 from services.online_sources.gelbooru.client import GelbooruClient
-
-if TYPE_CHECKING:
-    from services.models import BooruPost
+from services.models import BooruPost
 
 
 class GelbooruSource(SourceClient):
@@ -117,41 +114,43 @@ class GelbooruSource(SourceClient):
                 out.append(n)
         return out, has_more
 
-    async def download(self, pid: str, out_dir: Path, *,
+    async def download(self, post: BooruPost, out_dir: Path, *,
                        overwrite: bool = False, anima_format: bool = True,
                        include_meta_tags: bool = False, keep_underscores: bool = False) -> dict:
         """下载 Gelbooru 原图并写旁路标签.
 
-        实现 ``base.SourceClient.download``.
+        直接使用 search 阶段已持有的 ``post.file_url`` 与 ``post.tags`` 落盘,
+        不再重新请求 ``get_post``; 仅 anima 格式需要额外查询标签类型。
+        实现 ``base.SourceClient.download``。
 
         Callers:
             - ``base.py:SourceClient.download`` (经 ``media.download_post`` 委托)
         """
-        from services.online_sources.framework.utils import convert_path_to_png
-        from services.models import BooruPost
+        from services.online_sources.framework import http
 
         api = GelbooruClient()
-        stem = self.file_stem(pid)
-        image_path = out_dir / f"{stem}.png"
+        pid = post.id
+        stem = Path(post.filename).stem
+        image_path = out_dir / post.filename
         tags_path = out_dir / f"{stem}.txt"
-        existing = find_downloaded(out_dir, pid, file_stem_fn=self.file_stem)
+        existing = find_downloaded(out_dir, post.filename)
 
         if not overwrite and existing is not None and tags_path.is_file():
             return {"skipped": True, "path": str(existing), "stem": stem, "id": pid, "tags_path": str(tags_path)}
 
-        raw = await api.get_post(int(pid))
-        api_post = BooruPost.model_validate(raw)
-        if not api_post.file_url:
+        if not post.file_url:
             raise ValueError("无 file_url")
+
         if overwrite or not image_path.is_file():
-            tmp_ext = http.ext_from_url(api_post.file_url, ".bin")
-            tmp_path = out_dir / f"{stem}.tmp{tmp_ext}"
-            await api.get_image(int(pid), str(tmp_path))
-            convert_path_to_png(tmp_path, image_path)
+            data, _ = await http.get_bytes(
+                post.file_url, referer=self.image_referer, proxy=None,
+            )
+            await self._save_png(data, image_path)
             self._clean_old_files(out_dir, pid, image_path)
 
+        api_post = post
         if anima_format:
-            raw = await _categorize_gelbooru_tags(raw, api)
+            raw = await _categorize_gelbooru_tags(api_post.model_dump(), api)
             api_post = BooruPost.model_validate(raw)
         caption = self._build_caption(api_post, anima_format=anima_format, include_meta_tags=include_meta_tags, keep_underscores=keep_underscores)
         tags_path.write_text(caption + "\n", encoding="utf-8")

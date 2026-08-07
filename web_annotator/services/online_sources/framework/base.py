@@ -11,6 +11,7 @@ Callers:
 
 from __future__ import annotations
 
+import asyncio
 import io
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Mapping
@@ -71,10 +72,13 @@ class SourceClient(ABC):
             - `base.py:search_posts`
         """
     @abstractmethod
-    async def download(self, pid: str, out_dir: Path, *,
+    async def download(self, post: BooruPost, out_dir: Path, *,
                        overwrite: bool = False, anima_format: bool = True,
                        include_meta_tags: bool = False, keep_underscores: bool = False) -> dict:
-        """下载帖子原图并写旁路标签与 meta. 
+        """下载帖子原图并写旁路标签与 meta.
+
+        入参直接吃 search 阶段已返回的 ``BooruPost`` (含原图 URL 与标签),
+        各实现据此下载, 不再凭 id 重新请求帖文元数据。
 
         Callers:
             - `base.py:SourceClient.download`
@@ -239,7 +243,38 @@ class SourceClient(ABC):
         (meta_dir / f"{pid}.json").write_text(
             post.model_dump_json(indent=2) + "\n", encoding="utf-8")
 
-    def _save_png(self, data: bytes, dest: Path) -> None:
+    async def _save_png(self, data: bytes, dest: Path) -> None:
+        """将下载字节转为 PNG 落盘.
+
+        图片解码/重编码是 CPU 密集的同步操作, 移入线程池执行以避免阻塞事件
+        循环; 转码核心逻辑见 ``_save_png_sync``。
+
+        Args:
+            data: 原始字节。
+            dest: 目标 PNG 路径。
+
+        Raises:
+            ValueError: 文件类型不支持 (html/zip/video/webm)。
+
+        Callers:
+            - `danbooru/source.py:DanbooruSource.download`
+            - `gelbooru/source.py:GelbooruSource.download`
+            - `pixiv/source.py:PixivSource.download`
+            - `bilibili/source.py:BilibiliSource.download`
+            - `gallerydl.py:download`
+        """
+        await asyncio.to_thread(self._save_png_sync, data, dest)
+
+    def _save_png_sync(self, data: bytes, dest: Path) -> None:
+        """同步执行 PNG 字节转码落盘 (经 ``asyncio.to_thread`` 调用).
+
+        Args:
+            data: 原始字节。
+            dest: 目标 PNG 路径。
+
+        Callers:
+            - `SourceClient._save_png`
+        """
         kind = sniff_image_kind(data)
         if kind in ("html", "zip", "video", "webm"):
             raise ValueError(f"不支持该文件类型({kind})")
@@ -427,6 +462,10 @@ async def search_posts(
         - `online_sources/batch.py:_run_async`
     """
     src = get_source(source)
-    return await src.search(
+    posts, has_more = await src.search(
         tags, page=page, order=order, extra=extra,
     )
+    for post in posts:
+        post.stem = src.file_stem(post.id)
+        post.filename = f"{post.stem}.png"
+    return posts, has_more
