@@ -51,6 +51,8 @@ class BilibiliSource(SourceClient):
     prefix = "bi"
     order_tags: dict[str, str] = {}
     valid_orders: tuple[str, ...] = ()
+    image_hosts = ("hdslb.com",)
+    image_referer = "https://www.bilibili.com/"
 
     def parse_query(self, tags: str, extra: str) -> dict[str, str]:
         """解析 B 站查询串: ``tags`` 为 UID, ``extra`` 为 ``type:``/``after:``/``before:``/``keyword:``.
@@ -146,8 +148,6 @@ class BilibiliSource(SourceClient):
         page: int,
         order: str,
         extra: str,
-        proxy: str | None,
-        **auth,
     ) -> tuple[list[BooruPost], bool]:
         """按 UID 与筛选条件搜索动态图片, 返回 (posts, has_more).
 
@@ -156,7 +156,7 @@ class BilibiliSource(SourceClient):
         展开的图片; 已拉取的页缓存复用。
 
         Callers:
-            - `base.py:search_posts` / `routes/booru.py:booru_search`
+            - `base.py:search_posts` / `routes/online_sources.py:search`
         """
         f = self.parse_query(tags, extra)
         uid = int(f["uid"])
@@ -205,14 +205,14 @@ class BilibiliSource(SourceClient):
             raise ValueError(f"非法 id: {pid}")
         return pid[:idx], int(pid[idx + 1:])
 
-    async def fetch_meta(self, out_dir: Path, pid: str, proxy: str | None) -> None:
+    async def fetch_meta(self, out_dir: Path, pid: str) -> None:
         """按 pid 重新解析并写入帖元数据.
 
         实现 ``base.SourceClient.fetch_meta``。当前 ``detect_source`` 不会
         匹配 bilibili 文件名 (pid 含 `_`), 故仅在手动调用时生效。
 
         Callers:
-            - `routes/booru.py:_run_refresh`
+            - `routes/online_sources.py:_run_refresh`
         """
         dynamic_id, index = self._split_pid(pid)
         url, text = await resolve_image(dynamic_id, index)
@@ -226,7 +226,6 @@ class BilibiliSource(SourceClient):
         self,
         pid: str,
         out_dir: Path,
-        proxy: str | None,
         *,
         overwrite: bool = False,
         anima_format: bool = True,

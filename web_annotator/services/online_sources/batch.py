@@ -1,6 +1,6 @@
-"""Booru 批量下载长任务(工作线程内 asyncio 跑搜索与下载). 
+"""在线来源批量下载长任务(工作线程内 asyncio 跑搜索与下载). 
 
-引用: ``routes/booru.py``；进度经 ``JobManager`` SSE 推送. 
+引用: ``routes/online_sources.py``；进度经 ``JobManager`` SSE 推送. 
 """
 
 from __future__ import annotations
@@ -12,7 +12,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from services.online_sources import download_post, get_source, is_downloaded, local_rel_path, search_posts
+from services.online_sources.framework.base import get_source, search_posts
+from services.online_sources.framework.media import download_post, local_rel_path
+from services.online_sources.framework.utils import is_downloaded
 from services.models import JobSnapshot
 
 EMPTY_STREAK_MAX = 8
@@ -20,8 +22,8 @@ EmitFn = Callable[[JobSnapshot], None]
 
 
 @dataclass
-class BooruBatchProgress:
-    """可变进度与运行参数. 引用: ``run_booru_batch``、参数热更新接口. """
+class BatchProgress:
+    """可变进度与运行参数. 引用: ``run_batch``、参数热更新接口. """
 
     cancel_requested: bool = False
     limit: int = 50
@@ -33,7 +35,7 @@ class BooruBatchProgress:
     status: str = "running"
     message: str = ""
     phase: str = "download"
-    kind: str = "booru_batch"
+    kind: str = "online_batch"
     dataset: str = ""
 
     def snapshot(self) -> JobSnapshot:
@@ -64,14 +66,14 @@ class BooruBatchProgress:
         )
 
 
-_ACTIVE: dict[str, BooruBatchProgress] = {}
+_ACTIVE: dict[str, BatchProgress] = {}
 
 
-def register_progress(job_id: str, prog: BooruBatchProgress) -> None:
+def register_progress(job_id: str, prog: BatchProgress) -> None:
     """登记进行中的批量下载任务, 供热更新接口查询. 
 
     Callers:
-        - ``routes/booru.py``
+        - ``routes/online_sources.py``
     """
     _ACTIVE[job_id] = prog
 
@@ -80,16 +82,16 @@ def unregister_progress(job_id: str) -> None:
     """移除已结束批量任务的登记. 
 
     Callers:
-        - ``run_booru_batch`` (finally 块)
+        - ``run_batch`` (finally 块)
     """
     _ACTIVE.pop(job_id, None)
 
 
-def get_progress(job_id: str) -> BooruBatchProgress | None:
+def get_progress(job_id: str) -> BatchProgress | None:
     """按 job_id 获取进度对象. 
 
     Returns:
-        BooruBatchProgress | None: 不存在时返回 None. 
+        BatchProgress | None: 不存在时返回 None. 
 
     Callers:
         - 参数热更新接口. 
@@ -97,7 +99,7 @@ def get_progress(job_id: str) -> BooruBatchProgress | None:
     return _ACTIVE.get(job_id)
 
 
-def run_booru_batch(
+def run_batch(
     *,
     job_id: str,
     source: str,
@@ -107,8 +109,7 @@ def run_booru_batch(
     out_dir: Path,
     root: Path,
     start_page: int,
-    proxy: str | None,
-    progress: BooruBatchProgress,
+    progress: BatchProgress,
     emit: EmitFn,
     thumbnailer: Any | None = None,
     anima_format: bool = True,
@@ -118,7 +119,7 @@ def run_booru_batch(
     """
     同步入口: 在工作线程内 ``asyncio.run`` 执行批量下载. 
 
-    引用: ``routes/booru.py``. 
+    引用: ``routes/online_sources.py``. 
     """
     register_progress(job_id, progress)
     try:
@@ -131,7 +132,6 @@ def run_booru_batch(
                 out_dir=out_dir,
                 root=root,
                 start_page=start_page,
-                proxy=proxy,
                 progress=progress,
                 emit=emit,
                 thumbnailer=thumbnailer,
@@ -153,8 +153,7 @@ async def _run_async(
     out_dir: Path,
     root: Path,
     start_page: int,
-    proxy: str | None,
-    progress: BooruBatchProgress,
+    progress: BatchProgress,
     emit: EmitFn,
     thumbnailer: Any | None,
     anima_format: bool = True,
@@ -164,7 +163,7 @@ async def _run_async(
     """异步批量下载核心: 翻页搜索 + 并发下载, 含令牌桶限速与 429 退避. 
 
     Callers:
-        - ``run_booru_batch``
+        - ``run_batch``
     """
 
     def push(msg: str | None = None) -> None:
@@ -221,7 +220,6 @@ async def _run_async(
             page=page,
             order=order,
             extra=extra,
-            proxy=proxy,
         )
         page += 1
         if not has_more:
@@ -277,7 +275,6 @@ async def _run_async(
                         source,
                         post.id,
                         out_dir,
-                        proxy=proxy,
                         overwrite=False,
                         anima_format=anima_format,
                         include_meta_tags=include_meta_tags,

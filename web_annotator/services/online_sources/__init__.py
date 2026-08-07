@@ -4,7 +4,7 @@
 ``SourceClient`` 抽象并注册; 对外暴露搜索、下载、缩略图代理等公共 API。
 通用框架 (基类、网络、媒体操作) 位于 ``framework`` 子包。
 
-引用: ``routes.booru``. 
+引用: ``routes.online_sources``. 
 """
 
 from services.online_sources.framework.base import (
@@ -21,7 +21,6 @@ from services.online_sources.framework.base import (
 )
 from services.online_sources.framework.media import (
     download_post,
-    fetch_gelbooru_bytes,
     local_rel_path,
     regenerate_captions,
     remove_download,
@@ -47,7 +46,6 @@ __all__ = [
     "build_search_query",
     "detect_source",
     "download_post",
-    "fetch_gelbooru_bytes",
     "fetch_pixiv_bytes",
     "file_stem",
     "get_source",

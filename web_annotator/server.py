@@ -31,7 +31,7 @@ from routes.alpha_paint import router as paint_router
 from routes.annotations import router as annotations_router
 from routes.scoring import router as scoring_router
 from routes.birefnet import router as birefnet_router
-from routes.booru import router as booru_router
+from routes.online_sources import router as sources_router
 from routes.crop import router as crop_router
 from routes.dedupe import router as dedupe_router
 from routes.docs import router as docs_router
@@ -144,7 +144,7 @@ dataset_api.include_router(tagging_router)
 dataset_api.include_router(tag_stats_router)
 dataset_api.include_router(dedupe_router)
 dataset_api.include_router(ready_router)
-dataset_api.include_router(booru_router)
+dataset_api.include_router(sources_router)
 dataset_api.include_router(birefnet_router)
 
 app.include_router(dataset_api)
@@ -244,7 +244,6 @@ def main() -> int:
     app.state.task_store = store
     app.state.datasets = registry
     app.state.jobs = jobs
-    app.state.upstream_proxy = os.environ.get("UPSTREAM_PROXY", "").strip() or None
     app.state.paint_default_alpha = 255
     app.state.block_chinese_ua = args.block_chinese_ua
 

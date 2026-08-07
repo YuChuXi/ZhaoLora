@@ -4,9 +4,9 @@
 ``gelbooru`` / ``bilibili`` / ``x`` / ``pixiv``) 复用:
 
 - ``base``: ``SourceClient`` 抽象基类与来源注册表;
-- ``net``: 网络请求辅助 (Danbooru/Gelbooru HTTP、代理、URL 派生);
+- ``http``: 统一网络层 (基于 httpx);
 - ``utils``: 图片识型、文件定位、标签转换等工具;
-- ``media``: 预览拉取、下载、取消下载、标签重生成等媒体操作;
+- ``media``: 下载、取消下载、标签重生成等媒体操作;
 - ``gallerydl``: 基于 gallery-dl 的来源客户端基类.
 
 Callers:
@@ -15,7 +15,7 @@ Callers:
     - ``services.online_sources.bilibili``
     - ``services.online_sources.x``
     - ``services.online_sources.pixiv``
-    - ``routes.booru``
+    - ``routes.online_sources``
 """
 
 from services.online_sources.framework.base import (
@@ -33,7 +33,6 @@ from services.online_sources.framework.base import (
 from services.online_sources.framework.gallerydl import GalleryDLSource
 from services.online_sources.framework.media import (
     download_post,
-    fetch_gelbooru_bytes,
     local_rel_path,
     regenerate_captions,
     remove_download,
@@ -47,7 +46,6 @@ __all__ = [
     "build_search_query",
     "detect_source",
     "download_post",
-    "fetch_gelbooru_bytes",
     "file_stem",
     "get_source",
     "list_source_names",

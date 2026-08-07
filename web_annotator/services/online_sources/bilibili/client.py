@@ -12,19 +12,14 @@
 
 Callers:
     - ``services/online_sources/bilibili/source.py``
-    - ``routes/booru.py`` (图片代理)
+    - ``routes/online_sources.py`` (图片代理)
 """
 
 from __future__ import annotations
 
 import asyncio
 import re
-import time
 from typing import Any
-
-import curl_cffi.requests.exceptions
-import httpx
-import requests
 
 from bilibili_api import user
 from bilibili_api.exceptions import NetworkException
@@ -37,6 +32,7 @@ from services.online_sources.bilibili.models import (
     TopicInfo,
     VideoInfo,
 )
+from services.online_sources.framework import http
 
 # 转发链递归解析的最大深度, 防止异常深链造成栈溢出
 MAX_FORWARD_DEPTH = 8
@@ -50,7 +46,6 @@ FILTER_TYPES = {"DYNAMIC_TYPE_LIVE_RCMD"}
 # 桌面版详情接口: 免登录稳定可用; 库的 ``Dynamic.get_info`` 所用的 v1 detail
 # 接口在未登录会话下会被 412 风控拦截, 故单条详情改走此接口
 _DESKTOP_DETAIL_API = "https://api.bilibili.com/x/polymer/web-dynamic/desktop/v1/detail"
-_HOME_URL = "https://www.bilibili.com/"
 _UA = (
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36"
@@ -63,28 +58,9 @@ _BILI_HEADERS = {
 
 # 动态 ID -> 解析后的记录, 供下载时按 ID 取图, 避免重复请求
 _dynamic_cache: dict[str, DynamicRecord] = {}
-_desktop_session_cache: requests.Session | None = None
 
 
-def _desktop_session() -> requests.Session:
-    """获取带访客会话的请求会话, 进程内复用.
-
-    桌面版接口同样要求先访问首页获得 ``buvid3`` Cookie 才会放行。
-
-    Returns:
-        requests.Session: 已建立访客会话的请求对象。
-    """
-    global _desktop_session_cache
-    if _desktop_session_cache is None:
-        session = requests.Session()
-        session.headers.update(_BILI_HEADERS)
-        resp = session.get(_HOME_URL, timeout=30)
-        resp.raise_for_status()
-        _desktop_session_cache = session
-    return _desktop_session_cache
-
-
-def _desktop_detail(
+async def _desktop_detail(
     dynamic_id: str, *, retries: int = 3, base_sleep: float = 3.0
 ) -> dict | None:
     """免登录获取单条动态完整详情 (桌面版接口, 带退避重试).
@@ -101,20 +77,23 @@ def _desktop_detail(
 
     Raises:
         RuntimeError: 重试耗尽或接口返回其他非 0 code。
+
+    Callers:
+        - ``bilibili/client.py:resolve_image``
     """
     last_exc: Exception | None = None
     for attempt in range(1, retries + 1):
         try:
-            resp = _desktop_session().get(
+            resp = await http.request(
                 _DESKTOP_DETAIL_API,
+                headers=_BILI_HEADERS,
                 params={"id": dynamic_id, "timezone_offset": str(-480)},
-                timeout=30,
+                timeout=30.0,
             )
             resp.raise_for_status()
             data = resp.json()
             code = data.get("code")
             if code == -1024:
-                # 不支持的动态类型, 无可用详情, 由调用方跳过
                 return None
             if code != 0:
                 raise RuntimeError(f"code={code} message={data.get('message')}")
@@ -124,7 +103,7 @@ def _desktop_detail(
             if attempt < retries:
                 wait = base_sleep * (2 ** (attempt - 1))
                 print(f"详情 {dynamic_id} 请求失败 ({exc}), {wait:.0f} 秒后重试...")
-                time.sleep(wait)
+                await asyncio.sleep(wait)
     raise last_exc or RuntimeError(f"详情 {dynamic_id} 请求失败")
 
 
@@ -154,7 +133,7 @@ async def _retry_coro(
     for attempt in range(1, retries + 1):
         try:
             return await factory()
-        except (NetworkException, curl_cffi.requests.exceptions.RequestException) as exc:
+        except (NetworkException, http.NetworkError) as exc:
             last_exc = exc
             if attempt < retries:
                 wait = base_sleep * (2 ** (attempt - 1))
@@ -447,7 +426,7 @@ async def resolve_image(dynamic_id: str, index: int) -> tuple[str, str]:
     """
     record = _dynamic_cache.get(dynamic_id)
     if record is None:
-        detail = await asyncio.to_thread(_desktop_detail, dynamic_id)
+        detail = await _desktop_detail(dynamic_id)
         if detail is None:
             raise ValueError(f"动态 {dynamic_id} 无可用详情")
         record = _parse_item(detail)
@@ -474,8 +453,8 @@ async def fetch_bili_bytes(
     """带 B 站 Referer 拉取图片字节与 Content-Type.
 
     供缩略图/大图代理与下载共用, 规避图床防盗链。B 站图床对大图传输存在
-    间歇性连接中断 (``httpx.RemoteProtocolError``), 故对网络异常按指数退避
-    有限重试; 重试耗尽后仍会抛出最后一次异常, 不吞没错误。
+    间歇性连接中断, 故对网络异常按指数退避有限重试; 重试耗尽后仍会抛出
+    最后一次异常, 不吞没错误。
 
     Args:
         url (str): B 站图床原图 URL。
@@ -486,20 +465,19 @@ async def fetch_bili_bytes(
         tuple[bytes, str]: ``(字节内容, Content-Type)``。
 
     Raises:
-        httpx.HTTPError: 网络或 HTTP 状态错误 (重试后仍失败)。
+        http.NetworkError: 网络或 HTTP 状态错误 (重试后仍失败)。
+
+    Callers:
+        - ``routes.online_sources.booru_bili_image``
     """
-    last_exc: httpx.HTTPError | None = None
+    last_exc: http.NetworkError | None = None
     for attempt in range(1, retries + 1):
         try:
-            async with httpx.AsyncClient(
-                headers=_BILI_HEADERS, timeout=httpx.Timeout(120.0, connect=10.0)
-            ) as client:
-                resp = await client.get(url)
-                resp.raise_for_status()
-            ctype = (resp.headers.get("content-type") or "image/jpeg").split(";")[0].strip()
-            return resp.content, ctype
-        except httpx.HTTPError as exc:
+            return await http.get_bytes(
+                url, headers=_BILI_HEADERS, timeout=120.0,
+            )
+        except http.NetworkError as exc:
             last_exc = exc
             if attempt < retries:
                 await asyncio.sleep(base_sleep * (2 ** (attempt - 1)))
-    raise last_exc or httpx.HTTPError(f"图片拉取失败: {url}")
+    raise last_exc or http.NetworkError(f"图片拉取失败: {url}")

@@ -192,12 +192,12 @@ var BooruFilter = (function () {
       nameLabel: 'Gelbooru',
       buildRequest: _booruRequest,
       thumb: function (post) {
-        return API.apiPath('/booru/gelbooru-image')
+        return API.apiPath('/online-sources/gelbooru-image')
           + '?kind=thumb&id=' + encodeURIComponent(post.id)
           + '&url=' + encodeURIComponent(post.preview_url || post.sample_url || '');
       },
       sample: function (post) {
-        return API.apiPath('/booru/gelbooru-image')
+        return API.apiPath('/online-sources/gelbooru-image')
           + '?kind=sample&id=' + encodeURIComponent(post.id)
           + '&url=' + encodeURIComponent(post.sample_url || post.file_url || post.preview_url || '');
       },
@@ -228,10 +228,10 @@ var BooruFilter = (function () {
         return { tags: _val('bilibili-uid').trim(), extra: _val('bilibili-extra').trim(), order: '' };
       },
       thumb: function (post) {
-        return API.apiPath('/booru/bili-image') + '?url=' + encodeURIComponent(post.preview_url || post.sample_url || '');
+        return API.apiPath('/online-sources/bili-image') + '?url=' + encodeURIComponent(post.preview_url || post.sample_url || '');
       },
       sample: function (post) {
-        return API.apiPath('/booru/bili-image') + '?url=' + encodeURIComponent(post.sample_url || post.file_url || post.preview_url || '');
+        return API.apiPath('/online-sources/bili-image') + '?url=' + encodeURIComponent(post.sample_url || post.file_url || post.preview_url || '');
       },
       pageUrl: function (post) {
         var i = post.id.lastIndexOf('_');
@@ -256,10 +256,10 @@ var BooruFilter = (function () {
         return { tags: _val('x-user').trim(), extra: '', order: '' };
       },
       thumb: function (post) {
-        return API.apiPath('/booru/x-image') + '?url=' + encodeURIComponent(post.preview_url || post.sample_url || '');
+        return API.apiPath('/online-sources/x-image') + '?url=' + encodeURIComponent(post.preview_url || post.sample_url || '');
       },
       sample: function (post) {
-        return API.apiPath('/booru/x-image') + '?url=' + encodeURIComponent(post.sample_url || post.file_url || post.preview_url || '');
+        return API.apiPath('/online-sources/x-image') + '?url=' + encodeURIComponent(post.sample_url || post.file_url || post.preview_url || '');
       },
       pageUrl: function (post) {
         var parts = post.id.split('_');
@@ -284,10 +284,10 @@ var BooruFilter = (function () {
         return { tags: _val('pixiv-query').trim(), extra: 'mode:' + _val('pixiv-mode'), order: '' };
       },
       thumb: function (post) {
-        return API.apiPath('/booru/pixiv-image') + '?url=' + encodeURIComponent(post.preview_url || post.sample_url || '');
+        return API.apiPath('/online-sources/pixiv-image') + '?url=' + encodeURIComponent(post.preview_url || post.sample_url || '');
       },
       sample: function (post) {
-        return API.apiPath('/booru/pixiv-image') + '?url=' + encodeURIComponent(post.sample_url || post.file_url || post.preview_url || '');
+        return API.apiPath('/online-sources/pixiv-image') + '?url=' + encodeURIComponent(post.sample_url || post.file_url || post.preview_url || '');
       },
       pageUrl: function (post) {
         var i = post.id.indexOf('_');
@@ -1423,7 +1423,7 @@ var BooruFilter = (function () {
     updateCard(post.key);
     var res;
     try {
-      res = await fetch(API.apiPath('/booru/download'), {
+      res = await fetch(API.apiPath('/online-sources/download'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1641,7 +1641,7 @@ var BooruFilter = (function () {
   function pushBatchParams() {
     if (!_batchRunning || !_batchJobId) return;
     var p = readBatchParams();
-    API.request(API.apiPath('/booru/batch/params'), {
+    API.request(API.apiPath('/online-sources/batch/params'), {
       method: 'POST',
       body: JSON.stringify({
         limit: p.limit,
@@ -1710,7 +1710,7 @@ var BooruFilter = (function () {
     syncBatchCloseBtn();
     syncBatchStopBtn();
     syncBatchStartBtn();
-    var data = await API.request(API.apiPath('/booru/batch/start'), {
+    var data = await API.request(API.apiPath('/online-sources/batch/start'), {
       method: 'POST',
       body: JSON.stringify(body),
     });
@@ -1729,7 +1729,7 @@ var BooruFilter = (function () {
       include_meta_tags: !!document.getElementById('booru-batch-meta-tags')?.checked,
       keep_underscores: !!document.getElementById('booru-batch-keep-underscores')?.checked,
     };
-    var data = await API.request(API.apiPath('/booru/regenerate-captions'), {
+    var data = await API.request(API.apiPath('/online-sources/regenerate-captions'), {
       method: 'POST',
       body: JSON.stringify(body),
     });
@@ -1748,7 +1748,7 @@ var BooruFilter = (function () {
     syncBatchCloseBtn();
     syncBatchStopBtn();
     syncBatchStartBtn();
-    var submitted = await API.request(API.apiPath('/booru/refresh-metadata'), {
+    var submitted = await API.request(API.apiPath('/online-sources/refresh-metadata'), {
       method: 'POST',
       body: JSON.stringify(body),
     });
@@ -1760,7 +1760,7 @@ var BooruFilter = (function () {
    * 引用：init。
    */
   async function resumeBatch() {
-    var data = await API.request(API.apiPath('/booru/batch/active'));
+    var data = await API.request(API.apiPath('/online-sources/batch/active'));
     if (!data || !data.job_id) return;
     if (data.status) applyBatchSnapshot(data.status);
     watchBatch(data.job_id);
@@ -1768,7 +1768,7 @@ var BooruFilter = (function () {
   }
 
   async function undownloadOne(post) {
-    var res = await fetch(API.apiPath('/booru/undownload'), {
+    var res = await fetch(API.apiPath('/online-sources/undownload'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -1892,7 +1892,7 @@ var BooruFilter = (function () {
     var autoNext = false;
     var autoPrev = false;
     try {
-      var res = await fetch(API.apiPath('/booru/search'), {
+      var res = await fetch(API.apiPath('/online-sources/search'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

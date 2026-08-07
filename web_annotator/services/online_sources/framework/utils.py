@@ -91,8 +91,8 @@ def is_downloaded(out_dir: Path, post_id: str, *, file_stem_fn) -> bool:
         file_stem_fn: 接受单个 id 返回 stem 的函数(绑定方法), 如 ``SourceClient.file_stem``. 
 
     Callers:
-        - `routes/booru.py:booru_search`
-        - `services/booru.py`
+        - `routes/online_sources.py:search`
+        - `services/online_sources/batch.py`
     """
     return find_downloaded(out_dir, post_id, file_stem_fn=file_stem_fn) is not None
 

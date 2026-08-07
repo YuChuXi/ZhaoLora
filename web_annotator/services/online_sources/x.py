@@ -29,8 +29,6 @@ from services.models import BooruPost
 _INCR_BATCH = 200
 # 仅保留的媒体类型
 _IMAGE_TYPES = frozenset({"photo"})
-# 图片扩展名 (无前导点, 用于从下载结果中定位媒体)
-_IMG_EXT = frozenset({"jpg", "jpeg", "png", "webp"})
 
 
 def _sized_url(url: str, size: str) -> str:
@@ -69,7 +67,6 @@ class XSource(GalleryDLSource):
     prefix = "x"
     order_tags: dict[str, str] = {}
     valid_orders: tuple[str, ...] = ()
-    _IMG_EXT = _IMG_EXT
     _INCR_BATCH = _INCR_BATCH
 
     def _auth_overrides(self) -> list[tuple[tuple[str, ...], str, Any]]:
@@ -81,7 +78,6 @@ class XSource(GalleryDLSource):
 
         Callers:
             - `GalleryDLSource._gallery_meta_incremental`
-            - `GalleryDLSource._download_to_dir`
         """
         cookies = os.environ.get("X_COOKIES", "").strip()
         return [] if not cookies else [((), "cookies", cookies)]

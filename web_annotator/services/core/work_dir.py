@@ -59,7 +59,7 @@ def resolve_subdir(root: Path, name: str | None) -> tuple[str, Path]:
         ValueError: 名称非法或目录不存在. 
 
     引用:
-        ``resolve_subdirs``；``routes.booru`` / ``images`` / ``dedupe``. 
+        ``resolve_subdirs``；``routes.online_sources`` / ``images`` / ``dedupe``. 
     """
     raw = (name or "main").strip().replace("\\", "/").strip("/")
     if not raw or raw == ".":

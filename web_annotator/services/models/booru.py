@@ -15,7 +15,7 @@ from services.models.jobs import JobSnapshot
 class BooruPost(BaseModel):
     """图站帖子, 同时接纳 Gelbooru/Danbooru API 原始字段并统一规范化. 
 
-    引用: ``sources.*.normalize`` / ``search_posts`` / ``routes.booru``. 
+    引用: ``sources.*.normalize`` / ``search_posts`` / ``routes.online_sources``. 
     """
 
     model_config = {"extra": "allow"}
@@ -72,7 +72,7 @@ class BooruSearchResult(BaseModel):
     """Booru 搜索响应. 
 
     引用:
-        ``routes.booru.booru_search``. 
+        ``routes.online_sources.booru_search``. 
     """
 
     source: str
@@ -91,7 +91,7 @@ class BooruSourcesResponse(BaseModel):
     """可用图站与代理配置. 
 
     引用:
-        ``routes.booru.booru_sources``. 
+        ``routes.online_sources.booru_sources``. 
     """
 
     sources: list[str]
@@ -102,7 +102,7 @@ class BooruDownloadResult(BaseModel):
     """Booru 下载结果. 
 
     引用:
-        ``online_sources.download_post``；``routes.booru``. 
+        ``online_sources.download_post``；``routes.online_sources``. 
     """
 
     path: str
@@ -120,7 +120,7 @@ class BooruUndownloadResult(BaseModel):
     """Booru 移除本地下载结果. 
 
     引用:
-        ``online_sources.remove_download``；``routes.booru``. 
+        ``online_sources.remove_download``；``routes.online_sources``. 
     """
 
     id: str
@@ -130,8 +130,8 @@ class BooruUndownloadResult(BaseModel):
     dir: str = ""
 
 
-class BooruBatchStartBody(BaseModel):
-    """批量下载启动请求. 引用: ``POST /booru/batch/start``. """
+class BatchStartBody(BaseModel):
+    """批量下载启动请求. 引用: ``POST /online-sources/batch/start``. """
 
     source: str
     tags: str = ""
@@ -147,16 +147,16 @@ class BooruBatchStartBody(BaseModel):
     keep_underscores: bool = Field(False, description="保留下划线, 不转为空格")
 
 
-class BooruBatchParamsBody(BaseModel):
-    """批量下载运行中改参. 引用: ``POST /booru/batch/params``. """
+class BatchParamsBody(BaseModel):
+    """批量下载运行中改参. 引用: ``POST /online-sources/batch/params``. """
 
     limit: int | None = Field(None, ge=1, le=5000)
     conn: int | None = Field(None, ge=1, le=8)
     rate_rps: float | None = Field(None, ge=0, le=60)
 
 
-class BooruBatchActiveResponse(BaseModel):
-    """当前数据集上未结束的批量任务. 引用: ``GET /booru/batch/active``. """
+class BatchActiveResponse(BaseModel):
+    """当前数据集上未结束的批量任务. 引用: ``GET /online-sources/batch/active``. """
 
     ok: bool = True
     job_id: str | None = None

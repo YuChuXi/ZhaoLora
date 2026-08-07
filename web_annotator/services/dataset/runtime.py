@@ -96,7 +96,7 @@ class DatasetRegistry:
             - `routes/scoring.py:scoring_results`
             - `routes/images.py:similar_images`
             - `routes/tasks.py:list_tasks` / `add_task`
-            - `routes/booru.py:booru_download`
+            - `routes/online_sources.py:download`
         """
         existing = self.by_name.get(name)
         if existing is not None:

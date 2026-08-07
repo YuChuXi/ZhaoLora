@@ -60,7 +60,7 @@ class JobManager:
         dataset: str | None = None,
         kind: str | None = None,
     ) -> Job | None:
-        """找最近一个未结束任务(刷新后重连). 引用: ``routes.booru``. """
+        """找最近一个未结束任务(刷新后重连). 引用: ``routes.online_sources``. """
         found: Job | None = None
         for job in self._jobs.values():
             if job.latest.status in TERMINAL:
@@ -104,7 +104,7 @@ class JobManager:
             - `routes/tagging.py:tagging_start`
             - `routes/dedupe.py:scan_duplicate`
             - `routes/tag_stats.py:tag_clean` / `tag_batch_edit`
-            - `routes/booru.py:booru_batch_start` / `booru_refresh_metadata`
+            - `routes/online_sources.py:batch_start` / `booru_refresh_metadata`
             - `routes/birefnet.py:birefnet_mask`
         """
         job_id = uuid.uuid4().hex

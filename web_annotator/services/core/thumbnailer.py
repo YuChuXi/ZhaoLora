@@ -221,7 +221,7 @@ class Thumbnailer:
             bool: 是否已存在或生成成功. 
 
         Callers:
-            - ``services/booru.py``: 下载后确保缩略图存在
+            - ``services/online_sources/batch.py``: 下载后确保缩略图存在
         """
         if self.exists(image_rel_path):
             return True

@@ -1,21 +1,20 @@
-"""Booru 挂载 API: 搜索 / 预览代理 / 下载到工作目录. """
+"""在线来源 API: 搜索 / 预览代理 / 下载到工作目录. """
 
 from __future__ import annotations
 
 import asyncio
+import os
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Query, Request
-from fastapi.responses import Response
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
-import httpx
-from curl_cffi.requests.exceptions import RequestException
 
-from services.booru import BooruBatchProgress, get_progress, register_progress, run_booru_batch
+from curl_cffi.requests.exceptions import RequestException as CffiError
+
+from services.online_sources.batch import BatchProgress, get_progress, register_progress, run_batch
 from services.online_sources import (
     download_post,
-    fetch_gelbooru_bytes,
-    fetch_pixiv_bytes,
     file_stem,
     get_source,
     is_downloaded,
@@ -24,13 +23,13 @@ from services.online_sources import (
     regenerate_captions,
     remove_download,
 )
-from services.online_sources.bilibili import fetch_bili_bytes
+from services.online_sources.framework import http
 from routes.deps import get_runtime, jobs
 from services.core.jobs import EmitFn
 from services.models import (
-    BooruBatchActiveResponse,
-    BooruBatchParamsBody,
-    BooruBatchStartBody,
+    BatchActiveResponse,
+    BatchParamsBody,
+    BatchStartBody,
     BooruPost,
     BooruDownloadResult,
     BooruSearchResult,
@@ -41,18 +40,13 @@ from services.models import (
 )
 from services.core.work_dir import resolve_subdir
 
-router = APIRouter(prefix="/booru", tags=["booru"])
+router = APIRouter(prefix="/online-sources", tags=["online-sources"])
 
-_NETWORK_ERRORS = (RuntimeError, OSError, httpx.HTTPError, RequestException)
-
-
-def _proxy(request: Request) -> str | None:
-    """读取进程级上游代理配置. 引用: 本模块各网络接口. """
-    return getattr(request.app.state, "upstream_proxy", None)
+_NETWORK_ERRORS = (RuntimeError, OSError, http.NetworkError, CffiError)
 
 
 class SearchBody(BaseModel):
-    """Booru 搜索请求体. 引用: ``POST /booru/search``. """
+    """Booru 搜索请求体. 引用: ``POST /online-sources/search``. """
 
     source: str = Field(..., description="gelbooru | danbooru")
     tags: str = ""
@@ -63,7 +57,7 @@ class SearchBody(BaseModel):
 
 
 class DownloadBody(BaseModel):
-    """Booru 下载 / 取消下载请求体. 引用: ``POST /booru/download|undownload``. """
+    """Booru 下载 / 取消下载请求体. 引用: ``POST /online-sources/download|undownload``. """
 
     source: str
     id: str = Field(..., min_length=1)
@@ -72,16 +66,16 @@ class DownloadBody(BaseModel):
 
 
 @router.get("/sources")
-def booru_sources(request: Request) -> BooruSourcesResponse:
+def list_sources() -> BooruSourcesResponse:
     """列出可用图站与代理. 引用: ``booru_filter.js``. """
     return BooruSourcesResponse(
         sources=list_source_names(),
-        proxy=_proxy(request) or "",
+        proxy=os.environ.get("UPSTREAM_PROXY", "").strip(),
     )
 
 
 @router.post("/search")
-async def booru_search(request: Request, body: SearchBody) -> BooruSearchResult:
+async def search(request: Request, body: SearchBody) -> BooruSearchResult:
     """搜索图站并标记本地下载状态. 引用: ``booru_filter.js``. """
     source = body.source.strip().lower()
     src = get_source(source)
@@ -98,7 +92,7 @@ async def booru_search(request: Request, body: SearchBody) -> BooruSearchResult:
     try:
         raw_posts, has_more = await src.search(
             body.tags, page=body.page,
-            order=order, extra=body.extra or "", proxy=_proxy(request),
+            order=order, extra=body.extra or "",
         )
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
@@ -125,101 +119,33 @@ async def booru_search(request: Request, body: SearchBody) -> BooruSearchResult:
     )
 
 
-@router.get("/gelbooru-image")
-async def booru_gelbooru_image(
-    request: Request,
-    id: str = Query(..., min_length=1),
-    url: str = Query(..., min_length=8, description="搜索结果预览/大图 URL"),
-    kind: str = Query("thumb", description="thumb 或 sample"),
-) -> Response:
-    """代理 Gelbooru 图片, 供搜索结果缩略图与大图. 引用: ``booru_filter.js``. """
+@router.get("/{source}-image")
+async def proxy_image(
+    source: str,
+    url: str = Query(..., min_length=8, description="图床原图 URL"),
+    id: str = Query(None, description="Gelbooru 帖 id, 用于合法性校验"),
+    kind: str = Query("", description="thumb 或 sample"),
+) -> StreamingResponse:
+    """按来源代理图片(防盗链), 流式传输. 引用: ``booru_filter.js``. 
+    
+    图床白名单 / 防盗链头 / 超时均由各 ``SourceClient`` 自描述, 见 
+    ``SourceClient.proxy_image``. 
+    """
     try:
-        data, ctype = await fetch_gelbooru_bytes(
-            kind, id, url=url, proxy=_proxy(request)
-        )
+        src = get_source(source)
+    except ValueError:
+        raise HTTPException(404, f"未知来源: {source}") from None
+    pid = (id or "").strip()
+    if pid and ("/" in pid or "\\" in pid or ".." in pid):
+        raise HTTPException(400, "非法 id")
+    try:
+        ctype, chunks = await src.proxy_image(url, kind=kind)
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
-    except _NETWORK_ERRORS as e:
+    except http.NetworkError as e:
         raise HTTPException(502, f"图片拉取失败: {e}") from e
-    return Response(
-        content=data,
-        media_type=ctype,
-        headers={"Cache-Control": "public, max-age=86400"},
-    )
-
-
-@router.get("/bili-image")
-async def booru_image(
-    request: Request,
-    url: str = Query(..., min_length=8, description="B 站图床原图 URL"),
-) -> Response:
-    """代理 B 站图片 (防盗链), 供搜索结果缩略图与大图. 引用: ``booru_filter.js``. """
-    from urllib.parse import urlparse
-
-    u = urlparse(url)
-    if u.scheme not in ("http", "https") or not u.hostname:
-        raise HTTPException(400, "非法地址")
-    host = u.hostname.lower()
-    if host != "i0.hdslb.com" and not host.endswith(".hdslb.com"):
-        raise HTTPException(400, "非 B 站图床")
-    try:
-        data, ctype = await fetch_bili_bytes(url)
-    except (httpx.HTTPError, OSError) as e:
-        raise HTTPException(502, f"图片拉取失败: {e}") from e
-    return Response(
-        content=data,
-        media_type=ctype,
-        headers={"Cache-Control": "public, max-age=86400"},
-    )
-
-
-@router.get("/pixiv-image")
-async def booru_pixiv_image(
-    request: Request,
-    url: str = Query(..., min_length=8, description="pximg 图床原图 URL"),
-) -> Response:
-    """代理 pixiv 图片 (防盗链), 供搜索结果缩略图与大图. 引用: ``booru_filter.js``. """
-    from urllib.parse import urlparse
-
-    u = urlparse(url)
-    if u.scheme not in ("http", "https") or not u.hostname:
-        raise HTTPException(400, "非法地址")
-    host = u.hostname.lower()
-    if host != "i.pximg.net" and not host.endswith(".pximg.net"):
-        raise HTTPException(400, "非 pixiv 图床")
-    try:
-        data, ctype = await fetch_pixiv_bytes(url, proxy=_proxy(request))
-    except (httpx.HTTPError, OSError) as e:
-        raise HTTPException(502, f"图片拉取失败: {e}") from e
-    return Response(
-        content=data,
-        media_type=ctype,
-        headers={"Cache-Control": "public, max-age=86400"},
-    )
-
-
-@router.get("/x-image")
-async def booru_x_image(
-    request: Request,
-    url: str = Query(..., min_length=8, description="X 图床原图 URL"),
-) -> Response:
-    """代理 X/Twitter 图片, 供搜索结果缩略图与大图. 引用: ``booru_filter.js``. """
-    import httpx
-
-    try:
-        async with httpx.AsyncClient(
-            proxy=_proxy(request),
-            timeout=httpx.Timeout(30.0, connect=10.0),
-        ) as client:
-            resp = await client.get(url)
-            resp.raise_for_status()
-            data = resp.content
-            ctype = resp.headers.get("content-type", "image/jpeg")
-    except (httpx.HTTPError, OSError) as e:
-        raise HTTPException(502, f"图片拉取失败: {e}") from e
-    return Response(
-        content=data,
-        media_type=ctype,
+    return StreamingResponse(
+        chunks, media_type=ctype,
         headers={"Cache-Control": "public, max-age=86400"},
     )
 
@@ -235,7 +161,7 @@ async def _cancel_on_disconnect(request: Request, task: asyncio.Task) -> None:
         task: 封装的下载协程.
 
     Callers:
-        - `routes/booru.py:booru_download`
+        - `routes/online_sources.py:download`
     """
     while not task.done():
         if await request.is_disconnected():
@@ -245,7 +171,7 @@ async def _cancel_on_disconnect(request: Request, task: asyncio.Task) -> None:
 
 
 @router.post("/download")
-async def booru_download(request: Request, body: DownloadBody) -> BooruDownloadResult:
+async def download(request: Request, body: DownloadBody) -> BooruDownloadResult:
     """下载帖子到工作目录; 客户端断开时取消下载. 引用: ``booru_filter.js``. """
     source = body.source.strip().lower()
     if source not in list_source_names():
@@ -261,7 +187,6 @@ async def booru_download(request: Request, body: DownloadBody) -> BooruDownloadR
             source,
             body.id.strip(),
             out_dir,
-            proxy=_proxy(request),
             overwrite=body.overwrite,
         )
     )
@@ -276,7 +201,7 @@ async def booru_download(request: Request, body: DownloadBody) -> BooruDownloadR
         msg = str(e)
         code = 429 if "429" in msg else 502
         raise HTTPException(code, f"下载失败: {e}") from e
-    except (OSError, httpx.HTTPError, RequestException) as e:
+    except (OSError, http.NetworkError, CffiError) as e:
         raise HTTPException(502, f"下载失败: {e}") from e
     rel = local_rel_path(root, result.path)
     thumb = get_runtime(request).thumbnailer
@@ -293,7 +218,7 @@ async def booru_download(request: Request, body: DownloadBody) -> BooruDownloadR
 
 
 @router.post("/undownload")
-def booru_undownload(request: Request, body: DownloadBody) -> BooruUndownloadResult:
+def undownload(request: Request, body: DownloadBody) -> BooruUndownloadResult:
     """删除工作目录中该帖已下载文件. 引用: ``booru_filter.js``. """
     source = body.source.strip().lower()
     if source not in list_source_names():
@@ -322,23 +247,23 @@ def booru_undownload(request: Request, body: DownloadBody) -> BooruUndownloadRes
 
 
 @router.get("/batch/active")
-def booru_batch_active(request: Request) -> BooruBatchActiveResponse:
+def batch_active(request: Request) -> BatchActiveResponse:
     """查询本数据集未结束的批量下载任务. 引用: ``booru_filter.js`` 刷新重连. """
     rt = get_runtime(request)
-    job = jobs(request).find_active(dataset=rt.name, kind="booru_batch")
+    job = jobs(request).find_active(dataset=rt.name, kind="online_batch")
     if job is None:
-        return BooruBatchActiveResponse(ok=True, job_id=None, status=None)
-    return BooruBatchActiveResponse(ok=True, job_id=job.id, status=job.latest)
+        return BatchActiveResponse(ok=True, job_id=None, status=None)
+    return BatchActiveResponse(ok=True, job_id=job.id, status=job.latest)
 
 
 @router.post("/batch/start")
-async def booru_batch_start(
-    request: Request, body: BooruBatchStartBody
+async def batch_start(
+    request: Request, body: BatchStartBody
 ) -> JobSubmitResponse:
     """
     提交批量下载长任务. 
 
-    进度见 GET /api/jobs/{id}/events；刷新后用 GET /booru/batch/active 重连. 
+    进度见 GET /api/jobs/{id}/events；刷新后用 GET /online-sources/batch/active 重连. 
     引用: ``booru_filter.js``. 
     """
     source = body.source.strip().lower()
@@ -349,7 +274,7 @@ async def booru_batch_start(
 
     rt = get_runtime(request)
     mgr = jobs(request)
-    existing = mgr.find_active(dataset=rt.name, kind="booru_batch")
+    existing = mgr.find_active(dataset=rt.name, kind="online_batch")
     if existing is not None:
         raise HTTPException(409, "批量下载已在进行中")
 
@@ -358,13 +283,12 @@ async def booru_batch_start(
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
 
-    prog = BooruBatchProgress(
+    prog = BatchProgress(
         limit=body.limit,
         conn=body.conn,
         rate_rps=body.rate_rps,
         dataset=rt.name,
     )
-    proxy = _proxy(request)
     thumb = rt.thumbnailer
     tags = body.tags
     extra = body.extra or ""
@@ -377,7 +301,7 @@ async def booru_batch_start(
 
     def run(emit: EmitFn) -> None:
         """工作线程入口. 引用: ``JobManager.submit``. """
-        run_booru_batch(
+        run_batch(
             job_id=job_box["id"],
             source=source,
             tags=tags,
@@ -386,7 +310,6 @@ async def booru_batch_start(
             out_dir=out_dir,
             root=root,
             start_page=start_page,
-            proxy=proxy,
             progress=prog,
             emit=emit,
             thumbnailer=thumb,
@@ -396,7 +319,7 @@ async def booru_batch_start(
         )
 
     job_id = await mgr.submit(
-        kind="booru_batch",
+        kind="online_batch",
         group="network",
         dataset=rt.name,
         run=run,
@@ -408,10 +331,10 @@ async def booru_batch_start(
 
 
 @router.post("/batch/params")
-def booru_batch_params(request: Request, body: BooruBatchParamsBody) -> JobSubmitResponse:
+def batch_params(request: Request, body: BatchParamsBody) -> JobSubmitResponse:
     """运行中更新数量 / 连接 / 限速. 引用: ``booru_filter.js``. """
     rt = get_runtime(request)
-    job = jobs(request).find_active(dataset=rt.name, kind="booru_batch")
+    job = jobs(request).find_active(dataset=rt.name, kind="online_batch")
     if job is None:
         raise HTTPException(404, "没有进行中的批量任务")
     prog = get_progress(job.id)
@@ -427,7 +350,7 @@ def booru_batch_params(request: Request, body: BooruBatchParamsBody) -> JobSubmi
 
 
 class RegenerateCaptionsBody(BaseModel):
-    """批量重生成 caption 请求. 引用: ``POST /booru/regenerate-captions``. """
+    """批量重生成 caption 请求. 引用: ``POST /online-sources/regenerate-captions``. """
 
     dir: str = Field("main", description="工作子目录")
     anima_format: bool = Field(True, description="Anima 格式")
@@ -436,7 +359,7 @@ class RegenerateCaptionsBody(BaseModel):
 
 
 @router.post("/regenerate-captions")
-async def booru_regenerate_captions(request: Request, body: RegenerateCaptionsBody) -> dict:
+async def regenerate_captions(request: Request, body: RegenerateCaptionsBody) -> dict:
     """从 .danbooru_meta / .gelbooru_meta 批量重生成旁路 .txt. 
 
     引用: ``booru_filter.js`` 批量重生成按钮. 
@@ -457,13 +380,13 @@ async def booru_regenerate_captions(request: Request, body: RegenerateCaptionsBo
 
 
 class RefreshMetadataBody(BaseModel):
-    """刷新元数据请求. 引用: ``POST /booru/refresh-metadata``. """
+    """刷新元数据请求. 引用: ``POST /online-sources/refresh-metadata``. """
 
     dir: str = Field("main", description="工作子目录")
 
 
 @router.post("/refresh-metadata")
-async def booru_refresh_metadata(request: Request, body: RefreshMetadataBody) -> JobSubmitResponse:
+async def refresh_metadata(request: Request, body: RefreshMetadataBody) -> JobSubmitResponse:
     """
     扫描现有图片, 根据文件名 ID 重新拉取 booru 元数据(长任务). 
 
@@ -475,17 +398,15 @@ async def booru_refresh_metadata(request: Request, body: RefreshMetadataBody) ->
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
 
-    proxy = _proxy(request)
-
     def run(emit: EmitFn) -> None:
         import asyncio as _asyncio
         loop = _asyncio.new_event_loop()
         try:
-            loop.run_until_complete(_run_refresh(rt.root / body.dir if body.dir else rt.root, proxy, emit))
+            loop.run_until_complete(_run_refresh(rt.root / body.dir if body.dir else rt.root, emit))
         finally:
             loop.close()
 
-    async def _run_refresh(scan_dir: Path, proxy: str | None, emit: EmitFn) -> None:
+    async def _run_refresh(scan_dir: Path, emit: EmitFn) -> None:
         from services.core.scanner import IMAGE_EXTS as _EXTS
         from services.online_sources.framework.base import detect_source, get_source
 
@@ -510,7 +431,7 @@ async def booru_refresh_metadata(request: Request, body: RefreshMetadataBody) ->
                              message=f"[{i + 1}/{total}] {source}:{pid}"))
             try:
                 src = get_source(source)
-                await src.fetch_meta(scan_dir, pid, proxy)
+                await src.fetch_meta(scan_dir, pid)
                 stats[source] = stats.get(source, 0) + 1
             except Exception as e:
                 errors.append(f"{source}:{pid} {e}")

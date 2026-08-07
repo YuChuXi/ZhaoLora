@@ -1,27 +1,27 @@
 """gallery-dl 驱动的来源客户端基类.
 
-把 gallery-dl 共用的脚手架 (元数据拉取、下载到临时目录、媒体定位、
-增量分页缓存、旁路标签与 meta 写入) 统一到 ``GalleryDLSource``。来源
-子类只需实现来源特有的查询键、URL 构造、元数据换算与认证配置, 即可
-获得完整的 ``search`` / ``download`` / ``fetch_meta`` 能力。
+把 gallery-dl 共用的脚手架 (元数据拉取、增量分页缓存、图片直链下载、
+旁路标签与 meta 写入) 统一到 ``GalleryDLSource``。来源子类只需实现
+特有的查询键、URL 构造、元数据换算与认证配置, 即可获得完整的
+``search`` / ``download`` / ``fetch_meta`` 能力。
 
 Callers:
-    - ``services.online_sources.pixiv``
     - ``services.online_sources.x``
 """
 
 from __future__ import annotations
 
 import asyncio
-import tempfile
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from gallery_dl import config, job
+from gallery_dl import config
 from gallery_dl.extractor import find as gallery_find
 from gallery_dl.extractor.message import Message
 
+from services.online_sources.framework import http
 from services.online_sources.framework.base import SourceClient
 from services.online_sources.framework.utils import find_downloaded
 from services.models import BooruPost
@@ -52,12 +52,11 @@ class GalleryDLSource(SourceClient):
     - ``_caption_from_item(kwdict)``: 从媒体元数据提取旁路标签文本。
     - ``_auth_overrides()``: 认证相关的临时配置项(默认空)。
 
-    子类可覆盖 ``_IMG_EXT``(媒体扩展名白名单)、``_PAGE_SIZE``(每页卡片数)、
+    子类可覆盖 ``_PAGE_SIZE``(每页卡片数)、
     ``_INCR_BATCH``(单批增量条数; None 表示一次性全量拉取)。
     """
 
     # 子类可覆盖
-    _IMG_EXT: frozenset[str] = frozenset()
     _PAGE_SIZE = 40
     _INCR_BATCH: int | None = None
 
@@ -170,34 +169,32 @@ class GalleryDLSource(SourceClient):
 
         Callers:
             - `GalleryDLSource._gallery_meta_incremental`
-            - `GalleryDLSource._download_to_dir`
         """
         return []
 
     # ---- 通用脚手架 ----
 
-    def _proxy_overrides(self, proxy: str | None) -> list[tuple[tuple[str, ...], str, Any]]:
+    def _proxy_overrides(self) -> list[tuple[tuple[str, ...], str, Any]]:
         """构造上游代理的临时配置项, 供 ``config.apply`` 使用.
 
-        Args:
-            proxy: 代理地址; 空串或 None 表示直连.
+        从 ``os.environ`` 的 ``UPSTREAM_PROXY`` 环境变量读取代理地址,
+        空串或缺失表示直连.
 
         Returns:
             list[tuple]: 形如 ``[((), "proxy", 地址)]`` 的配置项列表.
 
         Callers:
             - `GalleryDLSource._gallery_meta_incremental`
-            - `GalleryDLSource._download_to_dir`
         """
-        p = (proxy or "").strip()
+        p = (os.environ.get("UPSTREAM_PROXY") or "").strip()
         return [] if not p else [((), "proxy", p)]
 
     def _gallery_meta_incremental(
         self,
         url: str,
+        *,
         cursor: str | None,
         cap: int | None,
-        proxy: str | None = None,
     ) -> tuple[list[tuple[str, dict[str, Any]]], str | None]:
         """驱动 ``extractor.items()`` 增量拉取媒体元数据.
 
@@ -209,7 +206,6 @@ class GalleryDLSource(SourceClient):
             url: 搜索页或单条媒体页 URL.
             cursor: 上次拉取的游标, None 表示从开头拉取.
             cap: 单批目标媒体条数, 达到后提前停止; None 表示全量.
-            proxy: 上游代理, None 表示直连.
 
         Returns:
             tuple[list[tuple[str, dict]], str | None]:
@@ -222,7 +218,7 @@ class GalleryDLSource(SourceClient):
             - `GalleryDLSource._gallery_meta`
             - `GalleryDLSource._ensure_cached`
         """
-        overrides = self._auth_overrides() + self._proxy_overrides(proxy)
+        overrides = self._auth_overrides() + self._proxy_overrides()
         if cursor:
             overrides.append(((), "cursor", cursor))
         with config.apply(overrides):
@@ -262,13 +258,12 @@ class GalleryDLSource(SourceClient):
         return pairs, next_cursor
 
     def _gallery_meta(
-        self, url: str, proxy: str | None = None,
+        self, url: str,
     ) -> list[tuple[str, dict[str, Any]]]:
         """用 gallery-dl 全量拉取媒体元数据.
 
         Args:
             url: 单条媒体页 URL.
-            proxy: 上游代理, None 表示直连.
 
         Returns:
             list[tuple[str, dict]]: 每个元素为 (媒体URL, 元数据字典).
@@ -279,15 +274,14 @@ class GalleryDLSource(SourceClient):
         Callers:
             - `GalleryDLSource._fetch_detail`
         """
-        pairs, _ = self._gallery_meta_incremental(url, cursor=None, cap=None, proxy=proxy)
+        pairs, _ = self._gallery_meta_incremental(url, cursor=None, cap=None)
         return pairs
 
-    def _fetch_detail(self, parts: tuple, proxy: str | None) -> list[dict[str, Any]]:
+    def _fetch_detail(self, parts: tuple) -> list[dict[str, Any]]:
         """同步拉取单条媒体(作品/推文)的元数据列表.
 
         Args:
             parts: ``_split_pid`` 拆解出的元组.
-            proxy: 上游代理, None 表示直连.
 
         Returns:
             list[dict]: 该媒体的元数据列表 (按 num 排序).
@@ -300,65 +294,9 @@ class GalleryDLSource(SourceClient):
             - `GalleryDLSource.fetch_meta`
         """
         url = self._detail_url(parts)
-        return [dict(kwdict, url=raw_url) for raw_url, kwdict in self._gallery_meta(url, proxy)]
+        return [dict(kwdict, url=raw_url) for raw_url, kwdict in self._gallery_meta(url)]
 
-    def _download_to_dir(self, url: str, tmp_dir: Path, proxy: str | None) -> None:
-        """同步用 gallery-dl 下载整条媒体到临时目录.
-
-        覆盖 filename 为 ``{num}.{extension}``, 使下载文件名带媒体序号,
-        便于按 ``num`` 定位目标图片.
-
-        Args:
-            url: 单条媒体页 URL.
-            tmp_dir: 临时下载目录.
-            proxy: 上游代理, None 表示直连.
-
-        Returns:
-            None
-
-        Raises:
-            RuntimeError: gallery-dl 下载失败时抛出.
-
-        Callers:
-            - `GalleryDLSource.download`
-        """
-        overrides = self._auth_overrides() + [
-            ((), "base-directory", str(tmp_dir)),
-            ((), "directory", ()),
-            ((), "filename", "{num}.{extension}"),
-            (("output",), "mode", False),
-        ]
-        if proxy:
-            overrides.append(((), "proxy", proxy))
-        with config.apply(overrides):
-            djob = job.DownloadJob(url)
-            djob.run()
-        if djob.status != 0:
-            raise RuntimeError(f"gallery-dl 下载失败(状态 {djob.status})")
-
-    def _pick_media(self, tmp_dir: Path, num: int) -> bytes:
-        """从下载目录读取第 num 张图片媒体内容.
-
-        Args:
-            tmp_dir: 下载目录, 内含 ``{num}.{ext}`` 命名的媒体文件.
-            num: 媒体序号.
-
-        Returns:
-            bytes: 图片内容.
-
-        Raises:
-            FileNotFoundError: 对应媒体文件缺失.
-
-        Callers:
-            - `GalleryDLSource.download`
-        """
-        for ext in self._IMG_EXT:
-            p = tmp_dir / f"{num}.{ext}"
-            if p.is_file():
-                return p.read_bytes()
-        raise FileNotFoundError(f"未找到第 {num} 张媒体")
-
-    def _ensure_cached(self, key: Any, cache: _Cache | None, proxy: str | None) -> _Cache:
+    def _ensure_cached(self, key: Any, cache: _Cache | None) -> _Cache:
         """同步拉取一批媒体并追加到缓存.
 
         从 ``cache.cursor`` 续拉 ``_INCR_BATCH`` 张图片追加到已有列表并返回
@@ -367,7 +305,6 @@ class GalleryDLSource(SourceClient):
         Args:
             key: 搜索缓存键.
             cache: 现有缓存; None 表示首次拉取.
-            proxy: 上游代理, None 表示直连.
 
         Returns:
             _Cache: 追加增量后的缓存对象.
@@ -382,7 +319,6 @@ class GalleryDLSource(SourceClient):
             self._search_url(key),
             cursor=(cache.cursor if cache else None),
             cap=self._INCR_BATCH,
-            proxy=proxy,
         )
         new_posts = [
             post
@@ -398,7 +334,6 @@ class GalleryDLSource(SourceClient):
         page: int,
         order: str,
         extra: str,
-        proxy: str | None,
     ) -> tuple[list[BooruPost], bool]:
         """按查询键搜索, 返回 (posts, has_more).
 
@@ -406,7 +341,7 @@ class GalleryDLSource(SourceClient):
         从缓存按页切片返回; 页大小固定为 ``_PAGE_SIZE``。
 
         Callers:
-            - `base.py:search_posts` / `routes/booru.py:booru_search`
+            - `base.py:search_posts` / `routes/online_sources.py:search`
         """
         key = self._search_key(tags, extra)
         if key is None:
@@ -422,7 +357,7 @@ class GalleryDLSource(SourceClient):
         async with lock:
             cache = self._cache.get(key)
             if cache is None or (cache.cursor is not None and len(cache.posts) < need):
-                cache = await asyncio.to_thread(self._ensure_cached, key, cache, proxy)
+                cache = await asyncio.to_thread(self._ensure_cached, key, cache)
                 self._cache[key] = cache
 
         posts = cache.posts
@@ -435,7 +370,6 @@ class GalleryDLSource(SourceClient):
         self,
         pid: str,
         out_dir: Path,
-        proxy: str | None,
         *,
         overwrite: bool = False,
         anima_format: bool = True,
@@ -443,6 +377,9 @@ class GalleryDLSource(SourceClient):
         keep_underscores: bool = False,
     ) -> dict:
         """下载指定媒体为 PNG, 并写旁路标签与 meta.
+
+        gallery-dl extractor 仅用于获取元数据与媒体 URL, 图片字节通过
+        ``http.get_bytes`` 直链下载, 不经过临时目录。
 
         Callers:
             - `base.py:SourceClient.download` (经 ``media.download_post`` 委托)
@@ -464,15 +401,15 @@ class GalleryDLSource(SourceClient):
                 "tags_path": str(tags_path),
             }
 
-        items = await asyncio.to_thread(self._fetch_detail, parts, proxy)
+        items = await asyncio.to_thread(self._fetch_detail, parts)
         target = next((it for it in items if it.get("num") == num), None)
         if target is None:
             raise ValueError(f"pid {pid} 无第 {num} 张媒体")
 
-        with tempfile.TemporaryDirectory() as td:
-            tmp_dir = Path(td)
-            await asyncio.to_thread(self._download_to_dir, self._detail_url(parts), tmp_dir, proxy)
-            data = await asyncio.to_thread(self._pick_media, tmp_dir, num)
+        image_url = str(target.get("url") or "")
+        if not image_url:
+            raise ValueError(f"pid {pid} 无媒体 URL")
+        data, _ = await http.get_bytes(image_url)
 
         self._save_png(data, image_path)
         self._clean_old_files(out_dir, pid, image_path)
@@ -483,7 +420,7 @@ class GalleryDLSource(SourceClient):
         self._write_meta(
             out_dir,
             pid,
-            BooruPost(source=self.name, id=pid, file_url=str(target.get("url") or ""), tags=caption),
+            BooruPost(source=self.name, id=pid, file_url=image_url, tags=caption),
         )
         return {
             "path": str(image_path),
@@ -492,15 +429,15 @@ class GalleryDLSource(SourceClient):
             "tags_path": str(tags_path),
         }
 
-    async def fetch_meta(self, out_dir: Path, pid: str, proxy: str | None) -> None:
+    async def fetch_meta(self, out_dir: Path, pid: str) -> None:
         """按 pid 拉取媒体元数据并写入磁盘.
 
         Callers:
-            - `routes/booru.py:_run_refresh`
+            - `routes/online_sources.py:_run_refresh`
         """
         parts = self._split_pid(pid)
         num = parts[-1]
-        items = await asyncio.to_thread(self._fetch_detail, parts, proxy)
+        items = await asyncio.to_thread(self._fetch_detail, parts)
         target = next((it for it in items if it.get("num") == num), None)
         if target is None:
             raise ValueError(f"pid {pid} 无第 {num} 张媒体")

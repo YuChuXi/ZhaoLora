@@ -14,7 +14,7 @@
 
 Callers:
     - ``services.online_sources.__init__`` (注册)
-    - ``routes.booru.booru_pixiv_image`` (图片代理)
+    - ``routes.online_sources.booru_pixiv_image`` (图片代理)
 """
 
 from __future__ import annotations
@@ -24,8 +24,7 @@ import os
 from pathlib import Path
 from typing import Any
 
-import httpx
-
+from services.online_sources.framework import http
 from services.online_sources.framework.base import SourceClient
 from services.online_sources.framework.utils import find_downloaded
 from services.models import BooruPost
@@ -96,7 +95,7 @@ def _request_headers() -> dict[str, str]:
     return headers
 
 
-async def fetch_pixiv_bytes(url: str, proxy: str | None) -> tuple[bytes, str]:
+async def fetch_pixiv_bytes(url: str) -> tuple[bytes, str]:
     """带 pixiv Referer 拉取 pximg 图片字节与 Content-Type。
 
     供缩略图/大图代理与下载共用, 规避 pximg 防盗链 (需 ``Referer:
@@ -105,34 +104,27 @@ async def fetch_pixiv_bytes(url: str, proxy: str | None) -> tuple[bytes, str]:
 
     Args:
         url: pximg 图床 URL。
-        proxy: 上游代理, 可为 None。
 
     Returns:
         tuple[bytes, str]: ``(字节内容, Content-Type)``。
 
     Raises:
-        httpx.HTTPError: 网络或 HTTP 状态错误 (重试后仍失败)。
+        http.NetworkError: 网络或 HTTP 状态错误 (重试后仍失败)。
 
     Callers:
-        - ``routes.booru.booru_pixiv_image``
+        - ``routes.online_sources.booru_pixiv_image``
     """
-    last_exc: httpx.HTTPError | None = None
+    last_exc: http.NetworkError | None = None
     for attempt in range(1, 4):
         try:
-            async with httpx.AsyncClient(
-                headers=_IMG_HEADERS,
-                timeout=httpx.Timeout(120.0, connect=10.0),
-                proxy=proxy,
-            ) as client:
-                resp = await client.get(url)
-                resp.raise_for_status()
-            ctype = (resp.headers.get("content-type") or "image/jpeg").split(";")[0].strip()
-            return resp.content, ctype
-        except httpx.HTTPError as exc:
+            return await http.get_bytes(
+                url, headers=_IMG_HEADERS, timeout=120.0,
+            )
+        except http.NetworkError as exc:
             last_exc = exc
             if attempt < 3:
                 await asyncio.sleep(1.5 * (2 ** (attempt - 1)))
-    raise last_exc or httpx.HTTPError(f"图片拉取失败: {url}")
+    raise last_exc or http.NetworkError(f"图片拉取失败: {url}")
 
 
 class PixivSource(SourceClient):
@@ -146,6 +138,8 @@ class PixivSource(SourceClient):
     prefix = "p"
     order_tags: dict[str, str] = {}
     valid_orders: tuple[str, ...] = ()
+    image_hosts = ("pximg.net",)
+    image_referer = "https://www.pixiv.net/"
 
     def __init__(self) -> None:
         """初始化每查询缓存与并发锁。"""
@@ -177,18 +171,17 @@ class PixivSource(SourceClient):
 
     # ---- web AJAX API ----
 
-    async def _request(self, url: str, proxy: str | None) -> dict[str, Any]:
+    async def _request(self, url: str) -> dict[str, Any]:
         """调用 pixiv web AJAX API, 返回 JSON 响应体。
 
         Args:
             url: API 请求 URL。
-            proxy: 上游代理。
 
         Returns:
             dict: API 响应 JSON。
 
         Raises:
-            httpx.HTTPError: HTTP 错误。
+            http.NetworkError: HTTP 错误。
             RuntimeError: API 返回 ``error: true``。
 
         Callers:
@@ -197,13 +190,8 @@ class PixivSource(SourceClient):
             - `PixivSource._fetch_pages`
             - `PixivSource._fetch_detail`
         """
-        async with httpx.AsyncClient(
-            headers=_request_headers(),
-            timeout=httpx.Timeout(30.0, connect=10.0),
-            proxy=proxy,
-        ) as client:
-            resp = await client.get(url)
-            resp.raise_for_status()
+        resp = await http.request(url, headers=_request_headers())
+        resp.raise_for_status()
         data = resp.json()
         if data.get("error"):
             raise RuntimeError(data.get("message", "pixiv API 错误"))
@@ -267,7 +255,7 @@ class PixivSource(SourceClient):
 
     # ---- 搜索 ----
 
-    async def _search_user(self, user_id: str, proxy: str | None) -> list[BooruPost]:
+    async def _search_user(self, user_id: str) -> list[BooruPost]:
         """拉取指定画师的全部作品, 展开为扁平卡片列表。
 
         分两步: (1) 用 ``profile/all`` 获取全部作品 ID, (2) 逐幅
@@ -276,7 +264,6 @@ class PixivSource(SourceClient):
 
         Args:
             user_id: 画师 ID。
-            proxy: 上游代理。
 
         Returns:
             list[BooruPost]: 按 ID 降序排列的卡片列表。
@@ -286,7 +273,6 @@ class PixivSource(SourceClient):
         """
         data = await self._request(
             f"https://www.pixiv.net/ajax/user/{user_id}/profile/all",
-            proxy,
         )
         body = data.get("body", {})
         illust_ids = [int(k) for k in body.get("illusts", {})]
@@ -301,7 +287,6 @@ class PixivSource(SourceClient):
             async with sem:
                 detail = await self._request(
                     f"https://www.pixiv.net/ajax/illust/{iid}",
-                    proxy,
                 )
             item = detail.get("body", {})
             if item.get("illustType") not in _IMG_TYPES:
@@ -315,7 +300,7 @@ class PixivSource(SourceClient):
         return posts
 
     async def _search_tag_page(
-        self, tag: str, page: int, proxy: str | None,
+        self, tag: str, page: int,
     ) -> tuple[list[BooruPost], int]:
         """拉取一页标签搜索结果, 展开为扁平卡片列表。
 
@@ -325,7 +310,6 @@ class PixivSource(SourceClient):
         Args:
             tag: 标签词。
             page: 页码 (1-based)。
-            proxy: 上游代理。
 
         Returns:
             tuple[list[BooruPost], int]: (卡片列表, 总结果数)。
@@ -337,7 +321,6 @@ class PixivSource(SourceClient):
             f"https://www.pixiv.net/ajax/search/illustrations/{tag}"
             f"?word={tag}&order=date_d&mode=all&p={page}"
             f"&s_mode=s_tag_full&type=illust_and_ugoira&lang=zh",
-            proxy,
         )
         illust = data.get("body", {}).get("illust", {})
         items = illust.get("data", [])
@@ -359,7 +342,6 @@ class PixivSource(SourceClient):
         page: int,
         order: str,
         extra: str,
-        proxy: str | None,
     ) -> tuple[list[BooruPost], bool]:
         """按查询键搜索, 返回 (posts, has_more)。
 
@@ -367,7 +349,7 @@ class PixivSource(SourceClient):
         页大小固定为 ``_PAGE_SIZE``。
 
         Callers:
-            - ``routes/booru.py:booru_search``
+            - ``routes/online_sources.py:search``
         """
         f = self.parse_query(tags, extra)
         value = f["value"]
@@ -385,9 +367,9 @@ class PixivSource(SourceClient):
             cache = self._cache.get(key)
             if cache is None:
                 if f["mode"] == "user":
-                    cache = await self._search_user(value, proxy)
+                    cache = await self._search_user(value)
                 else:
-                    cache, _ = await self._search_tag_page(value, 1, proxy)
+                    cache, _ = await self._search_tag_page(value, 1)
                 self._cache[key] = cache
 
         posts = cache
@@ -398,12 +380,11 @@ class PixivSource(SourceClient):
 
     # ---- 下载 / 元数据 ----
 
-    async def _fetch_pages(self, illust_id: str, proxy: str | None) -> list[dict]:
+    async def _fetch_pages(self, illust_id: str) -> list[dict]:
         """获取作品的所有分页 URL。
 
         Args:
             illust_id: 作品 ID。
-            proxy: 上游代理。
 
         Returns:
             list[dict]: 分页列表, 每项含 ``urls.original``。
@@ -413,16 +394,14 @@ class PixivSource(SourceClient):
         """
         data = await self._request(
             f"https://www.pixiv.net/ajax/illust/{illust_id}/pages",
-            proxy,
         )
         return data.get("body", [])
 
-    async def _fetch_detail(self, illust_id: str, proxy: str | None) -> dict:
+    async def _fetch_detail(self, illust_id: str) -> dict:
         """获取作品详情 (标签、尺寸等)。
 
         Args:
             illust_id: 作品 ID。
-            proxy: 上游代理。
 
         Returns:
             dict: 作品详情。
@@ -433,7 +412,6 @@ class PixivSource(SourceClient):
         """
         data = await self._request(
             f"https://www.pixiv.net/ajax/illust/{illust_id}",
-            proxy,
         )
         return data.get("body", {})
 
@@ -441,7 +419,6 @@ class PixivSource(SourceClient):
         self,
         pid: str,
         out_dir: Path,
-        proxy: str | None,
         *,
         overwrite: bool = False,
         anima_format: bool = True,
@@ -469,17 +446,17 @@ class PixivSource(SourceClient):
                 "tags_path": str(tags_path),
             }
 
-        pages = await self._fetch_pages(illust_id, proxy)
+        pages = await self._fetch_pages(illust_id)
         if num >= len(pages):
             raise ValueError(f"pid {pid} 无第 {num} 张媒体")
         target_url = pages[num].get("urls", {}).get("original", "")
 
-        data, _ = await fetch_pixiv_bytes(target_url, proxy)
+        data, _ = await fetch_pixiv_bytes(target_url)
 
         self._save_png(data, image_path)
         self._clean_old_files(out_dir, pid, image_path)
 
-        detail = await self._fetch_detail(illust_id, proxy)
+        detail = await self._fetch_detail(illust_id)
         caption = self._extract_tags(detail)
         if include_meta_tags:
             caption = (caption + (" " + self.name) if caption else self.name).strip()
@@ -496,14 +473,14 @@ class PixivSource(SourceClient):
             "tags_path": str(tags_path),
         }
 
-    async def fetch_meta(self, out_dir: Path, pid: str, proxy: str | None) -> None:
+    async def fetch_meta(self, out_dir: Path, pid: str) -> None:
         """按 pid 拉取媒体元数据并写入磁盘。
 
         Callers:
-            - ``routes/booru.py:_run_refresh``
+            - ``routes/online_sources.py:_run_refresh``
         """
         illust_id, num = self._split_pid(pid)
-        detail = await self._fetch_detail(illust_id, proxy)
+        detail = await self._fetch_detail(illust_id)
         page_count = detail.get("pageCount", 1)
         if num >= page_count:
             raise ValueError(f"pid {pid} 无第 {num} 张媒体")
