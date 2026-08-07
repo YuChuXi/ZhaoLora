@@ -1,4 +1,4 @@
-"""X(Twitter) 来源客户端: 用 gallery-dl 驱动, 按用户名拉取其推文图片.
+"""X(Twitter) 来源适配器: 用 gallery-dl 驱动, 按用户名拉取其推文图片.
 
 ``tags`` 参数承载 X 用户名, ``extra`` 暂不支持筛选。搜索采用**真增量**:
 经 ``GalleryDLSource`` 每批消费到 ``_INCR_BATCH`` 张图片后 ``break`` 并保存
@@ -9,17 +9,16 @@
 ``num`` 张转为 PNG 落盘。
 
 访问 X 需要登录 cookies, 从 ``os.environ["X_COOKIES"]`` 读取 (Netscape
-格式, 由 ``server.py:_load_env_config`` 解析为绝对路径后写入).
+格式, 由 ``server.py`` 解析为绝对路径后写入).
 
 Callers:
-    - ``services.online_sources.__init__`` (注册)
+    - ``x/__init__.py`` (导出)
 """
 
 from __future__ import annotations
 
 import os
 import re
-from pathlib import Path
 from typing import Any
 
 from services.online_sources.framework.gallerydl import GalleryDLSource

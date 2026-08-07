@@ -29,7 +29,7 @@ from services.online_sources.danbooru import DanbooruSource
 from services.online_sources.gelbooru import GelbooruSource
 from services.online_sources.bilibili import BilibiliSource
 from services.online_sources.x import XSource
-from services.online_sources.pixiv import PixivSource, fetch_pixiv_bytes
+from services.online_sources.pixiv import PixivSource, fetch_bytes as fetch_pixiv_bytes
 from services.online_sources.framework.utils import is_downloaded
 
 # 注册内置来源

@@ -5,8 +5,8 @@
 避免各来源各自混用不同的 HTTP 栈。
 
 Callers:
-    - ``online_sources.gelbooru``
-    - ``online_sources.pixiv``
+    - ``online_sources.gelbooru.source``
+    - ``online_sources.pixiv.source``
     - ``online_sources.bilibili``
     - ``routes.online_sources``
 """
@@ -67,7 +67,7 @@ def ext_from_url(url: str, fallback: str = ".jpg") -> str:
     """从 URL 提取图片扩展名, 未知则回退.
 
     Callers:
-        - ``online_sources.gelbooru``
+        - ``online_sources.gelbooru.source``
     """
     path = url.split("?", 1)[0]
     suf = Path(path).suffix.lower()
@@ -122,7 +122,7 @@ async def request(
         NetworkError: 网络错误。
 
     Callers:
-        - ``online_sources.gelbooru`` / ``online_sources.pixiv`` / ``online_sources.bilibili``
+        - ``online_sources.gelbooru.source`` / ``online_sources.pixiv.source`` / ``online_sources.bilibili``
     """
     return await _client(proxy).get(
         url, headers=headers, params=params,
@@ -153,7 +153,7 @@ async def get_bytes(
         NetworkError: 网络或 HTTP 状态错误。
 
     Callers:
-        - ``online_sources.pixiv`` / ``online_sources.bilibili``
+        - ``online_sources.pixiv.source`` / ``online_sources.bilibili``
     """
     h = headers or make_headers(referer=referer)
     resp = await request(url, headers=h, proxy=proxy, timeout=timeout)
