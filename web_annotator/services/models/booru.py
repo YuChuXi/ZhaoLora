@@ -85,6 +85,7 @@ class BooruSearchResult(BaseModel):
     page: int
     count: int
     has_more: bool
+    session: str = ""  # 会话式来源的续拉 token (页码式来源为空)
     posts: list[BooruPost]
 
 

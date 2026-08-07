@@ -44,6 +44,8 @@ class SourceClient(ABC):
     prefix: str
     order_tags: dict[str, str] = {}
     valid_orders: tuple[str, ...] = ()
+    # 游标式来源用会话续拉 (Bilibili/X), 无页码概念; 走 search_session
+    session_based: bool = False
 
     @abstractmethod
     async def fetch_meta(self, out_dir: Path, pid: str) -> None:

@@ -53,6 +53,7 @@ class SearchBody(BaseModel):
     source: str = Field(..., description="gelbooru | danbooru")
     tags: str = ""
     page: int = Field(1, ge=1, le=10000)
+    session: str = Field("", description="会话式来源的续拉 token; 新搜索留空")
     order: str = Field("", description="空 | score | id | id_asc")
     extra: str = Field("", description="额外元标签, 如 rating:g width:>=1920")
     dir: str = Field("main", description="用于标记已下载的工作子目录")
@@ -94,14 +95,25 @@ async def search(request: Request, body: SearchBody) -> BooruSearchResult:
         raise HTTPException(400, str(e)) from e
 
     try:
-        raw_posts, has_more = await search_posts(
-            source, body.tags, page=body.page,
-            order=order, extra=body.extra or "",
-        )
+        if src.session_based:
+            raw_posts, has_more, session = await src.search_session(
+                body.tags, body.session or "", order, body.extra or "",
+            )
+        else:
+            raw_posts, has_more = await search_posts(
+                source, body.tags, page=body.page,
+                order=order, extra=body.extra or "",
+            )
+            session = ""
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
     except _NETWORK_ERRORS as e:
         raise HTTPException(502, f"搜索失败: {e}") from e
+
+    if src.session_based:
+        for post in raw_posts:
+            post.stem = src.file_stem(post.id)
+            post.filename = f"{post.stem}.png"
 
     posts: list[BooruPost] = []
     for post in raw_posts:
@@ -118,6 +130,7 @@ async def search(request: Request, body: SearchBody) -> BooruSearchResult:
         page=body.page,
         count=len(posts),
         has_more=has_more,
+        session=session,
         posts=posts,
     )
 

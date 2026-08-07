@@ -502,6 +502,7 @@ var BooruFilter = (function () {
   var _page = 1;
   var _pageLo = 1;
   var _pageHi = 1;
+  var _session = ''; // 会话式来源 (bilibili/x) 的续拉 token
   var _source = 'gelbooru';
   var _loading = false;
   var _hasMore = false;
@@ -876,7 +877,7 @@ var BooruFilter = (function () {
     var remote = isRemote();
     if (start) start.disabled = !!noJump();
     if (start && remote && _page >= 1 && document.activeElement !== start) {
-      start.value = String(start.disabled ? 1 : _page);
+      start.value = String(_page);
     }
     if (prev) {
       prev.disabled = !remote || _loading || !_hasPrev;
@@ -890,6 +891,7 @@ var BooruFilter = (function () {
 
   /** 视口靠上卡片 → 当前页 */
   function syncPageFromScroll() {
+    if (noJump()) return; // 游标式来源页码无跳页语义
     if (!isRemote() || !_posts.length) return;
     var start = document.getElementById('booru-start-page');
     if (start && document.activeElement === start) return;
@@ -921,6 +923,7 @@ var BooruFilter = (function () {
   function scrollToPage(page) {
     var p = parseInt(page, 10);
     if (!(p > 0)) return;
+    if (noJump()) return; // 游标式来源不支持跳页
     _page = p;
     var startEl = document.getElementById('booru-start-page');
     if (startEl) startEl.value = String(p);
@@ -1888,6 +1891,7 @@ var BooruFilter = (function () {
       _pageLo = start;
       _pageHi = start;
       _page = start;
+      _session = '';
       _posts = [];
       _selected = {};
       _status = {};
@@ -1898,7 +1902,7 @@ var BooruFilter = (function () {
       window.scrollTo(0, 0);
     }
     var fetchPage = isUp ? _pageLo : _pageHi;
-    _page = fetchPage;
+    if (!noJump()) _page = fetchPage;
     saveUiState();
     _loading = true;
     updatePageStatus();
@@ -1908,17 +1912,19 @@ var BooruFilter = (function () {
     var autoNext = false;
     var autoPrev = false;
     try {
+      var pbody = {
+        source: _source,
+        tags: tags,
+        extra: extra,
+        order: order,
+        dir: destDir(),
+      };
+      if (noJump()) pbody.session = isReset ? '' : _session;
+      else pbody.page = fetchPage;
       var res = await fetch(API.apiPath('/online-sources/search'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          source: _source,
-          tags: tags,
-          extra: extra,
-          order: order,
-          page: fetchPage,
-          dir: destDir(),
-        }),
+        body: JSON.stringify(pbody),
       });
       if (!res.ok) {
         var err = await res.text();
@@ -1926,9 +1932,13 @@ var BooruFilter = (function () {
       }
       var data = await res.json();
       var list = data.posts || [];
-      for (var pi = 0; pi < list.length; pi++) list[pi].page = fetchPage;
-      if (!isUp) {
+      if (noJump()) {
+        _session = data.session || '';
         _hasMore = !!data.has_more;
+        for (var pi = 0; pi < list.length; pi++) list[pi].page = _page;
+      } else {
+        for (var pi = 0; pi < list.length; pi++) list[pi].page = fetchPage;
+        if (!isUp) _hasMore = !!data.has_more;
       }
 
       var fresh = list;
@@ -1992,13 +2002,14 @@ var BooruFilter = (function () {
   function loadMore(up) {
     if (_loading) return;
     if (up) {
+      if (noJump()) return; // 游标式来源仅向下会话续拉
       if (!_hasPrev || _pageLo <= 1) return;
       _pageLo -= 1;
       _page = _pageLo;
     } else {
       if (!_hasMore) return;
-      _pageHi += 1;
-      _page = _pageHi;
+      if (noJump()) _page += 1;
+      else { _pageHi += 1; _page = _pageHi; }
     }
     search(up ? 'up' : 'down').catch(function (e) {
       if (up) { _pageLo += 1; _page = _pageLo; }
@@ -2016,6 +2027,7 @@ var BooruFilter = (function () {
     applyForm(loadUiState());
     _source = mode();
     _posts = [];
+    _session = '';
     var start = startPageFromInput();
     _page = start;
     _pageLo = start;

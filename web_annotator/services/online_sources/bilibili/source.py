@@ -11,22 +11,15 @@ Callers:
 
 from __future__ import annotations
 
-import asyncio
 from datetime import date, datetime
 from pathlib import Path
-from typing import Any
 
 from services.online_sources.framework.base import SourceClient
 from services.online_sources.bilibili.client import fetch_bili_bytes, fetch_dynamics, resolve_image
 from services.online_sources.bilibili.models import DynamicRecord
+from services.online_sources.framework.session import SessionStore
 from services.online_sources.framework.utils import find_downloaded
 from services.models import BooruPost
-
-# 游标分页状态: 键为 (uid, type, after, before, keyword),
-# 值为 {offsets: 各页请求游标, pages: 各页展开的帖子, has_more: 上游是否还有}
-_listing_state: dict[tuple[Any, ...], dict[str, Any]] = {}
-_listing_locks: dict[tuple[Any, ...], asyncio.Lock] = {}
-_state_guard = asyncio.Lock()
 
 # 动态类型 -> 筛选页展示语义
 _TYPE_MAP = {
@@ -50,8 +43,14 @@ class BilibiliSource(SourceClient):
     prefix = "bi"
     order_tags: dict[str, str] = {}
     valid_orders: tuple[str, ...] = ()
+    session_based = True
     image_hosts = ("hdslb.com",)
     image_referer = "https://www.bilibili.com/"
+
+    def __init__(self) -> None:
+        """初始化会话存储. """
+        super().__init__()
+        self._sessions = SessionStore()
 
     def parse_query(self, tags: str, extra: str) -> dict[str, str]:
         """解析 B 站查询串: ``tags`` 为 UID, ``extra`` 为 ``type:``/``after:``/``before:``/``keyword:``.
@@ -148,49 +147,52 @@ class BilibiliSource(SourceClient):
         order: str,
         extra: str,
     ) -> tuple[list[BooruPost], bool]:
-        """按 UID 与筛选条件搜索动态图片, 返回 (posts, has_more).
-
-        B 站 feed 是游标分页, 页大小由接口决定 (约 20 条动态)。按需拉取:
-        ``page=N`` 时若上游页尚未拉够, 才从游标继续拉取, 返回第 N 页动态
-        展开的图片; 已拉取的页缓存复用。
+        """游标式来源不支持页码式搜索; 使用 ``search_session``. 实现 ``base.SourceClient.search``.
 
         Callers:
-            - `base.py:search_posts` / `routes/online_sources.py:search`
+            - `base.py:search_posts` (仅页码式来源触发)
+        """
+        raise NotImplementedError("bilibili 为会话式来源, 请使用 search_session")
+
+    async def search_session(
+        self,
+        tags: str,
+        session: str,
+        order: str,
+        extra: str,
+    ) -> tuple[list[BooruPost], bool, str]:
+        """按会话续拉下一批动态图片, 返回 (posts, has_more, session_token).
+
+        B 站 feed 是游标分页, 会话持有动态游标; 每次调用从当前游标拉取
+        下一批动态并过滤展开, 直到凑出非空批次或上游耗尽。发起新搜索
+        (session 为空或查询键变化) 或会话超过一天无翻页时由 ``SessionStore``
+        重建会话。
+
+        Callers:
+            - `routes/online_sources.py:search`
         """
         f = self.parse_query(tags, extra)
         uid = int(f["uid"])
-        key = (uid, f["type"], f["after"], f["before"], f["keyword"])
-
-        async with _state_guard:
-            st = _listing_state.get(key)
-            if st is None:
-                st = {"offsets": [""], "pages": [], "has_more": True}
-                _listing_state[key] = st
-            lock = _listing_locks.get(key)
-            if lock is None:
-                lock = asyncio.Lock()
-                _listing_locks[key] = lock
-
-        async with lock:
-            while len(st["pages"]) < page and st["has_more"]:
+        query_key = (uid, f["type"], f["after"], f["before"], f["keyword"])
+        sess = await self._sessions.acquire(session, self.name, query_key)
+        async with sess.lock:
+            st = sess.state
+            if not st:
+                st.update(offsets=[""], has_more=True)
+            page_posts: list[BooruPost] = []
+            while st["has_more"] and not page_posts:
                 records, next_offset, has_more = await fetch_dynamics(
                     uid, offset=st["offsets"][-1]
                 )
+                st["offsets"].append(next_offset)
+                st["has_more"] = has_more
                 page_posts = [
                     post
                     for record in records
                     if self._matches(record, f)
                     for post in self._expand(record)
                 ]
-                st["pages"].append(page_posts)
-                st["offsets"].append(next_offset)
-                st["has_more"] = has_more
-
-        idx = min(page - 1, len(st["pages"]) - 1)
-        slice_posts = st["pages"][idx] if idx >= 0 else []
-        has_more = idx + 1 < len(st["pages"]) or st["has_more"]
-
-        return slice_posts, has_more
+        return page_posts, st["has_more"], sess.token
 
     def _split_pid(self, pid: str) -> tuple[str, int]:
         """将 ``{动态ID}_{图片序号}`` 拆为 (动态ID, 序号).

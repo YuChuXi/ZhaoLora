@@ -23,8 +23,13 @@ from gallery_dl.extractor.message import Message
 
 from services.online_sources.framework import http
 from services.online_sources.framework.base import SourceClient
+from services.online_sources.framework.session import SessionStore
 from services.online_sources.framework.utils import find_downloaded
 from services.models import BooruPost
+
+
+# 会话游标的"未开始"哨兵 (区别于已拉取完毕的 None)
+_NOT_STARTED: Any = object()
 
 
 @dataclass
@@ -58,12 +63,11 @@ class GalleryDLSource(SourceClient):
 
     # 子类可覆盖
     _INCR_BATCH: int | None = None
+    session_based = True
 
     def __init__(self) -> None:
-        """初始化来源级的缓存、锁与并发保护。"""
-        self._cache: dict[Any, _Cache] = {}
-        self._locks: dict[Any, asyncio.Lock] = {}
-        self._guard = asyncio.Lock()
+        """初始化来源级的会话存储。"""
+        self._sessions = SessionStore()
 
     # ---- 子类必须实现的钩子 ----
 
@@ -334,37 +338,60 @@ class GalleryDLSource(SourceClient):
         order: str,
         extra: str,
     ) -> tuple[list[BooruPost], bool]:
-        """按查询键搜索, 返回 (posts, has_more).
-
-        每页对应一次增量拉取 (``_INCR_BATCH`` 条), 拉到多少返回多少:
-        增量来源 (``_INCR_BATCH`` 非 None) 按批续拉直到覆盖目标页, 全量来源
-        (``_INCR_BATCH`` 为 None) 一次性拉取并以单页返回全部。
+        """游标式来源不支持页码式搜索; 使用 ``search_session``. 实现 ``base.SourceClient.search``.
 
         Callers:
-            - `base.py:search_posts` / `routes/online_sources.py:search`
+            - `base.py:search_posts` (仅页码式来源触发)
+        """
+        raise NotImplementedError("gallerydl 为会话式来源, 请使用 search_session")
+
+    async def search_session(
+        self,
+        tags: str,
+        session: str,
+        order: str,
+        extra: str,
+    ) -> tuple[list[BooruPost], bool, str]:
+        """按会话续拉下一批媒体, 返回 (posts, has_more, session_token).
+
+        会话持有已拉缓存与续拉游标, 每次调用从游标续拉一批并返回该批新增
+        卡片 (``_INCR_BATCH`` 条; None 时全量拉取一次返回全部)。末端页仅向下:
+        已返回的卡片由前端累计, 不再重发。发起新搜索 (session 为空或查询键
+        变化) 或会话超过一天无翻页时由 ``SessionStore`` 重建会话。
+
+        Callers:
+            - `routes/online_sources.py:search`
         """
         key = self._search_key(tags, extra)
         if key is None:
-            return [], False
+            return [], False, ""
+        sess = await self._sessions.acquire(session, self.name, key)
+        async with sess.lock:
+            st = sess.state
+            if not st:
+                st.update(posts=[], cursor=_NOT_STARTED, returned=0)
+            if st["cursor"] is _NOT_STARTED:
+                cache = await asyncio.to_thread(self._ensure_cached, key, None)
+                st["posts"] = cache.posts
+                st["cursor"] = cache.cursor
+            elif st["cursor"] is not None:
+                cache = await asyncio.to_thread(
+                    self._ensure_cached,
+                    key,
+                    _Cache(posts=st["posts"], cursor=st["cursor"]),
+                )
+                st["posts"] = cache.posts
+                st["cursor"] = cache.cursor
 
-        async with self._guard:
-            lock = self._locks.get(key)
-            if lock is None:
-                lock = asyncio.Lock()
-                self._locks[key] = lock
-
-        batch = self._INCR_BATCH
-        async with lock:
-            cache = self._cache.get(key)
-            if cache is None or (batch and cache.cursor is not None and len(cache.posts) < page * batch):
-                cache = await asyncio.to_thread(self._ensure_cached, key, cache)
-                self._cache[key] = cache
-
-        posts = cache.posts
-        if not batch:
-            return posts, False
-        start = (page - 1) * batch
-        return posts[start : start + batch], cache.cursor is not None or start + batch < len(posts)
+            batch = self._INCR_BATCH
+            if batch:
+                new_posts = st["posts"][st["returned"] : st["returned"] + batch]
+                st["returned"] += len(new_posts)
+            else:
+                new_posts = st["posts"][st["returned"]:]
+                st["returned"] = len(st["posts"])
+        has_more = st["cursor"] is not None or st["returned"] < len(st["posts"])
+        return new_posts, has_more, sess.token
 
     async def download(
         self,

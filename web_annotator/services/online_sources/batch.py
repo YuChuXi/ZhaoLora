@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from services.online_sources.framework.base import search_posts
+from services.online_sources.framework.base import get_source, search_posts
 from services.online_sources.framework.media import download_post, local_rel_path
 from services.online_sources.framework.utils import is_downloaded
 from services.models import JobSnapshot
@@ -177,6 +177,7 @@ async def _run_async(
     push("准备中…")
 
     page = max(1, int(start_page))
+    session_token = ""  # 会话式来源的续拉 token; 首轮空表示从头拉取
     empty_streak = 0
     has_more_pages = True
     buffer: list[Any] = []
@@ -211,17 +212,24 @@ async def _run_async(
 
     async def fill_buffer() -> None:
         """向后翻一页并加入未下载候选. 引用: ``next_post``. """
-        nonlocal page, empty_streak, has_more_pages
+        nonlocal page, session_token, empty_streak, has_more_pages
         if not has_more_pages:
             return
-        posts, has_more = await search_posts(
-            source,
-            tags,
-            page=page,
-            order=order,
-            extra=extra,
-        )
-        page += 1
+        src = get_source(source)
+        if src.session_based:
+            # 会话式来源: 从已持有会话续拉; 首轮 token 为空即从头拉取
+            posts, has_more, session_token = await src.search_session(
+                tags, session_token, order, extra,
+            )
+        else:
+            posts, has_more = await search_posts(
+                source,
+                tags,
+                page=page,
+                order=order,
+                extra=extra,
+            )
+            page += 1
         if not has_more:
             has_more_pages = False
         if not posts:
