@@ -18,17 +18,17 @@ from services.online_sources.framework.base import (
 )
 from services.online_sources.framework.utils import (
     find_downloaded,
-    find_existing,
-    stem_candidates,
 )
 
 
 def remove_download(
     source: str,
-    post_id: str,
+    filename: str,
     out_dir: Path,
 ) -> BooruUndownloadResult:
     """取消选中时删除已下载的图、旁路 txt 与 meta.
+
+    以完整文件名(如 ``d12345.png``)为参数, 由文件名反推 stem 与 pid, 无需探测.
 
     Callers:
         - ``routes.online_sources.booru_undownload``
@@ -36,22 +36,23 @@ def remove_download(
     source = source.strip().lower()
     if source not in SOURCES:
         raise ValueError(f"不支持的源: {source}")
-    pid = str(post_id).strip()
     src = get_source(source)
     prefix = src.prefix
-    if prefix and pid.startswith(prefix) and pid[len(prefix):].isdigit():
-        pid = pid[len(prefix):]
+
+    img = out_dir / filename
+    stem = img.stem  # 去掉后缀, 如 d12345
+    pid = stem[len(prefix):] if prefix and stem.startswith(prefix) else stem
 
     removed: list[str] = []
-    for stem in stem_candidates(pid, file_stem_fn=src.file_stem):
-        img = find_existing(out_dir, stem)
-        if img is not None:
-            img.unlink()
-            removed.append(img.name)
-        tags_path = out_dir / f"{stem}.txt"
-        if tags_path.is_file():
-            tags_path.unlink()
-            removed.append(tags_path.name)
+    images: list[str] = []  # 被删图片文件名, 供缩略图清理
+    if img.is_file():
+        img.unlink()
+        removed.append(img.name)
+        images.append(img.name)
+    tags_path = out_dir / f"{stem}.txt"
+    if tags_path.is_file():
+        tags_path.unlink()
+        removed.append(tags_path.name)
 
     meta_path = out_dir / src.meta_subdir / f"{pid}.json"
     if meta_path.is_file():
@@ -62,6 +63,7 @@ def remove_download(
         id=pid,
         source=source,
         removed=removed,
+        images=images,
         count=len(removed),
     )
 

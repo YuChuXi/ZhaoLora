@@ -12,7 +12,7 @@ import os
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from services.online_sources.danbooru.source.source import client as _client
+from services.online_sources.danbooru import client as _client
 from services.online_sources.framework.base import SourceClient
 from services.online_sources.framework.utils import find_downloaded, pil_can_open, sniff_image_kind
 

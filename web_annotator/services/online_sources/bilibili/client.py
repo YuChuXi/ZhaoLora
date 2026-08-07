@@ -46,12 +46,8 @@ FILTER_TYPES = {"DYNAMIC_TYPE_LIVE_RCMD"}
 # 桌面版详情接口: 免登录稳定可用; 库的 ``Dynamic.get_info`` 所用的 v1 detail
 # 接口在未登录会话下会被 412 风控拦截, 故单条详情改走此接口
 _DESKTOP_DETAIL_API = "https://api.bilibili.com/x/polymer/web-dynamic/desktop/v1/detail"
-_UA = (
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36"
-)
 _BILI_HEADERS = {
-    "user-agent": _UA,
+    "user-agent": http.DEFAULT_UA,
     "referer": "https://www.bilibili.com/",
     "accept": "application/json, text/plain, */*",
 }

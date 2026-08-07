@@ -59,28 +59,19 @@ def stem_candidates(post_id: str, *, file_stem_fn) -> list[str]:
     return [primary] if pid == primary else [primary, pid]
 
 
-def find_existing(out_dir: Path, stem: str) -> Path | None:
-    for ext in IMAGE_EXTS:
-        p = out_dir / f"{stem}{ext}"
-        if p.is_file(): return p
-    return None
-
-
 def find_downloaded(out_dir: Path, post_id: str, *, file_stem_fn) -> Path | None:
-    """查找已下载帖图. 
+    """查找已下载帖图. 下载输出统一为 {stem}.png, 文件名确定, 无需探测扩展名.
 
     Args:
         post_id: 帖子 ID. 
         file_stem_fn: 接受单个 id 返回 stem 的函数(绑定方法), 如 ``SourceClient.file_stem``. 
 
     Callers:
-        - `gelbooru.py:GelbooruSource.download`
-        - `danbooru.py:DanbooruSource.download`
+        - `gelbooru/source.py:GelbooruSource.download`
+        - `danbooru/source.py:DanbooruSource.download`
     """
-    for stem in stem_candidates(post_id, file_stem_fn=file_stem_fn):
-        hit = find_existing(out_dir, stem)
-        if hit is not None: return hit
-    return None
+    p = out_dir / f"{file_stem_fn(post_id)}.png"
+    return p if p.is_file() else None
 
 
 def is_downloaded(out_dir: Path, post_id: str, *, file_stem_fn) -> bool:
@@ -115,7 +106,7 @@ def convert_path_to_png(src: Path, dest: Path) -> None:
     """临时文件转 PNG. 
 
     Callers:
-        - `gelbooru.py:GelbooruSource.download`
+        - `gelbooru/source.py:GelbooruSource.download`
     """
     from services.online_sources.framework.base import SourceClient
     data = src.read_bytes()

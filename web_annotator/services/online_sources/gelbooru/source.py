@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING
 from services.online_sources.framework import http
 from services.online_sources.framework.base import SourceClient
 from services.online_sources.framework.utils import find_downloaded
-from services.online_sources.gelbooru.source.source.client import GelbooruClient
+from services.online_sources.gelbooru.client import GelbooruClient
 
 if TYPE_CHECKING:
     from services.models import BooruPost

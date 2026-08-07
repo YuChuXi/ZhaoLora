@@ -22,7 +22,7 @@ from services.online_sources.framework import http
 from services.online_sources.framework.base import SourceClient
 from services.online_sources.framework.utils import find_downloaded
 from services.models import BooruPost
-from services.online_sources.pixiv.source.source.client import fetch_bytes, request_headers
+from services.online_sources.pixiv.client import fetch_bytes, request_headers
 
 # 每页卡片数
 _PAGE_SIZE = 40

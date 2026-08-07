@@ -4,6 +4,6 @@ Callers:
     - ``services.online_sources.__init__`` (注册)
 """
 
-from services.online_sources.gelbooru.source.source.source import GelbooruSource
+from services.online_sources.gelbooru.source import GelbooruSource
 
 __all__ = ["GelbooruSource"]

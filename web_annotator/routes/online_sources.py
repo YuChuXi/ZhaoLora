@@ -38,6 +38,7 @@ from services.models import (
     JobSnapshot,
     JobSubmitResponse,
 )
+from services.core.scanner import IMAGE_EXTS
 from services.core.work_dir import resolve_subdir
 
 router = APIRouter(prefix="/online-sources", tags=["online-sources"])
@@ -61,6 +62,7 @@ class DownloadBody(BaseModel):
 
     source: str
     id: str = Field(..., min_length=1)
+    filename: str = ""
     dir: str = Field("main", description="数据集根下的工作子目录")
     overwrite: bool = False
 
@@ -103,6 +105,7 @@ async def search(request: Request, body: SearchBody) -> BooruSearchResult:
     for post in raw_posts:
         post.downloaded = is_downloaded(out_dir, post.id, file_stem_fn=src.file_stem)
         post.stem = src.file_stem(post.id)
+        post.filename = f"{post.stem}.png"
         posts.append(post)
 
     return BooruSearchResult(
@@ -209,6 +212,7 @@ async def download(request: Request, body: DownloadBody) -> BooruDownloadResult:
     return result.model_copy(
         update={
             "dir": name,
+            "filename": Path(result.path).name,
             "rel_path": rel,
             "thumbnail_hash": thumb.hash_for(rel),
             "path": rel,
@@ -230,18 +234,16 @@ def undownload(request: Request, body: DownloadBody) -> BooruUndownloadResult:
         raise HTTPException(400, str(e)) from e
 
     try:
-        result = remove_download(source, body.id.strip(), out_dir)
+        result = remove_download(source, body.filename.strip(), out_dir)
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
 
+    # 用 remove_download 返回的真实文件名清理缩略图缓存
     thumb = get_runtime(request).thumbnailer
-    stems = [file_stem(source, body.id.strip()), body.id.strip()]
-    for stem in stems:
-        for ext in (".jpg", ".jpeg", ".png", ".webp", ".gif"):
-            rel = f"{name}/{stem}{ext}"
-            path = thumb.get_path(rel)
-            if path.is_file():
-                path.unlink()
+    for img in result.images:
+        path = thumb.get_path(f"{name}/{img}")
+        if path.is_file():
+            path.unlink()
 
     return result.model_copy(update={"dir": name})
 
@@ -407,13 +409,12 @@ async def refresh_metadata(request: Request, body: RefreshMetadataBody) -> JobSu
             loop.close()
 
     async def _run_refresh(scan_dir: Path, emit: EmitFn) -> None:
-        from services.core.scanner import IMAGE_EXTS as _EXTS
         from services.online_sources.framework.base import detect_source, get_source
 
         scan_dir = scan_dir.resolve()
         files: list[tuple[str, str]] = []  # (source, pid)
         for f in sorted(scan_dir.iterdir()):
-            if not f.is_file() or f.suffix.lower() not in _EXTS:
+            if not f.is_file() or f.suffix.lower() not in IMAGE_EXTS:
                 continue
             detected = detect_source(f.stem)
             if detected:

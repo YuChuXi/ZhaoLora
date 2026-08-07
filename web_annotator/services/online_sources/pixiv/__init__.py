@@ -5,7 +5,7 @@ Callers:
     - ``routes/online_sources.py`` (图片代理, ``fetch_bytes``)
 """
 
-from services.online_sources.pixiv.source.source.client import fetch_bytes
-from services.online_sources.pixiv.source.source.source import PixivSource
+from services.online_sources.pixiv.client import fetch_bytes
+from services.online_sources.pixiv.source import PixivSource
 
 __all__ = ["PixivSource", "fetch_bytes"]

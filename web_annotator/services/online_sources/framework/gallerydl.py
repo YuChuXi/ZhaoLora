@@ -6,7 +6,7 @@
 ``search`` / ``download`` / ``fetch_meta`` 能力。
 
 Callers:
-    - ``services.online_sources.x.source.source``
+    - ``services.online_sources.x.source``
 """
 
 from __future__ import annotations

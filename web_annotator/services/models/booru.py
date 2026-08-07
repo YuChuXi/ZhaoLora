@@ -45,6 +45,7 @@ class BooruPost(BaseModel):
     # 运行时附加
     downloaded: bool = False
     stem: str = ""
+    filename: str = ""
 
     @computed_field
     @property
@@ -109,6 +110,7 @@ class BooruDownloadResult(BaseModel):
     stem: str
     id: str
     source: str
+    filename: str = ""
     tags_path: str = ""
     skipped: bool = False
     dir: str = ""
@@ -126,6 +128,7 @@ class BooruUndownloadResult(BaseModel):
     id: str
     source: str
     removed: list[str] = Field(default_factory=list)
+    images: list[str] = Field(default_factory=list)
     count: int = 0
     dir: str = ""
 

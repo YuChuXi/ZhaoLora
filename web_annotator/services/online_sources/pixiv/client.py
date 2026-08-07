@@ -19,20 +19,16 @@ from services.online_sources.framework import http
 
 # pixiv web AJAX 请求头
 _WEB_HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/131.0.0.0 Safari/537.36"
-    ),
-    "Referer": "https://www.pixiv.net/",
-    "Accept": "application/json",
+    "user-agent": http.WINDOWS_UA,
+    "referer": "https://www.pixiv.net/",
+    "accept": "application/json",
 }
 
 # pximg 图床防盗链: 需带 pixiv Referer
 _IMG_HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
-    "Referer": "https://www.pixiv.net/",
-    "Accept": "image/avif,image/webp,image/*,*/*;q=0.8",
+    "user-agent": http.WINDOWS_UA,
+    "referer": "https://www.pixiv.net/",
+    "accept": "image/avif,image/webp,image/*,*/*;q=0.8",
 }
 
 

@@ -24,9 +24,15 @@ from services.core.scanner import IMAGE_EXTS
 
 NetworkError = httpx.HTTPError
 
-_DEFAULT_UA = (
+# 统一 UA: 各来源复用, 不再各自写字符串
+DEFAULT_UA = (
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+)
+WINDOWS_UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/131.0.0.0 Safari/537.36"
 )
 
 
@@ -53,7 +59,7 @@ def make_headers(*, referer: str | None = None) -> dict[str, str]:
         - ``framework.http.request`` / ``get_bytes`` / ``stream_response``
     """
     h = {
-        "user-agent": _DEFAULT_UA,
+        "user-agent": DEFAULT_UA,
         "accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
     }
     if referer:

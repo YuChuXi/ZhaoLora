@@ -1452,6 +1452,7 @@ var BooruFilter = (function () {
     var data = await res.json();
     _status[post.key] = 'done';
     if (data.stem) post.stem = data.stem;
+    if (data.filename) post.filename = data.filename;
     updateCard(post.key);
     await refreshDiskCount();
     return data;
@@ -1774,6 +1775,7 @@ var BooruFilter = (function () {
       body: JSON.stringify({
         source: post.source,
         id: String(post.id),
+        filename: post.filename,
         dir: destDir(),
       }),
     });

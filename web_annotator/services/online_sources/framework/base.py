@@ -214,7 +214,7 @@ class SourceClient(ABC):
 
         Callers:
             - `routes/online_sources.py:search`
-            - `gelbooru.py:GelbooruSource.search`
+            - `gelbooru/source.py:GelbooruSource.search`
         """
         parts = [tags.strip()] if tags.strip() else []
         filtered = self.filter_extra(extra)
@@ -357,7 +357,7 @@ def register_source(client: SourceClient) -> None:
     """注册来源客户端. 
 
     Callers:
-        - `gelbooru.py` 模块初始化
+        - `services/online_sources/__init__.py` 模块初始化
     """
     _SOURCES[client.name] = client
 

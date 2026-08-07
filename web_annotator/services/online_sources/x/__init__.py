@@ -4,6 +4,6 @@ Callers:
     - ``services.online_sources.__init__`` (注册)
 """
 
-from services.online_sources.x.source.source.source import XSource
+from services.online_sources.x.source import XSource
 
 __all__ = ["XSource"]
