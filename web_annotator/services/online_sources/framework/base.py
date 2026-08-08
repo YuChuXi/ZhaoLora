@@ -89,6 +89,21 @@ class SourceClient(ABC):
             - `online_sources/batch.py:download_one`
         """
 
+    async def autocomplete(self, query: str, limit: int = 10) -> list[dict]:
+        """标签自动补全. 默认不支持, 返回空列表.
+
+        Args:
+            query: 标签前缀.
+            limit: 返回条数上限.
+
+        Returns:
+            规范化的建议列表: 每项为 ``{"name", "category", "count"}``.
+
+        Callers:
+            - `routes/online_sources.py:tag_suggest`
+        """
+        return []
+
     def parse_query(self, tags: str, extra: str) -> dict[str, str]:
         """把来源原始查询串解析为结构化条件.
 

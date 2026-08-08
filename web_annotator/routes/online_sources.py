@@ -78,6 +78,24 @@ def list_sources() -> BooruSourcesResponse:
     )
 
 
+@router.get("/tag-suggest")
+async def tag_suggest(
+    source: str = Query(..., description="gelbooru | danbooru"),
+    q: str = Query(..., min_length=1, max_length=100, description="标签前缀"),
+    limit: int = Query(10, ge=1, le=50),
+) -> dict:
+    """标签自动补全. 引用: ``booru_filter.js`` 标签输入框. """
+    try:
+        src = get_source(source)
+    except ValueError:
+        raise HTTPException(404, f"未知来源: {source}") from None
+    try:
+        tags = await src.autocomplete(q, limit)
+    except _NETWORK_ERRORS as e:
+        raise HTTPException(502, f"补全失败: {e}") from e
+    return {"tags": tags}
+
+
 @router.post("/search")
 async def search(request: Request, body: SearchBody) -> BooruSearchResult:
     """搜索图站并标记本地下载状态. 引用: ``booru_filter.js``. """

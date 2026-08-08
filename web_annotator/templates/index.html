@@ -43,6 +43,27 @@
     margin-right: auto;
   }
   #booru-cheat:hover { text-decoration: underline; }
+  /* 标签自动补全下拉: 固定定位到输入框下方 */
+  .tag-suggest {
+    position: fixed; z-index: 600; min-width: 180px; max-width: 340px; max-height: 240px; overflow: auto;
+    background: var(--card-bg, #0d1b2e); border: 1px solid var(--border); border-radius: 6px;
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.4); padding: 4px; font-size: 12px;
+  }
+  .tag-suggest-table {
+    width: 100%; border-collapse: collapse;
+  }
+  .tag-suggest-row { cursor: pointer; }
+  .tag-suggest-row.active { background: rgba(255, 255, 255, 0.08); }
+  .tag-suggest-row td { padding: 5px 8px; }
+  .tag-suggest-name {
+    text-align: left; color: var(--text); white-space: nowrap;
+  }
+  .tag-suggest-cat {
+    width: 48px; text-align: right; color: var(--text-dim); font-size: 11px; white-space: nowrap;
+  }
+  .tag-suggest-cnt {
+    width: 56px; text-align: right; color: var(--text-dim); font-size: 11px; white-space: nowrap;
+  }
   /* display:contents 会盖掉 [hidden]，用 class 切换 */
   .toolbar-group { display: contents; }
   .toolbar-group.is-off { display: none !important; }

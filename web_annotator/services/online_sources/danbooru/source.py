@@ -131,6 +131,16 @@ class DanbooruSource(SourceClient):
             raise RuntimeError(f"Danbooru HTTP {meta.status_code}")
         self._write_meta(out_dir, pid, BooruPost.model_validate(meta.json()))
 
+    async def autocomplete(self, query: str, limit: int = 10) -> list[dict]:
+        """标签自动补全.
+
+        实现 ``base.SourceClient.autocomplete``。
+
+        Callers:
+            - `routes/online_sources.py:tag_suggest`
+        """
+        return await _client.autocomplete(query, limit)
+
     async def search(self, tags: str, page: int, order: str, extra: str) -> tuple[list[BooruPost], bool]:
         """搜索 Danbooru 帖.
 

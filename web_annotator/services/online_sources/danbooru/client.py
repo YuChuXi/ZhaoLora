@@ -86,3 +86,45 @@ async def get(
         url, params=p or None, headers=_headers(accept=accept),
         timeout=timeout, allow_redirects=True,
     )
+
+
+async def autocomplete(query: str, limit: int = 10) -> list[dict]:
+    """Danbooru 标签自动补全 (官方 autocomplete 端点).
+
+    ``search[type]=tag`` 时返回 JSON 数组; ``tag_query`` 则返回 HTML 菜单片段。
+
+    Args:
+        query: 标签前缀.
+        limit: 返回条数上限.
+
+    Returns:
+        规范化的建议列表: 每项为 ``{"name", "category", "count"}``。
+
+    Raises:
+        RuntimeError: 上游返回非 200.
+        httpx/curl_cffi 网络异常由调用方处理.
+
+    Callers:
+        - ``danbooru/source.py:DanbooruSource.autocomplete``
+    """
+    resp = await get(
+        "https://danbooru.donmai.us/autocomplete",
+        accept="application/json", timeout=15.0,
+        params={"search[query]": query, "search[type]": "tag", "version": "3", "limit": limit},
+    )
+    if resp.status_code != 200:
+        raise RuntimeError(f"Danbooru autocomplete HTTP {resp.status_code}")
+    data = resp.json()
+    out: list[dict] = []
+    for item in data if isinstance(data, list) else []:
+        if not isinstance(item, dict):
+            continue
+        name = item.get("value")
+        if not name:
+            continue
+        out.append({
+            "name": str(name),
+            "category": int(item.get("category") or 0),
+            "count": int(item.get("post_count") or 0),
+        })
+    return out
