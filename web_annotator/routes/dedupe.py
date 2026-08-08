@@ -47,7 +47,7 @@ class ApplyBody(BaseModel):
 
 
 def _names(dirs: list[str] | None, legacy: str | None) -> list[str]:
-    """解析目录名列表. 引用: ``scan_duplicates`` / ``apply_dedupe_delete``. """
+    """解析目录名列表. 引用: ``scan_duplicates`` / ``apply_delete``. """
     if dirs:
         return list(dirs)
     if legacy:
@@ -135,7 +135,7 @@ def similarity_histogram(values, algorithm: str) -> str | None:
 
 
 @router.get("/dirs")
-def dedupe_dirs(request: Request) -> DirsResponse:
+def dirs(request: Request) -> DirsResponse:
     """列出可扫描工作目录. 引用: ``dedupe.js``. """
     rt = get_runtime(request)
     return DirsResponse(dirs=list_work_dirs(rt.root), default="main")
@@ -254,7 +254,7 @@ async def scan_duplicates(request: Request, body: ScanBody) -> JobSubmitResponse
 
 
 @router.post("/apply")
-def apply_dedupe_delete(request: Request, body: ApplyBody) -> DedupeMoveResponse:
+def apply_delete(request: Request, body: ApplyBody) -> DedupeMoveResponse:
     """将手选路径移入回收站(与筛选页同一套 trash). """
     rt = get_runtime(request)
     root = rt.root

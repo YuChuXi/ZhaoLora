@@ -45,7 +45,7 @@ class StartBody(BaseModel):
 # ---------------------------------------------------------------------------
 
 @router.get("/dirs")
-def scoring_dirs(request: Request) -> ScoringDirsResponse:
+def dirs(request: Request) -> ScoringDirsResponse:
     """列出可评分目录与两类分数文件的就绪状态. 
 
     Callers:
@@ -70,7 +70,7 @@ def scoring_dirs(request: Request) -> ScoringDirsResponse:
 
 
 @router.get("/results")
-async def scoring_results(
+async def results(
     request: Request,
     kind: str = Query(..., description="评分类型: 'aesthetic' | 'quality'"),
 ):
@@ -105,7 +105,7 @@ async def scoring_results(
 
 
 @router.get("/active")
-def scoring_active(request: Request) -> ScoringActiveResponse:
+def active(request: Request) -> ScoringActiveResponse:
     """查询本数据集是否有未结束的评分任务. 
 
     Callers:
@@ -125,7 +125,7 @@ def scoring_active(request: Request) -> ScoringActiveResponse:
 
 
 @router.post("/start")
-async def scoring_start(request: Request, body: StartBody) -> ScoringStartResponse:
+async def start(request: Request, body: StartBody) -> ScoringStartResponse:
     """提交评分长任务(美学或质量). 
 
     返回 job_id；进度通过 GET /api/jobs/{id}/events (SSE) 获取. 

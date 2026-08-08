@@ -97,8 +97,8 @@ def check_tag_in_caption(raw: str, tag: str, position: str) -> tuple[bool, bool]
         ``(exists, position_ok)``. 标签不存在时两者均为 False.
 
     Callers:
-        - ``routes/tag_stats.tag_check``
-        - ``routes/tag_stats.tag_edit_one``
+        - ``routes/tag_stats.check``
+        - ``routes/tag_stats.edit_one``
     """
     header, body, _ = split_header_body(raw)
     key = tag_key(tag)
@@ -147,7 +147,7 @@ def add_tag_to_caption(raw: str, tag: str, position: str) -> str:
         编辑后的 caption 字符串.
 
     Callers:
-        - ``routes/tag_stats.tag_edit_one``
+        - ``routes/tag_stats.edit_one``
     """
     header, body, has_sep = split_header_body(raw)
     key = tag_key(tag)
@@ -198,7 +198,7 @@ def delete_tag_from_caption(raw: str, tag: str) -> str:
         删除后的 caption 字符串. 若标签不存在则返回原文.
 
     Callers:
-        - ``routes/tag_stats.tag_delete_one``
+        - ``routes/tag_stats.delete_one``
     """
     header, body, has_sep = split_header_body(raw)
     key = tag_key(tag)

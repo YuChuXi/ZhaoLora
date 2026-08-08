@@ -542,7 +542,7 @@ def build_score_results(
         按分数降序排列. 
 
     Callers:
-        - ``routes/scoring.py:scoring_results``
+        - ``routes/scoring.py:results``
     """
     if kind == "aesthetic":
         scores = load_score_json(root, AESTHETIC_SCORES)

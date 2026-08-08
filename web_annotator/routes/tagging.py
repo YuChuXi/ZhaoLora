@@ -30,7 +30,7 @@ class StartBody(BaseModel):
 
 
 @router.get("/dirs")
-def tagging_dirs(request: Request) -> TaggingDirsResponse:
+def dirs(request: Request) -> TaggingDirsResponse:
     """列出可打标目录与模型状态. 引用: ``tagging.js``. """
     rt = get_runtime(request)
     root = rt.root
@@ -44,7 +44,7 @@ def tagging_dirs(request: Request) -> TaggingDirsResponse:
 
 
 @router.post("/start")
-async def tagging_start(request: Request, body: StartBody) -> TaggingStartResponse:
+async def start(request: Request, body: StartBody) -> TaggingStartResponse:
     """
     提交打标长任务. 
 

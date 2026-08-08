@@ -36,11 +36,16 @@ WINDOWS_UA = (
 )
 
 
-def _upstream_proxy() -> str | None:
+def upstream_proxy() -> str | None:
     """从环境变量读取上游代理, 空串视为无代理.
 
+    全项目上游代理的唯一读取入口; 各来源/网络层均应复用, 不得各自
+    直接读取 ``os.environ``。
+
     Callers:
-        - ``framework.http`` 内部
+        - ``framework.http`` 内部 (`_client` / `stream_response`)
+        - ``danbooru.client``
+        - ``framework.gallerydl``
     """
     p = os.environ.get("UPSTREAM_PROXY", "").strip()
     return p or None
@@ -86,12 +91,12 @@ def _client(proxy: str | None = None) -> httpx.AsyncClient:
     Callers:
         - ``framework.http.request`` / ``get_bytes``
     """
-    key = (proxy or _upstream_proxy() or "")
+    key = (proxy or upstream_proxy() or "")
     c = _clients.get(key)
     if c is not None and not c.is_closed:
         return c
     c = httpx.AsyncClient(
-        proxy=proxy or _upstream_proxy(),
+        proxy=proxy or upstream_proxy(),
         limits=httpx.Limits(max_connections=32, max_keepalive_connections=16),
         timeout=httpx.Timeout(30.0, connect=10.0),
     )
@@ -197,7 +202,7 @@ async def stream_response(
     """
     h = headers or make_headers(referer=referer)
     client = httpx.AsyncClient(
-        proxy=proxy or _upstream_proxy(),
+        proxy=proxy or upstream_proxy(),
         timeout=httpx.Timeout(timeout, connect=10.0),
     )
     req = client.build_request("GET", url, headers=h)

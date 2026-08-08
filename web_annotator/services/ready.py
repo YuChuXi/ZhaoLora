@@ -22,7 +22,7 @@ def subdir_mask_stats(root: Path, subdir: str = "main") -> MaskStats:
     统计指定子目录的蒙版状态: 每张图仅「无」或「完整」. 
 
     整体 status: 全部有蒙版 →「完整」；否则 →「无」. 
-    引用: ``ready_dirs``、``build_ready_toml``；``routes/ready.py`` 侧栏. 
+    引用: ``dirs``、``build_ready_toml``；``routes/ready.py`` 侧栏. 
     """
     root = root.resolve()
     subdir = (subdir or "main").strip().strip("/")

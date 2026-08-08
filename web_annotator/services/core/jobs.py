@@ -100,10 +100,10 @@ class JobManager:
 
         Callers:
             - `dataset/runtime.py:DatasetRegistry.ensure`
-            - `routes/scoring.py:scoring_start`
-            - `routes/tagging.py:tagging_start`
+            - `routes/scoring.py:start`
+            - `routes/tagging.py:start`
             - `routes/dedupe.py:scan_duplicate`
-            - `routes/tag_stats.py:tag_clean` / `tag_batch_edit`
+            - `routes/tag_stats.py:clean` / `batch_edit`
             - `routes/online_sources.py:batch_start` / `booru_refresh_metadata`
             - `routes/birefnet.py:birefnet_mask`
         """

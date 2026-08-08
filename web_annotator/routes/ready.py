@@ -21,7 +21,7 @@ class ReadyBody(BaseModel):
 
 
 @router.get("/dirs")
-def ready_dirs(request: Request) -> ReadyDirsResponse:
+def dirs(request: Request) -> ReadyDirsResponse:
     """
     可导出工作目录与各目录蒙版统计. 
 
@@ -43,7 +43,7 @@ def ready_dirs(request: Request) -> ReadyDirsResponse:
 
 
 @router.post("/toml")
-def ready_toml(request: Request, body: ReadyBody) -> ReadyTomlResult:
+def toml(request: Request, body: ReadyBody) -> ReadyTomlResult:
     """
     生成 TOML 预览文本. 引用: ready.js. 
     """

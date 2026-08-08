@@ -93,7 +93,7 @@ class DatasetRegistry:
         Callers:
             - `server.py:bind_dataset_middleware`
             - `server.py:dataset_thumb`
-            - `routes/scoring.py:scoring_results`
+            - `routes/scoring.py:results`
             - `routes/images.py:similar_images`
             - `routes/tasks.py:list_tasks` / `add_task`
             - `routes/online_sources.py:download`

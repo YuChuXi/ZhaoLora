@@ -34,7 +34,6 @@
   var ctx = canvas.getContext('2d');
   var wrap = document.getElementById('canvas-wrap');
   var _brushPreview = document.getElementById('brush-preview');
-  var _toastTimer = null;
   var _bgStyleEl = document.getElementById('bg-style');
   var _bgColorEl = document.getElementById('bg-color');
   if (_bgStyleEl) _bgStyle = _bgStyleEl.value;
@@ -45,15 +44,6 @@
    * @param {string} msg
    * 引用：保存成功、错误提示。
    */
-  function toast(msg) {
-    var el = document.getElementById('toast');
-    if (!el) return;
-    el.textContent = msg;
-    el.classList.add('show');
-    clearTimeout(_toastTimer);
-    _toastTimer = setTimeout(function () { el.classList.remove('show'); }, 2200);
-  }
-
   function errshow(msg) {
     toast('\u26a0 ' + msg);
   }

@@ -6,19 +6,6 @@
 (function () {
   'use strict';
 
-  var _toastTimer = null;
-
-  /**
-   * @param {string} msg
-   */
-  function toast(msg) {
-    var el = document.getElementById('toast');
-    el.textContent = msg;
-    el.classList.add('show');
-    clearTimeout(_toastTimer);
-    _toastTimer = setTimeout(function () { el.classList.remove('show'); }, 2200);
-  }
-
   /**
    * @param {string} url
    * @param {object} [opts]

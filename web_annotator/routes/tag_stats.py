@@ -75,14 +75,14 @@ class CleanBody(BaseModel):
 
 
 @router.get("/dirs")
-def tag_dirs(request: Request) -> TagDirsResponse:
+def dirs(request: Request) -> TagDirsResponse:
     """列出工作子目录(含图片的一级子目录). 引用: 标签/标签检查页. """
     root = _root(request)
     return TagDirsResponse(dirs=list_work_dirs(root))
 
 
 @router.post("/stats")
-def tag_stats(request: Request, body: StatsBody) -> TagStatsResult:
+def stats(request: Request, body: StatsBody) -> TagStatsResult:
     """统计标签频率. 引用: 标签页. """
     root = _root(request)
     selected = resolve_selected_dirs(root, body.dirs)
@@ -131,7 +131,7 @@ async def translate_missing(request: Request, body: TranslateMissingBody) -> dic
 
 
 @router.post("/clean")
-async def tag_clean(request: Request, body: CleanBody) -> JobSubmitResponse:
+async def clean(request: Request, body: CleanBody) -> JobSubmitResponse:
     """
     提交标签清洗长任务.
 
@@ -213,7 +213,7 @@ class BatchEditBody(BaseModel):
 
 
 @router.post("/batch-edit")
-async def tag_batch_edit(request: Request, body: BatchEditBody) -> JobSubmitResponse:
+async def batch_edit(request: Request, body: BatchEditBody) -> JobSubmitResponse:
     """
     批量删除/添加标签.
 
@@ -317,8 +317,8 @@ def _build_check_item(
         TagCheckItem: 检查结果项.
 
     Callers:
-        - ``tag_check``
-        - ``tag_edit_one``
+        - ``check``
+        - ``edit_one``
     """
     txt_path = work_dir / (stem + ".txt")
     raw = ""
@@ -341,7 +341,7 @@ def _build_check_item(
 
 
 @router.post("/check")
-def tag_check(request: Request, body: TagCheckBody) -> TagCheckResponse:
+def check(request: Request, body: TagCheckBody) -> TagCheckResponse:
     """批量检查目录内图片旁路 ``.txt`` 中标签的存在与位置.
 
     引用: ``tag_check.js``.
@@ -400,7 +400,7 @@ def tag_check(request: Request, body: TagCheckBody) -> TagCheckResponse:
 
 
 @router.post("/edit-one")
-def tag_edit_one(request: Request, body: TagEditOneBody) -> TagCheckItem:
+def edit_one(request: Request, body: TagEditOneBody) -> TagCheckItem:
     """编辑单张图片的旁路 ``.txt``, 在指定位置添加标签后返回最新检查结果.
 
     引用: ``tag_check.js``.
@@ -442,7 +442,7 @@ class TagDeleteOneBody(BaseModel):
 
 
 @router.post("/delete-one")
-def tag_delete_one(request: Request, body: TagDeleteOneBody) -> TagCheckItem:
+def delete_one(request: Request, body: TagDeleteOneBody) -> TagCheckItem:
     """从单张图片旁路 ``.txt`` 中删除指定标签后返回最新检查结果.
 
     引用: ``tag_check.js``.

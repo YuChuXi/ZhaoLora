@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import os
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -75,7 +74,7 @@ def list_sources() -> BooruSourcesResponse:
     """列出可用图站与代理. 引用: ``booru_filter.js``. """
     return BooruSourcesResponse(
         sources=list_source_names(),
-        proxy=os.environ.get("UPSTREAM_PROXY", "").strip(),
+        proxy=http.upstream_proxy() or "",
     )
 
 

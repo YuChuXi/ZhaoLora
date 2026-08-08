@@ -7,7 +7,6 @@
   'use strict';
 
   var _items = [];
-  var _toastTimer = null;
   var _colsKey = 'zhao_tagcheck_cols';
   var _manualCols = 0;
   var _singleIndex = -1;
@@ -25,19 +24,6 @@
   var _acDebounce = null;    // 输入防抖计时器
   var _acReqId = 0;          // 统计请求序号(丢弃过期响应)
   var _AC_LIMIT = 60;        // 最多显示建议数
-
-  /**
-   * 显示短暂提示。
-   * @param {string} msg
-   */
-  function toast(msg) {
-    var el = document.getElementById('toast');
-    if (!el) return;
-    el.textContent = msg;
-    el.classList.add('show');
-    clearTimeout(_toastTimer);
-    _toastTimer = setTimeout(function () { el.classList.remove('show'); }, 2200);
-  }
 
   /**
    * 更新工具栏统计。

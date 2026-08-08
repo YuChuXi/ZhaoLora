@@ -30,7 +30,7 @@ class ReadyDirsResponse(BaseModel):
     """就绪页目录列表. 
 
     引用:
-        ``routes.ready.ready_dirs``. 
+        ``routes.ready.dirs``. 
     """
 
     root: str

@@ -15,7 +15,7 @@ class ScoringDirsResponse(BaseModel):
     """统一评分页目录与两类分数文件状态. 
 
     引用:
-        ``routes.scoring.scoring_dirs``. 
+        ``routes.scoring.dirs``. 
     """
 
     dirs: list[WorkDirInfo]
@@ -31,7 +31,7 @@ class ScoringStartResponse(BaseModel):
     """统一评分任务提交回执. 
 
     引用:
-        ``routes.scoring.scoring_start``. 
+        ``routes.scoring.start``. 
     """
 
     ok: bool = True
@@ -45,7 +45,7 @@ class ScoringActiveResponse(BaseModel):
     """统一评分任务重连回执. 
 
     引用:
-        ``routes.scoring.scoring_active``. 
+        ``routes.scoring.active``. 
     """
 
     ok: bool = True
@@ -58,7 +58,7 @@ class TaggingDirsResponse(BaseModel):
     """打标页目录与模型状态. 
 
     引用:
-        ``routes.tagging.tagging_dirs``. 
+        ``routes.tagging.dirs``. 
     """
 
     dirs: list[WorkDirInfo]
@@ -71,7 +71,7 @@ class TaggingStartResponse(BaseModel):
     """打标任务提交回执. 
 
     引用:
-        ``routes.tagging.tagging_start``. 
+        ``routes.tagging.start``. 
     """
 
     ok: bool = True

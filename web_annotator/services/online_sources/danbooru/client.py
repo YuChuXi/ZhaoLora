@@ -1,8 +1,8 @@
 """Danbooru 底层网络: TLS 指纹模拟 + JSON API 请求.
 
 封装 Danbooru 专属网络请求 (curl_cffi 模拟 Chrome TLS 指纹绕过
-Cloudflare); 代理从 ``os.environ["UPSTREAM_PROXY"]`` 读取, 认证
-(login / api_key) 由调用方经参数传入.
+Cloudflare); 代理经 ``framework.http.upstream_proxy`` 从统一层读取,
+认证 (login / api_key) 由调用方经参数传入.
 
 Callers:
     - ``danbooru/source.py`` (搜索 / 下载 / 元数据)
@@ -10,10 +10,11 @@ Callers:
 
 from __future__ import annotations
 
-import os
 from typing import Any
 
 from curl_cffi.requests import AsyncSession
+
+from services.online_sources.framework.http import upstream_proxy
 
 # Danbooru 需模拟 Chrome TLS 指纹绕过 Cloudflare
 _IMPERSONATE = "chrome"
@@ -25,12 +26,12 @@ _clients: dict[tuple[str, str], AsyncSession] = {}
 def _client() -> AsyncSession:
     """按代理复用的 curl_cffi 连接池, 固定 Chrome TLS 指纹.
 
-    代理从 ``os.environ["UPSTREAM_PROXY"]`` 读取。
+    代理经 ``upstream_proxy`` 从统一层读取。
 
     Callers:
         - ``danbooru/client.py:get``
     """
-    p = os.environ.get("UPSTREAM_PROXY", "").strip() or None
+    p = upstream_proxy()
     key = (p or "", _IMPERSONATE)
     c = _clients.get(key)
     if c is None:

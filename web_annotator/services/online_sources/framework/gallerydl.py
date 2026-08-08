@@ -12,7 +12,6 @@ Callers:
 from __future__ import annotations
 
 import asyncio
-import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -180,8 +179,8 @@ class GalleryDLSource(SourceClient):
     def _proxy_overrides(self) -> list[tuple[tuple[str, ...], str, Any]]:
         """构造上游代理的临时配置项, 供 ``config.apply`` 使用.
 
-        从 ``os.environ`` 的 ``UPSTREAM_PROXY`` 环境变量读取代理地址,
-        空串或缺失表示直连.
+        代理经 ``http.upstream_proxy`` 从统一网络层读取, 空串或缺失
+        表示直连.
 
         Returns:
             list[tuple]: 形如 ``[((), "proxy", 地址)]`` 的配置项列表.
@@ -189,7 +188,7 @@ class GalleryDLSource(SourceClient):
         Callers:
             - `GalleryDLSource._gallery_meta_incremental`
         """
-        p = (os.environ.get("UPSTREAM_PROXY") or "").strip()
+        p = http.upstream_proxy()
         return [] if not p else [((), "proxy", p)]
 
     def _gallery_meta_incremental(

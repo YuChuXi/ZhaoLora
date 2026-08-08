@@ -6,19 +6,10 @@
 
   var _groups = [];
   var _selected = {};
-  var _toastTimer = null;
   var _previewMembers = [];
   var _previewIdx = 0;
   var _previewOpen = false;
   var _algorithm = 'mse';
-
-  function toast(msg) {
-    var el = document.getElementById('toast');
-    el.textContent = msg;
-    el.classList.add('show');
-    clearTimeout(_toastTimer);
-    _toastTimer = setTimeout(function () { el.classList.remove('show'); }, 2200);
-  }
 
   async function api(url, opts) {
     var res = await fetch(url, Object.assign({

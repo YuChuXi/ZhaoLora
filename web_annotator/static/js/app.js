@@ -4,16 +4,6 @@
 (function() {
   'use strict';
 
-  var _toastTimer = null;
-  function toast(msg) {
-    var el = document.getElementById('toast');
-    if (!el) return;
-    el.textContent = msg;
-    el.classList.add('show');
-    clearTimeout(_toastTimer);
-    _toastTimer = setTimeout(function() { el.classList.remove('show'); }, 2000);
-  }
-
   function updateStats(st) {
     st = st || Store.stats();
     document.getElementById('stat-kept').textContent = st.total;

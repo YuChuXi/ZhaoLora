@@ -38,7 +38,7 @@ def image_size(path: Path) -> tuple[int, int]:
     Callers:
         - ``routes.images.list_images``
         - ``routes.images.similar_images``
-        - ``routes.tag_stats.tag_check``
+        - ``routes.tag_stats.check``
     """
     key = str(path)
     mtime = path.stat().st_mtime
@@ -245,7 +245,7 @@ class Thumbnailer:
             - `online_sources/batch.py`: 下载后确保缩略图存在
             - `routes/online_sources.py:download`
             - `routes/tasks.py:random_tasks`
-            - `routes/scoring.py:scoring_results`
+            - `routes/scoring.py:results`
             - `routes/images.py:similar_images`
             - `server.py:dataset_thumb`
         """

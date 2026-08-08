@@ -513,7 +513,6 @@ var BooruFilter = (function () {
   var _aborters = {};
   var _io = null;
   var _pageIo = null;
-  var _toastTimer = null;
   var _colLo = null;
   var _colHi = null;
   var _minY = 0;
@@ -527,15 +526,6 @@ var BooruFilter = (function () {
   var _batchJobId = null;
   var _batchWatch = null;
   var _batchParamTimer = null;
-
-  function toast(msg) {
-    var el = document.getElementById('toast');
-    if (!el) return;
-    el.textContent = msg;
-    el.classList.add('show');
-    clearTimeout(_toastTimer);
-    _toastTimer = setTimeout(function () { el.classList.remove('show'); }, 2200);
-  }
 
   function destDir() {
     if (typeof DirPicker !== 'undefined' && DirPicker.getDirs) {

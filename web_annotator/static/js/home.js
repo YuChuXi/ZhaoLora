@@ -6,25 +6,12 @@
 (function () {
   'use strict';
 
-  var _toastTimer = null;
   var _candidates = [];
   var _suggestIndex = -1;
   var _nav = [];
   var _sortBy = 'sort_order';
   var _sortOrder = 'asc';
   var _dragSrcName = null;
-
-  /**
-   * @param {string} msg
-   */
-  function toast(msg) {
-    var el = document.getElementById('toast');
-    if (!el) return;
-    el.textContent = msg;
-    el.classList.add('show');
-    clearTimeout(_toastTimer);
-    _toastTimer = setTimeout(function () { el.classList.remove('show'); }, 2200);
-  }
 
   /**
    * @param {string} url

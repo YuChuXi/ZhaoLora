@@ -6,17 +6,7 @@ var Tagging = (function () {
 
   var _watch = null;
   var _jobId = null;
-  var _toastTimer = null;
   var _modelReady = false;
-
-  function toast(msg) {
-    var el = document.getElementById('toast');
-    if (!el) return;
-    el.textContent = msg;
-    el.classList.add('show');
-    clearTimeout(_toastTimer);
-    _toastTimer = setTimeout(function () { el.classList.remove('show'); }, 2200);
-  }
 
   function modal() {
     return document.getElementById('tagging-modal');

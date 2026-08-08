@@ -91,7 +91,7 @@ class TagCheckItem(BaseModel):
     """单张图片的标签检查结果.
 
     引用:
-        ``routes.tag_stats.tag_check`` / ``tag_edit_one``.
+        ``routes.tag_stats.check`` / ``edit_one``.
     """
 
     path: str
@@ -109,7 +109,7 @@ class TagCheckResponse(BaseModel):
     """标签检查批量响应.
 
     引用:
-        ``routes.tag_stats.tag_check``.
+        ``routes.tag_stats.check``.
     """
 
     tag: str

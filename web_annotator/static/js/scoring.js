@@ -8,7 +8,6 @@
 
   var _watch = null;
   var _jobId = null;
-  var _toastTimer = null;
   var _currentType = 'aesthetic';
   var _results = { aesthetic: null, quality: null };
   var _sortKey = 'score';
@@ -31,14 +30,6 @@
   // -----------------------------------------------------------------------
   // 工具栏
   // -----------------------------------------------------------------------
-
-  function toast(msg) {
-    var el = document.getElementById('toast');
-    el.textContent = msg;
-    el.classList.add('show');
-    clearTimeout(_toastTimer);
-    _toastTimer = setTimeout(function () { el.classList.remove('show'); }, 2200);
-  }
 
   function setRunningUi(running) {
     document.getElementById('btn-start').disabled = running;

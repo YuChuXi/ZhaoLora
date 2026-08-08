@@ -32,20 +32,10 @@
   var _dragIdx = -1;
   var _dragRaf = null; // onDrag 的 requestAnimationFrame 句柄, 合并高频 mousemove
   var _baseCanvas = null; // 离屏底图缓存(checker+原图), 拖拽时免重复绘制
-  var _toastTimer = null;
 
   var canvas = document.getElementById('crop-canvas');
   var ctx = canvas.getContext('2d');
   var wrap = document.getElementById('canvas-wrap');
-
-  function toast(msg) {
-    var el = document.getElementById('toast');
-    if (!el) return;
-    el.textContent = msg;
-    el.classList.add('show');
-    clearTimeout(_toastTimer);
-    _toastTimer = setTimeout(function () { el.classList.remove('show'); }, 2200);
-  }
 
   function errshow(msg) {
     toast('⚠ ' + msg);
