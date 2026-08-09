@@ -147,7 +147,6 @@ var Masonry = (function() {
       _lastClickedPath = img.path;
     });
     if (typeof SimilarHover !== 'undefined') SimilarHover.bindCard(card, img.path);
-    if (_config.decorate) _config.decorate(card, img);
 
     var imgEl = document.createElement('img');
     imgEl.alt = img.stem;
@@ -185,6 +184,8 @@ var Masonry = (function() {
     overlay.className = 'overlay';
     overlay.textContent = '\u2713';
     card.appendChild(overlay);
+
+    if (_config.decorate) _config.decorate(card, img);
 
     return card;
   }

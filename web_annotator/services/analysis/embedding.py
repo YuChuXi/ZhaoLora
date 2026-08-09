@@ -291,7 +291,7 @@ class EmbeddingIndex:
         data_dir: Path,
         rels: list[str],
         on_progress: Callable[[int, int], None] | None = None,
-    ) -> None:
+    ) -> int:
         """批量确保候选图片的嵌入已加载到内存（并行计算缺失项，完成后写入磁盘）。
 
         Args:
@@ -299,12 +299,17 @@ class EmbeddingIndex:
             rels: 图片相对路径列表。
             on_progress: 进度回调 ``(done, total)``, 每完成一张图片调用一次。
 
+        Returns:
+            int: 本次操作后索引中可用的图片总数（缓存命中 + 本次新增，跳过
+                文件缺失与解码失败的图片）。
+
         Callers:
             - ``routes/tag_stats:embedding_build``
         """
         from concurrent.futures import ThreadPoolExecutor, as_completed
 
         missing: list[str] = []
+        available = 0
         with self._lock:
             for rel in rels:
                 path = data_dir / rel
@@ -312,11 +317,13 @@ class EmbeddingIndex:
                     continue
                 mtime = path.stat().st_mtime
                 cached = self._embeddings.get(rel)
-                if not cached or cached[0] != mtime:
+                if cached and cached[0] == mtime:
+                    available += 1
+                else:
                     missing.append(rel)
 
         if not missing:
-            return
+            return available
 
         done = 0
         total = len(missing)
@@ -344,6 +351,7 @@ class EmbeddingIndex:
                 if on_progress:
                     on_progress(done, total)
         self.flush()
+        return available + done
 
     def query(
         self,

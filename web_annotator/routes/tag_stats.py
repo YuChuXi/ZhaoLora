@@ -570,11 +570,11 @@ async def embedding_build(request: Request, body: EmbeddingBuildBody) -> JobSubm
                 pct=pct, done=done, total=n_total,
             ))
 
-        idx.ensure_many(root, rels, on_progress=on_progress)
+        available = idx.ensure_many(root, rels, on_progress=on_progress)
 
         emit(JobSnapshot(
             status="done", phase="done",
-            message=f"已构建 {total} 张图片的向量",
+            message=f"向量索引可用 {available} 张图片",
             pct=100, total=total,
         ))
 

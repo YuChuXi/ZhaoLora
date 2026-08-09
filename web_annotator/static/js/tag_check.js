@@ -61,6 +61,11 @@
     } else {
       card.title = '(无 .txt)';
     }
+    // 相似度 (与 A / Q 指标同栏); 余弦相似度可为负值, 仅 null 表示无相似度
+    var nameEl = card.querySelector('.name');
+    if (nameEl && img._sim != null) {
+      nameEl.textContent = 'S' + img._sim.toFixed(3) + ' ' + nameEl.textContent;
+    }
   }
 
   /**
@@ -594,16 +599,29 @@
 
   // ---- 向量嵌入 ----
 
-  var _embSortOrder = null;    // [{index, similarity}] 排序后索引
   var _embSortActive = false;  // 是否处于排序模式
 
   /**
-   * 更新嵌入状态栏文本。
-   * @param {string} msg
+   * 更新嵌入进度条。
+   * @param {Object} s - 任务快照
    */
-  function embStatus(msg) {
-    var el = document.getElementById('emb-status');
-    if (el) el.textContent = msg;
+  function embProgress(s) {
+    var bar = document.getElementById('emb-progress');
+    var running = s.status === 'running' || s.status === 'queued';
+    if (bar) bar.hidden = !running;
+    var fill = document.getElementById('emb-progress-fill');
+    var loading = running && s.phase === 'loading';
+    var waiting = s.status === 'queued';
+    if (fill) fill.classList.toggle('indeterminate', loading || waiting);
+    if (fill && !loading && !waiting) {
+      fill.style.width = Math.min(100, s.pct || 0) + '%';
+    }
+    var pctEl = document.getElementById('emb-progress-pct');
+    if (pctEl) pctEl.textContent = (loading || waiting)
+      ? '…'
+      : (Math.min(100, Math.round(s.pct || 0)) + '%');
+    var statusEl = document.getElementById('emb-status');
+    if (statusEl) statusEl.textContent = s.message || s.phase || '';
   }
 
   /**
@@ -629,7 +647,7 @@
   async function embBuild() {
     var btn = document.getElementById('emb-build');
     btn.disabled = true;
-    embStatus('正在启动…');
+    document.getElementById('emb-status').textContent = '正在启动…';
     try {
       var ok = await embCheckModel();
       if (!ok) { btn.disabled = false; return; }
@@ -638,12 +656,12 @@
         body: JSON.stringify({ dirs: DirPicker.getDirs() }),
       });
       if (!res.job_id) {
-        embStatus('构建失败');
+        document.getElementById('emb-status').textContent = '构建失败';
         btn.disabled = false;
         return;
       }
       API.watchJob(res.job_id, function (s) {
-        embStatus(s.message || s.phase);
+        embProgress(s);
         if (s.status === 'done') {
           btn.disabled = false;
           toast(s.message || '构建完成');
@@ -653,7 +671,7 @@
         }
       });
     } catch (e) {
-      embStatus('构建失败');
+      document.getElementById('emb-status').textContent = '构建失败';
       toast('构建失败: ' + String(e.message || e));
       btn.disabled = false;
     }
@@ -669,14 +687,14 @@
 
     var btn = document.getElementById('emb-sort');
     btn.disabled = true;
-    embStatus('查询中…');
+    document.getElementById('emb-status').textContent = '查询中…';
     try {
       var res = await API.request(API.apiPath('/tags/embedding/query'), {
         method: 'POST',
         body: JSON.stringify({ query: query, dirs: DirPicker.getDirs() }),
       });
       if (!res.items || res.items.length === 0) {
-        embStatus('无匹配结果');
+        document.getElementById('emb-status').textContent = '无匹配结果';
         return;
       }
 
@@ -686,10 +704,15 @@
         simMap[res.items[i].path] = res.items[i].similarity;
       }
 
-      // 按相似度降序排列 _items
+      // 将相似度写入 _items; 余弦相似度可为负值, 未命中者用 null 表示无相似度
+      for (var i = 0; i < _items.length; i++) {
+        var s = simMap[_items[i].path];
+        _items[i]._sim = s !== undefined ? s : null;
+      }
+      // 降序排列, 无相似度(null)排最后
       _items.sort(function (a, b) {
-        var sa = simMap[a.path] !== undefined ? simMap[a.path] : -1;
-        var sb = simMap[b.path] !== undefined ? simMap[b.path] : -1;
+        var sa = a._sim == null ? -Infinity : a._sim;
+        var sb = b._sim == null ? -Infinity : b._sim;
         return sb - sa;
       });
 
@@ -697,10 +720,10 @@
       hideSingle();
       Masonry.render(_items);
       updateStats();
-      embStatus('已按相似度排序 (' + res.items.length + ' 条)');
+      document.getElementById('emb-status').textContent = '已按相似度排序 (' + res.items.length + ' 条)';
       toast('已按相似度排序');
     } catch (e) {
-      embStatus('查询失败');
+      document.getElementById('emb-status').textContent = '查询失败';
       toast('查询失败: ' + String(e.message || e));
     } finally {
       btn.disabled = false;
@@ -713,7 +736,7 @@
    */
   async function embBatchTag() {
     var query = document.getElementById('emb-query').value.trim();
-    var tag = document.getElementById('check-tag').value.trim();
+    var tag = document.getElementById('emb-tag').value.trim();
     if (!query) { toast('请输入查询文本'); return; }
     if (!tag) { toast('请输入标签'); return; }
 
@@ -728,7 +751,7 @@
 
     var btn = document.getElementById('emb-batch-tag');
     btn.disabled = true;
-    embStatus('正在启动…');
+    document.getElementById('emb-status').textContent = '正在启动…';
     try {
       var res = await API.request(API.apiPath('/tags/embedding/batch-tag'), {
         method: 'POST',
@@ -744,12 +767,12 @@
         }),
       });
       if (!res.job_id) {
-        embStatus('执行失败');
+        document.getElementById('emb-status').textContent = '执行失败';
         btn.disabled = false;
         return;
       }
       API.watchJob(res.job_id, function (s) {
-        embStatus(s.message || s.phase);
+        embProgress(s);
         if (s.status === 'done') {
           btn.disabled = false;
           toast(s.message || '批量执行完成');
@@ -761,7 +784,7 @@
         }
       });
     } catch (e) {
-      embStatus('执行失败');
+      document.getElementById('emb-status').textContent = '执行失败';
       toast('批量执行失败: ' + String(e.message || e));
       btn.disabled = false;
     }
@@ -831,6 +854,44 @@
     });
 
     // ---- 向量嵌入事件 ----
+    function embPositionLabel() {
+      var sep = document.getElementById('check-position');
+      var mode = document.getElementById('check-mode');
+      var sepText = sep ? sep.options[sep.selectedIndex].text : '-';
+      var modeText = mode ? mode.options[mode.selectedIndex].text : '-';
+      return sepText + ' · ' + modeText;
+    }
+    function embUpdateAction() {
+      var wrap = document.getElementById('emb-fuzzy-wrap');
+      var action = document.getElementById('emb-action').value;
+      if (wrap) wrap.style.display = action === 'delete' ? '' : 'none';
+      var btn = document.getElementById('emb-batch-tag');
+      if (btn) btn.textContent = action === 'delete' ? '批量删除' : '批量添加';
+    }
+    function openEmbDlg() {
+      var dlg = document.getElementById('emb-dlg');
+      dlg.classList.add('open');
+      dlg.setAttribute('aria-hidden', 'false');
+      document.getElementById('emb-position-display').textContent = embPositionLabel();
+      embUpdateAction();
+      document.getElementById('emb-query').focus();
+    }
+    function closeEmbDlg() {
+      var dlg = document.getElementById('emb-dlg');
+      dlg.classList.remove('open');
+      dlg.setAttribute('aria-hidden', 'true');
+    }
+    document.getElementById('btn-emb-dlg').addEventListener('click', openEmbDlg);
+    document.getElementById('btn-emb-close').addEventListener('click', closeEmbDlg);
+    document.getElementById('emb-dlg').addEventListener('click', function (e) {
+      if (e.target === this) closeEmbDlg();
+    });
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape' && document.getElementById('emb-dlg').classList.contains('open')) {
+        closeEmbDlg();
+      }
+    });
+    document.getElementById('emb-action').addEventListener('change', embUpdateAction);
     document.getElementById('emb-build').addEventListener('click', function () {
       embBuild().catch(function (e) { toast('构建失败: ' + String(e.message || e)); });
     });
@@ -845,6 +906,13 @@
       if (e.key === 'Enter') {
         e.preventDefault();
         embSort().catch(function (err) { toast('查询失败: ' + String(err.message || err)); });
+      }
+    });
+    // Enter 键触发批量执行
+    document.getElementById('emb-tag').addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        embBatchTag().catch(function (err) { toast('批量执行失败: ' + String(err.message || err)); });
       }
     });
 

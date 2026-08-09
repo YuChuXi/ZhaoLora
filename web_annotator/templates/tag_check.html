@@ -6,14 +6,13 @@
 <title>标签检查</title>
 <link rel="stylesheet" href="/static/css/annotator.css">
 <style>
-  /* body: 全屏 flex 列 (参考 paint), 两个视图通过 hidden 切换 */
-  body { margin: 0; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+  /* 多图模式复用 index 自然滚动; 单图模式 body 转 flex 固定布局 */
+  body.mode-single { height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+  body.mode-single .view-single { flex: 1; min-height: 0; }
   .view-multi, .view-single {
-    display: flex; flex-direction: column; flex: 1; min-height: 0;
+    display: flex; flex-direction: column;
   }
   .view-multi[hidden], .view-single[hidden] { display: none; }
-  /* 多图视图: masonry 占满剩余空间并滚动 */
-  .view-multi .masonry { flex: 1; overflow-y: auto; }
   .view-multi .hint { flex-shrink: 0; }
   /* 共享 toolbar: multi-only 默认显示, single-only 默认隐藏; 进入单图模式 body 加 mode-single 反转 */
   .single-only { display: none !important; }
@@ -110,27 +109,14 @@
     border-bottom: 1px solid var(--border);
     flex-wrap: wrap; font-size: 12px;
   }
-  .toolbar-row .emb-label { color: var(--text-dim); white-space: nowrap; }
-  #emb-query {
-    background: #0a1a30; color: var(--text);
-    border: 1px solid var(--border); border-radius: 4px;
-    padding: 4px 8px; font-size: 12px;
-    width: min(180px, 20vw);
-  }
-  #emb-threshold {
-    width: 60px; background: #0a1a30; color: var(--text);
-    border: 1px solid var(--border); border-radius: 4px;
-    padding: 3px 6px; font-size: 12px; text-align: center;
-  }
-  #emb-operator, #emb-action {
-    background: var(--card-bg); color: var(--text);
-    border: 1px solid var(--border); border-radius: 4px;
-    padding: 3px 6px; font-size: 12px;
-  }
-  .toolbar-row .btn { font-size: 12px; padding: 4px 10px; }
-  #emb-fuzzy-wrap { display: flex; align-items: center; gap: 3px; color: var(--text-dim); white-space: nowrap; }
+  .emb-dlg-row { display: flex; align-items: center; gap: 8px; }
+  .emb-dlg-row label { font-size: 13px; color: var(--text-dim); white-space: nowrap; }
+  #emb-query { flex: 1; background: var(--input-bg); color: var(--text); border: 1px solid var(--border); border-radius: 4px; padding: 4px 8px; font-size: 13px; }
+  #emb-threshold { width: 80px; background: var(--input-bg); color: var(--text); border: 1px solid var(--border); border-radius: 4px; padding: 3px 6px; font-size: 13px; text-align: center; }
+  #emb-operator, #emb-action { background: var(--card-bg); color: var(--text); border: 1px solid var(--border); border-radius: 4px; padding: 3px 6px; font-size: 13px; }
+  #emb-fuzzy-wrap { display: flex; align-items: center; gap: 3px; color: var(--text-dim); white-space: nowrap; font-size: 13px; }
   #emb-fuzzy-wrap input { margin: 0; }
-  #emb-status { color: var(--text-dim); font-size: 11px; margin-left: auto; white-space: nowrap; }
+  #emb-status { color: var(--text-dim); font-size: 11px; white-space: nowrap; }
 </style>
 </head>
 <body>
@@ -149,6 +135,7 @@
     <option value="bottom">置底</option>
     <option value="random">任意</option>
   </select>
+  <button class="btn multi-only" type="button" id="btn-emb-dlg" title="向量相似度搜索与批量标记">向量</button>
   <span class="sep multi-only"></span>
   <button class="btn green multi-only" type="button" id="btn-check">检查</button>
   <label class="cols-ctl multi-only" id="cols-ctl"><span>列</span><input type="range" id="cols-slider" min="0" max="16" value="0" step="1"><span id="cols-label">自动</span></label>
@@ -160,25 +147,56 @@
   <button class="btn single-only" type="button" id="btn-fit" title="切换 contain/cover">⊞</button>
 </div>
 
-<!-- 向量嵌入工具栏: 多图视图专属 -->
-<div class="toolbar-row multi-only">
-  <span class="emb-label">向量</span>
-  <input type="text" id="emb-query" placeholder="查询文本" spellcheck="false">
-  <button class="btn" type="button" id="emb-build">构建向量</button>
-  <button class="btn green" type="button" id="emb-sort">按相似度排序</button>
-  <span class="sep"></span>
-  <select id="emb-operator">
-    <option value="gt">&gt;=</option>
-    <option value="lt">&lt;=</option>
-  </select>
-  <input type="number" id="emb-threshold" value="0.5" min="0" max="1" step="0.05">
-  <select id="emb-action">
-    <option value="add">添加标签</option>
-    <option value="delete">删除标签</option>
-  </select>
-  <label id="emb-fuzzy-wrap"><input type="checkbox" id="emb-fuzzy">模糊匹配</label>
-  <button class="btn" type="button" id="emb-batch-tag">批量执行</button>
-  <span id="emb-status"></span>
+<!-- 向量嵌入对话框 -->
+<div class="modal" id="emb-dlg" aria-hidden="true">
+  <div class="modal-panel" role="dialog" aria-labelledby="emb-dlg-title" style="width:min(480px,92vw);height:auto;max-height:min(360px,64vh);">
+    <div class="modal-head">
+      <span class="modal-title" id="emb-dlg-title">向量相似度</span>
+    </div>
+    <div class="modal-body" style="display:flex;flex-direction:column;gap:12px;padding:16px;">
+      <div class="emb-dlg-row">
+        <label>查询文本</label>
+        <input type="text" id="emb-query" placeholder="查询文本" spellcheck="false" style="flex:1;">
+      </div>
+      <div class="emb-dlg-row">
+        <button class="btn" type="button" id="emb-build">构建向量</button>
+        <button class="btn green" type="button" id="emb-sort">按相似度排序</button>
+      </div>
+      <div class="job-progress compact" id="emb-progress" hidden>
+        <div class="job-progress-track">
+          <div class="job-progress-fill" id="emb-progress-fill"></div>
+        </div>
+        <span class="job-progress-pct" id="emb-progress-pct">0%</span>
+      </div>
+      <span id="emb-status" style="color:var(--text-dim);font-size:11px;white-space:nowrap;"></span>
+      <hr style="border:none;border-top:1px solid var(--border);margin:0;">
+      <div class="emb-dlg-row">
+        <label>标签</label>
+        <input type="text" id="emb-tag" placeholder="要添加或删除的标签" spellcheck="false" style="flex:1;">
+      </div>
+      <div class="emb-dlg-row">
+        <label>位置</label>
+        <span id="emb-position-display" style="color:var(--text);font-size:12px;">-</span>
+      </div>
+      <div class="emb-dlg-row">
+        <select id="emb-action">
+          <option value="add">添加标签</option>
+          <option value="delete">删除标签</option>
+        </select>
+        <label>相似度</label>
+        <select id="emb-operator">
+          <option value="gt">&gt;=</option>
+          <option value="lt">&lt;=</option>
+        </select>
+        <input type="number" id="emb-threshold" value="0.5" min="0" max="1" step="0.05" style="width:80px;">
+        <label id="emb-fuzzy-wrap" style="display:none"><input type="checkbox" id="emb-fuzzy">模糊匹配</label>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn green" type="button" id="emb-batch-tag">批量添加</button>
+      <button class="btn" type="button" id="btn-emb-close">关闭</button>
+    </div>
+  </div>
 </div>
 
 <!-- 多图视图 (瀑布流) -->
