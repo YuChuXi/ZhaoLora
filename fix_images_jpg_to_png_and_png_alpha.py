@@ -59,7 +59,7 @@ def ensure_png_has_alpha(path: Path, *, rewrite_even_if_rgba: bool) -> bool:
     im = Image.open(path)
     need = False
 
-    # 统一将可能含透明信息的模式转为 RGBA，再判断是否需要落盘
+    # 统一将可能含透明信息的模式转为 RGBA，再判断是否需要写入磁盘
     if im.mode in ("RGBA", "RGBa"):
         rgba = im
         if rewrite_even_if_rgba:

@@ -11,18 +11,21 @@ from __future__ import annotations
 import cv2
 import json
 import subprocess
+import threading
 from pathlib import Path
 
 import numpy as np
 
 from services.core.video_scanner import cover_hash
 from services.core.work_dir import resolve_under
-from services.models.video import FrameType
+from services.models.video import BitstreamTypes
 
 # 位流缓存目录名(数据集根下)
 CACHE_DIRNAME = ".video_cache"
 # 保存帧文件名模板
 FRAME_NAME_TPL = "{stem}_frame_{idx:06d}.png"
+# 包大小量化档位: 字节 / 1024 = KB
+_SIZE_KB = 1024
 # ffprobe 单次分析的超时上限(秒), 大视频较长
 _FFPROBE_TIMEOUT = 300
 
@@ -66,35 +69,75 @@ class VideoFrameStore:
         """位流缓存文件路径. 引用: ``load_bitstream`` / ``save_bitstream``. """
         return self._cache_dir(video_rel) / "bitstream.json"
 
-    def load_bitstream(self, video_rel: str) -> dict[int, FrameType]:
-        """读取已持久化的帧类型位流; 无则返回空字典.
+    def load_bitstream(self, video_rel: str) -> BitstreamTypes:
+        """读取已持久化的紧凑帧位流; 无则返回空位流.
+
+        数据以紧凑 ``{"t", "s"}`` 存储(``s`` 已量化到 KB), 读取即得可直接返回的
+        位流; 若发现旧版逐帧 ``{str(idx): {"type","size"}}`` 格式(包大小为字节),
+        则一次性迁移为紧凑格式写入磁盘并返回, 使已分析视频下一次读取同样受益。
+
+        Args:
+            video_rel: 相对数据集根的视频路径.
+
+        Returns:
+            BitstreamTypes: 紧凑位流; 无缓存或损坏时为空位流.
 
         Callers:
             - `VideoFrameStore.analyze_bitstream`
+            - `routes.video:video_detail`
         """
         path = self._bitstream_path(video_rel)
         if not path.is_file():
-            return {}
+            return BitstreamTypes()
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
-            return {}
-        result: dict[int, FrameType] = {}
-        for k, v in data.items():
-            if str(k).isdigit() and isinstance(v, dict):
-                result[int(k)] = FrameType(
-                    type=str(v.get("type", "?")),
-                    size=int(v.get("size", 0) or 0),
-                )
-        return result
+            return BitstreamTypes()
+        if isinstance(data, dict) and isinstance(data.get("t"), str) and isinstance(data.get("s"), list):
+            return BitstreamTypes(t=data["t"], s=[max(0, int(x)) for x in data["s"]])
+        bits = self._legacy_to_compact(data)
+        if bits.t:
+            self.save_bitstream(video_rel, bits)
+        return bits
 
-    def save_bitstream(self, video_rel: str, bitstream: dict[int, FrameType]) -> None:
-        """持久化帧类型位流. 引用: ``VideoFrameStore.analyze_bitstream``. """
+    @staticmethod
+    def _legacy_to_compact(data: object) -> BitstreamTypes:
+        """把旧版逐帧位流 ``{str(idx): {"type","size"}}`` 转为紧凑格式.
+
+        Args:
+            data: 旧版 JSON 反序列化结果.
+
+        Returns:
+            BitstreamTypes: 紧凑位流, 包大小由字节量化到 KB.
+
+        Callers:
+            - `VideoFrameStore.load_bitstream`
+        """
+        t_chars: list[str] = []
+        sizes: list[int] = []
+        if isinstance(data, dict):
+            items = [(int(k), v) for k, v in data.items() if str(k).isdigit() and isinstance(v, dict)]
+            for _, v in sorted(items):
+                type_char = str(v.get("type", "?"))[:1] or "?"
+                t_chars.append(type_char)
+                sizes.append(max(0, int(v.get("size", 0) or 0)) // _SIZE_KB)
+        return BitstreamTypes(t="".join(t_chars), s=sizes)
+
+    def save_bitstream(self, video_rel: str, bits: BitstreamTypes) -> None:
+        """持久化紧凑帧位流(``s`` 各元素为量化到 KB 的大小).
+
+        Args:
+            video_rel: 相对数据集根的视频路径.
+            bits: 待持久化的紧凑位流.
+
+        Callers:
+            - `VideoFrameStore.load_bitstream`
+            - `VideoFrameStore.analyze_bitstream`
+        """
         d = self._cache_dir(video_rel)
         d.mkdir(parents=True, exist_ok=True)
         tmp = self._bitstream_path(video_rel).with_suffix(".tmp")
-        payload = {str(k): v.model_dump() for k, v in bitstream.items()}
-        tmp.write_text(json.dumps(payload), encoding="utf-8")
+        tmp.write_text(json.dumps(bits.model_dump()), encoding="utf-8")
         tmp.replace(self._bitstream_path(video_rel))
 
     # ---- 帧读取与编码 ----
@@ -104,7 +147,7 @@ class VideoFrameStore:
 
         复用 ``resolve_under`` 做词法规范化 (消除 ``..``/``.`` 但不跟随符号链接),
         因此数据集内指向外部存储的视频链接 (如 ``video -> /mnt/...``) 也能正常
-        解析, 与 ``routes.deps.resolve_path`` 的越界判定口径一致。
+        解析, 与 ``routes.deps.resolve_path`` 的越界判定标准一致。
 
         Args:
             video_rel: 相对数据集根的视频路径.
@@ -154,24 +197,46 @@ class VideoFrameStore:
         finally:
             cap.release()
 
-    def frame_bytes(self, video_rel: str, index: int, *, fmt: str = "jpg") -> bytes:
-        """读取一帧并编码为 JPEG/PNG 字节.
+    def frame_bytes(
+        self,
+        video_rel: str,
+        index: int,
+        *,
+        fmt: str = "jpg",
+        max_size: int | None = None,
+    ) -> bytes:
+        """读取一帧, 可选等比缩略后编码为 JPEG/PNG 字节.
+
+        抽帧预览分两种消费: 主图需清晰, 缩略条仅需小尺寸定位。通过
+        ``max_size`` 限制最长边以减小传输体积, 缩小用 INTER_AREA 保证质量;
+        None 时返回原始分辨率帧。
 
         Args:
             video_rel: 相对数据集根的视频路径.
             index: 帧索引.
             fmt: 编码格式("jpg" 或 "png").
+            max_size: 缩略后最长边像素数; None 表示不缩略.
 
         Returns:
             bytes: 编码后图像数据.
 
         Raises:
-            VideoFrameError: 帧读取失败.
+            VideoFrameError: 帧读取失败或编码失败.
 
         Callers:
             - `routes/video.py:video_frame`
         """
         frame = self.extract_frame(video_rel, index)
+        if max_size:
+            h, w = frame.shape[:2]
+            longest = max(w, h)
+            if longest > max_size:
+                scale = max_size / longest
+                frame = cv2.resize(
+                    frame,
+                    (int(w * scale), int(h * scale)),
+                    interpolation=cv2.INTER_AREA,
+                )
         ext = ".png" if fmt == "png" else ".jpg"
         ok, buf = cv2.imencode(ext, frame)
         if not ok:
@@ -261,11 +326,11 @@ class VideoFrameStore:
         total: int,
         cancel_fn=None,
         emit=None,
-    ) -> dict[int, FrameType]:
+    ) -> BitstreamTypes:
         """用 ffprobe 提取每帧的编码类型(I/P/B)与包大小, 已分析的帧跳过.
 
         一次性运行 ffprobe 输出全部帧的 ``pict_type`` 与 ``pkt_size``; 若缓存已
-        存在则直接复用, 不重复扫描。
+        存在则直接复用, 不重复扫描。包大小在持久化前量化到 KB, 与紧凑存储格式一致。
 
         Args:
             video_rel: 相对数据集根的视频路径.
@@ -274,7 +339,7 @@ class VideoFrameStore:
             emit: 可选进度回调 ``(done, total)``.
 
         Returns:
-            dict[int, dict]: 帧索引 -> ``{"type": I/P/B, "size": int}``.
+            BitstreamTypes: 紧凑位流(``s`` 为量化到 KB 的大小).
 
         Raises:
             VideoFrameError: 视频无法打开或 ffprobe 失败.
@@ -284,7 +349,7 @@ class VideoFrameStore:
         """
         path = self._video_path(video_rel)
         cached = self.load_bitstream(video_rel)
-        if cached:
+        if cached.t:
             if emit and total:
                 emit(total, total)
             return cached
@@ -293,33 +358,68 @@ class VideoFrameStore:
             "ffprobe", "-v", "error",
             "-select_streams", "v:0",
             "-show_entries", "frame=pict_type,pkt_size",
-            "-of", "json", str(path),
+            "-of", "csv=p=0",
+            str(path),
         ]
         try:
-            res = subprocess.run(cmd, capture_output=True, text=True, timeout=_FFPROBE_TIMEOUT)
-        except (OSError, subprocess.TimeoutExpired) as e:
-            raise VideoFrameError(f"位流分析失败: {e}") from e
-        if res.returncode != 0 or not res.stdout.strip():
-            raise VideoFrameError(f"位流分析失败: {res.stderr.strip() or res.returncode}")
-
-        bitstream: dict[int, FrameType] = {}
-        try:
-            frames = (json.loads(res.stdout) or {}).get("frames") or []
-        except ValueError as e:
-            raise VideoFrameError(f"位流分析输出解析失败: {e}") from e
-        for i, f in enumerate(frames):
-            if cancel_fn and cancel_fn():
-                break
-            bitstream[i] = FrameType(
-                type=str(f.get("pict_type", "?")),
-                size=int(f.get("pkt_size", 0) or 0),
+            proc: subprocess.Popen[bytes] = subprocess.Popen(
+                cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             )
-            if emit and (i + 1) % 50 == 0:
-                emit(i + 1, max(total, len(frames)))
+        except OSError as e:
+            raise VideoFrameError(f"位流分析失败: {e}") from e
+
+        err_lines: list[str] = []
+
+        def drain_stderr() -> None:
+            """后台线程收集 ffprobe stderr 输出(``-v error`` 下仅错误信息).
+
+            Callers:
+                - `VideoFrameStore.analyze_bitstream`
+            """
+            for raw in proc.stderr or ():
+                err_lines.append(raw.decode("utf-8", "replace").strip())
+
+        err_thread = threading.Thread(target=drain_stderr, daemon=True)
+        err_thread.start()
+
+        t_chars: list[str] = []
+        sizes: list[int] = []
+        cancelled = False
+        try:
+            for raw in getattr(proc, "stdout") or ():
+                line = raw.decode("utf-8", "replace").strip()
+                if not line:
+                    continue
+                parts = line.split(",")
+                if len(parts) < 2:
+                    continue
+                if cancel_fn and cancel_fn():
+                    cancelled = True
+                    break
+                # ffprobe `frame=pict_type,pkt_size -of csv=p=0` 输出字段顺序为
+                # pkt_size,pict_type, 需按此顺序解析
+                t_chars.append((parts[1] or "?")[:1])
+                sizes.append((int(parts[0]) if parts[0] else 0) // _SIZE_KB)
+                # ffprobe 逐帧流式输出, 每 50 帧回报一次进度
+                if emit and total and len(sizes) % 50 == 0:
+                    emit(len(sizes), max(total, len(sizes)))
+            if cancelled:
+                # 取消时终止 ffprobe, 否则 stdout 管道写满后 wait 会空等至超时
+                proc.terminate()
+            proc.wait(timeout=_FFPROBE_TIMEOUT)
+        finally:
+            err_thread.join()
+        if cancelled:
+            # 取消不持久化部分缓存, 以免下次复用残缺位流
+            raise VideoFrameError("位流分析已取消")
+        if proc.returncode != 0:
+            detail = " ".join(err_lines).strip() or str(proc.returncode)
+            raise VideoFrameError(f"位流分析失败: {detail}")
         if emit and total:
-            emit(max(total, len(frames)), total)
-        self.save_bitstream(video_rel, bitstream)
-        return bitstream
+            emit(max(total, len(sizes)), total)
+        bits = BitstreamTypes(t="".join(t_chars), s=sizes)
+        self.save_bitstream(video_rel, bits)
+        return bits
 
 
 def total_frames(video_rel: str, data_dir: Path) -> int:

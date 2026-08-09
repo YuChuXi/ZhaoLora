@@ -170,7 +170,7 @@ def chat_ollama_vision_stream(
     timeout_sec: int,
     think: bool | str | None,
 ) -> str:
-    """返回 message.content 全文；思考过程仅流式打印到终端，不返回、不落盘。think 为 None 时不传 think 字段。
+    """返回 message.content 全文；思考过程仅流式打印到终端，不返回、不写入磁盘。think 为 None 时不传 think 字段。
     不传入 temperature 等采样参数，沿用 Ollama/模型默认。"""
     url = host.rstrip("/") + "/api/chat"
     body: dict[str, Any] = {

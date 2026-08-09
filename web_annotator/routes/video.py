@@ -140,13 +140,16 @@ async def video_frame(
     request: Request,
     path: str = Query(...),
     index: int = Query(..., ge=0),
+    size: int | None = Query(None, ge=1),
 ) -> Response:
-    """按帧索引返回一帧 JPEG. 引用: 抽帧页预览. """
+    """按帧索引返回一帧 JPEG, 可指定 ``size`` 等比缩略最长边. 引用: 抽帧页预览. """
     rt = get_runtime(request)
     resolve_path(rt.root, path)
     store, _ = _stores(request)
     try:
-        data = await asyncio.to_thread(store.frame_bytes, path, index, fmt="jpg")
+        data = await asyncio.to_thread(
+            store.frame_bytes, path, index, fmt="jpg", max_size=size
+        )
     except VideoFrameError as e:
         raise HTTPException(400, str(e)) from e
     return Response(

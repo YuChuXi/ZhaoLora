@@ -14,6 +14,9 @@ var VideoExtract = (function () {
   'use strict';
 
   var THUMB_COUNT = 60; // 缩略图条采样目标数量
+  var THUMB_SIZE = 256; // 缩略图条帧最长边
+  var MAIN_SIZE = 1920; // 主图帧最长边
+  var FRAME_CACHE_MAX = 200; // 主图帧缓存上限: 前/后各 100 个 I/P 帧(隐藏 B 帧时)
   var FRAME_COLORS = { I: '#ff6b6b', P: '#f5c542', B: '#4a9eff' }; // 红I/黄P/蓝B
 
   var state = {
@@ -29,18 +32,24 @@ var VideoExtract = (function () {
     vidIdx: -1,    // 当前视频在列表中的位置
     jobWatch: null,
     analyzing: false,
+    hideB: true, // 隐藏 B 帧: 柱状图不绘制 B 帧柱(紧凑排列), 所有切帧操作(滚轮/键盘/按钮)跳过 B 帧, 只落在 I/P 帧
   };
 
   var _stripItems = []; // 缩略图条 DOM 集合
   var _stripIo = null;  // 缩略图懒加载观察器
+  var _frameCache = new Map(); // 主图帧缓存: idx -> objectURL(blob), 超出上限时按插入序淘汰并 revoke
+  var _reqSeq = 0; // 主图请求序号, 丢弃过期响应
+  var _globalCache = null; // 全局图柱状体缓存(逐帧绘制成本高, 仅宽度/帧数变化时重建)
 
   function $(id) { return document.getElementById(id); }
 
-  /** 构造帧预览 URL。引用: goto。 */
-  function frameUrl(idx) {
-    return API.apiPath('/video/frame')
+  /** 构造帧预览 URL, 可选等比缩略最长边尺寸。引用: loadFrame / buildStrip。 */
+  function frameUrl(idx, size) {
+    var url = API.apiPath('/video/frame')
       + '?path=' + encodeURIComponent(state.path)
       + '&index=' + idx;
+    if (size) url += '&size=' + size;
+    return url;
   }
 
   /** 构造封面 URL(用于视频切换时顶部信息)。引用: 无(仅信息)。 */
@@ -59,23 +68,22 @@ var VideoExtract = (function () {
    */
   function paintStatus() {
     var name = state.path ? state.path.split('/').pop() : '';
-    var seg = $('ve-video');
+    var seg = $('seg-name');
     if (seg) {
       seg.textContent = (state.vidIdx >= 0 ? '[' + (state.vidIdx + 1) + '/' + state.videoList.length + '] ' : '')
         + name
         + ' · ' + state.total + ' 帧'
         + (state.total ? ' · ' + fmtTime((state.idx + 1) / (state.total / (state.duration || 1))) : '');
     }
-    var frame = $('ve-frame');
+    var frame = $('seg-pos');
     if (frame) {
       var ft = state.types[state.idx];
-      var tInfo = ft ? (' · ' + ft.type + '帧 '
-        + (ft.size >= 1024 ? (ft.size / 1024).toFixed(1) + 'KB' : ft.size + 'B')) : '';
+      var tInfo = ft ? (' · ' + ft.type + '帧 ' + ft.size + 'KB') : '';
       frame.textContent = (state.idx + 1) + '/' + state.total + tInfo;
     }
-    var saved = $('ve-saved-seg');
+    var saved = $('seg-done');
     if (saved) saved.textContent = '已保存: ' + state.saved.length;
-    var size = $('ve-size');
+    var size = $('seg-metric');
     if (size) size.textContent = state.width + '×' + state.height;
   }
 
@@ -90,7 +98,7 @@ var VideoExtract = (function () {
   /**
    * 跳转到指定帧: 钳位、加载预览、同步缩略条与曲线光标。
    * @param {number} idx
-   * 引用: init / 各导航回调 / 键盘 / 滚轮。
+   * 引用: init / 各切帧入口 / 键盘 / 滚轮。
    */
   function goto(idx) {
     if (!state.total) return;
@@ -108,13 +116,14 @@ var VideoExtract = (function () {
     var stage = $('ve-stage');
     var img = $('ve-img');
     if (stage) stage.classList.add('loading');
-    var url = frameUrl(idx);
+    var cached = _frameCache.get(idx);
+    var url = cached || frameUrl(idx, MAIN_SIZE);
     img.onload = function () {
       img.setAttribute('data-idx', String(idx));
       state.idx = idx;
       if (stage) stage.classList.remove('loading');
       paintStatus();
-      drawChart();
+      updateCursor();
       syncStrip();
     };
     img.onerror = function () {
@@ -122,6 +131,49 @@ var VideoExtract = (function () {
       toast('帧 ' + idx + ' 读取失败');
     };
     img.src = url;
+    preloadNeighbors();
+  }
+
+  /**
+   * 收集当前帧前/后各 count 个导航帧索引(隐藏 B 帧时为 I/P 帧, 否则为全部帧)。
+   * 引用: preloadNeighbors。
+   */
+  function neighborFrameIndices(count) {
+    var back = [];
+    for (var i = state.idx - 1; back.length < count && i >= 0; i--) {
+      var b = state.types[i];
+      if (b && (b.type !== 'B' || !state.hideB)) back.unshift(i);
+    }
+    var fwd = [];
+    for (var j = state.idx + 1; fwd.length < count && j < state.total; j++) {
+      var f = state.types[j];
+      if (f && (f.type !== 'B' || !state.hideB)) fwd.push(j);
+    }
+    return back.concat(fwd);
+  }
+
+  /** 预取单帧到内存缓存(blob -> objectURL), 超出上限时按插入序淘汰并 revoke。引用: preloadNeighbors。 */
+  function cacheFrame(idx) {
+    if (_frameCache.has(idx)) return;
+    fetch(frameUrl(idx, MAIN_SIZE))
+      .then(function (r) { return r.ok ? r.blob() : null; })
+      .then(function (blob) {
+        if (!blob) { _frameCache.delete(idx); return; }
+        var url = URL.createObjectURL(blob);
+        _frameCache.set(idx, url);
+        while (_frameCache.size > FRAME_CACHE_MAX) {
+          var oldest = _frameCache.keys().next().value;
+          URL.revokeObjectURL(_frameCache.get(oldest));
+          _frameCache.delete(oldest);
+        }
+      })
+      .catch(function () { _frameCache.delete(idx); });
+  }
+
+  /** 预取当前帧前/后各 100 个导航帧, 使切帧时无需等待网络。引用: loadFrame。 */
+  function preloadNeighbors() {
+    var list = neighborFrameIndices(100);
+    for (var i = 0; i < list.length; i++) cacheFrame(list[i]);
   }
 
   /** 切换视频(上下一个)，重新加载详情并回到第 0 帧。引用: prevVideo/nextVideo。 */
@@ -142,6 +194,7 @@ var VideoExtract = (function () {
    * 引用: init / switchVideo。
    */
   async function setPath(p) {
+    clearFrameCache();
     state.path = p;
     state.idx = 0;
     state.total = 0;
@@ -152,10 +205,33 @@ var VideoExtract = (function () {
     if (img) img.removeAttribute('src');
     $('ve-strip').innerHTML = '';
     _stripItems = [];
+    _chart = { global: null, local: null };
     paintStatus();
     await loadDetail();
     // 直接加载第 0 帧: goto(0) 会因 idx===state.idx 提前返回而跳过首帧
     loadFrame(0);
+  }
+
+  /** 清空主图帧缓存并撤销所有 objectURL。引用: setPath。 */
+  function clearFrameCache() {
+    _frameCache.forEach(function (url) { URL.revokeObjectURL(url); });
+    _frameCache.clear();
+  }
+
+  /**
+   * 把后端紧凑位流(类型串 + 大小数组)还原为 ``{帧号: {type, size}}``。
+   * 数组下标即帧序号, 由 detail 接口压缩传输以减小负载。
+   * 引用: loadDetail。
+   */
+  function decodeBitstream(bits) {
+    var out = {};
+    if (!bits || !bits.t) return out;
+    var t = bits.t, s = bits.s || [];
+    for (var i = 0; i < t.length; i++) {
+      var c = t[i];
+      if (c !== '?') out[i] = { type: c, size: s[i] || 0 };
+    }
+    return out;
   }
 
   /**
@@ -169,13 +245,24 @@ var VideoExtract = (function () {
     state.width = data.width || 0;
     state.height = data.height || 0;
     state.duration = data.duration || 0;
-    state.types = data.types || {};
+    state.types = decodeBitstream(data.types);
     state.saved = data.saved || [];
     if (!state.total) {
       toast('视频无法读取或总帧数为 0');
       return;
     }
     buildStrip();
+    drawChart();
+    // 位流缓存命中时如实报告已分析状态; 未命中则自动分析(进度会覆盖该文本)
+    var segExtra = $('seg-extra');
+    if (segExtra && Object.keys(state.types).length) {
+      segExtra.textContent = '帧类型: 已分析';
+    }
+    // 位流未缓存时自动分析帧类型, 使 I/P/B 曲线无需手动触发;
+    // 分析完成回调会回读 detail(此时 types 非空)故不会重复启动
+    if (!Object.keys(state.types).length && !state.analyzing) {
+      toggleAnalysis();
+    }
   }
 
   /**
@@ -219,6 +306,11 @@ var VideoExtract = (function () {
     strip.innerHTML = '';
     _stripItems = [];
     if (!state.total) return;
+    // 按视频真实宽高比设置缩略图占位, 使懒加载前布局与加载后一致(避免抖动/误判)
+    strip.style.setProperty(
+      '--thumb-ar',
+      (state.width || 16) + '/' + (state.height || 9),
+    );
     var interval = Math.max(1, Math.round(state.total / THUMB_COUNT));
     var indices = [];
     for (var i = 0; i < state.total; i += interval) indices.push(i);
@@ -231,7 +323,7 @@ var VideoExtract = (function () {
         box.dataset.idx = String(idx);
         var img = document.createElement('img');
         img.loading = 'lazy';
-        img.dataset.src = frameUrl(idx);
+        img.dataset.src = frameUrl(idx, THUMB_SIZE);
         box.appendChild(img);
         var tag = document.createElement('span');
         tag.className = 'tag';
@@ -283,107 +375,192 @@ var VideoExtract = (function () {
     }
   }
 
-  // ---- 帧类型柱状图 ----
+  // ---- 帧类型柱状图 (SVG 原生横向滚动) ----
 
   /**
-   * 绘制帧类型柱状图: 每帧一根柱(红I/黄P/蓝B), 高度按包大小归一化到最大包;
-   * 叠加当前帧竖线(白)与已保存帧底部刻度(绿)。
-   * 大量帧时按像素列分桶, 每列取该帧(最大包)绘制以避免卡顿。
-   * 引用: goto / loadFrame / analysisDone / saveCurrent / deleteCurrent。
+   * 帧类型双图, 均渲染整条视频时间轴:
+   *   全局图: 视口宽度约对应 10 分钟时间窗, 尺度粗;
+   *   局部图: 视口宽度约对应 200 帧, 尺度细, 承担逐帧 I/P/B 明细。
+   * 每帧一根柱 I红/P黄/B蓝, 高度按最大包归一化; 叠加当前帧白竖线(游标)与
+   * 已保存帧绿刻度。SVG 宽度 = 整条时间轴宽度, 超出视口部分由容器
+   * ``overflow-x: auto`` 提供浏览器原生横向滚动, 滚动只浏览、不改变当前帧。
+   * 数据变化(分析完成/存取帧/换片/缩放)走 drawChart 全量重建; 仅换帧走
+   * updateCursor 只移动游标并滚动居中, 开销最小。
    */
-  function drawChart() {
-    var canvas = $('ve-chart');
-    if (!canvas) return;
-    var dpr = window.devicePixelRatio || 1;
-    var w = canvas.clientWidth, h = canvas.clientHeight;
-    if (!w || !h) return;
-    canvas.width = Math.round(w * dpr);
-    canvas.height = Math.round(h * dpr);
-    var ctx = canvas.getContext('2d');
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.clearRect(0, 0, w, h);
+  var _chart = { global: null, local: null }; // 各图渲染信息: {svgId, ppf, svgW, viewportW, cursor}
 
-    var pad = 2;
-    var plotW = w - pad * 2;
-    var plotH = h - pad * 2;
-    var bottom = h - pad;
+  /** 显示域帧数: 隐藏 B 帧时仅计非 B 帧, 否则即总帧数。引用: globalPxPerFrame / localPxPerFrame / renderChart。 */
+  function domainCount() {
+    if (!state.hideB) return state.total;
+    var n = 0;
+    for (var i = 0; i < state.total; i++) {
+      var ft = state.types[i];
+      if (ft && ft.type !== 'B') n++;
+    }
+    return n;
+  }
+
+  /** 帧索引映射到显示域序号(0 基): 隐藏 B 帧时为其左侧非 B 帧个数, 否则即帧号。引用: cursorX / renderChart。 */
+  function barOrdinal(idx) {
+    if (!state.hideB) return idx;
+    var n = 0;
+    for (var i = 0; i < idx; i++) {
+      var ft = state.types[i];
+      if (ft && ft.type !== 'B') n++;
+    }
+    return n;
+  }
+
+  /** 全局图每帧像素宽: 视口最多对应 10 分钟帧跨度; 视频更短时整条铺满视口(最多 10 分钟而非固定 10 分钟)。引用: renderChart。 */
+  function globalPxPerFrame(viewportW) {
+    var domain = domainCount() || 1;
+    var dur = state.duration || 0;
+    var WIN_SEC = 600; // 10 分钟
+    var winFrames = dur > 0 ? Math.max(1, Math.round((WIN_SEC * domain) / dur)) : domain;
+    var showFrames = Math.min(winFrames, domain);
+    return viewportW / showFrames;
+  }
+
+  /** 局部图每帧像素宽: 视口最多对应 200 帧; 视频更短时整条铺满视口。引用: renderChart。 */
+  function localPxPerFrame(viewportW) {
+    var domain = domainCount() || 1;
+    var LOCAL_SPAN = 200;
+    return viewportW / Math.min(LOCAL_SPAN, domain);
+  }
+
+  /**
+   * 全量重建单张 SVG 柱状图(柱 + 已存刻度 + 游标)。
+   * @param {string} svgId svg 元素 id。
+   * @param {function(number):number} pxPerFrame 每帧像素宽计算函数。
+   * @returns {{svgId:string, ppf:number, svgW:number, viewportW:number, cursor:SVGElement}|null}
+   * 引用: drawChart。
+   */
+  function renderChart(svgId, pxPerFrame) {
+    var svg = $(svgId);
+    if (!svg) return null;
+    var container = svg.parentElement;
+    var viewportW = container.clientWidth, vh = container.clientHeight;
+    if (!viewportW || !vh) return null;
     var total = state.total || 1;
-    var xOf = function (idx) { return pad + (idx / total) * plotW; };
+    var domain = domainCount() || 1; // 显示域宽度: 隐藏 B 帧时即非 B 帧数
+    var ppf = pxPerFrame(viewportW);
+    var svgW = Math.max(viewportW, Math.ceil(domain * ppf));
+    svg.setAttribute('width', svgW);
+    svg.setAttribute('height', vh);
+    svg.style.width = svgW + 'px';
+    svg.style.height = vh + 'px';
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
 
-    var keys = Object.keys(state.types).map(Number).sort(function (a, b) { return a - b; });
-    if (keys.length) {
-      // 最大包大小用于高度归一化
-      var maxSize = 0;
-      for (var i = 0; i < keys.length; i++) {
-        var s = state.types[keys[i]].size;
-        if (s > maxSize) maxSize = s;
-      }
-      if (maxSize <= 0) maxSize = 1;
+    var ns = 'http://www.w3.org/2000/svg';
+    var plotH = vh - 2, bottom = vh - 1;
 
-      if (keys.length <= plotW) {
-        // 帧数少: 逐帧绘制
-        var barW = Math.max(1, plotW / total);
-        for (var j = 0; j < keys.length; j++) {
-          var idx = keys[j];
-          var ft = state.types[idx];
-          var hgt = (ft.size / maxSize) * plotH;
-          ctx.fillStyle = FRAME_COLORS[ft.type] || '#888';
-          ctx.fillRect(xOf(idx), bottom - hgt, barW, hgt);
-        }
-      } else {
-        // 帧数多: 按像素列分桶, 每列取包最大的帧
-        var colMax = {};   // 列 -> 最大 size
-        var colType = {};  // 列 -> 对应帧类型
-        for (var k = 0; k < keys.length; k++) {
-          var c = Math.floor(xOf(keys[k]));
-          var sz = state.types[keys[k]].size;
-          if (colMax[c] == null || sz > colMax[c]) {
-            colMax[c] = sz;
-            colType[c] = state.types[keys[k]].type;
-          }
-        }
-        for (var col in colMax) {
-          var bx = Number(col);
-          var bh = (colMax[col] / maxSize) * plotH;
-          ctx.fillStyle = FRAME_COLORS[colType[col]] || '#888';
-          ctx.fillRect(bx, bottom - bh, 1, bh);
-        }
+    var maxSize = 1;
+    for (var k in state.types) {
+      var s = state.types[k].size;
+      if (s > maxSize) maxSize = s;
+    }
+
+    // 隐藏 B 帧时, 柱按显示顺序紧凑排列(不留空槽), 故用 pos 而非 idx 定位。
+    var bars = document.createElementNS(ns, 'g');
+    var slots = []; // 显示序号 -> 帧索引(点击反查)
+    var pos = 0;
+    for (var idx = 0; idx < total; idx++) {
+      var ft = state.types[idx];
+      if (!ft) continue;
+      if (state.hideB && ft.type === 'B') continue;
+      slots.push(idx);
+      var hgt = (ft.size / maxSize) * plotH;
+      var r = document.createElementNS(ns, 'rect');
+      r.setAttribute('x', pos * ppf);
+      r.setAttribute('y', bottom - hgt);
+      r.setAttribute('width', Math.max(1, ppf));
+      r.setAttribute('height', hgt);
+      r.setAttribute('fill', FRAME_COLORS[ft.type] || '#888');
+      bars.appendChild(r);
+      pos++;
+    }
+    svg.appendChild(bars);
+
+    if (state.saved.length) {
+      for (var s2 = 0; s2 < state.saved.length; s2++) {
+        var t = document.createElementNS(ns, 'rect');
+        t.setAttribute('x', barOrdinal(state.saved[s2]) * ppf - 1);
+        t.setAttribute('y', bottom - 4);
+        t.setAttribute('width', 2);
+        t.setAttribute('height', 4);
+        t.setAttribute('fill', '#3ecf8e');
+        svg.appendChild(t);
       }
     }
 
-    // 当前帧竖线(白)
-    ctx.strokeStyle = '#ffffff';
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    var cx = xOf(state.idx);
-    ctx.moveTo(cx, 0);
-    ctx.lineTo(cx, h);
-    ctx.stroke();
+    var cursor = document.createElementNS(ns, 'line');
+    cursor.setAttribute('y1', 0);
+    cursor.setAttribute('y2', vh);
+    cursor.setAttribute('stroke', '#ffffff');
+    cursor.setAttribute('stroke-width', 1);
+    svg.appendChild(cursor);
 
-    // 已保存帧底部刻度(绿)
-    if (state.saved.length) {
-      ctx.fillStyle = '#3ecf8e';
-      for (var s = 0; s < state.saved.length; s++) {
-        var sx = xOf(state.saved[s]);
-        ctx.fillRect(sx - 1, bottom - 4, 2, 4);
-      }
+    var info = { svgId: svgId, ppf: ppf, svgW: svgW, viewportW: viewportW, cursor: cursor, slots: slots };
+    _chart[svgId === 've-chart-global' ? 'global' : 'local'] = info;
+    positionCursor(info);
+    return info;
+  }
+
+  /** 当前帧游标在柱上的 x 坐标: 柱中心(避免落在两柱交界)。引用: positionCursor / syncScroll。 */
+  function cursorX(info) {
+    return barOrdinal(state.idx) * info.ppf + info.ppf / 2;
+  }
+
+  /** 将游标移动到当前帧柱中心(仅移动 line, 不重建柱)。引用: renderChart / updateCursor。 */
+  function positionCursor(info) {
+    if (!info || !info.cursor) return;
+    var x = cursorX(info);
+    info.cursor.setAttribute('x1', x);
+    info.cursor.setAttribute('x2', x);
+  }
+
+  /** 数据变化时全量重建两图并滚动居中游标。引用: loadDetail / analysisDone / saveCurrent / deleteCurrent / bindResize。 */
+  function drawChart() {
+    renderChart('ve-chart-global', globalPxPerFrame);
+    renderChart('ve-chart-local', localPxPerFrame);
+    syncScroll();
+  }
+
+  /** 仅移动游标并滚动居中(换帧时调用, 开销最小)。引用: loadFrame。 */
+  function updateCursor() {
+    positionCursor(_chart.global);
+    positionCursor(_chart.local);
+    syncScroll();
+  }
+
+  /** 滚动各图容器, 使当前帧游标尽量居中(边缘处贴边)。引用: drawChart / updateCursor。 */
+  function syncScroll() {
+    for (var key in _chart) {
+      var c = _chart[key];
+      if (!c) continue;
+      var container = $(c.svgId).parentElement;
+      var target = cursorX(c) - c.viewportW / 2;
+      container.scrollLeft = Math.max(0, Math.min(target, c.svgW - c.viewportW));
     }
   }
 
-  /** 将画布坐标换算为帧索引并跳转。引用: 柱状图点击。 */
+  /** 将点击坐标换算为帧索引并跳转(按各图每帧像素宽映射)。引用: 两图点击。 */
   function chartClick(e) {
     if (!state.total) return;
-    var canvas = $('ve-chart');
-    var r = canvas.getBoundingClientRect();
-    var x = e.clientX - r.left - 2;
-    var plotW = r.width - 4;
-    var idx = Math.round((x / (plotW || 1)) * state.total);
+    var svg = e.currentTarget;
+    var c = _chart[svg.id === 've-chart-global' ? 'global' : 'local'];
+    if (!c) return;
+    var r = svg.getBoundingClientRect();
+    var xCanvas = e.clientX - r.left;
+    var slot = Math.floor(xCanvas / c.ppf);
+    var idx = c.slots[slot];
+    if (idx === undefined) idx = state.total - 1;
     goto(Math.max(0, Math.min(state.total - 1, idx)));
   }
 
   // ---- 帧类型分析 ----
 
-  /** 停止进行中的分析 SSE 订阅。引用: setPath / stopAnalysis。 */
+  /** 停止进行中的分析 SSE 订阅并隐藏进度条。引用: setPath / toggleAnalysis。 */
   function stopAnalysis() {
     if (state.jobWatch) {
       state.jobWatch.close();
@@ -392,16 +569,41 @@ var VideoExtract = (function () {
     state.analyzing = false;
     var btn = $('ve-analysis');
     if (btn) btn.disabled = false;
+    var bar = $('ve-progress');
+    if (bar) bar.hidden = true;
+  }
+
+  /**
+   * 更新分析进度条(轨道+百分比)与状态栏消息。
+   * 引用: toggleAnalysis。
+   */
+  function setProgress(pct, msg) {
+    var bar = $('ve-progress');
+    if (bar) bar.hidden = false;
+    var fill = $('ve-progress-fill');
+    if (fill) fill.style.width = Math.min(100, pct) + '%';
+    var pctEl = $('ve-progress-pct');
+    if (pctEl) pctEl.textContent = Math.round(pct) + '%';
+    var seg = $('seg-extra');
+    if (seg) seg.textContent = msg || '';
+  }
+
+  /** 设置分析结束状态文本并复位按钮。引用: toggleAnalysis。 */
+  function setStatus(t) {
+    var prog = $('seg-extra');
+    if (prog) prog.textContent = t;
+    var btn = $('ve-analysis');
+    if (btn) btn.textContent = '帧类型';
   }
 
   /**
    * 启动/停止位流帧类型分析长任务。
-   * 引用: 分析按钮。
+   * 引用: 分析按钮 / loadDetail(自动分析)。
    */
   async function toggleAnalysis() {
     if (state.analyzing) {
       stopAnalysis();
-      setProgressText('分析: 已停止');
+      setStatus('分析: 已停止');
       return;
     }
     if (!state.total) return;
@@ -410,34 +612,24 @@ var VideoExtract = (function () {
     state.analyzing = true;
     var btn = $('ve-analysis');
     if (btn) btn.textContent = '停止';
-    var prog = $('ve-progress-seg');
-    if (prog) prog.textContent = '分析: 提交中…';
+    setProgress(0, '提交中…');
     state.jobWatch = API.watchJob(data.job_id, function (s) {
-      if (prog) {
-        prog.textContent = '分析: ' + (s.done || 0) + '/' + (s.total || 0)
-          + (s.message ? ' · ' + s.message : '');
-      }
-      if (s.status === 'done') {
+      if (s.status === 'running') {
+        setProgress(s.pct || 0, (s.done || 0) + '/' + (s.total || 0)
+          + (s.message ? ' · ' + s.message : ''));
+      } else if (s.status === 'done') {
         stopAnalysis();
-        setProgressText('分析: 完成');
+        setStatus('分析: 完成');
         analysisDone();
       } else if (s.status === 'error') {
         stopAnalysis();
-        setProgressText('分析: 失败');
+        setStatus('分析: 失败');
         toast('帧类型分析失败: ' + (s.message || ''));
       } else if (s.status === 'cancelled') {
         stopAnalysis();
-        setProgressText('分析: 已取消');
+        setStatus('分析: 已取消');
       }
     });
-  }
-
-  /** 更新分析进度文本。引用: toggleAnalysis / stopAnalysis。 */
-  function setProgressText(t) {
-    var prog = $('ve-progress-seg');
-    if (prog) prog.textContent = t;
-    var btn = $('ve-analysis');
-    if (btn) btn.textContent = '帧类型';
   }
 
   /** 分析完成后回读帧类型并重绘柱状图。引用: toggleAnalysis。 */
@@ -450,6 +642,37 @@ var VideoExtract = (function () {
 
   // ---- 事件绑定 ----
 
+  /**
+   * 按步长切帧; 隐藏 B 帧开启时, 步长按非 B 帧(I/P)计数并跳过 B 帧。
+   * 位流尚未分析时无类型信息, 退化为按实际帧数步进。
+   * 引用: bindToolbar / bindStage / bindKeys。
+   */
+  function stepFrame(step) {
+    if (!state.hideB) { goto(state.idx + step); return; }
+    var dir = step > 0 ? 1 : -1;
+    var n = Math.abs(step);
+    var i = state.idx;
+    while (n > 0) {
+      i += dir;
+      if (i < 0 || i >= state.total) break;
+      var ft = state.types[i];
+      if (!ft || ft.type !== 'B') n--;
+    }
+    goto(i);
+  }
+
+  /** 跳到下一个/上一个 I 帧(按方向 dir); 无 I 帧时保持当前帧。引用: bindStage(Shift+滚轮)。 */
+  function stepI(dir) {
+    var i = state.idx + dir;
+    while (i >= 0 && i < state.total) {
+      var ft = state.types[i];
+      if (ft && ft.type === 'I') break;
+      i += dir;
+    }
+    if (i < 0 || i >= state.total) return;
+    goto(i);
+  }
+
   /** 绑定工具栏按钮与主预览交互。引用: init。 */
   function bindToolbar() {
     var el = document.getElementById('ve-toolbar');
@@ -458,10 +681,10 @@ var VideoExtract = (function () {
       var id = e.target && e.target.id;
       if (id === 've-prev-vid') switchVideo(-1);
       else if (id === 've-next-vid') switchVideo(1);
-      else if (id === 've-prev-10') goto(state.idx - 10);
-      else if (id === 've-prev-1') goto(state.idx - 1);
-      else if (id === 've-next-1') goto(state.idx + 1);
-      else if (id === 've-next-10') goto(state.idx + 10);
+      else if (id === 've-prev-10') stepFrame(-10);
+      else if (id === 've-prev-1') stepFrame(-1);
+      else if (id === 've-next-1') stepFrame(1);
+      else if (id === 've-next-10') stepFrame(10);
       else if (id === 've-save') {
         saveCurrent().catch(function (err) { toast('存帧失败: ' + (err.message || err)); });
       } else if (id === 've-del') {
@@ -472,10 +695,29 @@ var VideoExtract = (function () {
     });
   }
 
-  /** 绑定帧类型柱状图点击。引用: init。 */
+  /** 绑定"隐藏B帧"开关: 切换后重绘柱状图并落到非 B 帧。引用: init。 */
+  function bindHideB() {
+    var box = $('ve-hide-b');
+    if (!box) return;
+    state.hideB = box.checked;
+    box.addEventListener('change', function () {
+      state.hideB = box.checked;
+      // 开启隐藏 B 帧时, 若当前帧是 B 帧则跳到最近的 I/P 帧
+      if (state.hideB) {
+        var ft = state.types[state.idx];
+        if (ft && ft.type === 'B') stepFrame(1);
+      }
+      drawChart();
+      paintStatus();
+    });
+  }
+
+  /** 绑定帧类型柱状图交互(全局图 + 局部图): 点击跳帧; 横向滚动由容器 overflow-x:auto 原生处理。引用: init。 */
   function bindChart() {
-    var canvas = $('ve-chart');
-    if (canvas) canvas.addEventListener('click', chartClick);
+    var g = $('ve-chart-global');
+    var l = $('ve-chart-local');
+    if (g) g.addEventListener('click', chartClick);
+    if (l) l.addEventListener('click', chartClick);
   }
 
   /** 绑定主预览交互: 左键存帧、右键删帧、滚轮调帧。引用: init。 */
@@ -494,8 +736,8 @@ var VideoExtract = (function () {
     stage.addEventListener('contextmenu', function (e) { e.preventDefault(); });
     stage.addEventListener('wheel', function (e) {
       e.preventDefault();
-      var step = e.shiftKey ? 30 : 1;
-      goto(state.idx + (e.deltaY < 0 ? -step : step));
+      if (e.shiftKey) { stepI(e.deltaY < 0 ? -1 : 1); return; } // Shift: 按 I 帧跳
+      stepFrame(e.deltaY < 0 ? -1 : 1);
     }, { passive: false });
   }
 
@@ -509,12 +751,12 @@ var VideoExtract = (function () {
       var handled = true;
       if (k === 'a' || k === 'A') switchVideo(-1);
       else if (k === 'd' || k === 'D') switchVideo(1);
-      else if (k === 'q' || k === 'Q') goto(state.idx - 1);
-      else if (k === 'e' || k === 'E') goto(state.idx + 1);
-      else if (k === 'ArrowLeft') goto(state.idx - 10);
-      else if (k === 'ArrowRight') goto(state.idx + 10);
-      else if (k === 'PageUp') goto(state.idx - 100);
-      else if (k === 'PageDown') goto(state.idx + 100);
+      else if (k === 'q' || k === 'Q') stepFrame(-1);
+      else if (k === 'e' || k === 'E') stepFrame(1);
+      else if (k === 'ArrowLeft') stepFrame(-10);
+      else if (k === 'ArrowRight') stepFrame(10);
+      else if (k === 'PageUp') stepFrame(-100);
+      else if (k === 'PageDown') stepFrame(100);
       else if (k === 's' || k === 'S' || k === ' ') {
         e.preventDefault();
         saveCurrent().catch(function (err) { toast('存帧失败: ' + (err.message || err)); });
@@ -554,6 +796,7 @@ var VideoExtract = (function () {
     bindStage();
     bindKeys();
     bindResize();
+    bindHideB();
 
     // 拉取视频列表以支持 A/D 切换
     try {

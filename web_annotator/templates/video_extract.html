@@ -31,11 +31,42 @@
   .ve-stage.loading .ve-loading { display: flex; }
   .ve-stage.loading img { opacity: 0.35; }
 
-  /* 评分曲线图 */
-  #ve-chart {
-    flex: 0 0 120px; width: 100%; height: 120px;
+  /* 帧类型图区: 全局图 + 局部图左右并排(参照桌面工具 QHBoxLayout 双图布局)。
+     每个 SVG 渲染整条时间轴, 容器 overflow-x:auto 提供浏览器原生横向滚动 */
+  .ve-charts {
+    flex: 0 0 auto;
+    display: flex;
+  }
+  .ve-chart-scroll {
+    flex: 1 1 0; min-width: 0;
+    height: 100px;
+    overflow-x: auto; overflow-y: hidden;
     background: var(--surface); border-top: 1px solid var(--border);
-    cursor: crosshair; display: block;
+    cursor: crosshair;
+  }
+  .ve-chart-scroll + .ve-chart-scroll {
+    border-left: 1px solid var(--border);
+  }
+  .ve-chart-scroll svg {
+    display: block;
+  }
+  /* 图表容器自定义细滚动条, 避免默认粗白条 */
+  .ve-chart-scroll {
+    scrollbar-width: thin;
+    scrollbar-color: var(--border) transparent;
+  }
+  .ve-chart-scroll::-webkit-scrollbar {
+    height: 6px;
+  }
+  .ve-chart-scroll::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .ve-chart-scroll::-webkit-scrollbar-thumb {
+    background: var(--border);
+    border-radius: 3px;
+  }
+  .ve-chart-scroll::-webkit-scrollbar-thumb:hover {
+    background: var(--text-dim);
   }
 
   /* 缩略图条: 横向滚动, 当前/已存高亮 */
@@ -44,6 +75,24 @@
     display: flex; align-items: center; gap: 6px;
     padding: 8px 12px; overflow-x: auto;
     background: var(--surface); border-top: 1px solid var(--border);
+  }
+  /* 缩略图条自定义细滚动条, 与图表区保持一致 */
+  .ve-strip {
+    scrollbar-width: thin;
+    scrollbar-color: var(--border) transparent;
+  }
+  .ve-strip::-webkit-scrollbar {
+    height: 6px;
+  }
+  .ve-strip::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .ve-strip::-webkit-scrollbar-thumb {
+    background: var(--border);
+    border-radius: 3px;
+  }
+  .ve-strip::-webkit-scrollbar-thumb:hover {
+    background: var(--text-dim);
   }
   .ve-thumb {
     position: relative; flex-shrink: 0;
@@ -55,21 +104,33 @@
   .ve-thumb.active { border-color: var(--green); }
   .ve-thumb.saved { border-color: var(--accent); }
   .ve-thumb.active.saved { border-color: var(--green); box-shadow: 0 0 0 1px var(--accent); }
-  .ve-thumb img { height: 52px; width: auto; display: block; border-radius: 2px; }
+  .ve-thumb img { height: 52px; width: auto; aspect-ratio: var(--thumb-ar, 16 / 9); display: block; border-radius: 2px; }
   .ve-thumb .tag {
     position: absolute; right: 2px; bottom: 2px;
     background: rgba(0,0,0,0.7); color: #fff;
     font-size: 10px; padding: 0 4px; border-radius: 3px;
     pointer-events: none;
   }
+  /* 隐藏B帧开关与工具栏同排 */
+  .ve-toggle {
+    display: inline-flex; align-items: center; gap: 4px;
+    color: var(--text-dim); font-size: 12px; cursor: pointer;
+    user-select: none; white-space: nowrap;
+  }
+  .ve-toggle input { accent-color: var(--accent); cursor: pointer; }
 
-  /* 状态栏置于底部, 复用全局 .status-bar */
-  .status-bar { justify-content: flex-end; }
-  .status-bar .status-seg { text-align: right; }
+  /* 状态栏复用全局 .status-bar, 无页面专属覆盖 */
 </style>
 </head>
 <body class="video-extract">
 <nav class="app-tabs" id="app-tabs"></nav>
+
+<div class="job-progress compact" id="ve-progress" hidden>
+  <div class="job-progress-track">
+    <div class="job-progress-fill" id="ve-progress-fill"></div>
+  </div>
+  <span class="job-progress-pct" id="ve-progress-pct">0%</span>
+</div>
 
 <div class="toolbar compact" id="ve-toolbar">
   <button type="button" class="btn" id="ve-prev-vid" title="A: 上一个视频">‹ 视频</button>
@@ -77,7 +138,6 @@
   <span class="sep"></span>
   <button type="button" class="btn" id="ve-prev-10" title="←: 后退 10 帧">-10</button>
   <button type="button" class="btn" id="ve-prev-1" title="Q: 上一帧">-1</button>
-  <span class="status-seg" id="ve-frame">0/0</span>
   <button type="button" class="btn" id="ve-next-1" title="E: 下一帧">+1</button>
   <button type="button" class="btn" id="ve-next-10" title="→: 前进 10 帧">+10</button>
   <span class="sep"></span>
@@ -86,7 +146,9 @@
   <span class="sep"></span>
   <button type="button" class="btn" id="ve-analysis" title="ffprobe 分析每帧编码类型(I/P/B)与包大小">帧类型</button>
   <span class="sep"></span>
-  <span class="status-seg" id="ve-video">加载中…</span>
+  <label class="ve-toggle" title="柱状图隐藏 B 帧柱并紧凑排列, 所有切帧操作(滚轮/键盘/按钮)跳过 B 帧, 只落在 I/P 帧">
+    <input type="checkbox" id="ve-hide-b" checked> 隐藏B帧
+  </label>
 </div>
 
 <div class="ve-stage" id="ve-stage">
@@ -94,17 +156,26 @@
   <div class="ve-loading" id="ve-loading">读取帧中…</div>
 </div>
 
-<canvas id="ve-chart"></canvas>
+<div class="ve-charts">
+  <div class="ve-chart-scroll" id="ve-scroll-global">
+    <svg id="ve-chart-global"></svg>
+  </div>
+  <div class="ve-chart-scroll" id="ve-scroll-local">
+    <svg id="ve-chart-local"></svg>
+  </div>
+</div>
 
 <div class="ve-strip" id="ve-strip"></div>
 
 <div class="status-bar">
-  <span class="status-seg" id="ve-progress-seg">帧类型: 未分析</span>
-  <span class="status-seg" id="ve-saved-seg">已保存: 0</span>
-  <span class="status-seg" id="ve-size">-</span>
+  <span class="status-seg" id="seg-pos">0/0</span>
+  <span class="status-seg" id="seg-done">已保存 0</span>
+  <span class="status-seg" id="seg-name">加载中…</span>
+  <span class="status-seg" id="seg-metric">-</span>
+  <span class="status-seg" id="seg-extra">帧类型: 未分析</span>
 </div>
 
-<div class="hint" id="ve-hint">左键存帧 · 右键删帧 · 滚轮调帧 · A/D 切换视频 · Q/E 单帧 · ←/→ 十帧 · S/空格 存帧 · X/Delete 删帧</div>
+<div class="hint" id="ve-hint">左键存帧 · 右键删帧 · 滚轮调帧 · Shift+滚轮 按I帧跳 · A/D 切换视频 · Q/E 单帧 · ←/→ 十帧 · S/空格 存帧 · X/Delete 删帧</div>
 <div class="toast" id="toast"></div>
 
 <script src="/static/js/ui.js"></script>

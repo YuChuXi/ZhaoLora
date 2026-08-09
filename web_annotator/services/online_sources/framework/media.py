@@ -71,7 +71,7 @@ def remove_download(
 
 
 def post_is_video(post: BooruPost) -> bool:
-    """判断帖子是否为视频帖, 统一各来源的识别口径.
+    """判断帖子是否为视频帖, 统一各来源的识别标准.
 
     优先依据 ``post.file_ext`` (如 danbooru 提供), 其次依据 ``post.file_url``
     的后缀 (如 gelbooru 不提供 file_ext), 两者任一击中 ``VIDEO_EXTS`` 即视为

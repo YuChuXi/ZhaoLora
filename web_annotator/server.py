@@ -23,6 +23,7 @@ from fastapi import APIRouter, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from dotenv import load_dotenv
+from starlette.middleware.gzip import GZipMiddleware
 import uvicorn
 
 
@@ -120,6 +121,12 @@ async def _ua_middleware(
     call_next: Callable[[Request], Awaitable[Response]],
 ) -> Response:
     return await _block_chinese_ua_middleware(request, call_next)
+
+
+# 对超过阈值(默认 500)的响应启用 gzip, 避免小响应压缩反增开销。
+# 使用 Starlette 内置 GZipMiddleware, 其基于 ASGI 直接改写响应头,
+# 正确处理 Content-Length 与 Vary, 无需手写压缩逻辑。
+app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 
 static_dir = Path(__file__).parent / "static"

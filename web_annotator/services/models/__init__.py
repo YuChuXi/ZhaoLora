@@ -98,6 +98,7 @@ from services.models.pages import (
 from services.models.video import (
     VideoInfo,
     VideoDetail,
+    BitstreamTypes,
     FrameType,
     FrameSaveBody,
     FrameSaveResponse,
@@ -174,6 +175,7 @@ __all__ = [
     'TaggingStartResponse',
     'VideoInfo',
     'VideoDetail',
+    'BitstreamTypes',
     'FrameType',
     'FrameSaveBody',
     'FrameSaveResponse',
