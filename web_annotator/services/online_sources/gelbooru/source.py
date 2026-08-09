@@ -135,7 +135,7 @@ class GelbooruSource(SourceClient):
 
         直接使用 search 阶段已持有的 ``post.file_url`` 与 ``post.tags`` 写入,
         不再重新请求 ``get_post``; 仅 anima 格式需要额外查询标签类型。
-        视频帖 (``post.is_video``) 走 ``download_raw_file`` 下载原始文件。
+        视频帖 (``post.is_video``) 经由 ``download_raw_file`` 下载原始文件。
         实现 ``base.SourceClient.download``。
 
         Args:

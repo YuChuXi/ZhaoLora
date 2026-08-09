@@ -135,7 +135,7 @@
     <option value="bottom">置底</option>
     <option value="random">任意</option>
   </select>
-  <button class="btn multi-only" type="button" id="btn-emb-dlg" title="向量相似度搜索与批量标记">向量</button>
+  <button class="btn multi-only" type="button" id="btn-emb-dlg" title="相似度搜索与批量标记">相似度</button>
   <span class="sep multi-only"></span>
   <button class="btn green multi-only" type="button" id="btn-check">检查</button>
   <label class="cols-ctl multi-only" id="cols-ctl"><span>列</span><input type="range" id="cols-slider" min="0" max="16" value="0" step="1"><span id="cols-label">自动</span></label>
@@ -151,7 +151,7 @@
 <div class="modal" id="emb-dlg" aria-hidden="true">
   <div class="modal-panel" role="dialog" aria-labelledby="emb-dlg-title" style="width:min(480px,92vw);height:auto;max-height:min(360px,64vh);">
     <div class="modal-head">
-      <span class="modal-title" id="emb-dlg-title">向量相似度</span>
+      <span class="modal-title" id="emb-dlg-title">相似度搜索</span>
     </div>
     <div class="modal-body" style="display:flex;flex-direction:column;gap:12px;padding:16px;">
       <div class="emb-dlg-row">
@@ -201,7 +201,7 @@
 <!-- 多图视图 (瀑布流) -->
 <div class="view-multi" id="view-multi">
   <div class="masonry" id="masonry"></div>
-  <div class="hint" id="check-hint">输入标签并检查 · 绿色=位置符合 · 红色=位置不符 · 点击卡片添加/删除标签 · 右键卡片进入单图 · 无标签时显示全部图片 · 支持向量相似度排序与批量标记</div>
+  <div class="hint" id="check-hint">输入标签并检查 · 绿色=位置符合 · 红色=位置不符 · 点击卡片添加/删除标签 · 右键卡片进入单图 · 无标签时显示全部图片 · 支持相似度排序与批量标记</div>
   <div class="status-bar" id="check-status">
     <span class="status-seg">共<b id="stat-total">0</b></span>
     <span class="status-seg">符合<b id="stat-ok">0</b></span>

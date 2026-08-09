@@ -184,7 +184,7 @@ class DanbooruSource(SourceClient):
 
         直接使用 search 阶段已获取的完整 ``post`` (含原图 URL 与标签字段),
         不再按 id 重新拉取 ``posts/{pid}.json``。视频帖 (``post.is_video``)
-        走 ``download_raw_file`` 下载原始文件。实现 ``base.SourceClient.download``。
+        经由 ``download_raw_file`` 下载原始文件。实现 ``base.SourceClient.download``。
 
         Args:
             emit: 下载进度回调, 图片来源忽略 (透传签名统一).

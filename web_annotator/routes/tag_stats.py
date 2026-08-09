@@ -502,9 +502,9 @@ def embedding_status(request: Request) -> EmbeddingStatusResponse:
 async def embedding_query(request: Request, body: EmbeddingQueryBody) -> JobSubmitResponse:
     """按查询文本对候选图片实时重排序（异步长任务，带进度条）。
 
-    Reranker 为 cross-encoder，无法预计算向量，故对目录内全部图片逐张
-    (query, image) 打分，耗时较长，故提交 JobManager 由前端以 SSE 订阅进度，
-    done 时在 result 中携带排序结果。
+    Reranker 为 cross-encoder，无法预计算向量，须对目录内全部图片逐张
+    (query, image) 评分，耗时较长，故提交 JobManager，由前端以 SSE 订阅进度，
+    任务完成时在 result 中携带排序结果。
 
     引用: tag_check.js。
     """
@@ -535,16 +535,16 @@ async def embedding_query(request: Request, body: EmbeddingQueryBody) -> JobSubm
     total = len(candidates)
 
     def run(emit: EmitFn) -> EmbeddingQueryResult:
-        """工作线程: 逐张打分并回报进度。引用: ``JobManager.submit``。"""
+        """工作线程: 逐张相似度评分并回报进度。引用: ``JobManager.submit``。"""
         emit(JobSnapshot(
             status="running", phase="querying",
-            message="正在实时打分…", pct=0, total=total,
+            message="正在相似度评分…", pct=0, total=total,
         ))
 
         def on_progress(done: int, n_total: int) -> None:
             emit(JobSnapshot(
                 status="running", phase="querying",
-                message=f"正在打分 {done}/{n_total}…",
+                message=f"正在相似度评分 {done}/{n_total}…",
                 pct=round(done / n_total * 100, 1) if n_total else 100,
                 done=done, total=n_total,
             ))
@@ -569,8 +569,8 @@ async def embedding_query(request: Request, body: EmbeddingQueryBody) -> JobSubm
 def embedding_batch_tag(request: Request, body: EmbeddingBatchTagBody) -> EmbeddingBatchTagResponse:
     """按已计算相似度的路径批量添加或删除标签（同步）。
 
-    相似度由 ``embedding/query`` 排序时实时打分得到并缓存在前端，本接口直接
-    接收前端按阈值筛选出的匹配路径，仅做批量写标签，瞬间完成，故不走长任务。
+    相似度由 ``embedding/query`` 实时评分得出并缓存于前端，本接口直接
+    接收前端按阈值筛选出的匹配路径，仅做批量写标签，开销极小，故不采用长任务调度。
 
     引用: tag_check.js。
     """

@@ -1380,7 +1380,7 @@ var BooruFilter = (function () {
     if (_selected[post.key]) card.classList.add('selected');
     card.dataset.key = post.key;
     if (post.page) card.dataset.page = String(post.page);
-    // 来源可自定义卡片点击(如视频进入抽帧页); 否则走默认下载/预览.
+    // 来源可自定义卡片点击(如视频进入抽帧页); 否则采用默认下载/预览.
     var srcDef = _SOURCES[post.source] || {};
     card.addEventListener('click', function (e) {
       if (srcDef.onClick) { srcDef.onClick(post); return; }

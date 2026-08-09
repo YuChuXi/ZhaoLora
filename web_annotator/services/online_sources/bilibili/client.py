@@ -3,7 +3,7 @@
 基于专业库 ``bilibili-api`` (https://github.com/Nemo2011/bilibili-api) 免登录
 按游标分页拉取用户动态: ``User.get_dynamics_new`` (``web-dynamic/v1/feed/space``),
 库自动处理 buvid 会话、WBI 签名与 dm 设备指纹, 规避手写 requests 调用被
--352/412 风控的问题。单条详情 (下载时需要按动态 ID 取图) 走桌面版接口
+-352/412 风控的问题。单条详情 (下载时需要按动态 ID 取图) 经由桌面版接口
 ``web-dynamic/desktop/v1/detail``, 免登录稳定可用。
 
 本模块是 ``services.online_sources.bilibili`` 子包的在线来源实现, 供筛选页的
@@ -44,7 +44,7 @@ MAX_EMPTY_RETRIES = 3
 FILTER_TYPES = {"DYNAMIC_TYPE_LIVE_RCMD"}
 
 # 桌面版详情接口: 免登录稳定可用; 库的 ``Dynamic.get_info`` 所用的 v1 detail
-# 接口在未登录会话下会被 412 风控拦截, 故单条详情改走此接口
+# 接口在未登录会话下会被 412 风控拦截, 故单条详情改用此接口
 _DESKTOP_DETAIL_API = "https://api.bilibili.com/x/polymer/web-dynamic/desktop/v1/detail"
 _BILI_HEADERS = {
     "user-agent": http.DEFAULT_UA,

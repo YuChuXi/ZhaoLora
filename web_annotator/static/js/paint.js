@@ -242,7 +242,7 @@
   }
 
   /**
-   * 加载单张图的视觉与蒙版: 视觉走 AVIF(有损可接受, 已压缩), 蒙版走无损 PNG(不可有损),
+   * 加载单张图的视觉与蒙版: 视觉采用 AVIF(有损可接受, 已压缩), 蒙版采用无损 PNG(不可有损),
    * 前端合成. 返回 { img, mask, w, h }. Callers: loadIndex、_preloadOne.
    */
   async function _loadEntry(img) {

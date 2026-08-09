@@ -1,8 +1,8 @@
 """Qwen3-VL-Reranker-2B 多模态重排序服务.
 
-使用 ``sentence_transformers.CrossEncoder`` 加载模型，对 (查询文本, 图片) 配对
-实时计算相关性分数。Reranker 是 cross-encoder，无法像 bi-encoder 那样预计算
-向量索引，因此每次查询都对候选图片实时打分，不依赖任何缓存。
+使用 ``sentence_transformers.CrossEncoder`` 加载模型，对 (查询文本, 图片)
+配对实时计算相似度。Reranker 为 cross-encoder，无法像 bi-encoder 那样预计算
+向量索引，故每次查询须对全部候选图片实时评分，不依赖任何缓存。
 
 Callers:
     - ``routes/tag_stats``: 查询排序、批量标记 API
@@ -22,10 +22,10 @@ if TYPE_CHECKING:
 
 _MODEL_NAME = "Qwen/Qwen3-VL-Reranker-2B"
 
-# instruction-aware 提示词, 用于将任务限定为「按查询检索图片」, 提升相关性精度
+# instruction-aware 提示词, 用于将任务限定为「按查询检索图片」, 提升检索相关性
 _PROMPT = "Retrieve images or text relevant to the user's query."
 
-# 单次 predict 的配对数量; Reranker 需逐图前向, 分批避免一次性占用过多显存
+# 单次 predict 的配对数量; Reranker 须逐张前向计算, 分批避免一次性占用过多显存
 _BATCH_SIZE = 8
 
 _RERANK_MODEL: CrossEncoder | None = None
@@ -87,10 +87,11 @@ def rerank(
     candidates: list[tuple[str, Path]],
     on_progress: Callable[[int, int], None] | None = None,
 ) -> list[tuple[str, float]]:
-    """对候选图片与查询文本逐张实时计算相关性分数。
+    """对候选图片与查询文本逐张实时计算相似度。
 
-    因 Reranker 为 cross-encoder，须对每张候选图构造 (query, image) 配对并前向，
-    无法复用预计算缓存。分批调用模型并逐批上报进度，避免一次性占用过多显存。
+    因 Reranker 为 cross-encoder，须对每张候选图构造 (query, image) 配对并
+    执行前向计算，无法复用预计算缓存。分批调用模型并逐批上报进度，
+    避免一次性占用过多显存。
 
     Args:
         query_text: 查询文本。
@@ -98,7 +99,7 @@ def rerank(
         on_progress: 进度回调 ``(done, total)``, 每完成一批调用一次。
 
     Returns:
-        ``[(相对路径, 相关性分数), ...]``，按分数降序排列。分数经 sigmoid
+        ``[(相对路径, 相似度), ...]``，按相似度降序排列。相似度经 sigmoid
         映射到 [0, 1]，与前端阈值语义一致。
 
     Callers:

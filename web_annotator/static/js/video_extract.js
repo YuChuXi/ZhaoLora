@@ -5,7 +5,7 @@
  *   - 主预览区显示当前帧；左键存帧、右键删帧、滚轮调帧
  *   - 底部缩略图条按采样间隔提供快速跳转
  *   - 帧类型柱状图(Canvas)展示每帧编码类型(I/P/B)与包大小，点击柱状跳帧
- *   - 帧类型走后端长任务(ffprobe 分析 + SSE 进度)，完成后回读并重绘柱状图
+ *   - 帧类型经由后端长任务(ffprobe 分析 + SSE 进度)，完成后回读并重绘柱状图
  *   - 键盘：A/D 切换视频、Q/E 单帧、←/→ 十帧、S/空格 存帧、X/Delete 删帧
  *
  * 引用：templates/video_extract.html。
@@ -637,7 +637,7 @@ var VideoExtract = (function () {
    * 每帧一根柱 I红/P黄/B蓝, 高度按最大包归一化; 叠加当前帧白竖线(游标)与
    * 已保存帧绿刻度。SVG 宽度 = 整条时间轴宽度, 超出视口部分由容器
    * ``overflow-x: auto`` 提供浏览器原生横向滚动, 滚动只浏览、不改变当前帧。
-   * 数据变化(分析完成/存取帧/换片/缩放)走 drawChart 全量重建; 仅换帧走
+   * 数据变化(分析完成/存取帧/换片/缩放)调用 drawChart 全量重建; 仅换帧调用
    * updateCursor 只移动游标并滚动居中, 开销最小。
    */
   var _chart = { global: null, local: null }; // 各图渲染信息: {svgId, ppf, svgW, viewportW, cursor}

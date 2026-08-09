@@ -122,7 +122,7 @@ def distance(a: np.ndarray, b: np.ndarray) -> float:
 class ColorIndex:
     """内存 + 磁盘(npz)色调指纹索引, 线程安全. 
 
-    优先走缩略图加速指纹计算, 通过 ``ensure_many`` 批量构建, 
+    优先经由缩略图加速指纹计算, 通过 ``ensure_many`` 批量构建, 
     ``similar_matrix`` 矩阵比对返回最近邻. 
 
     Callers:
@@ -231,7 +231,7 @@ class ColorIndex:
         rel: str,
         thumb_path: Path | None = None,
     ) -> np.ndarray | None:
-        """取单个相对路径的色调指纹(若缩略图可用则走缩略图加速). 
+        """取单个相对路径的色调指纹(若缩略图可用则经由缩略图加速). 
 
         mtime 变化时自动重新计算. 
 

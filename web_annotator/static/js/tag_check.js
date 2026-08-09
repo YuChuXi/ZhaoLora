@@ -602,7 +602,7 @@
   var _embSortActive = false;  // 是否处于排序模式
 
   /**
-   * 更新向量查询进度条（query 走 JobManager，SSE 推送进度）。
+   * 更新向量查询进度条（query 采用 JobManager，SSE 推送进度）。
    * @param {Object} s - 任务快照
    */
   function embProgress(s) {
@@ -623,7 +623,7 @@
   }
 
   /**
-   * 按查询文本相似度排序瀑布流（提交 JobManager 实时打分，SSE 订阅进度）。
+   * 按查询文本相似度排序瀑布流（提交 JobManager 实时相似度评分，SSE 订阅进度）。
    * @returns {Promise<void>}
    */
   async function embSort() {
@@ -690,8 +690,8 @@
   /**
    * 基于已排序瀑布流缓存的相似度，按阈值筛选匹配图片并批量添加/删除标签。
    *
-   * 相似度来自 embSort 实时打分结果（_items[i]._sim），本函数仅做前端筛选后
-   * 提交同步写接口，因此瞬间完成，无需长任务与进度条。
+   * 相似度来自 embSort 实时相似度评分结果（_items[i]._sim），本函数仅做前端筛选后
+   * 提交同步写接口，因此开销极小，无需长任务与进度条。
    * @returns {Promise<void>}
    */
   async function embBatchTag() {
