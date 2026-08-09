@@ -17,7 +17,6 @@ from services.core.jobs import EmitFn
 from services.core.video_frame import (
     VideoFrameError,
     VideoFrameStore,
-    total_frames,
 )
 from services.core.video_scanner import (
     COVER_DIRNAME,
@@ -48,7 +47,7 @@ def _services(request: Request) -> tuple[Path, bool]:
         ``(root, is_ready)``; 数据集无 video 目录时 ``is_ready`` 为 False.
 
     Callers:
-        - 本模块各端点
+        - `routes/video.py:list_videos`
     """
     rt = get_runtime(request)
     root = rt.root
@@ -65,7 +64,12 @@ def _stores(request: Request):
         ``(VideoFrameStore, cover_dir)``.
 
     Callers:
-        - 本模块各端点
+        - `routes/video.py:video_detail`
+        - `routes/video.py:video_frame`
+        - `routes/video.py:video_segment`
+        - `routes/video.py:save_frame`
+        - `routes/video.py:delete_frame`
+        - `routes/video.py:start_analysis`
     """
     rt = get_runtime(request)
     root = rt.root
@@ -74,19 +78,25 @@ def _stores(request: Request):
 
 
 @router.get("/videos")
-async def list_videos(request: Request) -> list[VideoInfo]:
+async def list_videos(
+    request: Request,
+    probe: bool = Query(False, description="是否并行 ffprobe 探测宽高/时长"),
+) -> list[VideoInfo]:
     """列出 ``video`` 目录下视频并返回封面 hash.
 
-    封面不在此处批量生成; 前端经 ``/video/cover`` 按需请求, 单张封面
-    生成失败只影响该卡片, 不会导致整个列表加载失败.
+    ``probe=False`` 时仅列文件(快); ``probe=True`` 时并行 ffprobe 探测宽高/时长。
+    封面不在此处批量生成; 前端经 ``/video/cover`` 按需请求。
 
     Callers:
         - `static/js/booru_filter.js` 视频来源
+        - `static/js/video_extract.js` A/D 视频切换
     """
     root, ready = _services(request)
     if not ready:
         return []
-    items = scan_videos(root / VIDEO_DIRNAME, path_prefix=VIDEO_DIRNAME)
+    items = await asyncio.to_thread(
+        scan_videos, root / VIDEO_DIRNAME, path_prefix=VIDEO_DIRNAME, probe=probe,
+    )
     for item in items:
         item.cover_hash = cover_hash(item.path)
     return items
@@ -97,7 +107,11 @@ async def video_cover(
     request: Request,
     path: str = Query(..., description="相对数据集根的视频路径"),
 ) -> FileResponse:
-    """返回视频封面图(missing 时即时生成). 引用: 前端视频瀑布流. """
+    """返回视频封面图(missing 时即时生成).
+
+    Callers:
+        - `static/js/booru_filter.js` 视频卡片封面
+    """
     root = get_runtime(request).root
     video_path = resolve_path(root, path)
     cover_dir = root / COVER_DIRNAME
@@ -117,12 +131,15 @@ async def video_detail(
     request: Request,
     path: str = Query(..., description="相对数据集根的视频路径"),
 ) -> VideoDetail:
-    """返回视频抽帧页详情(宽高/总帧数/已评分/已保存帧). 引用: 抽帧页. """
+    """返回视频抽帧页详情(宽高/总帧数/已保存帧/位流类型).
+
+    Callers:
+        - `static/js/video_extract.js` 加载视频详情
+    """
     root = get_runtime(request).root
     resolve_path(root, path)  # 校验路径合法
     store, _ = _stores(request)
-    w, h, dur = probe_video(root / path.lstrip("/"))
-    total = total_frames(path, root)
+    w, h, dur, total = probe_video(root / path.lstrip("/"))
     return VideoDetail(
         path=path,
         name=Path(path).name,
@@ -142,7 +159,11 @@ async def video_frame(
     index: int = Query(..., ge=0),
     size: int | None = Query(None, ge=1),
 ) -> Response:
-    """按帧索引返回一帧 JPEG, 可指定 ``size`` 等比缩略最长边. 引用: 抽帧页预览. """
+    """按帧索引返回一帧 JPEG, 可指定 ``size`` 等比缩略最长边.
+
+    Callers:
+        - `static/js/video_extract.js` 缩略图条
+    """
     rt = get_runtime(request)
     resolve_path(rt.root, path)
     store, _ = _stores(request)
@@ -165,12 +186,16 @@ async def video_segment(
     path: str = Query(...),
     start: int = Query(..., ge=0),
     end: int = Query(..., ge=0),
+    hide_b: bool = Query(False),
 ) -> Response:
-    """返回 ``[start, end]`` 帧窗口的正常 I/P/B H.264 Annex-B 裸流.
+    """返回 ``[start, end]`` 帧窗口的 H.264 Annex-B 裸流.
 
-    首帧为关键帧、段自包含可从头解码, 供前端 WebCodecs 逐帧解码: 窗口内前向
-    增量解码, 向后/随机定位从最近关键帧重解。窗口内定位不重复请求; 移出窗口后
-    再请求新段。引用: 抽帧页主预览.
+    ``hide_b`` 为真时 ``-bf 0`` 禁用 B 帧(解码顺序 = 显示顺序); 否则正常
+    I/P/B 编码。首帧为关键帧, 段自包含可从头解码。实际帧数通过
+    ``X-Frame-Count`` 响应头告知前端(视频末尾可能少于请求数).
+
+    Callers:
+        - `static/js/video_extract.js` 主预览 WebCodecs 解码
     """
     rt = get_runtime(request)
     resolve_path(rt.root, path)
@@ -178,19 +203,23 @@ async def video_segment(
     if end < start:
         raise HTTPException(400, "end 不能小于 start")
     try:
-        data = await asyncio.to_thread(store.segment_bytes, path, start, end)
+        data, count = await asyncio.to_thread(store.segment_bytes, path, start, end, hide_b=hide_b)
     except VideoFrameError as e:
         raise HTTPException(400, str(e)) from e
     return Response(
         content=data,
         media_type="video/h264",
-        headers={"Cache-Control": "no-store"},
+        headers={"Cache-Control": "no-store", "X-Frame-Count": str(count)},
     )
 
 
 @router.post("/video/frame/save")
 async def save_frame(request: Request, body: FrameSaveBody) -> FrameSaveResponse:
-    """保存指定帧为 PNG 到 ``main`` 目录. 引用: 抽帧页左键. """
+    """保存指定帧为 PNG 到 ``main`` 目录.
+
+    Callers:
+        - `static/js/video_extract.js` 左键/存帧按钮
+    """
     rt = get_runtime(request)
     resolve_path(rt.root, body.path)
     store, _ = _stores(request)
@@ -204,7 +233,11 @@ async def save_frame(request: Request, body: FrameSaveBody) -> FrameSaveResponse
 
 @router.post("/video/frame/delete")
 async def delete_frame(request: Request, body: FrameSaveBody) -> FrameSaveResponse:
-    """删除已保存的指定帧 PNG. 引用: 抽帧页右键. """
+    """删除已保存的指定帧 PNG.
+
+    Callers:
+        - `static/js/video_extract.js` 右键/删帧按钮
+    """
     rt = get_runtime(request)
     resolve_path(rt.root, body.path)
     store, _ = _stores(request)
@@ -217,19 +250,26 @@ async def delete_frame(request: Request, body: FrameSaveBody) -> FrameSaveRespon
 async def start_analysis(request: Request, path: str = Query(...)) -> JobSubmitResponse:
     """启动视频位流帧类型分析长任务(ffprobe 提取每帧 I/P/B 类型与包大小).
 
-    进度见 GET /api/jobs/{id}/events。Callers: 抽帧页.
+    进度见 GET /api/jobs/{id}/events。
+
+    Callers:
+        - `static/js/video_extract.js` 帧类型分析按钮
     """
     rt = get_runtime(request)
     resolve_path(rt.root, path)
     store, _ = _stores(request)
-    total = total_frames(path, rt.root)
+    _w, _h, _dur, total = probe_video(rt.root / path.lstrip("/"))
     if total <= 0:
         raise HTTPException(400, "视频无法读取或总帧数为 0")
 
     cancel_flag = {"on": False}
 
     def run(emit: EmitFn) -> None:
-        """分析工作线程入口. 引用: ``JobManager.submit``. """
+        """分析工作线程入口.
+
+        Callers:
+            - `services/core/jobs.py:JobManager.submit`
+        """
         emit(
             JobSnapshot(
                 status="running", phase="analysis", total=total, done=0, pct=0,
@@ -238,7 +278,11 @@ async def start_analysis(request: Request, path: str = Query(...)) -> JobSubmitR
         )
 
         def progress(done: int, total_n: int) -> None:
-            """进度回调. 引用: ``analyze_bitstream``. """
+            """进度回调.
+
+            Callers:
+                - `services/core/video_frame.py:VideoFrameStore.analyze_bitstream`
+            """
             pct = round(100.0 * done / total_n, 1) if total_n else 100.0
             emit(
                 JobSnapshot(

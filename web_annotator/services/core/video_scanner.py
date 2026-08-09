@@ -13,6 +13,7 @@ import hashlib
 import json
 import os
 import subprocess
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 from services.models import VideoInfo
@@ -103,14 +104,18 @@ FFMPEG = resolve_ffmpeg()
 FFPROBE = os.path.join(os.path.dirname(FFMPEG), "ffprobe")
 
 
-def _probe(path: Path) -> tuple[int, int, float]:
-    """用 ffprobe 读取视频宽高与时长的纯逻辑.
+def _probe(path: Path) -> tuple[int, int, float, int]:
+    """用 ffprobe 读取视频宽高、时长与总帧数.
+
+    帧数优先取 ``nb_frames`` 元数据(MP4/MKV 可靠); 缺失时(FLV 等)用
+    ``duration × r_frame_rate`` 估算。两种方式均比 OpenCV 的
+    ``CAP_PROP_FRAME_COUNT`` 更可靠(后者对 FLV 常偏高)。
 
     Args:
         path: 视频绝对路径.
 
     Returns:
-        ``(width, height, duration)``; 无法读取时宽高为 0, 时长为 0.0.
+        ``(width, height, duration, total_frames)``; 无法读取时全为 0.
 
     Callers:
         - `video_scanner.probe_video`
@@ -118,53 +123,71 @@ def _probe(path: Path) -> tuple[int, int, float]:
     cmd = [
         FFPROBE, "-v", "error",
         "-select_streams", "v:0",
-        "-show_entries", "stream=width,height",
+        "-show_entries", "stream=width,height,nb_frames,r_frame_rate",
         "-show_entries", "format=duration",
         "-of", "json", str(path),
     ]
     try:
         out = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
     except (OSError, subprocess.TimeoutExpired):
-        return 0, 0, 0.0
+        return 0, 0, 0.0, 0
     if out.returncode != 0 or not out.stdout.strip():
-        return 0, 0, 0.0
+        return 0, 0, 0.0, 0
     try:
         data = json.loads(out.stdout)
     except ValueError:
-        return 0, 0, 0.0
+        return 0, 0, 0.0, 0
     streams = data.get("streams") or []
-    width = int(streams[0].get("width", 0) or 0) if streams else 0
-    height = int(streams[0].get("height", 0) or 0) if streams else 0
+    stream = streams[0] if streams else {}
+    width = int(stream.get("width", 0) or 0)
+    height = int(stream.get("height", 0) or 0)
     duration = 0.0
     try:
         duration = float(data.get("format", {}).get("duration") or 0.0)
     except (TypeError, ValueError):
         duration = 0.0
-    return width, height, duration
+    # 帧数: 优先 nb_frames 元数据; 缺失则用 duration × fps 估算
+    total = 0
+    nb = stream.get("nb_frames")
+    if nb and str(nb).isdigit():
+        total = int(nb)
+    elif duration > 0:
+        rfr = stream.get("r_frame_rate", "0/1")
+        try:
+            num, den = rfr.split("/")
+            fps = float(num) / float(den) if float(den) else 0.0
+            if fps > 0:
+                total = round(duration * fps)
+        except (ValueError, ZeroDivisionError):
+            pass
+    return width, height, duration, total
 
 
-def probe_video(path: Path) -> tuple[int, int, float]:
-    """读取视频宽高与时长(绝对路径).
+def probe_video(path: Path) -> tuple[int, int, float, int]:
+    """读取视频宽高、时长与总帧数(绝对路径).
 
     Args:
         path: 视频绝对路径.
 
     Returns:
-        ``(width, height, duration)``.
+        ``(width, height, duration, total_frames)``.
 
     Callers:
-        - `routes/video.py:list_videos`
         - `routes/video.py:video_detail`
+        - `routes/video.py:start_analysis`
     """
     return _probe(path)
 
 
-def scan_videos(video_dir: Path, *, path_prefix: str = "") -> list[VideoInfo]:
+def scan_videos(video_dir: Path, *, path_prefix: str = "", probe: bool = False) -> list[VideoInfo]:
     """扫描 ``video_dir`` 下视频并按文件名排序.
+
+    ``probe=False`` 时仅列文件(快); ``probe=True`` 时并行 ffprobe 探测宽高/时长。
 
     Args:
         video_dir: 视频目录绝对路径.
         path_prefix: 非空时加在 ``path`` 前(相对数据集根), 通常为目录名 ``video``.
+        probe: 是否并行 ffprobe 探测宽高/时长.
 
     Returns:
         按文件名排序的 ``VideoInfo`` 列表.
@@ -175,23 +198,34 @@ def scan_videos(video_dir: Path, *, path_prefix: str = "") -> list[VideoInfo]:
     prefix = (path_prefix or "").replace("\\", "/").strip("/")
     if not video_dir.is_dir():
         return []
+    paths: list[Path] = []
     result: list[VideoInfo] = []
     for p in sorted(video_dir.iterdir()):
         if not p.is_file() or p.suffix.lower() not in VIDEO_EXTS:
             continue
         rel = f"{prefix}/{p.name}" if prefix else p.name
-        w, h, dur = _probe(p)
+        paths.append(p)
         result.append(
             VideoInfo(
                 path=rel,
                 name=p.name,
                 stem=p.stem,
-                width=w,
-                height=h,
-                duration=dur,
                 size=p.stat().st_size,
             )
         )
+    if not result or not probe:
+        return result
+    with ThreadPoolExecutor(max_workers=len(result)) as ex:
+        futures = {ex.submit(_probe, p): i for i, p in enumerate(paths)}
+        for f in as_completed(futures):
+            i = futures[f]
+            try:
+                w, h, dur, _ = f.result()
+            except Exception:
+                continue
+            result[i].width = w
+            result[i].height = h
+            result[i].duration = dur
     return result
 
 
@@ -255,7 +289,7 @@ def ensure_cover(video_path: Path, cover_dir: Path, video_rel_path: str) -> Path
     if out.is_file():
         return out
     cover_dir.mkdir(parents=True, exist_ok=True)
-    w, h, dur = _probe(video_path)
+    w, h, dur, _total = _probe(video_path)
     mid = max(0.0, dur / 2.0) if dur > 0 else 0.0
     vm = f"scale={COVER_MAX_SIDE}:-2" if w else "scale=-2:240"
     cmd = [

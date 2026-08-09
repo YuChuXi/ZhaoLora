@@ -148,13 +148,15 @@ class VideoFrameStore:
         start: int,
         end: int,
         max_edge: int = SEGMENT_MAX_EDGE,
-    ) -> bytes:
-        """把 ``[start, end]`` 帧窗口编码为正常 H.264 Annex-B 字节流.
+        hide_b: bool = False,
+    ) -> tuple[bytes, int]:
+        """把 ``[start, end]`` 帧窗口编码为 H.264 Annex-B 字节流.
 
         用 OpenCV 精确指定起始帧并顺序读取, 保证窗口帧序列与源帧号一一对应;
-        逐帧等比缩略到 ``max_edge`` 后经 ffmpeg 编码为正常 I/P/B 编码(窗口首帧
-        设为关键帧, 见 ``_encode_h264_annexb``), 使段自包含可从头解码, 前端
-        WebCodecs 从最近关键帧解算到目标帧。纯内存管道, 不落盘。
+        逐帧等比缩略到 ``max_edge`` 后经 ffmpeg 编码(首帧为关键帧, 段自包含
+        可从头解码)。``hide_b`` 为真时用 ``-bf 0`` 禁用 B 帧使解码顺序 = 显示
+        顺序, 前端无需处理重排序。纯内存管道, 不写临时文件。实际编码帧数可能
+        少于请求数(视频末尾帧不足), 通过返回值 ``count`` 告知调用方。
 
         Args:
             video_rel: 相对数据集根的视频路径.
@@ -163,7 +165,7 @@ class VideoFrameStore:
             max_edge: 输出帧最长边像素上限, 用于控制传输体积.
 
         Returns:
-            bytes: H.264 Annex-B 裸流.
+            ``(data, count)``: H.264 Annex-B 裸流与实际编码帧数.
 
         Raises:
             VideoFrameError: 视频无法打开或窗口内无可用帧.
@@ -204,7 +206,7 @@ class VideoFrameStore:
                     cv2.resize(f, (w, h), interpolation=cv2.INTER_AREA)
                     for f in frames
                 ]
-        return _encode_h264_annexb(frames, fps)
+        return _encode_h264_annexb(frames, fps, hide_b), len(frames)
 
     # ---- 帧读取与编码 ----
 
@@ -488,25 +490,12 @@ class VideoFrameStore:
         return bits
 
 
-def total_frames(video_rel: str, data_dir: Path) -> int:
-    """读取视频总帧数(fps × 时长). 引用: ``routes/video.py``. """
-    path = (data_dir / video_rel.lstrip("/")).resolve()
-    cap = cv2.VideoCapture(str(path))
-    try:
-        if not cap.isOpened():
-            return 0
-        n = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-        return max(0, n)
-    finally:
-        cap.release()
+def _encode_h264_annexb(frames: list[np.ndarray], fps: float, hide_b: bool = False) -> bytes:
+    """把同尺寸 BGR 帧序列编码为 H.264 Annex-B 字节流.
 
-
-def _encode_h264_annexb(frames: list[np.ndarray], fps: float) -> bytes:
-    """把同尺寸 BGR 帧序列编码为正常 I/P/B H.264 Annex-B 字节流.
-
-    正常 I/P/B 编码以压缩体积; 关键帧间隔 ``-g`` 设为帧序列长度, 使输出首帧即
-    为关键帧、整个段自包含可从头解码, 前端 WebCodecs 从最近关键帧解算即可到达
-    窗口内任意帧(向后/随机重解最长一整个窗口)。
+    关键帧间隔 ``-g`` 设为帧序列长度, 使首帧为关键帧、段自包含可从头解码。
+    ``hide_b`` 为真时加 ``-bf 0`` 禁用 B 帧, 解码顺序 = 显示顺序, 前端无需
+    处理重排序; 为假时正常 I/P/B 编码, 前端按 output 顺序匹配目标帧。
 
     帧序列拼为单个 bytes 经 stdin 一次性传入、编码结果从 stdout 收集, 全程内存、
     不写临时文件。用 ``subprocess.run`` 的 ``capture_output`` 让标准库同时排空
@@ -515,6 +504,7 @@ def _encode_h264_annexb(frames: list[np.ndarray], fps: float) -> bytes:
     Args:
         frames: 同尺寸 BGR 帧序列.
         fps: 输入帧率(用于 ffmpeg 时间基准).
+        hide_b: 为真时 ``-bf 0`` 禁用 B 帧.
 
     Returns:
         bytes: H.264 Annex-B 裸流.
@@ -534,6 +524,7 @@ def _encode_h264_annexb(frames: list[np.ndarray], fps: float) -> bytes:
         "-i", "-",
         "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
         "-g", str(keyint), "-pix_fmt", "yuv420p",
+    ] + (["-bf", "0"] if hide_b else []) + [
         "-f", "h264", "-",
     ]
     proc = subprocess.run(

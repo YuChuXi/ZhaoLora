@@ -2095,7 +2095,7 @@ var BooruFilter = (function () {
     _loading = true;
     updatePageStatus();
     try {
-      var res = await fetch(API.apiPath('/videos'));
+      var res = await fetch(API.apiPath('/videos') + '?probe=1');
       if (!res.ok) throw new Error(await res.text());
       var list = await res.json();
       _posts = (list || []).map(function (v) {

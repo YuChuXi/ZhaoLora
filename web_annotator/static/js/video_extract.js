@@ -16,7 +16,7 @@ var VideoExtract = (function () {
   var THUMB_COUNT = 60; // 缩略图条采样目标数量
   var THUMB_SIZE = 256; // 缩略图条帧最长边
   var FRAME_COLORS = { I: '#ff6b6b', P: '#f5c542', B: '#4a9eff' }; // 红I/黄P/蓝B
-  var SEG_HALF = 100; // 帧窗口半宽(当前帧前/后各拉取帧数)
+  var SEG_MAX_SEC = 60; // 帧窗口最大时长(秒), 前后各半
 
   var state = {
     path: '',      // 相对数据集根的视频路径
@@ -38,17 +38,18 @@ var VideoExtract = (function () {
   var _stripIo = null;  // 缩略图懒加载观察器
   var _globalCache = null; // 全局图柱状体缓存(逐帧绘制成本高, 仅宽度/帧数变化时重建)
 
-  // ---- WebCodecs 帧窗口段: 后端把当前窗口编码为正常 I/P/B H.264, 前端逐帧解码 ----
+  // ---- WebCodecs 帧窗口段: 后端编码为正常 I/P/B H.264, 前端批量 decode + flush,
+  //      按 output 顺序(显示顺序)匹配目标帧 ----
   var _canvas = null;   // 主预览 canvas
   var _cctx = null;     // canvas 2D 上下文
   var _decoder = null;  // VideoDecoder 实例
   var _seg = null;      // 当前窗口: { start, end, chunks: [{bytes, key}] }
   var _segSeq = 0;      // 窗口段版本号, 换段递增以丢弃过期响应
-  var _decodeTail = Promise.resolve(); // 解码串行链, 避免解码队列超限
+  var _decodeTail = Promise.resolve(); // 解码串行链, 避免 decode/flush 交错
   var _pendingTarget = -1; // 最近一次请求的帧索引(用于丢弃已过期的目标)
-  var _decodePos = -1;  // 当前等待解码结果的窗口内位置
-  var _decodeResolve = null; // 当前等待解码结果的 Promise 回调
-  var _decodedUpTo = -1; // 当前窗口内已解码到的位置(前向解码增量推进; 向后/随机回到最近关键帧重解)
+  var _flushTarget = -1;   // 当前 flush 期望的 output 序号(显示顺序偏移)
+  var _flushCount = 0;     // flush 期间已 output 的帧数
+  var _flushResult = null; // flush 期间收集的目标帧(其余帧立即释放)
 
   function $(id) { return document.getElementById(id); }
 
@@ -61,11 +62,12 @@ var VideoExtract = (function () {
     return url;
   }
 
-  /** 构造帧窗口段 URL(后端返回正常 I/P/B H.264 Annex-B)。引用: ensureSegment。 */
+  /** 构造帧窗口段 URL(后端返回 H.264 Annex-B + X-Frame-Count 头)。引用: ensureSegment。 */
   function segmentUrl(start, end) {
     return API.apiPath('/video/segment')
       + '?path=' + encodeURIComponent(state.path)
-      + '&start=' + start + '&end=' + end;
+      + '&start=' + start + '&end=' + end
+      + (state.hideB ? '&hide_b=true' : '');
   }
 
   /** 构造封面 URL(用于视频切换时顶部信息)。引用: 无(仅信息)。 */
@@ -127,8 +129,9 @@ var VideoExtract = (function () {
   }
 
   /**
-   * 解码并显示指定帧: 目标在窗口内则从最近关键帧解算到目标(正常编码, 前向增量、
-   * 向后/随机重解); 移出窗口则先请求覆盖目标的新窗口段。引用: goto / setPath。
+   * 解码并显示指定帧: 从最近关键帧批量 decode 到段尾, flush 强制按显示顺序
+   * 输出所有帧, 按 output 序号匹配目标(B 帧重排序由解码器内部处理);
+   * 移出窗口则先请求新段。引用: goto / setPath。
    * @param {number} idx
    */
   function showFrame(idx) {
@@ -138,7 +141,7 @@ var VideoExtract = (function () {
       var pos = idx - _seg.start;
       _decodeTail = _decodeTail
         .then(function () {
-          if (_pendingTarget !== idx) return;
+          if (_pendingTarget !== idx) return null;
           return navigateTo(pos, idx);
         })
         .then(function (frame) {
@@ -149,56 +152,89 @@ var VideoExtract = (function () {
           paintStatus();
           updateCursor();
           syncStrip();
-        })
-        .catch(function (e) {
-          toast('帧 ' + idx + ' 解码失败: ' + ((e && e.message) || e));
         });
+    }).catch(function (e) {
+      toast('帧 ' + idx + ' 加载失败: ' + ((e && e.message) || e));
+      var stage = $('ve-stage');
+      if (stage) stage.classList.remove('loading');
     });
   }
 
-  /** 确保当前窗口覆盖目标帧, 否则拉取新段并重建解码器。引用: showFrame。 */
+  /** 帧窗口半宽(帧数): 按 fps 和 SEG_MAX_SEC 计算, 前后各最多 SEG_MAX_SEC/2 秒。引用: ensureSegment。 */
+  function segHalf() {
+    if (state.duration > 0 && state.total > 0) {
+      var fps = state.total / state.duration;
+      return Math.max(30, Math.round(fps * SEG_MAX_SEC / 2));
+    }
+    return 100; // 无时长信息时的回退值
+  }
+
+  /**
+   * 拉取覆盖目标帧的窗口段并重建解码器。实际帧数由后端 ``X-Frame-Count``
+   * 响应头告知(视频末尾可能少于请求数), 前端不猜测。引用: showFrame。
+   */
   function ensureSegment(idx) {
     if (_seg && idx >= _seg.start && idx <= _seg.end) return Promise.resolve();
-    var start = Math.max(0, idx - SEG_HALF);
-    var end = Math.min(state.total - 1, idx + SEG_HALF);
+    var half = segHalf();
+    var start = Math.max(0, idx - half);
+    var end = Math.min(state.total - 1, idx + half);
     var seq = ++_segSeq;
     var stage = $('ve-stage');
     if (stage) stage.classList.add('loading');
     return fetch(segmentUrl(start, end))
       .then(function (r) {
         if (!r.ok) throw new Error('段获取失败 ' + r.status);
-        return r.arrayBuffer();
+        var count = parseInt(r.headers.get('X-Frame-Count'), 10) || 0;
+        return r.arrayBuffer().then(function (buf) { return { buf: buf, count: count }; });
       })
-      .then(function (buf) {
+      .then(function (result) {
         if (seq !== _segSeq) return; // 期间已切换目标, 丢弃该段
-        var parsed = demuxAnnexB(new Uint8Array(buf));
+        var parsed = demuxAnnexB(new Uint8Array(result.buf));
         if (!parsed.sps || !parsed.pps || !parsed.chunks.length) {
           throw new Error('段内无有效编码帧');
         }
-        // 关闭旧解码器并重建(SPS/PPS 变化或换段)
         if (_decoder) { try { _decoder.close(); } catch (ignore) {} }
         _decoder = makeDecoder();
         _decoder.configure({
           codec: buildCodecString(parsed.sps),
           description: buildAvcConfig(parsed.sps, parsed.pps),
         });
-        _seg = { start: start, end: end, chunks: parsed.chunks };
-        _decodedUpTo = -1;
+        _seg = { start: start, end: start + result.count - 1, chunks: parsed.chunks };
       });
   }
 
   /**
-   * 把解码器推进到目标位置: 目标大于已解码位置则前向增量逐帧解; 否则回到
-   * 最近关键帧重解到目标。返回目标帧(其余中间帧释放)。
-   * @param {number} pos 窗口内目标位置。
+   * 从最近关键帧批量 decode 到目标(无 B 帧)或段尾(有 B 帧), flush 强制输出。
+   * 解码器内部处理 B 帧重排序, output 按显示顺序输出, 用 output 序号匹配目标帧。
+   * ``hide_b`` 为真时后端 ``-bf 0`` 禁用 B 帧, 解码顺序 = 显示顺序, 只需 decode
+   * 到目标位置即可; 否则需 decode 到段尾以确保 B 帧参考帧就绪。
+   * @param {number} pos 窗口内目标位置(显示顺序)。
    * @param {number} idx 全局帧索引(用于中途抛弃过期目标)。
    * 引用: showFrame。
    */
   function navigateTo(pos, idx) {
-    var start = pos > _decodedUpTo ? _decodedUpTo + 1 : lastKeyAtOrBefore(pos);
-    return decodeRange(start, pos, idx).then(function (frame) {
-      _decodedUpTo = pos;
-      return frame;
+    var keyPos = lastKeyAtOrBefore(pos);
+    var end = state.hideB ? pos : _seg.chunks.length - 1;
+    for (var p = keyPos; p <= end; p++) {
+      var chunk = _seg.chunks[p];
+      _decoder.decode(new EncodedVideoChunk({
+        type: chunk.key ? 'key' : 'delta',
+        timestamp: p,
+        data: chunk.bytes,
+      }));
+    }
+    _flushTarget = pos - keyPos;
+    _flushCount = 0;
+    _flushResult = null;
+    return _decoder.flush().then(function () {
+      if (_pendingTarget !== idx) {
+        if (_flushResult) _flushResult.close();
+        _flushResult = null;
+        return null;
+      }
+      var f = _flushResult;
+      _flushResult = null;
+      return f;
     });
   }
 
@@ -210,46 +246,7 @@ var VideoExtract = (function () {
     return 0;
   }
 
-  /** 逐位置喂给解码器并等待输出, 保留目标帧, 其余中间帧释放。引用: navigateTo。 */
-  function decodeRange(start, pos, idx) {
-    return new Promise(function (resolve, reject) {
-      var last = null;
-      var p = start;
-      function step() {
-        if (_pendingTarget !== idx) { if (last) last.close(); resolve(null); return; }
-        if (p > pos) { resolve(last); return; }
-        decodeFrame(p).then(function (frame) {
-          if (last) last.close();
-          last = frame;
-          p++;
-          step();
-        }).catch(reject);
-      }
-      step();
-    });
-  }
-
-  /** 解码窗口内位置 pos 的一帧(chunk 为关键帧则 type=key, 否则 delta)。引用: decodeRange。 */
-  function decodeFrame(pos) {
-    return new Promise(function (resolve, reject) {
-      _decodePos = pos;
-      _decodeResolve = resolve;
-      var chunk = _seg.chunks[pos];
-      var ecc = new EncodedVideoChunk({
-        type: chunk.key ? 'key' : 'delta',
-        timestamp: pos,
-        data: chunk.bytes,
-      });
-      try {
-        _decoder.decode(ecc);
-      } catch (e) {
-        _decodeResolve = null;
-        reject(e);
-      }
-    });
-  }
-
-  /** 构造 VideoDecoder, 解码结果经回调交给当前等待者。引用: ensureSegment。 */
+  /** 构造 VideoDecoder, 解码结果经 onDecoded 收集。引用: ensureSegment。 */
   function makeDecoder() {
     return new VideoDecoder({
       output: onDecoded,
@@ -259,16 +256,17 @@ var VideoExtract = (function () {
     });
   }
 
-  /** 解码器输出回调: 仅当该帧位置与当前等待者匹配时交给它, 否则释放。引用: makeDecoder。 */
+  /**
+   * 解码器输出回调: flush 期间按 output 顺序计数, 仅保留序号匹配
+   * ``_flushTarget`` 的目标帧, 其余中间帧立即释放。引用: makeDecoder。
+   */
   function onDecoded(frame) {
-    var pos = frame.timestamp;
-    if (pos === _decodePos && _decodeResolve) {
-      var resolve = _decodeResolve;
-      _decodeResolve = null;
-      resolve(frame);
+    if (_flushCount === _flushTarget) {
+      _flushResult = frame;
     } else {
       frame.close();
     }
+    _flushCount++;
   }
 
   /** 把解码帧绘制到主预览 canvas(按帧尺寸自适应画布)。引用: showFrame。 */
@@ -284,22 +282,31 @@ var VideoExtract = (function () {
     if (stage) stage.classList.remove('loading');
   }
 
-  /** 解析 H.264 Annex-B 裸流: 提取 SPS/PPS 并按片 NAL 分组成帧, 标记首帧关键帧。引用: ensureSegment。 */
+  /**
+   * 解析 H.264 Annex-B 裸流: 提取 SPS/PPS 并按片 NAL 分组成帧。
+   * SPS/PPS 只提取用于 configure 的 description, 不包含在 chunk 中(AVCC 格式
+   * 要求参数集通过 description 传入, chunk 只含 slice 数据)。
+   * 关键帧判定: 片 NAL 为 IDR(类型 5) 即关键帧。
+   * 引用: ensureSegment。
+   */
   function demuxAnnexB(bin) {
     var nals = [];
     var i = 0, n = bin.length;
-    while (i + 3 < n) {
-      if (bin[i] === 0 && bin[i + 1] === 0 && bin[i + 2] === 1) {
-        i += 3;
-      } else if (bin[i] === 0 && bin[i + 1] === 0 && bin[i + 2] === 0 && bin[i + 3] === 1) {
-        i += 4;
-      } else {
-        i++;
-        continue;
+    while (i < n) {
+      // 找起始码(3 字节 00 00 01 或 4 字节 00 00 00 01)
+      var scLen = 0;
+      if (i + 3 <= n && bin[i] === 0 && bin[i + 1] === 0 && bin[i + 2] === 1) {
+        scLen = 3;
+      } else if (i + 4 <= n && bin[i] === 0 && bin[i + 1] === 0 && bin[i + 2] === 0 && bin[i + 3] === 1) {
+        scLen = 4;
       }
+      if (!scLen) { i++; continue; }
+      i += scLen;
       var start = i;
-      while (i + 3 < n) {
-        if (bin[i] === 0 && bin[i + 1] === 0 && (bin[i + 2] === 1 || (bin[i + 2] === 0 && bin[i + 3] === 1))) break;
+      // 扫描到下一个起始码或末尾
+      while (i < n) {
+        if (i + 3 <= n && bin[i] === 0 && bin[i + 1] === 0 && bin[i + 2] === 1) break;
+        if (i + 4 <= n && bin[i] === 0 && bin[i + 1] === 0 && bin[i + 2] === 0 && bin[i + 3] === 1) break;
         i++;
       }
       nals.push(bin.subarray(start, i));
@@ -310,17 +317,13 @@ var VideoExtract = (function () {
       if (t === 7 && !sps) sps = nals[k];
       else if (t === 8 && !pps) pps = nals[k];
     }
-    // 按片 NAL 分组为帧: 每帧以片 NAL 结尾, 其前累积的 SPS/PPS/SEI 并入该帧,
-    // 保证每帧 chunk 为完整访问单元。关键帧判定: 片 NAL 为 IDR(类型 5) 即关键帧。
+    // 按片 NAL 分组为帧: 每个 slice NAL(类型 1 或 5)为一个独立 chunk,
+    // SPS/PPS 已通过 configure 的 description 传入, 不包含在 chunk 中。
     var chunks = [];
-    var pending = [];
     for (var m = 0; m < nals.length; m++) {
       var ty = nals[m][0] & 0x1F;
       if (ty === 1 || ty === 5) {
-        chunks.push({ bytes: toLengthPrefixed(pending.concat([nals[m]])), key: ty === 5 });
-        pending = [];
-      } else {
-        pending.push(nals[m]);
+        chunks.push({ bytes: toLengthPrefixed([nals[m]]), key: ty === 5 });
       }
     }
     return { sps: sps, pps: pps, chunks: chunks };
@@ -373,7 +376,9 @@ var VideoExtract = (function () {
     _segSeq++;
     _decodeTail = Promise.resolve();
     _pendingTarget = -1;
-    _decodeResolve = null;
+    _flushTarget = -1;
+    _flushCount = 0;
+    _flushResult = null;
   }
 
   /** 切换视频(上下一个)，重新加载详情并回到第 0 帧。引用: prevVideo/nextVideo。 */
@@ -604,6 +609,23 @@ var VideoExtract = (function () {
     return n;
   }
 
+  /**
+   * 已保存帧在显示域中的可见位置: 非隐藏 B 帧时即自身; 隐藏 B 帧时若该帧为 B
+   * 则向外搜索最近的非 B 帧作为落点, 使标记始终可见。引用: renderChart。
+   * @param {number} idx 已保存帧的全局索引。
+   * @returns {number} 可见帧的全局索引。
+   */
+  function nearestVisibleIdx(idx) {
+    if (!state.hideB) return idx;
+    var ft = state.types[idx];
+    if (ft && ft.type !== 'B') return idx;
+    for (var d = 1; d < state.total; d++) {
+      if (idx - d >= 0 && state.types[idx - d] && state.types[idx - d].type !== 'B') return idx - d;
+      if (idx + d < state.total && state.types[idx + d] && state.types[idx + d].type !== 'B') return idx + d;
+    }
+    return idx;
+  }
+
   /** 全局图每帧像素宽: 视口最多对应 10 分钟帧跨度; 视频更短时整条铺满视口(最多 10 分钟而非固定 10 分钟)。引用: renderChart。 */
   function globalPxPerFrame(viewportW) {
     var domain = domainCount() || 1;
@@ -674,14 +696,20 @@ var VideoExtract = (function () {
     }
     svg.appendChild(bars);
 
+    // 已保存帧标记: 顶部彩色条, 颜色取帧类型(I 红/P 黄/B 蓝);
+    // 隐藏 B 帧时已保存的 B 帧映射到最近的可见帧位置
     if (state.saved.length) {
       for (var s2 = 0; s2 < state.saved.length; s2++) {
+        var saveIdx = state.saved[s2];
+        var visIdx = nearestVisibleIdx(saveIdx);
+        var saveFt = state.types[saveIdx];
+        var markerColor = saveFt ? (FRAME_COLORS[saveFt.type] || '#888') : '#3ecf8e';
         var t = document.createElementNS(ns, 'rect');
-        t.setAttribute('x', barOrdinal(state.saved[s2]) * ppf - 1);
-        t.setAttribute('y', bottom - 4);
-        t.setAttribute('width', 2);
-        t.setAttribute('height', 4);
-        t.setAttribute('fill', '#3ecf8e');
+        t.setAttribute('x', barOrdinal(visIdx) * ppf);
+        t.setAttribute('y', 0);
+        t.setAttribute('width', Math.max(2, ppf));
+        t.setAttribute('height', 8);
+        t.setAttribute('fill', markerColor);
         svg.appendChild(t);
       }
     }
@@ -888,24 +916,27 @@ var VideoExtract = (function () {
     });
   }
 
-  /** 绑定"隐藏B帧"开关: 切换后重绘柱状图并落到非 B 帧。引用: init。 */
+  /** 绑定"隐藏B帧"开关: 切换后重置解码器(段编码方式变了)、重绘柱状图并落到非 B 帧。引用: init。 */
   function bindHideB() {
     var box = $('ve-hide-b');
     if (!box) return;
     state.hideB = box.checked;
     box.addEventListener('change', function () {
       state.hideB = box.checked;
-      // 开启隐藏 B 帧时, 若当前帧是 B 帧则跳到最近的 I/P 帧
-      if (state.hideB) {
-        var ft = state.types[state.idx];
-        if (ft && ft.type === 'B') stepFrame(1);
-      }
+      // 段编码方式变了(B 帧开关), 必须重置解码器并重新请求段
+      resetDecoder();
       drawChart();
       paintStatus();
+      // 开启隐藏 B 帧时, 若当前帧是 B 帧则跳到最近的 I/P 帧(stepFrame 内部调 showFrame)
+      if (state.hideB) {
+        var ft = state.types[state.idx];
+        if (ft && ft.type === 'B') { stepFrame(1); return; }
+      }
+      showFrame(state.idx);
     });
   }
 
-  /** 绑定帧类型柱状图交互(全局图 + 局部图): 点击跳帧; 横向滚动由容器 overflow-x:auto 原生处理。引用: init。 */
+  /** 绑定帧类型柱状图交互(全局图 + 局部图): 点击跳帧; 垂直滚轮转水平滚动。引用: init。 */
   function bindChart() {
     var g = $('ve-chart-global');
     var l = $('ve-chart-local');
@@ -997,6 +1028,15 @@ var VideoExtract = (function () {
     bindKeys();
     bindResize();
     bindHideB();
+
+    // 横向滚动容器(图表×2 + 缩略图条): 垂直滚轮转水平滚动
+    document.querySelectorAll('.ve-chart-scroll, .ve-strip').forEach(function (el) {
+      el.addEventListener('wheel', function (e) {
+        if (!e.deltaY) return;
+        e.preventDefault();
+        el.scrollLeft += e.deltaY;
+      }, { passive: false });
+    });
 
     // 拉取视频列表以支持 A/D 切换
     try {
