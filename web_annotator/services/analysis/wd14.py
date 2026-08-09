@@ -12,6 +12,7 @@ from PIL import Image
 
 from services.models import JobSnapshot, WorkDirInfo
 from services.core.scanner import IMAGE_EXTS, collect_images
+from services.online_sources.framework.utils import _GENDER_TAGS
 
 if TYPE_CHECKING:
     from onnxruntime import InferenceSession
@@ -24,7 +25,8 @@ WD14_ONNX_PATH = WD14_MODEL_DIR / "model.onnx"
 WD14_CSV_PATH = WD14_MODEL_DIR / "selected_tags.csv"
 
 _WD14_SESSION: InferenceSession | None = None
-_WD14_LABELS: list[str] = []
+# (标签名, 是否角色) 元组列表, 与模型输出索引对齐; 角色取自 selected_tags.csv category=4
+_WD14_LABELS: list[tuple[str, bool]] = []
 _WD14_LOCK = threading.Lock()
 
 
@@ -73,26 +75,64 @@ class Tags:
         return " ".join(tag.strip().replace("_", " ").split())
 
     @staticmethod
-    def merge_for_disk_by_confidence(base: list[str], wd_scored: list[tuple[str, float]]) -> str:
-        """按置信度合并原标签与 WD14 结果. 
+    def merge_for_disk_by_confidence(
+        base: list[str],
+        wd_scored: list[tuple[str, float, bool]],
+        *,
+        artist_tag: str = "",
+    ) -> str:
+        """按置信度合并原标签与 WD14 结果, 并按 Anima 格式输出.
+
+        头部按 性别 → 角色 → 画师 收纳, 其余通用标签置于 ``|||`` 分隔的正文,
+        与图源下载的 Anima 风格保持一致. 角色标签由 ``is_character`` 标记区分,
+        画师标签由 ``artist_tag`` 显式提供(需带 ``@`` 前缀), 均按等价键去重.
+
+        Args:
+            base: 原旁路标签文本拆分列表.
+            wd_scored: ``(标签名, 置信度, 是否角色)`` 元组列表.
+            artist_tag: 画师标签, 需带 ``@`` 前缀; 为空则不写入.
+
+        Returns:
+            Anima 格式的标签文本.
 
         Callers:
             - ``process_one``
         """
         score_by_key: dict[str, float] = {}
         canonical_by_key: dict[str, str] = {}
-        for tag, score in wd_scored:
+        character_key: set[str] = set()
+        for tag, score, is_character in wd_scored:
             key = Tags.equivalence_key(tag)
             if key not in score_by_key or score > score_by_key[key]:
                 score_by_key[key] = score
                 canonical_by_key[key] = Tags._canonical_spacing(tag)
+            if is_character:
+                character_key.add(key)
         for raw in base:
             key = Tags.equivalence_key(raw)
             if key not in canonical_by_key:
                 canonical_by_key[key] = Tags._canonical_spacing(raw)
                 score_by_key[key] = -1.0
         ordered = sorted(score_by_key.keys(), key=lambda k: score_by_key[k], reverse=True)
-        return Tags.join_caption([canonical_by_key[k] for k in ordered])
+
+        gender_keys = {Tags.equivalence_key(g) for g in _GENDER_TAGS}
+        header, body = [], []
+        for key in ordered:
+            tag = canonical_by_key[key]
+            if key in character_key or Tags.equivalence_key(tag) in gender_keys:
+                header.append(tag)
+            else:
+                body.append(tag)
+        artist = artist_tag.strip()
+        if artist:
+            artist = Tags._canonical_spacing(artist)
+            header_keys = {Tags.equivalence_key(t) for t in header}
+            if Tags.equivalence_key(artist) not in header_keys:
+                header.append(artist)
+        caption = Tags.join_caption(header)
+        if body:
+            caption += " ||| " + Tags.join_caption(body)
+        return caption
 
 
 # 打标页不列出这些目录(mask 是 alpha, 非待打标图)
@@ -175,8 +215,15 @@ def model_ready() -> tuple[bool, str]:
     return False, f"找不到本地 WD14 模型: {rel}"
 
 
-def _get_wd14() -> tuple[InferenceSession, list[str]]:
-    """加载或复用 WD14 ONNX 会话. 引用: ``run_wd14_on_image_scored``. """
+def _get_wd14() -> tuple[InferenceSession, list[tuple[str, bool]]]:
+    """加载或复用 WD14 ONNX 会话. 
+    
+    Returns:
+        ``(session, labels)`` — ``labels`` 为 ``(标签名, 是否角色)`` 元组列表,
+        与模型输出索引对齐.
+
+    引用: ``run_wd14_on_image_scored``.
+    """
     global _WD14_SESSION, _WD14_LABELS
     with _WD14_LOCK:
         if _WD14_SESSION is not None:
@@ -189,7 +236,8 @@ def _get_wd14() -> tuple[InferenceSession, list[str]]:
         import torch
 
         df = pd.read_csv(WD14_CSV_PATH)
-        _WD14_LABELS = df["name"].tolist()
+        is_character = (df["category"].astype(str) == "4").tolist()
+        _WD14_LABELS = list(zip(df["name"].tolist(), is_character))
         providers = (
             ["CUDAExecutionProvider", "CPUExecutionProvider"]
             if torch.cuda.is_available()
@@ -199,8 +247,8 @@ def _get_wd14() -> tuple[InferenceSession, list[str]]:
         return _WD14_SESSION, _WD14_LABELS
 
 
-def run_wd14_on_image_scored(img: Image.Image, threshold: float) -> list[tuple[str, float]]:
-    """对单张图跑 WD14, 返回 (tag, score). 引用: process_one. """
+def run_wd14_on_image_scored(img: Image.Image, threshold: float) -> list[tuple[str, float, bool]]:
+    """对单张图跑 WD14, 返回 (tag, score, is_character). 引用: process_one. """
     session, labels = _get_wd14()
     if img.mode == "RGBA":
         rgb = Image.new("RGB", img.size, (255, 255, 255))
@@ -219,13 +267,13 @@ def run_wd14_on_image_scored(img: Image.Image, threshold: float) -> list[tuple[s
     input_name = session.get_inputs()[0].name
     # 模型输出声明为稀疏张量, 类型推断为 SparseTensor, 但运行时返回 numpy 数组; 显式转 ndarray.
     probs = np.asarray(session.run(None, {input_name: input_data})[0])[0]
-    scored: list[tuple[str, float]] = []
+    scored: list[tuple[str, float, bool]] = []
     for i, p in enumerate(probs):
         if i < len(labels) and float(p) >= threshold:
-            name = labels[i]
+            name, is_character = labels[i]
             if name in ["general", "sensitive", "questionable", "explicit"]:
                 continue
-            scored.append((name.replace("_", " ").strip(), float(p)))
+            scored.append((name.replace("_", " ").strip(), float(p), is_character))
     scored.sort(key=lambda x: x[1], reverse=True)
     return scored
 
@@ -290,6 +338,7 @@ def process_one(
     threshold: float,
     disable_orig_tags: bool,
     force: bool,
+    artist_tag: str = "",
 ) -> str:
     """处理单张图片: WD14 推理 → 合并原标签 → 写入同名 .txt. 
 
@@ -308,7 +357,7 @@ def process_one(
     if not disable_orig_tags:
         base = Tags.split_caption(_load_text(out_txt_path))
     wd_scored = run_wd14_on_image_scored(img, threshold)
-    caption = Tags.merge_for_disk_by_confidence(base, wd_scored)
+    caption = Tags.merge_for_disk_by_confidence(base, wd_scored, artist_tag=artist_tag)
     out_txt_path.write_text(caption, encoding="utf-8")
     return "ok"
 
@@ -321,6 +370,7 @@ def run_batch(
     force: bool,
     progress: TaggingProgress,
     on_update: Callable[[], None] | None = None,
+    artist_tag: str = "",
 ) -> None:
     """批量打标主循环. 引用: ``routes/tagging.py``. """
     items = collect_images(dirs)
@@ -334,7 +384,8 @@ def run_batch(
     progress.message = f"共 {len(items)} 张, 加载模型…"
     progress.log(
         f"开始: dirs={[d.name for d in dirs]}, threshold={threshold}, "
-        f"disable_orig_tags={disable_orig_tags}, force={force}, total={len(items)}"
+        f"disable_orig_tags={disable_orig_tags}, force={force}, "
+        f"artist={artist_tag or '无'}, total={len(items)}"
     )
     if on_update:
         on_update()
@@ -377,6 +428,7 @@ def run_batch(
                 threshold=threshold,
                 disable_orig_tags=disable_orig_tags,
                 force=force,
+                artist_tag=artist_tag,
             )
         except (OSError, ValueError, RuntimeError) as e:
             progress.failed += 1

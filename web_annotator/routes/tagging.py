@@ -27,6 +27,7 @@ class StartBody(BaseModel):
     threshold: float = Field(default=DEFAULT_THRESHOLD, ge=0.0, le=1.0)
     disable_orig_tags: bool = True
     force: bool = False
+    artist_tag: str = Field(default="", description="画师标签, 需带 @ 前缀")
 
 
 @router.get("/dirs")
@@ -76,6 +77,7 @@ async def start(request: Request, body: StartBody) -> TaggingStartResponse:
             force=body.force,
             progress=prog,
             on_update=on_update,
+            artist_tag=body.artist_tag.strip(),
         )
         on_update()
 

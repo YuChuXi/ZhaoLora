@@ -42,6 +42,7 @@ class PixivSource(SourceClient):
     prefix = "p"
     order_tags: dict[str, str] = {}
     valid_orders: tuple[str, ...] = ()
+    writes_caption = False
     image_hosts = ("pximg.net",)
     image_referer = "https://www.pixiv.net/"
 
@@ -391,7 +392,7 @@ class PixivSource(SourceClient):
         tags_path = out_dir / f"{stem}.txt"
         existing = find_downloaded(out_dir, post.filename)
 
-        if not overwrite and existing is not None and tags_path.is_file():
+        if not overwrite and existing is not None and (tags_path.is_file() or not self.writes_caption):
             return {
                 "skipped": True,
                 "path": str(existing),
@@ -413,7 +414,8 @@ class PixivSource(SourceClient):
         caption = (post.tags or "").strip()
         if include_meta_tags:
             caption = (caption + (" " + self.name) if caption else self.name).strip()
-        tags_path.write_text(caption + "\n", encoding="utf-8")
+        if self.writes_caption:
+            tags_path.write_text(caption + "\n", encoding="utf-8")
         self._write_meta(
             out_dir,
             pid,

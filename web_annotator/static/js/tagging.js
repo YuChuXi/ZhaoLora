@@ -122,7 +122,8 @@ var Tagging = (function () {
       dirs: dirs,
       threshold: threshold,
       disable_orig_tags: document.getElementById('chk-disable-orig').checked,
-      force: document.getElementById('chk-force').checked
+      force: document.getElementById('chk-force').checked,
+      artist_tag: document.getElementById('artist-tag').value.trim()
     };
     var data = await API.request(API.apiPath('/tagging/start'), {
       method: 'POST',

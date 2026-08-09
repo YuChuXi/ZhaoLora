@@ -47,6 +47,8 @@ class SourceClient(ABC):
     valid_orders: tuple[str, ...] = ()
     # 游标式来源用会话续拉 (Bilibili/X), 无页码概念; 经由 search_session
     session_based: bool = False
+    # 是否在下载时生成旁路 .txt 标注; booru 来源开启, 非 booru 来源关闭
+    writes_caption: bool = True
 
     @abstractmethod
     async def fetch_meta(self, out_dir: Path, pid: str) -> None:

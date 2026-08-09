@@ -64,6 +64,7 @@ class GalleryDLSource(SourceClient):
     # 子类可覆盖
     _INCR_BATCH: int | None = None
     session_based = True
+    writes_caption = False
 
     def __init__(self) -> None:
         """初始化来源级的会话存储。"""
@@ -423,7 +424,7 @@ class GalleryDLSource(SourceClient):
         tags_path = out_dir / f"{stem}.txt"
         existing = find_downloaded(out_dir, post.filename)
 
-        if not overwrite and existing is not None and tags_path.is_file():
+        if not overwrite and existing is not None and (tags_path.is_file() or not self.writes_caption):
             return {
                 "skipped": True,
                 "path": str(existing),
@@ -442,7 +443,8 @@ class GalleryDLSource(SourceClient):
 
         await self._save_png(data, image_path)
         self._clean_old_files(out_dir, pid, image_path)
-        tags_path.write_text(caption + "\n", encoding="utf-8")
+        if self.writes_caption:
+            tags_path.write_text(caption + "\n", encoding="utf-8")
         self._write_meta(
             out_dir, pid,
             BooruPost(source=self.name, id=pid, file_url=image_url, tags=caption),
