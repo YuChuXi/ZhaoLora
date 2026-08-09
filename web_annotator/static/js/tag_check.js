@@ -602,7 +602,7 @@
   var _embSortActive = false;  // 是否处于排序模式
 
   /**
-   * 更新嵌入进度条。
+   * 更新向量查询进度条（query 走 JobManager，SSE 推送进度）。
    * @param {Object} s - 任务快照
    */
   function embProgress(s) {
@@ -610,75 +610,20 @@
     var running = s.status === 'running' || s.status === 'queued';
     if (bar) bar.hidden = !running;
     var fill = document.getElementById('emb-progress-fill');
-    var loading = running && s.phase === 'loading';
-    var waiting = s.status === 'queued';
-    if (fill) fill.classList.toggle('indeterminate', loading || waiting);
-    if (fill && !loading && !waiting) {
+    if (fill) fill.classList.toggle('indeterminate', s.status === 'queued');
+    if (fill && s.status === 'running') {
       fill.style.width = Math.min(100, s.pct || 0) + '%';
     }
     var pctEl = document.getElementById('emb-progress-pct');
-    if (pctEl) pctEl.textContent = (loading || waiting)
+    if (pctEl) pctEl.textContent = s.status === 'queued'
       ? '…'
       : (Math.min(100, Math.round(s.pct || 0)) + '%');
     var statusEl = document.getElementById('emb-status');
-    if (statusEl) statusEl.textContent = s.message || s.phase || '';
+    if (statusEl && s.message) statusEl.textContent = s.message;
   }
 
   /**
-   * 检查向量嵌入模型是否可用。
-   * @returns {Promise<boolean>}
-   */
-  async function embCheckModel() {
-    var res = await API.request(API.apiPath('/tags/embedding/status'), {
-      method: 'POST',
-      body: '{}',
-    });
-    if (!res.ok) {
-      toast('模型不可用: ' + (res.message || '未知错误'));
-      return false;
-    }
-    return true;
-  }
-
-  /**
-   * 构建当前目录图片的向量嵌入（异步长任务，带进度条）。
-   * @returns {Promise<void>}
-   */
-  async function embBuild() {
-    var btn = document.getElementById('emb-build');
-    btn.disabled = true;
-    document.getElementById('emb-status').textContent = '正在启动…';
-    try {
-      var ok = await embCheckModel();
-      if (!ok) { btn.disabled = false; return; }
-      var res = await API.request(API.apiPath('/tags/embedding/build'), {
-        method: 'POST',
-        body: JSON.stringify({ dirs: DirPicker.getDirs() }),
-      });
-      if (!res.job_id) {
-        document.getElementById('emb-status').textContent = '构建失败';
-        btn.disabled = false;
-        return;
-      }
-      API.watchJob(res.job_id, function (s) {
-        embProgress(s);
-        if (s.status === 'done') {
-          btn.disabled = false;
-          toast(s.message || '构建完成');
-        } else if (s.status === 'error') {
-          btn.disabled = false;
-          toast('构建失败: ' + (s.message || ''));
-        }
-      });
-    } catch (e) {
-      document.getElementById('emb-status').textContent = '构建失败';
-      toast('构建失败: ' + String(e.message || e));
-      btn.disabled = false;
-    }
-  }
-
-  /**
-   * 按查询文本相似度排序瀑布流。
+   * 按查询文本相似度排序瀑布流（提交 JobManager 实时打分，SSE 订阅进度）。
    * @returns {Promise<void>}
    */
   async function embSort() {
@@ -687,58 +632,72 @@
 
     var btn = document.getElementById('emb-sort');
     btn.disabled = true;
-    document.getElementById('emb-status').textContent = '查询中…';
+    document.getElementById('emb-status').textContent = '提交中…';
     try {
       var res = await API.request(API.apiPath('/tags/embedding/query'), {
         method: 'POST',
         body: JSON.stringify({ query: query, dirs: DirPicker.getDirs() }),
       });
-      if (!res.items || res.items.length === 0) {
-        document.getElementById('emb-status').textContent = '无匹配结果';
+      if (!res.job_id) {
+        document.getElementById('emb-status').textContent = '查询失败';
+        btn.disabled = false;
         return;
       }
-
-      // 构建 path -> similarity 映射
-      var simMap = {};
-      for (var i = 0; i < res.items.length; i++) {
-        simMap[res.items[i].path] = res.items[i].similarity;
-      }
-
-      // 将相似度写入 _items; 余弦相似度可为负值, 未命中者用 null 表示无相似度
-      for (var i = 0; i < _items.length; i++) {
-        var s = simMap[_items[i].path];
-        _items[i]._sim = s !== undefined ? s : null;
-      }
-      // 降序排列, 无相似度(null)排最后
-      _items.sort(function (a, b) {
-        var sa = a._sim == null ? -Infinity : a._sim;
-        var sb = b._sim == null ? -Infinity : b._sim;
-        return sb - sa;
+      API.watchJob(res.job_id, function (s) {
+        embProgress(s);
+        if (s.status === 'done') {
+          btn.disabled = false;
+          var items = (s.result && s.result.items) || [];
+          if (items.length === 0) {
+            document.getElementById('emb-status').textContent = '无匹配结果';
+            return;
+          }
+          // 构建 path -> similarity 映射
+          var simMap = {};
+          for (var i = 0; i < items.length; i++) {
+            simMap[items[i].path] = items[i].similarity;
+          }
+          // 将相似度写入 _items; 余弦相似度可为负值, 未命中者用 null 表示无相似度
+          for (var i = 0; i < _items.length; i++) {
+            var v = simMap[_items[i].path];
+            _items[i]._sim = v !== undefined ? v : null;
+          }
+          // 降序排列, 无相似度(null)排最后
+          _items.sort(function (a, b) {
+            var sa = a._sim == null ? -Infinity : a._sim;
+            var sb = b._sim == null ? -Infinity : b._sim;
+            return sb - sa;
+          });
+          _embSortActive = true;
+          hideSingle();
+          Masonry.render(_items);
+          updateStats();
+          document.getElementById('emb-status').textContent = '已按相似度排序 (' + items.length + ' 条)';
+          toast('已按相似度排序');
+        } else if (s.status === 'error') {
+          btn.disabled = false;
+          document.getElementById('emb-status').textContent = '查询失败';
+          toast('查询失败: ' + (s.message || ''));
+        }
       });
-
-      _embSortActive = true;
-      hideSingle();
-      Masonry.render(_items);
-      updateStats();
-      document.getElementById('emb-status').textContent = '已按相似度排序 (' + res.items.length + ' 条)';
-      toast('已按相似度排序');
     } catch (e) {
       document.getElementById('emb-status').textContent = '查询失败';
       toast('查询失败: ' + String(e.message || e));
-    } finally {
       btn.disabled = false;
     }
   }
 
   /**
-   * 按相似度阈值批量添加或删除标签（异步长任务，带进度条）。
+   * 基于已排序瀑布流缓存的相似度，按阈值筛选匹配图片并批量添加/删除标签。
+   *
+   * 相似度来自 embSort 实时打分结果（_items[i]._sim），本函数仅做前端筛选后
+   * 提交同步写接口，因此瞬间完成，无需长任务与进度条。
    * @returns {Promise<void>}
    */
   async function embBatchTag() {
-    var query = document.getElementById('emb-query').value.trim();
     var tag = document.getElementById('emb-tag').value.trim();
-    if (!query) { toast('请输入查询文本'); return; }
     if (!tag) { toast('请输入标签'); return; }
+    if (!_embSortActive) { toast('请先按相似度排序'); return; }
 
     var operator = document.getElementById('emb-operator').value;
     var threshold = parseFloat(document.getElementById('emb-threshold').value);
@@ -749,43 +708,39 @@
     var action = document.getElementById('emb-action').value;
     var fuzzy = document.getElementById('emb-fuzzy').checked;
 
+    // 按阈值筛选匹配路径
+    var paths = [];
+    for (var i = 0; i < _items.length; i++) {
+      var s = _items[i]._sim;
+      if (s == null) continue;
+      if ((operator === 'gt' && s >= threshold) || (operator === 'lt' && s <= threshold)) {
+        paths.push(_items[i].path);
+      }
+    }
+    if (paths.length === 0) { toast('无匹配图片'); return; }
+
     var btn = document.getElementById('emb-batch-tag');
     btn.disabled = true;
-    document.getElementById('emb-status').textContent = '正在启动…';
+    document.getElementById('emb-status').textContent = '执行中…';
     try {
       var res = await API.request(API.apiPath('/tags/embedding/batch-tag'), {
         method: 'POST',
         body: JSON.stringify({
-          dirs: DirPicker.getDirs(),
-          query: query,
+          paths: paths,
           tag: tag,
-          operator: operator,
-          threshold: threshold,
           action: action,
           position: getInsertPosition(),
           fuzzy: fuzzy,
         }),
       });
-      if (!res.job_id) {
-        document.getElementById('emb-status').textContent = '执行失败';
-        btn.disabled = false;
-        return;
-      }
-      API.watchJob(res.job_id, function (s) {
-        embProgress(s);
-        if (s.status === 'done') {
-          btn.disabled = false;
-          toast(s.message || '批量执行完成');
-          // 执行后刷新检查结果
-          runCheck().catch(function (e) { toast('刷新失败: ' + String(e.message || e)); });
-        } else if (s.status === 'error') {
-          btn.disabled = false;
-          toast('批量执行失败: ' + (s.message || ''));
-        }
-      });
+      document.getElementById('emb-status').textContent = res.message || '完成';
+      toast(res.message || '批量执行完成');
+      // 执行后刷新检查结果
+      runCheck().catch(function (e) { toast('刷新失败: ' + String(e.message || e)); });
     } catch (e) {
       document.getElementById('emb-status').textContent = '执行失败';
       toast('批量执行失败: ' + String(e.message || e));
+    } finally {
       btn.disabled = false;
     }
   }
@@ -892,9 +847,6 @@
       }
     });
     document.getElementById('emb-action').addEventListener('change', embUpdateAction);
-    document.getElementById('emb-build').addEventListener('click', function () {
-      embBuild().catch(function (e) { toast('构建失败: ' + String(e.message || e)); });
-    });
     document.getElementById('emb-sort').addEventListener('click', function () {
       embSort().catch(function (e) { toast('排序失败: ' + String(e.message || e)); });
     });

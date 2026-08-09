@@ -143,20 +143,6 @@ class EmbeddingStatusResponse(BaseModel):
     message: str = ""
 
 
-class EmbeddingBuildBody(BaseModel):
-    """构建向量嵌入请求. 引用: ``POST /tags/embedding/build``."""
-
-    dirs: list[str] | None = Field(default=None, description="子目录名, 空/省略=全选")
-
-
-class EmbeddingBuildResponse(BaseModel):
-    """构建向量嵌入响应. 引用: ``POST /tags/embedding/build``."""
-
-    ok: bool
-    count: int = 0
-    message: str = ""
-
-
 class EmbeddingQueryBody(BaseModel):
     """向量查询请求. 引用: ``POST /tags/embedding/query``."""
 
@@ -173,21 +159,17 @@ class EmbeddingQueryItem(BaseModel):
     similarity: float
 
 
-class EmbeddingQueryResponse(BaseModel):
-    """向量查询响应. 引用: ``POST /tags/embedding/query``."""
+class EmbeddingQueryResult(BaseModel):
+    """向量查询长任务结束结果. 引用: ``POST /tags/embedding/query`` 的 job 终态 result."""
 
-    query: str
     items: list[EmbeddingQueryItem] = Field(default_factory=list)
 
 
 class EmbeddingBatchTagBody(BaseModel):
     """批量标记请求. 引用: ``POST /tags/embedding/batch-tag``."""
 
-    dirs: list[str] | None = Field(default=None, description="子目录名, 空/省略=全选")
-    query: str = Field(..., description="查询文本")
+    paths: list[str] = Field(..., description="按相似度阈值筛选出的图片相对路径列表")
     tag: str = Field(..., description="要添加或删除的标签")
-    operator: str = Field("gt", description="gt(大于) / lt(小于)")
-    threshold: float = Field(0.5, ge=0.0, le=1.0, description="相似度阈值")
     action: str = Field("add", description="add(添加) / delete(删除)")
     position: str = Field("top", description="添加时的位置")
     fuzzy: bool = Field(False, description="删除时是否模糊匹配")

@@ -27,18 +27,17 @@ from services.models import (
     TagStatsResult,
     WorkDirInfo,
     EmbeddingStatusResponse,
-    EmbeddingBuildBody,
     EmbeddingQueryBody,
     EmbeddingQueryItem,
-    EmbeddingQueryResponse,
+    EmbeddingQueryResult,
     EmbeddingBatchTagBody,
+    EmbeddingBatchTagResponse,
 )
 from services.tagging.clean import add_tag_to_caption, batch_edit_tags, check_tag_in_caption, clean_txt_dirs, delete_tag_from_caption, split_header_body, join_tags_line
 from services.tagging.stats import count_tags, load_translation_map, resolve_selected_dirs, translate_missing_tags
-from services.analysis.embedding import (
-    EmbeddingIndex,
-    embed_text,
-    model_ready as embedding_model_ready,
+from services.analysis.reranker import (
+    rerank,
+    model_ready as reranker_model_ready,
 )
 
 router = APIRouter(prefix="/tags", tags=["tags"])
@@ -486,47 +485,26 @@ def delete_one(request: Request, body: TagDeleteOneBody) -> TagCheckItem:
     )
 
 
-# ==================== 向量嵌入 API ====================
-
-
-def _embedding_index(request: Request) -> EmbeddingIndex:
-    """获取当前数据集的嵌入索引（惰性创建）。
-
-    Callers:
-        - ``routes/tag_stats:embedding_build``
-        - ``routes/tag_stats:embedding_query``
-        - ``routes/tag_stats:embedding_batch_tag``
-    """
-    rt = get_runtime(request)
-    if rt.embedding_index is None:
-        rt.embedding_index = EmbeddingIndex()
-    return rt.embedding_index
+# ==================== 向量重排序 API ====================
 
 
 @router.post("/embedding/status", response_model=EmbeddingStatusResponse)
 def embedding_status(request: Request) -> EmbeddingStatusResponse:
-    """检查向量嵌入模型是否可用。
+    """检查向量重排序模型是否可用。
 
     引用: tag_check.js。
     """
-    ok, msg = embedding_model_ready()
+    ok, msg = reranker_model_ready()
     return EmbeddingStatusResponse(ok=ok, message=msg)
 
 
-def _embedding_built(request: Request) -> bool:
-    """检查嵌入索引是否非空。
+@router.post("/embedding/query")
+async def embedding_query(request: Request, body: EmbeddingQueryBody) -> JobSubmitResponse:
+    """按查询文本对候选图片实时重排序（异步长任务，带进度条）。
 
-    Callers:
-        - ``routes/tag_stats:embedding_query``
-        - ``routes/tag_stats:embedding_batch_tag``
-    """
-    idx = _embedding_index(request)
-    return not idx.is_empty()
-
-
-@router.post("/embedding/build")
-async def embedding_build(request: Request, body: EmbeddingBuildBody) -> JobSubmitResponse:
-    """为指定目录的图片构建向量嵌入（异步长任务，带进度条）。
+    Reranker 为 cross-encoder，无法预计算向量，故对目录内全部图片逐张
+    (query, image) 打分，耗时较长，故提交 JobManager 由前端以 SSE 订阅进度，
+    done 时在 result 中携带排序结果。
 
     引用: tag_check.js。
     """
@@ -536,215 +514,101 @@ async def embedding_build(request: Request, body: EmbeddingBuildBody) -> JobSubm
     if not selected:
         raise HTTPException(400, "请选择目录")
 
-    ok, msg = embedding_model_ready()
+    if not body.query.strip():
+        raise HTTPException(400, "查询文本不能为空")
+
+    ok, msg = reranker_model_ready()
     if not ok:
         raise HTTPException(400, msg)
 
-    idx = _embedding_index(request)
-    idx.set_cache_dir(rt.thumbnailer.thumb_dir)
-
-    # 收集所有需要构建嵌入的图片相对路径
-    rels: list[str] = []
+    # 收集所有候选图片的相对路径与绝对路径
+    candidates: list[tuple[str, Path]] = []
     for work in selected:
         if work == root:
             prefix = ""
         else:
             prefix = work.name
         for img in scan_images(work, path_prefix=prefix):
-            rels.append(img.path)
+            candidates.append((img.path, root / img.path))
 
-    total = len(rels)
+    query_text = body.query.strip()
+    total = len(candidates)
 
-    def run(emit: EmitFn) -> None:
-        """工作线程: 构建向量嵌入。引用: ``JobManager.submit``。"""
+    def run(emit: EmitFn) -> EmbeddingQueryResult:
+        """工作线程: 逐张打分并回报进度。引用: ``JobManager.submit``。"""
         emit(JobSnapshot(
-            status="running", phase="embedding",
-            message=f"构建向量嵌入 0/{total}…", pct=0, total=total,
+            status="running", phase="querying",
+            message="正在实时打分…", pct=0, total=total,
         ))
 
         def on_progress(done: int, n_total: int) -> None:
-            pct = round(done / n_total * 100, 1) if n_total else 100
             emit(JobSnapshot(
-                status="running", phase="embedding",
-                message=f"构建向量嵌入 {done}/{n_total}…",
-                pct=pct, done=done, total=n_total,
+                status="running", phase="querying",
+                message=f"正在打分 {done}/{n_total}…",
+                pct=round(done / n_total * 100, 1) if n_total else 100,
+                done=done, total=n_total,
             ))
 
-        available = idx.ensure_many(root, rels, on_progress=on_progress)
-
+        hits = rerank(query_text, candidates, on_progress=on_progress)
+        items = [
+            EmbeddingQueryItem(path=p, stem=Path(p).stem, similarity=round(s, 6))
+            for p, s in hits
+        ]
+        result = EmbeddingQueryResult(items=items)
         emit(JobSnapshot(
             status="done", phase="done",
-            message=f"向量索引可用 {available} 张图片",
-            pct=100, total=total,
+            message=f"完成，共 {len(items)} 张", pct=100, result=result,
         ))
+        return result
 
-    job_id = await jobs(request).submit(kind="embedding_build", group="compute", dataset=rt.name, run=run)
+    job_id = await jobs(request).submit(kind="embedding_query", group="compute", dataset=rt.name, run=run)
     return JobSubmitResponse(ok=True, job_id=job_id)
 
 
-@router.post("/embedding/query", response_model=EmbeddingQueryResponse)
-async def embedding_query(request: Request, body: EmbeddingQueryBody) -> EmbeddingQueryResponse:
-    """按查询文本的向量相似度排序图片。
+@router.post("/embedding/batch-tag", response_model=EmbeddingBatchTagResponse)
+def embedding_batch_tag(request: Request, body: EmbeddingBatchTagBody) -> EmbeddingBatchTagResponse:
+    """按已计算相似度的路径批量添加或删除标签（同步）。
+
+    相似度由 ``embedding/query`` 排序时实时打分得到并缓存在前端，本接口直接
+    接收前端按阈值筛选出的匹配路径，仅做批量写标签，瞬间完成，故不走长任务。
 
     引用: tag_check.js。
     """
-    rt = get_runtime(request)
-    root = rt.root
-    selected = resolve_selected_dirs(root, body.dirs)
-    if not selected:
-        raise HTTPException(400, "请选择目录")
-
-    if not body.query.strip():
-        raise HTTPException(400, "查询文本不能为空")
-
-    ok, msg = embedding_model_ready()
-    if not ok:
-        raise HTTPException(400, msg)
-
-    if not _embedding_built(request):
-        raise HTTPException(400, "请先构建向量嵌入 (POST /tags/embedding/build)")
-
-    # 收集所有候选图片的相对路径
-    candidates: list[str] = []
-    for work in selected:
-        if work == root:
-            prefix = ""
-        else:
-            prefix = work.name
-        for img in scan_images(work, path_prefix=prefix):
-            candidates.append(img.path)
-
-    query_vec = await asyncio.to_thread(embed_text, body.query.strip())
-    idx = _embedding_index(request)
-    hits = idx.query(query_vec, candidates, top_k=body.top_k)
-
-    items = [
-        EmbeddingQueryItem(path=p, stem=Path(p).stem, similarity=round(s, 6))
-        for p, s in hits
-    ]
-    return EmbeddingQueryResponse(query=body.query, items=items)
-
-
-@router.post("/embedding/batch-tag")
-async def embedding_batch_tag(request: Request, body: EmbeddingBatchTagBody) -> JobSubmitResponse:
-    """按向量相似度阈值批量添加或删除标签（异步长任务，带进度条）。
-
-    引用: tag_check.js。
-    """
-    rt = get_runtime(request)
-    root = rt.root
-    selected = resolve_selected_dirs(root, body.dirs)
-    if not selected:
-        raise HTTPException(400, "请选择目录")
-
-    if not body.query.strip():
-        raise HTTPException(400, "查询文本不能为空")
+    root = get_runtime(request).root
+    if not body.paths:
+        raise HTTPException(400, "无匹配图片，请先按相似度排序")
     if not body.tag.strip():
         raise HTTPException(400, "标签不能为空")
-    if body.operator not in ("gt", "lt"):
-        raise HTTPException(400, "operator 须为 gt 或 lt")
     if body.action not in ("add", "delete"):
         raise HTTPException(400, "action 须为 add 或 delete")
 
-    ok, msg = embedding_model_ready()
-    if not ok:
-        raise HTTPException(400, msg)
-
-    if not _embedding_built(request):
-        raise HTTPException(400, "请先构建向量嵌入 (POST /tags/embedding/build)")
-
-    # 收集所有候选图片的相对路径
-    candidates: list[str] = []
-    for work in selected:
-        if work == root:
-            prefix = ""
-        else:
-            prefix = work.name
-        for img in scan_images(work, path_prefix=prefix):
-            candidates.append(img.path)
-
     tag = body.tag.strip()
-    query_text = body.query.strip()
     action = body.action
-    operator = body.operator
-    threshold = body.threshold
     position = body.position
     fuzzy = body.fuzzy
 
-    def run(emit: EmitFn) -> None:
-        """工作线程: 批量标记。引用: ``JobManager.submit``。"""
-        emit(JobSnapshot(
-            status="running", phase="querying",
-            message="正在查询相似度…", pct=0,
-        ))
+    changed = 0
+    for rel in body.paths:
+        img_abs = resolve_path(root, rel)
+        if not img_abs.is_file():
+            continue
+        txt_path = img_abs.with_suffix(".txt")
+        raw = txt_path.read_text(encoding="utf-8") if txt_path.is_file() else ""
 
-        query_vec = embed_text(query_text)
-        idx = _embedding_index(request)
-        hits = idx.query(query_vec, candidates)
+        if action == "add":
+            new_caption = add_tag_to_caption(raw, tag, position)
+        elif fuzzy:
+            new_caption = delete_tag_from_caption_fuzzy(raw, tag)
+        else:
+            new_caption = delete_tag_from_caption(raw, tag)
+        txt_path.write_text(new_caption + "\n", encoding="utf-8")
+        changed += 1
 
-        emit(JobSnapshot(
-            status="running", phase="filtering",
-            message=f"正在筛选匹配…", pct=10,
-        ))
-
-        # 按阈值筛选
-        matched_rel: list[str] = []
-        for p, sim in hits:
-            if operator == "gt" and sim >= threshold:
-                matched_rel.append(p)
-            elif operator == "lt" and sim <= threshold:
-                matched_rel.append(p)
-
-        if not matched_rel:
-            emit(JobSnapshot(
-                status="done", phase="done",
-                message="无匹配图片", pct=100,
-            ))
-            return
-
-        total = len(matched_rel)
-        changed = 0
-        failed = 0
-        for i, rel in enumerate(matched_rel):
-            img_abs = resolve_path(root, rel)
-            if not img_abs.is_file():
-                failed += 1
-                continue
-            txt_path = img_abs.with_suffix(".txt")
-            raw = ""
-            if txt_path.is_file():
-                raw = txt_path.read_text(encoding="utf-8")
-
-            try:
-                if action == "add":
-                    new_caption = add_tag_to_caption(raw, tag, position)
-                else:
-                    if fuzzy:
-                        new_caption = delete_tag_from_caption_fuzzy(raw, tag)
-                    else:
-                        new_caption = delete_tag_from_caption(raw, tag)
-                txt_path.write_text(new_caption + "\n", encoding="utf-8")
-                changed += 1
-            except Exception:
-                failed += 1
-
-            pct = round(10 + (i + 1) / total * 90, 1)
-            emit(JobSnapshot(
-                status="running", phase="tagging",
-                message=f"{'添加' if action == 'add' else '删除'}标签 {i + 1}/{total}…",
-                pct=pct, done=i + 1, total=total,
-            ))
-
-        msg_parts = [f"已{'添加' if action == 'add' else '删除'}标签 {tag} 到 {changed} 张图片"]
-        if failed:
-            msg_parts.append(f"{failed} 张失败")
-        emit(JobSnapshot(
-            status="done", phase="done",
-            message="；".join(msg_parts), pct=100,
-        ))
-
-    job_id = await jobs(request).submit(kind="embedding_batch_tag", group="compute", dataset=rt.name, run=run)
-    return JobSubmitResponse(ok=True, job_id=job_id)
+    return EmbeddingBatchTagResponse(
+        ok=True,
+        matched_count=changed,
+        message=f"已{'添加' if action == 'add' else '删除'}标签 {tag} 到 {changed} 张图片",
+    )
 
 
 def delete_tag_from_caption_fuzzy(raw: str, tag: str) -> str:

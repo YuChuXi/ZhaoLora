@@ -8,7 +8,7 @@ from __future__ import annotations
 from pydantic import BaseModel, Field
 
 from services.models.dedupe import DedupeScanResult
-from services.models.tags import TagCleanResult
+from services.models.tags import EmbeddingQueryResult, TagCleanResult
 
 
 class AestheticSummary(BaseModel):
@@ -40,7 +40,7 @@ class JobSubmitResponse(BaseModel):
     job_id: str
 
 
-JobResult = DedupeScanResult | TagCleanResult
+JobResult = DedupeScanResult | TagCleanResult | EmbeddingQueryResult
 
 class JobSnapshot(BaseModel):
     """长任务进度快照(SSE / 取消回执). 
