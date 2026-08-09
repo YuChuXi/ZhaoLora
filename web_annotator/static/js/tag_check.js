@@ -623,26 +623,38 @@
   }
 
   /**
-   * 构建当前目录图片的向量嵌入。
+   * 构建当前目录图片的向量嵌入（异步长任务，带进度条）。
    * @returns {Promise<void>}
    */
   async function embBuild() {
     var btn = document.getElementById('emb-build');
     btn.disabled = true;
-    embStatus('构建中…');
+    embStatus('正在启动…');
     try {
       var ok = await embCheckModel();
-      if (!ok) return;
+      if (!ok) { btn.disabled = false; return; }
       var res = await API.request(API.apiPath('/tags/embedding/build'), {
         method: 'POST',
         body: JSON.stringify({ dirs: DirPicker.getDirs() }),
       });
-      embStatus(res.message || '构建完成');
-      toast('向量构建完成: ' + (res.count || 0) + ' 张图片');
+      if (!res.job_id) {
+        embStatus('构建失败');
+        btn.disabled = false;
+        return;
+      }
+      API.watchJob(res.job_id, function (s) {
+        embStatus(s.message || s.phase);
+        if (s.status === 'done') {
+          btn.disabled = false;
+          toast(s.message || '构建完成');
+        } else if (s.status === 'error') {
+          btn.disabled = false;
+          toast('构建失败: ' + (s.message || ''));
+        }
+      });
     } catch (e) {
       embStatus('构建失败');
       toast('构建失败: ' + String(e.message || e));
-    } finally {
       btn.disabled = false;
     }
   }
@@ -696,7 +708,7 @@
   }
 
   /**
-   * 按相似度阈值批量添加或删除标签。
+   * 按相似度阈值批量添加或删除标签（异步长任务，带进度条）。
    * @returns {Promise<void>}
    */
   async function embBatchTag() {
@@ -716,7 +728,7 @@
 
     var btn = document.getElementById('emb-batch-tag');
     btn.disabled = true;
-    embStatus('批量执行中…');
+    embStatus('正在启动…');
     try {
       var res = await API.request(API.apiPath('/tags/embedding/batch-tag'), {
         method: 'POST',
@@ -731,14 +743,26 @@
           fuzzy: fuzzy,
         }),
       });
-      embStatus(res.message || '执行完成');
-      toast(res.message || '批量执行完成');
-      // 执行后刷新检查结果
-      runCheck().catch(function (e) { toast('刷新失败: ' + String(e.message || e)); });
+      if (!res.job_id) {
+        embStatus('执行失败');
+        btn.disabled = false;
+        return;
+      }
+      API.watchJob(res.job_id, function (s) {
+        embStatus(s.message || s.phase);
+        if (s.status === 'done') {
+          btn.disabled = false;
+          toast(s.message || '批量执行完成');
+          // 执行后刷新检查结果
+          runCheck().catch(function (e) { toast('刷新失败: ' + String(e.message || e)); });
+        } else if (s.status === 'error') {
+          btn.disabled = false;
+          toast('批量执行失败: ' + (s.message || ''));
+        }
+      });
     } catch (e) {
       embStatus('执行失败');
       toast('批量执行失败: ' + String(e.message || e));
-    } finally {
       btn.disabled = false;
     }
   }

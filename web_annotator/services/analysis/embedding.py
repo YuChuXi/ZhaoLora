@@ -10,6 +10,7 @@ Callers:
 from __future__ import annotations
 
 import threading
+from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
@@ -38,7 +39,10 @@ def model_ready() -> tuple[bool, str]:
         ``(ok, message)``. ok 为 True 时表示模型可用。
 
     Callers:
-        - ``routes/tag_stats``
+        - ``routes/tag_stats:embedding_status``
+        - ``routes/tag_stats:embedding_build``
+        - ``routes/tag_stats:embedding_query``
+        - ``routes/tag_stats:embedding_batch_tag``
     """
     global _EMBED_MODEL
 
@@ -73,8 +77,8 @@ def _get_model() -> SentenceTransformer:
         SentenceTransformer 实例。
 
     Callers:
-        - ``embed_image``
-        - ``embed_text``
+        - ``services/analysis/embedding:embed_image``
+        - ``services/analysis/embedding:embed_text``
     """
     return cast("SentenceTransformer", _EMBED_MODEL)
 
@@ -89,8 +93,8 @@ def embed_image(image_path: str | Path) -> np.ndarray | None:
         np.ndarray: 归一化嵌入向量，解码失败时返回 None。
 
     Callers:
-        - ``EmbeddingIndex.ensure_many``
-        - ``EmbeddingIndex.embed_for``
+        - ``services/analysis/embedding:EmbeddingIndex.ensure_many``
+        - ``services/analysis/embedding:EmbeddingIndex.embed_for``
     """
     path = Path(image_path)
     if not path.is_file():
@@ -114,8 +118,9 @@ def embed_text(text: str) -> np.ndarray:
         np.ndarray: 归一化嵌入向量。
 
     Callers:
-        - ``EmbeddingIndex.query``
-        - ``routes/tag_stats``
+        - ``services/analysis/embedding:EmbeddingIndex.query``
+        - ``routes/tag_stats:embedding_query``
+        - ``routes/tag_stats:embedding_batch_tag``
     """
     model = _get_model()
     vec = model.encode(text)
@@ -132,7 +137,7 @@ class EmbeddingIndex:
     线程安全。嵌入按图片相对路径索引，缓存文件时间戳用于失效判定。
 
     Callers:
-        - ``routes/tag_stats``
+        - ``routes/tag_stats:_embedding_index``
     """
 
     def __init__(self, cache_dir: Path | None = None) -> None:
@@ -142,7 +147,7 @@ class EmbeddingIndex:
             cache_dir: npz 缓存目录；None 表示仅内存模式。
 
         Callers:
-            - ``routes/tag_stats``
+            - ``routes/tag_stats:_embedding_index``
         """
         self._lock = threading.RLock()
         self._embeddings: dict[str, tuple[float, np.ndarray]] = {}
@@ -158,7 +163,7 @@ class EmbeddingIndex:
             cache_dir: npz 缓存所在目录。
 
         Callers:
-            - ``routes/tag_stats``
+            - ``routes/tag_stats:embedding_build``
         """
         with self._lock:
             self._cache_path = cache_dir / _CACHE_NAME
@@ -169,8 +174,7 @@ class EmbeddingIndex:
     def clear(self) -> None:
         """清空内存中的全部嵌入。
 
-        Callers:
-            - ``routes/tag_stats``
+        Callers: (暂无)
         """
         with self._lock:
             self._embeddings.clear()
@@ -183,7 +187,7 @@ class EmbeddingIndex:
             bool: True 表示无任何嵌入数据。
 
         Callers:
-            - ``routes/tag_stats``
+            - ``routes/tag_stats:_embedding_built``
         """
         with self._lock:
             return len(self._embeddings) == 0
@@ -197,8 +201,8 @@ class EmbeddingIndex:
             vec: 嵌入向量。
 
         Callers:
-            - ``EmbeddingIndex.embed_for``
-            - ``EmbeddingIndex.ensure_many``
+            - ``services/analysis/embedding:EmbeddingIndex.embed_for``
+            - ``services/analysis/embedding:EmbeddingIndex.ensure_many``
         """
         with self._lock:
             self._embeddings[rel] = (mtime, np.asarray(vec, dtype=np.float32))
@@ -208,8 +212,8 @@ class EmbeddingIndex:
         """从 npz 文件加载缓存到内存。
 
         Callers:
-            - ``__init__``
-            - ``set_cache_dir``
+            - ``services/analysis/embedding:EmbeddingIndex.__init__``
+            - ``services/analysis/embedding:EmbeddingIndex.set_cache_dir``
         """
         if not self._cache_path or not self._cache_path.is_file():
             return
@@ -227,7 +231,7 @@ class EmbeddingIndex:
         """将内存中的嵌入原子写入 npz 文件（仅在 dirty 时生效）。
 
         Callers:
-            - ``ensure_many``
+            - ``services/analysis/embedding:EmbeddingIndex.ensure_many``
         """
         with self._lock:
             if not self._dirty or not self._cache_path:
@@ -261,7 +265,7 @@ class EmbeddingIndex:
             np.ndarray | None: 嵌入向量，或文件缺失/解码失败时为 None。
 
         Callers:
-            - ``ensure_many``
+            - ``services/analysis/embedding:EmbeddingIndex.ensure_many``
         """
         path = data_dir / rel
         if not path.is_file():
@@ -286,15 +290,17 @@ class EmbeddingIndex:
         self,
         data_dir: Path,
         rels: list[str],
+        on_progress: Callable[[int, int], None] | None = None,
     ) -> None:
         """批量确保候选图片的嵌入已加载到内存（并行计算缺失项，完成后写入磁盘）。
 
         Args:
             data_dir: 数据集根目录。
             rels: 图片相对路径列表。
+            on_progress: 进度回调 ``(done, total)``, 每完成一张图片调用一次。
 
         Callers:
-            - ``routes/tag_stats``
+            - ``routes/tag_stats:embedding_build``
         """
         from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -311,6 +317,9 @@ class EmbeddingIndex:
 
         if not missing:
             return
+
+        done = 0
+        total = len(missing)
 
         def one(rel: str) -> tuple[str, float, np.ndarray] | None:
             """为单张图计算嵌入。引用: ensure_many。"""
@@ -331,6 +340,9 @@ class EmbeddingIndex:
                     continue
                 rel, mtime, vec = item
                 self.put(rel, mtime, vec)
+                done += 1
+                if on_progress:
+                    on_progress(done, total)
         self.flush()
 
     def query(
@@ -350,7 +362,8 @@ class EmbeddingIndex:
             ``[(相对路径, 余弦相似度), ...]``，按相似度降序排列。
 
         Callers:
-            - ``routes/tag_stats``
+            - ``routes/tag_stats:embedding_query``
+            - ``routes/tag_stats:embedding_batch_tag``
         """
         with self._lock:
             rows: list[str] = []
