@@ -51,9 +51,10 @@ var VideoExtract = (function () {
   var _flushCount = 0;     // flush 期间已 output 的帧数
   var _flushResult = null; // flush 期间收集的目标帧(其余帧立即释放)
 
+  /** ``document.getElementById`` 快捷别名, 全文件通用。 */
   function $(id) { return document.getElementById(id); }
 
-  /** 构造抽帧缩略图 URL, 可选等比缩略最长边尺寸。引用: buildStrip。 */
+  /** 构造抽帧缩略图 URL, 可选等比缩略最长边尺寸。Callers: buildStrip。 */
   function frameUrl(idx, size) {
     var url = API.apiPath('/video/frame')
       + '?path=' + encodeURIComponent(state.path)
@@ -62,7 +63,7 @@ var VideoExtract = (function () {
     return url;
   }
 
-  /** 构造帧窗口段 URL(后端返回 H.264 Annex-B + X-Frame-Count 头)。引用: ensureSegment。 */
+  /** 构造帧窗口段 URL(后端返回 H.264 Annex-B + X-Frame-Count 头)。Callers: ensureSegment。 */
   function segmentUrl(start, end) {
     return API.apiPath('/video/segment')
       + '?path=' + encodeURIComponent(state.path)
@@ -70,19 +71,28 @@ var VideoExtract = (function () {
       + (state.hideB ? '&hide_b=true' : '');
   }
 
-  /** 构造封面 URL(用于视频切换时顶部信息)。引用: 无(仅信息)。 */
+  /** 构造封面 URL(用于视频切换时顶部信息)。Callers: 无(仅信息)。 */
   function coverUrl() {
     return API.apiPath('/video/cover') + '?path=' + encodeURIComponent(state.path);
   }
 
-  /** 读取 path 查询参数并解码。引用: init。 */
+  /** 读取 path 查询参数并解码。Callers: init。 */
   function readQueryPath() {
     var p = new URLSearchParams(location.search).get('path');
     return p ? decodeURIComponent(p) : '';
   }
 
   /**
-   * 更新状态栏与工具栏信息。引用: goto / loadDetail / refreshSaved。
+   * 更新状态栏与工具栏信息。
+   *
+   * Callers:
+   *   - `goto`
+   *   - `setPath`
+   *   - `loadDetail`
+   *   - `saveCurrent`
+   *   - `deleteCurrent`
+   *   - `analysisDone`
+   *   - `bindHideB`
    */
   function paintStatus() {
     var name = state.path ? state.path.split('/').pop() : '';
@@ -105,7 +115,7 @@ var VideoExtract = (function () {
     if (size) size.textContent = state.width + '×' + state.height;
   }
 
-  /** 秒数格式化为 mm:ss。引用: paintStatus。 */
+  /** 秒数格式化为 mm:ss。Callers: paintStatus。 */
   function fmtTime(sec) {
     if (!(sec > 0) || !isFinite(sec)) return '';
     var s = Math.floor(sec % 60);
@@ -115,8 +125,14 @@ var VideoExtract = (function () {
 
   /**
    * 跳转到指定帧: 钳位、解码预览、同步缩略条与曲线光标。
-   * @param {number} idx
-   * 引用: init / 各切帧入口 / 键盘 / 滚轮。
+   *
+   * @param {number} idx 目标帧索引.
+   *
+   * Callers:
+   *   - `buildStrip` 缩略图点击
+   *   - `chartClick` 柱状图点击
+   *   - `stepFrame` 切帧步进
+   *   - `stepI` I 帧跳转
    */
   function goto(idx) {
     if (!state.total) return;
@@ -131,8 +147,14 @@ var VideoExtract = (function () {
   /**
    * 解码并显示指定帧: 从最近关键帧批量 decode 到段尾, flush 强制按显示顺序
    * 输出所有帧, 按 output 序号匹配目标(B 帧重排序由解码器内部处理);
-   * 移出窗口则先请求新段。引用: goto / setPath。
-   * @param {number} idx
+   * 移出窗口则先请求新段。
+   *
+   * @param {number} idx 目标帧索引.
+   *
+   * Callers:
+   *   - `goto`
+   *   - `setPath`
+   *   - `bindHideB`
    */
   function showFrame(idx) {
     _pendingTarget = idx;
@@ -160,7 +182,7 @@ var VideoExtract = (function () {
     });
   }
 
-  /** 帧窗口半宽(帧数): 按 fps 和 SEG_MAX_SEC 计算, 前后各最多 SEG_MAX_SEC/2 秒。引用: ensureSegment。 */
+  /** 帧窗口半宽(帧数): 按 fps 和 SEG_MAX_SEC 计算, 前后各最多 SEG_MAX_SEC/2 秒。Callers: ensureSegment。 */
   function segHalf() {
     if (state.duration > 0 && state.total > 0) {
       var fps = state.total / state.duration;
@@ -171,7 +193,7 @@ var VideoExtract = (function () {
 
   /**
    * 拉取覆盖目标帧的窗口段并重建解码器。实际帧数由后端 ``X-Frame-Count``
-   * 响应头告知(视频末尾可能少于请求数), 前端不猜测。引用: showFrame。
+   * 响应头告知(视频末尾可能少于请求数), 前端不猜测。Callers: showFrame。
    */
   function ensureSegment(idx) {
     if (_seg && idx >= _seg.start && idx <= _seg.end) return Promise.resolve();
@@ -210,7 +232,7 @@ var VideoExtract = (function () {
    * 到目标位置即可; 否则需 decode 到段尾以确保 B 帧参考帧就绪。
    * @param {number} pos 窗口内目标位置(显示顺序)。
    * @param {number} idx 全局帧索引(用于中途抛弃过期目标)。
-   * 引用: showFrame。
+   * Callers: showFrame。
    */
   function navigateTo(pos, idx) {
     var keyPos = lastKeyAtOrBefore(pos);
@@ -238,7 +260,7 @@ var VideoExtract = (function () {
     });
   }
 
-  /** 窗口内最近一个关键帧位置(≤ pos); 无则 0。引用: navigateTo。 */
+  /** 窗口内最近一个关键帧位置(≤ pos); 无则 0。Callers: navigateTo。 */
   function lastKeyAtOrBefore(pos) {
     for (var i = pos; i >= 0; i--) {
       if (_seg.chunks[i] && _seg.chunks[i].key) return i;
@@ -246,7 +268,7 @@ var VideoExtract = (function () {
     return 0;
   }
 
-  /** 构造 VideoDecoder, 解码结果经 onDecoded 收集。引用: ensureSegment。 */
+  /** 构造 VideoDecoder, 解码结果经 onDecoded 收集。Callers: ensureSegment。 */
   function makeDecoder() {
     return new VideoDecoder({
       output: onDecoded,
@@ -258,7 +280,7 @@ var VideoExtract = (function () {
 
   /**
    * 解码器输出回调: flush 期间按 output 顺序计数, 仅保留序号匹配
-   * ``_flushTarget`` 的目标帧, 其余中间帧立即释放。引用: makeDecoder。
+   * ``_flushTarget`` 的目标帧, 其余中间帧立即释放。Callers: makeDecoder。
    */
   function onDecoded(frame) {
     if (_flushCount === _flushTarget) {
@@ -269,7 +291,7 @@ var VideoExtract = (function () {
     _flushCount++;
   }
 
-  /** 把解码帧绘制到主预览 canvas(按帧尺寸自适应画布)。引用: showFrame。 */
+  /** 把解码帧绘制到主预览 canvas(按帧尺寸自适应画布)。Callers: showFrame。 */
   function drawFrame(frame) {
     var w = frame.displayWidth, h = frame.displayHeight;
     if (_canvas.width !== w || _canvas.height !== h) {
@@ -287,7 +309,7 @@ var VideoExtract = (function () {
    * SPS/PPS 只提取用于 configure 的 description, 不包含在 chunk 中(AVCC 格式
    * 要求参数集通过 description 传入, chunk 只含 slice 数据)。
    * 关键帧判定: 片 NAL 为 IDR(类型 5) 即关键帧。
-   * 引用: ensureSegment。
+   * Callers: ensureSegment。
    */
   function demuxAnnexB(bin) {
     var nals = [];
@@ -329,7 +351,7 @@ var VideoExtract = (function () {
     return { sps: sps, pps: pps, chunks: chunks };
   }
 
-  /** 把一组 NAL 封装为 4 字节长度前缀的 AVCC 数据(WebCodecs 期望的 chunk 格式)。引用: demuxAnnexB。 */
+  /** 把一组 NAL 封装为 4 字节长度前缀的 AVCC 数据(WebCodecs 期望的 chunk 格式)。Callers: demuxAnnexB。 */
   function toLengthPrefixed(nals) {
     var total = 0;
     for (var i = 0; i < nals.length; i++) total += 4 + nals[i].length;
@@ -343,13 +365,13 @@ var VideoExtract = (function () {
     return out;
   }
 
-  /** 由 SPS 构造 avc1 codec 字符串(profile.compat.level)。引用: ensureSegment。 */
+  /** 由 SPS 构造 avc1 codec 字符串(profile.compat.level)。Callers: ensureSegment。 */
   function buildCodecString(sps) {
     function hex2(b) { return ('0' + b.toString(16)).slice(-2); }
     return 'avc1.' + hex2(sps[1]) + hex2(sps[2]) + hex2(sps[3]);
   }
 
-  /** 由 SPS/PPS 构造 AVCDecoderConfigurationRecord 作为解码器 description。引用: ensureSegment。 */
+  /** 由 SPS/PPS 构造 AVCDecoderConfigurationRecord 作为解码器 description。Callers: ensureSegment。 */
   function buildAvcConfig(sps, pps) {
     var cfg = new Uint8Array(11 + sps.length + pps.length);
     var dv = new DataView(cfg.buffer);
@@ -368,7 +390,12 @@ var VideoExtract = (function () {
     return cfg;
   }
 
-  /** 关闭解码器并清空窗口段状态(切换视频时调用)。引用: setPath。 */
+  /** 关闭解码器并清空窗口段状态(切换视频时调用).
+   *
+   *  Callers:
+   *    - `setPath`
+   *    - `bindHideB`
+   */
   function resetDecoder() {
     if (_decoder) { try { _decoder.close(); } catch (ignore) {} }
     _decoder = null;
@@ -381,7 +408,14 @@ var VideoExtract = (function () {
     _flushResult = null;
   }
 
-  /** 切换视频(上下一个)，重新加载详情并回到第 0 帧。引用: prevVideo/nextVideo。 */
+  /** 切换视频(上下一个), 重新加载详情并回到第 0 帧.
+   *
+   *  @param {number} offset 偏移量(-1 上一个, 1 下一个).
+   *
+   *  Callers:
+   *    - `bindToolbar`
+   *    - `bindKeys`
+   */
   function switchVideo(offset) {
     if (!state.videoList.length) return;
     var i = state.vidIdx + offset;
@@ -395,8 +429,12 @@ var VideoExtract = (function () {
 
   /**
    * 切换到一个新视频路径: 重置状态并加载详情。
-   * @param {string} p
-   * 引用: init / switchVideo。
+   *
+   * @param {string} p 视频相对路径.
+   *
+   * Callers:
+   *   - `init`
+   *   - `switchVideo`
    */
   async function setPath(p) {
     state.path = p;
@@ -419,7 +457,7 @@ var VideoExtract = (function () {
   /**
    * 把后端紧凑位流(类型串 + 大小数组)还原为 ``{帧号: {type, size}}``。
    * 数组下标即帧序号, 由 detail 接口压缩传输以减小负载。
-   * 引用: loadDetail。
+   * Callers: loadDetail。
    */
   function decodeBitstream(bits) {
     var out = {};
@@ -434,7 +472,7 @@ var VideoExtract = (function () {
 
   /**
    * 加载视频详情(宽高/时长/总帧数/帧类型/已保存)。
-   * 引用: setPath / analysisDone。
+   * Callers: setPath / analysisDone。
    */
   async function loadDetail() {
     var data = await API.request(API.apiPath('/video/detail')
@@ -464,7 +502,12 @@ var VideoExtract = (function () {
   }
 
   /**
-   * 保存当前帧 PNG 到 main 目录。引用: 存帧按钮/左键/S/空格。
+   * 保存当前帧 PNG 到 main 目录。
+   *
+   * Callers:
+   *   - `bindToolbar` 存帧按钮
+   *   - `bindStage` 左键
+   *   - `bindKeys` S/空格
    */
   async function saveCurrent() {
     var res = await API.request(API.apiPath('/video/frame/save'), {
@@ -479,7 +522,12 @@ var VideoExtract = (function () {
   }
 
   /**
-   * 删除当前帧已保存的 PNG。引用: 删帧按钮/右键/X/Delete。
+   * 删除当前帧已保存的 PNG。
+   *
+   * Callers:
+   *   - `bindToolbar` 删帧按钮
+   *   - `bindStage` 右键
+   *   - `bindKeys` X/Delete
    */
   async function deleteCurrent() {
     var res = await API.request(API.apiPath('/video/frame/delete'), {
@@ -497,7 +545,7 @@ var VideoExtract = (function () {
 
   /**
    * 按采样间隔构建缩略图条(目标 THUMB_COUNT 个)。
-   * 引用: loadDetail。
+   * Callers: loadDetail。
    */
   function buildStrip() {
     var strip = $('ve-strip');
@@ -536,7 +584,7 @@ var VideoExtract = (function () {
     syncStrip();
   }
 
-  /** 为缩略图条绑定懒加载观察器。引用: buildStrip。 */
+  /** 为缩略图条绑定懒加载观察器。Callers: buildStrip。 */
   function observeStrip(container) {
     if (_stripIo) _stripIo.disconnect();
     _stripIo = new IntersectionObserver(function (entries) {
@@ -554,7 +602,14 @@ var VideoExtract = (function () {
     for (var j = 0; j < imgs.length; j++) _stripIo.observe(imgs[j]);
   }
 
-  /** 同步缩略图条高亮: 当前帧与已保存帧。引用: goto / saveCurrent / deleteCurrent。 */
+  /** 同步缩略图条高亮: 当前帧与已保存帧。
+   *
+   *  Callers:
+   *    - `goto`
+   *    - `saveCurrent`
+   *    - `deleteCurrent`
+   *    - `analysisDone`
+   */
   function syncStrip() {
     var savedSet = {};
     for (var i = 0; i < state.saved.length; i++) savedSet[state.saved[i]] = true;
@@ -587,7 +642,7 @@ var VideoExtract = (function () {
    */
   var _chart = { global: null, local: null }; // 各图渲染信息: {svgId, ppf, svgW, viewportW, cursor}
 
-  /** 显示域帧数: 隐藏 B 帧时仅计非 B 帧, 否则即总帧数。引用: globalPxPerFrame / localPxPerFrame / renderChart。 */
+  /** 显示域帧数: 隐藏 B 帧时仅计非 B 帧, 否则即总帧数。Callers: globalPxPerFrame / localPxPerFrame / renderChart。 */
   function domainCount() {
     if (!state.hideB) return state.total;
     var n = 0;
@@ -598,7 +653,7 @@ var VideoExtract = (function () {
     return n;
   }
 
-  /** 帧索引映射到显示域序号(0 基): 隐藏 B 帧时为其左侧非 B 帧个数, 否则即帧号。引用: cursorX / renderChart。 */
+  /** 帧索引映射到显示域序号(0 基): 隐藏 B 帧时为其左侧非 B 帧个数, 否则即帧号。Callers: cursorX / renderChart。 */
   function barOrdinal(idx) {
     if (!state.hideB) return idx;
     var n = 0;
@@ -611,7 +666,7 @@ var VideoExtract = (function () {
 
   /**
    * 已保存帧在显示域中的可见位置: 非隐藏 B 帧时即自身; 隐藏 B 帧时若该帧为 B
-   * 则向外搜索最近的非 B 帧作为落点, 使标记始终可见。引用: renderChart。
+   * 则向外搜索最近的非 B 帧作为落点, 使标记始终可见。Callers: renderChart。
    * @param {number} idx 已保存帧的全局索引。
    * @returns {number} 可见帧的全局索引。
    */
@@ -626,7 +681,7 @@ var VideoExtract = (function () {
     return idx;
   }
 
-  /** 全局图每帧像素宽: 视口最多对应 10 分钟帧跨度; 视频更短时整条铺满视口(最多 10 分钟而非固定 10 分钟)。引用: renderChart。 */
+  /** 全局图每帧像素宽: 视口最多对应 10 分钟帧跨度; 视频更短时整条铺满视口(最多 10 分钟而非固定 10 分钟)。Callers: renderChart。 */
   function globalPxPerFrame(viewportW) {
     var domain = domainCount() || 1;
     var dur = state.duration || 0;
@@ -636,7 +691,7 @@ var VideoExtract = (function () {
     return viewportW / showFrames;
   }
 
-  /** 局部图每帧像素宽: 视口最多对应 200 帧; 视频更短时整条铺满视口。引用: renderChart。 */
+  /** 局部图每帧像素宽: 视口最多对应 200 帧; 视频更短时整条铺满视口。Callers: renderChart。 */
   function localPxPerFrame(viewportW) {
     var domain = domainCount() || 1;
     var LOCAL_SPAN = 200;
@@ -648,7 +703,7 @@ var VideoExtract = (function () {
    * @param {string} svgId svg 元素 id。
    * @param {function(number):number} pxPerFrame 每帧像素宽计算函数。
    * @returns {{svgId:string, ppf:number, svgW:number, viewportW:number, cursor:SVGElement}|null}
-   * 引用: drawChart。
+   * Callers: drawChart。
    */
   function renderChart(svgId, pxPerFrame) {
     var svg = $(svgId);
@@ -727,12 +782,12 @@ var VideoExtract = (function () {
     return info;
   }
 
-  /** 当前帧游标在柱上的 x 坐标: 柱中心(避免落在两柱交界)。引用: positionCursor / syncScroll。 */
+  /** 当前帧游标在柱上的 x 坐标: 柱中心(避免落在两柱交界)。Callers: positionCursor / syncScroll。 */
   function cursorX(info) {
     return barOrdinal(state.idx) * info.ppf + info.ppf / 2;
   }
 
-  /** 将游标移动到当前帧柱中心(仅移动 line, 不重建柱)。引用: renderChart / updateCursor。 */
+  /** 将游标移动到当前帧柱中心(仅移动 line, 不重建柱)。Callers: renderChart / updateCursor。 */
   function positionCursor(info) {
     if (!info || !info.cursor) return;
     var x = cursorX(info);
@@ -740,21 +795,30 @@ var VideoExtract = (function () {
     info.cursor.setAttribute('x2', x);
   }
 
-  /** 数据变化时全量重建两图并滚动居中游标。引用: loadDetail / analysisDone / saveCurrent / deleteCurrent / bindResize。 */
+  /** 数据变化时全量重建两图并滚动居中游标。
+   *
+   *  Callers:
+   *    - `loadDetail`
+   *    - `analysisDone`
+   *    - `saveCurrent`
+   *    - `deleteCurrent`
+   *    - `bindResize`
+   *    - `bindHideB`
+   */
   function drawChart() {
     renderChart('ve-chart-global', globalPxPerFrame);
     renderChart('ve-chart-local', localPxPerFrame);
     syncScroll();
   }
 
-  /** 仅移动游标并滚动居中(换帧时调用, 开销最小)。引用: showFrame。 */
+  /** 仅移动游标并滚动居中(换帧时调用, 开销最小)。Callers: showFrame。 */
   function updateCursor() {
     positionCursor(_chart.global);
     positionCursor(_chart.local);
     syncScroll();
   }
 
-  /** 滚动各图容器, 使当前帧游标尽量居中(边缘处贴边)。引用: drawChart / updateCursor。 */
+  /** 滚动各图容器, 使当前帧游标尽量居中(边缘处贴边)。Callers: drawChart / updateCursor。 */
   function syncScroll() {
     for (var key in _chart) {
       var c = _chart[key];
@@ -765,7 +829,11 @@ var VideoExtract = (function () {
     }
   }
 
-  /** 将点击坐标换算为帧索引并跳转(按各图每帧像素宽映射)。引用: 两图点击。 */
+  /** 将点击坐标换算为帧索引并跳转(按各图每帧像素宽映射)。
+   *
+   *  Callers:
+   *    - `bindChart`
+   */
   function chartClick(e) {
     if (!state.total) return;
     var svg = e.currentTarget;
@@ -781,7 +849,7 @@ var VideoExtract = (function () {
 
   // ---- 帧类型分析 ----
 
-  /** 停止进行中的分析 SSE 订阅并隐藏进度条。引用: setPath / toggleAnalysis。 */
+  /** 停止进行中的分析 SSE 订阅并隐藏进度条。Callers: setPath / toggleAnalysis。 */
   function stopAnalysis() {
     if (state.jobWatch) {
       state.jobWatch.close();
@@ -796,7 +864,7 @@ var VideoExtract = (function () {
 
   /**
    * 更新分析进度条(轨道+百分比)与状态栏消息。
-   * 引用: toggleAnalysis。
+   * Callers: toggleAnalysis。
    */
   function setProgress(pct, msg) {
     var bar = $('ve-progress');
@@ -809,7 +877,7 @@ var VideoExtract = (function () {
     if (seg) seg.textContent = msg || '';
   }
 
-  /** 设置分析结束状态文本并复位按钮。引用: toggleAnalysis。 */
+  /** 设置分析结束状态文本并复位按钮。Callers: toggleAnalysis。 */
   function setStatus(t) {
     var prog = $('seg-extra');
     if (prog) prog.textContent = t;
@@ -819,7 +887,10 @@ var VideoExtract = (function () {
 
   /**
    * 启动/停止位流帧类型分析长任务。
-   * 引用: 分析按钮 / loadDetail(自动分析)。
+   *
+   * Callers:
+   *   - `bindToolbar` 分析按钮
+   *   - `loadDetail` 自动分析
    */
   async function toggleAnalysis() {
     if (state.analyzing) {
@@ -853,7 +924,7 @@ var VideoExtract = (function () {
     });
   }
 
-  /** 分析完成后回读帧类型并重绘柱状图。引用: toggleAnalysis。 */
+  /** 分析完成后回读帧类型并重绘柱状图。Callers: toggleAnalysis。 */
   async function analysisDone() {
     await loadDetail();
     drawChart();
@@ -866,7 +937,14 @@ var VideoExtract = (function () {
   /**
    * 按步长切帧; 隐藏 B 帧开启时, 步长按非 B 帧(I/P)计数并跳过 B 帧。
    * 位流尚未分析时无类型信息, 退化为按实际帧数步进。
-   * 引用: bindToolbar / bindStage / bindKeys。
+   *
+   * @param {number} step 步长(正向后, 负向前).
+   *
+   * Callers:
+   *   - `bindToolbar`
+   *   - `bindStage`
+   *   - `bindKeys`
+   *   - `bindHideB`
    */
   function stepFrame(step) {
     if (!state.hideB) { goto(state.idx + step); return; }
@@ -882,7 +960,7 @@ var VideoExtract = (function () {
     goto(i);
   }
 
-  /** 跳到下一个/上一个 I 帧(按方向 dir); 无 I 帧时保持当前帧。引用: bindStage(Shift+滚轮)。 */
+  /** 跳到下一个/上一个 I 帧(按方向 dir); 无 I 帧时保持当前帧。Callers: bindStage(Shift+滚轮)。 */
   function stepI(dir) {
     var i = state.idx + dir;
     while (i >= 0 && i < state.total) {
@@ -894,7 +972,7 @@ var VideoExtract = (function () {
     goto(i);
   }
 
-  /** 绑定工具栏按钮与主预览交互。引用: init。 */
+  /** 绑定工具栏按钮与主预览交互。Callers: init。 */
   function bindToolbar() {
     var el = document.getElementById('ve-toolbar');
     if (!el) return;
@@ -916,7 +994,7 @@ var VideoExtract = (function () {
     });
   }
 
-  /** 绑定"隐藏B帧"开关: 切换后重置解码器(段编码方式变了)、重绘柱状图并落到非 B 帧。引用: init。 */
+  /** 绑定"隐藏B帧"开关: 切换后重置解码器(段编码方式变了)、重绘柱状图并落到非 B 帧。Callers: init。 */
   function bindHideB() {
     var box = $('ve-hide-b');
     if (!box) return;
@@ -936,7 +1014,7 @@ var VideoExtract = (function () {
     });
   }
 
-  /** 绑定帧类型柱状图交互(全局图 + 局部图): 点击跳帧; 垂直滚轮转水平滚动。引用: init。 */
+  /** 绑定帧类型柱状图交互(全局图 + 局部图): 点击跳帧; 垂直滚轮转水平滚动。Callers: init。 */
   function bindChart() {
     var g = $('ve-chart-global');
     var l = $('ve-chart-local');
@@ -944,7 +1022,7 @@ var VideoExtract = (function () {
     if (l) l.addEventListener('click', chartClick);
   }
 
-  /** 绑定主预览交互: 左键存帧、右键删帧、滚轮调帧。引用: init。 */
+  /** 绑定主预览交互: 左键存帧、右键删帧、滚轮调帧。Callers: init。 */
   function bindStage() {
     var stage = $('ve-stage');
     if (!stage) return;
@@ -967,7 +1045,7 @@ var VideoExtract = (function () {
 
   /**
    * 绑定全局键盘快捷键。
-   * 引用: init。
+   * Callers: init。
    */
   function bindKeys() {
     document.addEventListener('keydown', function (e) {
@@ -994,7 +1072,7 @@ var VideoExtract = (function () {
     });
   }
 
-  /** 窗口尺寸变化时重绘画布。引用: init。 */
+  /** 窗口尺寸变化时重绘画布。Callers: init。 */
   function bindResize() {
     var raf = null;
     window.addEventListener('resize', function () {
@@ -1004,8 +1082,10 @@ var VideoExtract = (function () {
   }
 
   /**
-   * 页面初始化入口。
-   * 引用: 页面底部自动调用。
+   * 页面初始化入口: 绑定 DOM 事件、加载视频列表、加载首帧。
+   *
+   * Callers:
+   *   - `DOMContentLoaded` 事件监听器
    */
   async function init() {
     if (typeof API === 'undefined' || typeof API.dataset !== 'function') return;
