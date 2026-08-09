@@ -162,7 +162,7 @@ class GelbooruSource(SourceClient):
 
         if overwrite or not image_path.is_file():
             data, _ = await http.get_bytes(
-                post.file_url, referer=self.image_referer, proxy=None,
+                post.file_url, referer=self.image_referer,
             )
             await self._save_png(data, image_path)
             self._clean_old_files(out_dir, pid, image_path)

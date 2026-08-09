@@ -21,6 +21,7 @@ if TYPE_CHECKING:
 
 if TYPE_CHECKING:
     from services.analysis.similarity import ColorIndex
+    from services.analysis.embedding import EmbeddingIndex
 
 
 @dataclass
@@ -33,6 +34,7 @@ class DatasetRuntime:
     state_manager: StateManager
     mask_dir: Path
     color_index: ColorIndex | None = None
+    embedding_index: EmbeddingIndex | None = None
 
     @property
     def root(self) -> Path:

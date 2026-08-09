@@ -1,7 +1,7 @@
 """Gelbooru 底层客户端: 直连官方 JSON API.
 
-封装 Gelbooru JSON API 的请求与结果解析; 代理从环境变量读取
-(经 ``framework.http`` 统一处理)。
+封装 Gelbooru JSON API 的请求与结果解析; 代理从 ``HTTP_PROXY`` / ``HTTPS_PROXY``
+环境变量自动读取 (``httpx`` 原生支持)。
 
 Callers:
     - ``gelbooru/source.py`` (搜索 / 下载 / 元数据)
@@ -24,14 +24,6 @@ class GelbooruClient:
         - ``gelbooru/source.py:GelbooruSource``
     """
 
-    def __init__(self, proxy: str | None = None) -> None:
-        """初始化客户端.
-
-        Args:
-            proxy: 上游代理地址, None 表示直连.
-        """
-        self._proxy = proxy
-
     async def _api(self, params: dict[str, str | int]) -> dict:
         """调用 Gelbooru JSON API, 返回解析后的响应.
 
@@ -47,7 +39,7 @@ class GelbooruClient:
         Callers:
             - ``GelbooruClient.get_post`` / ``search`` / ``get_tag_types``
         """
-        resp = await http.request(_GELBOORU_BASE, params=params, proxy=self._proxy)
+        resp = await http.request(_GELBOORU_BASE, params=params)
         resp.raise_for_status()
         return resp.json()
 
@@ -116,7 +108,7 @@ class GelbooruClient:
         if not file_url:
             raise ValueError(f"帖子 {pid} 无 file_url")
         data, _ = await http.get_bytes(
-            file_url, referer="https://gelbooru.com/", proxy=self._proxy,
+            file_url, referer="https://gelbooru.com/",
         )
         Path(path).write_bytes(data)
 

@@ -135,3 +135,68 @@ class TagEditOneBody(BaseModel):
     tag: str
     position: str = Field("any", description="any/top/bottom/before-sep/after-sep")
 
+
+class EmbeddingStatusResponse(BaseModel):
+    """向量嵌入模型状态响应. 引用: ``POST /tags/embedding/status``."""
+
+    ok: bool
+    message: str = ""
+
+
+class EmbeddingBuildBody(BaseModel):
+    """构建向量嵌入请求. 引用: ``POST /tags/embedding/build``."""
+
+    dirs: list[str] | None = Field(default=None, description="子目录名, 空/省略=全选")
+
+
+class EmbeddingBuildResponse(BaseModel):
+    """构建向量嵌入响应. 引用: ``POST /tags/embedding/build``."""
+
+    ok: bool
+    count: int = 0
+    message: str = ""
+
+
+class EmbeddingQueryBody(BaseModel):
+    """向量查询请求. 引用: ``POST /tags/embedding/query``."""
+
+    query: str = Field(..., description="查询文本")
+    dirs: list[str] | None = Field(default=None, description="子目录名, 空/省略=全选")
+    top_k: int = Field(0, description="返回前 k 条；0 表示全部")
+
+
+class EmbeddingQueryItem(BaseModel):
+    """向量查询结果项. 引用: ``POST /tags/embedding/query``."""
+
+    path: str
+    stem: str
+    similarity: float
+
+
+class EmbeddingQueryResponse(BaseModel):
+    """向量查询响应. 引用: ``POST /tags/embedding/query``."""
+
+    query: str
+    items: list[EmbeddingQueryItem] = Field(default_factory=list)
+
+
+class EmbeddingBatchTagBody(BaseModel):
+    """批量标记请求. 引用: ``POST /tags/embedding/batch-tag``."""
+
+    dirs: list[str] | None = Field(default=None, description="子目录名, 空/省略=全选")
+    query: str = Field(..., description="查询文本")
+    tag: str = Field(..., description="要添加或删除的标签")
+    operator: str = Field("gt", description="gt(大于) / lt(小于)")
+    threshold: float = Field(0.5, ge=0.0, le=1.0, description="相似度阈值")
+    action: str = Field("add", description="add(添加) / delete(删除)")
+    position: str = Field("top", description="添加时的位置")
+    fuzzy: bool = Field(False, description="删除时是否模糊匹配")
+
+
+class EmbeddingBatchTagResponse(BaseModel):
+    """批量标记响应. 引用: ``POST /tags/embedding/batch-tag``."""
+
+    ok: bool
+    matched_count: int = 0
+    message: str = ""
+

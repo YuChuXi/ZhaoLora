@@ -102,6 +102,35 @@
   .view-single.single-bad .single-stage {
     box-shadow: inset 0 0 0 3px var(--accent), inset 0 0 40px rgba(233,69,96,0.15);
   }
+
+  /* 向量嵌入工具栏 */
+  .toolbar-row {
+    display: flex; align-items: center; gap: 6px;
+    padding: 4px 10px; background: rgba(0,0,0,0.2);
+    border-bottom: 1px solid var(--border);
+    flex-wrap: wrap; font-size: 12px;
+  }
+  .toolbar-row .emb-label { color: var(--text-dim); white-space: nowrap; }
+  #emb-query {
+    background: #0a1a30; color: var(--text);
+    border: 1px solid var(--border); border-radius: 4px;
+    padding: 4px 8px; font-size: 12px;
+    width: min(180px, 20vw);
+  }
+  #emb-threshold {
+    width: 60px; background: #0a1a30; color: var(--text);
+    border: 1px solid var(--border); border-radius: 4px;
+    padding: 3px 6px; font-size: 12px; text-align: center;
+  }
+  #emb-operator, #emb-action {
+    background: var(--card-bg); color: var(--text);
+    border: 1px solid var(--border); border-radius: 4px;
+    padding: 3px 6px; font-size: 12px;
+  }
+  .toolbar-row .btn { font-size: 12px; padding: 4px 10px; }
+  #emb-fuzzy-wrap { display: flex; align-items: center; gap: 3px; color: var(--text-dim); white-space: nowrap; }
+  #emb-fuzzy-wrap input { margin: 0; }
+  #emb-status { color: var(--text-dim); font-size: 11px; margin-left: auto; white-space: nowrap; }
 </style>
 </head>
 <body>
@@ -131,10 +160,31 @@
   <button class="btn single-only" type="button" id="btn-fit" title="切换 contain/cover">⊞</button>
 </div>
 
+<!-- 向量嵌入工具栏: 多图视图专属 -->
+<div class="toolbar-row multi-only">
+  <span class="emb-label">向量</span>
+  <input type="text" id="emb-query" placeholder="查询文本" spellcheck="false">
+  <button class="btn" type="button" id="emb-build">构建向量</button>
+  <button class="btn green" type="button" id="emb-sort">按相似度排序</button>
+  <span class="sep"></span>
+  <select id="emb-operator">
+    <option value="gt">&gt;=</option>
+    <option value="lt">&lt;=</option>
+  </select>
+  <input type="number" id="emb-threshold" value="0.5" min="0" max="1" step="0.05">
+  <select id="emb-action">
+    <option value="add">添加标签</option>
+    <option value="delete">删除标签</option>
+  </select>
+  <label id="emb-fuzzy-wrap"><input type="checkbox" id="emb-fuzzy">模糊匹配</label>
+  <button class="btn" type="button" id="emb-batch-tag">批量执行</button>
+  <span id="emb-status"></span>
+</div>
+
 <!-- 多图视图 (瀑布流) -->
 <div class="view-multi" id="view-multi">
   <div class="masonry" id="masonry"></div>
-  <div class="hint" id="check-hint">输入标签并检查 · 绿色=位置符合 · 红色=位置不符 · 点击卡片添加/删除标签 · 右键卡片进入单图 · 无标签时显示全部图片</div>
+  <div class="hint" id="check-hint">输入标签并检查 · 绿色=位置符合 · 红色=位置不符 · 点击卡片添加/删除标签 · 右键卡片进入单图 · 无标签时显示全部图片 · 支持向量相似度排序与批量标记</div>
   <div class="status-bar" id="check-status">
     <span class="status-seg">共<b id="stat-total">0</b></span>
     <span class="status-seg">符合<b id="stat-ok">0</b></span>

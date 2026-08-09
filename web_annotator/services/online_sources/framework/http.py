@@ -4,6 +4,9 @@
 与流式响应。统一异常为 ``httpx.HTTPError`` (别名 ``NetworkError``),
 避免各来源各自混用不同的 HTTP 栈。
 
+代理通过 ``HTTP_PROXY`` / ``HTTPS_PROXY`` 环境变量配置,
+``httpx`` 原生自动读取, 无需显式传参。
+
 Callers:
     - ``online_sources.gelbooru.source``
     - ``online_sources.pixiv.source``
@@ -13,7 +16,6 @@ Callers:
 
 from __future__ import annotations
 
-import os
 from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
@@ -35,24 +37,7 @@ WINDOWS_UA = (
     "Chrome/131.0.0.0 Safari/537.36"
 )
 
-
-def upstream_proxy() -> str | None:
-    """从环境变量读取上游代理, 空串视为无代理.
-
-    全项目上游代理的唯一读取入口; 各来源/网络层均应复用, 不得各自
-    直接读取 ``os.environ``。
-
-    Callers:
-        - ``framework.http`` 内部 (`_client` / `stream_response`)
-        - ``danbooru.client``
-        - ``framework.gallerydl``
-    """
-    p = os.environ.get("UPSTREAM_PROXY", "").strip()
-    return p or None
-
-
-# proxy key -> 复用连接池
-_clients: dict[str, httpx.AsyncClient] = {}
+_client: httpx.AsyncClient | None = None
 
 
 def make_headers(*, referer: str | None = None) -> dict[str, str]:
@@ -85,23 +70,20 @@ def ext_from_url(url: str, fallback: str = ".jpg") -> str:
     return suf if suf in IMAGE_EXTS else fallback
 
 
-def _client(proxy: str | None = None) -> httpx.AsyncClient:
-    """按代理复用的连接池.
+def _get_client() -> httpx.AsyncClient:
+    """懒加载单例 httpx 客户端, 自动从环境变量读取代理.
 
     Callers:
         - ``framework.http.request`` / ``get_bytes``
     """
-    key = (proxy or upstream_proxy() or "")
-    c = _clients.get(key)
-    if c is not None and not c.is_closed:
-        return c
-    c = httpx.AsyncClient(
-        proxy=proxy or upstream_proxy(),
+    global _client
+    if _client is not None and not _client.is_closed:
+        return _client
+    _client = httpx.AsyncClient(
         limits=httpx.Limits(max_connections=32, max_keepalive_connections=16),
         timeout=httpx.Timeout(30.0, connect=10.0),
     )
-    _clients[key] = c
-    return c
+    return _client
 
 
 def _ctype(resp: httpx.Response) -> str:
@@ -112,18 +94,16 @@ async def request(
     url: str, *,
     headers: dict[str, str] | None = None,
     params: dict[str, str | int] | None = None,
-    proxy: str | None = None,
     timeout: float = 30.0,
 ) -> httpx.Response:
     """发起 GET 请求并返回原始响应 (调用方自行判 HTTP 状态).
 
-    代理默认从 ``UPSTREAM_PROXY`` 环境变量读取, 可通过 ``proxy`` 参数覆盖。
+    代理从 ``HTTP_PROXY`` / ``HTTPS_PROXY`` 环境变量自动读取。
 
     Args:
         url: 目标 URL。
         headers: 请求头 (可选, 不传则使用默认 UA/Accept)。
         params: 查询参数。
-        proxy: 上游代理地址 (可选, 默认 ``UPSTREAM_PROXY`` 环境变量)。
         timeout: 超时秒数。
 
     Returns:
@@ -135,7 +115,7 @@ async def request(
     Callers:
         - ``online_sources.gelbooru.source`` / ``online_sources.pixiv.source`` / ``online_sources.bilibili``
     """
-    return await _client(proxy).get(
+    return await _get_client().get(
         url, headers=headers, params=params,
         timeout=timeout, follow_redirects=True,
     )
@@ -145,7 +125,6 @@ async def get_bytes(
     url: str, *,
     headers: dict[str, str] | None = None,
     referer: str | None = None,
-    proxy: str | None = None,
     timeout: float = 30.0,
 ) -> tuple[bytes, str]:
     """一次性拉取响应字节与 Content-Type.
@@ -154,7 +133,6 @@ async def get_bytes(
         url: 目标 URL。
         headers: 自定义请求头; 不传则使用 ``make_headers(referer=referer)``。
         referer: 防盗链 Referer。
-        proxy: 上游代理地址。
         timeout: 超时秒数。
 
     Returns:
@@ -167,7 +145,7 @@ async def get_bytes(
         - ``online_sources.pixiv.source`` / ``online_sources.bilibili``
     """
     h = headers or make_headers(referer=referer)
-    resp = await request(url, headers=h, proxy=proxy, timeout=timeout)
+    resp = await request(url, headers=h, timeout=timeout)
     resp.raise_for_status()
     return resp.content, _ctype(resp)
 
@@ -176,7 +154,6 @@ async def stream_response(
     url: str, *,
     headers: dict[str, str] | None = None,
     referer: str | None = None,
-    proxy: str | None = None,
     timeout: float = 30.0,
 ) -> tuple[str, AsyncIterator[bytes]]:
     """流式获取图片, 返回 (Content-Type, 字节迭代器).
@@ -184,11 +161,12 @@ async def stream_response(
     迭代器内部持有 httpx 连接, 迭代完成后自动关闭。调用方直接传入
     ``StreamingResponse(chunks, media_type=ctype)`` 即可。
 
+    代理从 ``HTTP_PROXY`` / ``HTTPS_PROXY`` 环境变量自动读取。
+
     Args:
         url: 目标 URL。
         headers: 自定义请求头; 不传则使用 ``make_headers(referer=referer)``。
         referer: 防盗链 Referer。
-        proxy: 上游代理地址 (可选, 默认 ``UPSTREAM_PROXY`` 环境变量)。
         timeout: 超时秒数。
 
     Returns:
@@ -202,7 +180,6 @@ async def stream_response(
     """
     h = headers or make_headers(referer=referer)
     client = httpx.AsyncClient(
-        proxy=proxy or upstream_proxy(),
         timeout=httpx.Timeout(timeout, connect=10.0),
     )
     req = client.build_request("GET", url, headers=h)

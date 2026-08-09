@@ -148,6 +148,7 @@
     var dirs = DirPicker.getDirs();
     var position = getCheckPosition();
 
+    _embSortActive = false;
     var btn = document.getElementById('btn-check');
     btn.disabled = true;
     try {
@@ -591,6 +592,157 @@
     stage.addEventListener('scroll', update);
   }
 
+  // ---- 向量嵌入 ----
+
+  var _embSortOrder = null;    // [{index, similarity}] 排序后索引
+  var _embSortActive = false;  // 是否处于排序模式
+
+  /**
+   * 更新嵌入状态栏文本。
+   * @param {string} msg
+   */
+  function embStatus(msg) {
+    var el = document.getElementById('emb-status');
+    if (el) el.textContent = msg;
+  }
+
+  /**
+   * 检查向量嵌入模型是否可用。
+   * @returns {Promise<boolean>}
+   */
+  async function embCheckModel() {
+    var res = await API.request(API.apiPath('/tags/embedding/status'), {
+      method: 'POST',
+      body: '{}',
+    });
+    if (!res.ok) {
+      toast('模型不可用: ' + (res.message || '未知错误'));
+      return false;
+    }
+    return true;
+  }
+
+  /**
+   * 构建当前目录图片的向量嵌入。
+   * @returns {Promise<void>}
+   */
+  async function embBuild() {
+    var btn = document.getElementById('emb-build');
+    btn.disabled = true;
+    embStatus('构建中…');
+    try {
+      var ok = await embCheckModel();
+      if (!ok) return;
+      var res = await API.request(API.apiPath('/tags/embedding/build'), {
+        method: 'POST',
+        body: JSON.stringify({ dirs: DirPicker.getDirs() }),
+      });
+      embStatus(res.message || '构建完成');
+      toast('向量构建完成: ' + (res.count || 0) + ' 张图片');
+    } catch (e) {
+      embStatus('构建失败');
+      toast('构建失败: ' + String(e.message || e));
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  /**
+   * 按查询文本相似度排序瀑布流。
+   * @returns {Promise<void>}
+   */
+  async function embSort() {
+    var query = document.getElementById('emb-query').value.trim();
+    if (!query) { toast('请输入查询文本'); return; }
+
+    var btn = document.getElementById('emb-sort');
+    btn.disabled = true;
+    embStatus('查询中…');
+    try {
+      var res = await API.request(API.apiPath('/tags/embedding/query'), {
+        method: 'POST',
+        body: JSON.stringify({ query: query, dirs: DirPicker.getDirs() }),
+      });
+      if (!res.items || res.items.length === 0) {
+        embStatus('无匹配结果');
+        return;
+      }
+
+      // 构建 path -> similarity 映射
+      var simMap = {};
+      for (var i = 0; i < res.items.length; i++) {
+        simMap[res.items[i].path] = res.items[i].similarity;
+      }
+
+      // 按相似度降序排列 _items
+      _items.sort(function (a, b) {
+        var sa = simMap[a.path] !== undefined ? simMap[a.path] : -1;
+        var sb = simMap[b.path] !== undefined ? simMap[b.path] : -1;
+        return sb - sa;
+      });
+
+      _embSortActive = true;
+      hideSingle();
+      Masonry.render(_items);
+      updateStats();
+      embStatus('已按相似度排序 (' + res.items.length + ' 条)');
+      toast('已按相似度排序');
+    } catch (e) {
+      embStatus('查询失败');
+      toast('查询失败: ' + String(e.message || e));
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  /**
+   * 按相似度阈值批量添加或删除标签。
+   * @returns {Promise<void>}
+   */
+  async function embBatchTag() {
+    var query = document.getElementById('emb-query').value.trim();
+    var tag = document.getElementById('check-tag').value.trim();
+    if (!query) { toast('请输入查询文本'); return; }
+    if (!tag) { toast('请输入标签'); return; }
+
+    var operator = document.getElementById('emb-operator').value;
+    var threshold = parseFloat(document.getElementById('emb-threshold').value);
+    if (isNaN(threshold) || threshold < 0 || threshold > 1) {
+      toast('阈值必须在 0~1 之间');
+      return;
+    }
+    var action = document.getElementById('emb-action').value;
+    var fuzzy = document.getElementById('emb-fuzzy').checked;
+
+    var btn = document.getElementById('emb-batch-tag');
+    btn.disabled = true;
+    embStatus('批量执行中…');
+    try {
+      var res = await API.request(API.apiPath('/tags/embedding/batch-tag'), {
+        method: 'POST',
+        body: JSON.stringify({
+          dirs: DirPicker.getDirs(),
+          query: query,
+          tag: tag,
+          operator: operator,
+          threshold: threshold,
+          action: action,
+          position: getInsertPosition(),
+          fuzzy: fuzzy,
+        }),
+      });
+      embStatus(res.message || '执行完成');
+      toast(res.message || '批量执行完成');
+      // 执行后刷新检查结果
+      runCheck().catch(function (e) { toast('刷新失败: ' + String(e.message || e)); });
+    } catch (e) {
+      embStatus('执行失败');
+      toast('批量执行失败: ' + String(e.message || e));
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
   function init() {
     Masonry.init('masonry', {
       getData: function () { return _items; },
@@ -646,10 +798,30 @@
     });
 
     document.getElementById('btn-check').addEventListener('click', function () {
+      _embSortActive = false;
       runCheck().catch(function (e) { toast('检查失败: ' + String(e.message || e)); });
     });
     document.getElementById('check-position').addEventListener('change', function () {
+      _embSortActive = false;
       runCheck().catch(function (e) { toast('检查失败: ' + String(e.message || e)); });
+    });
+
+    // ---- 向量嵌入事件 ----
+    document.getElementById('emb-build').addEventListener('click', function () {
+      embBuild().catch(function (e) { toast('构建失败: ' + String(e.message || e)); });
+    });
+    document.getElementById('emb-sort').addEventListener('click', function () {
+      embSort().catch(function (e) { toast('排序失败: ' + String(e.message || e)); });
+    });
+    document.getElementById('emb-batch-tag').addEventListener('click', function () {
+      embBatchTag().catch(function (e) { toast('批量执行失败: ' + String(e.message || e)); });
+    });
+    // Enter 键触发查询排序
+    document.getElementById('emb-query').addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        embSort().catch(function (err) { toast('查询失败: ' + String(err.message || err)); });
+      }
     });
 
     // ---- 单图模式事件 ----

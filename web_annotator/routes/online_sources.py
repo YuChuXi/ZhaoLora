@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from pathlib import Path
 
 from services.core.video_scanner import VIDEO_DIRNAME
@@ -24,7 +25,7 @@ from services.online_sources import (
     remove_download,
     search_posts,
 )
-from services.online_sources.framework import http
+from services.online_sources.framework import http as _http
 from routes.deps import get_runtime, jobs
 from services.core.jobs import EmitFn
 from services.models import (
@@ -44,7 +45,7 @@ from services.core.work_dir import resolve_subdir
 
 router = APIRouter(prefix="/online-sources", tags=["online-sources"])
 
-_NETWORK_ERRORS = (RuntimeError, OSError, http.NetworkError, CffiError)
+_NETWORK_ERRORS = (RuntimeError, OSError, _http.NetworkError, CffiError)
 
 
 class SearchBody(BaseModel):
@@ -73,9 +74,10 @@ class DownloadBody(BaseModel):
 @router.get("/sources")
 def list_sources() -> BooruSourcesResponse:
     """列出可用图站与代理. 引用: ``booru_filter.js``. """
+    proxy = os.environ.get("HTTP_PROXY", "") or os.environ.get("HTTPS_PROXY", "")
     return BooruSourcesResponse(
         sources=list_source_names(),
-        proxy=http.upstream_proxy() or "",
+        proxy=proxy.strip(),
     )
 
 
@@ -176,7 +178,7 @@ async def proxy_image(
         ctype, chunks = await src.proxy_image(url, kind=kind)
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
-    except http.NetworkError as e:
+    except _http.NetworkError as e:
         raise HTTPException(502, f"图片拉取失败: {e}") from e
     return StreamingResponse(
         chunks, media_type=ctype,
@@ -252,7 +254,7 @@ async def download(
         msg = str(e)
         code = 429 if "429" in msg else 502
         raise HTTPException(code, f"下载失败: {e}") from e
-    except (OSError, http.NetworkError, CffiError) as e:
+    except (OSError, _http.NetworkError, CffiError) as e:
         raise HTTPException(502, f"下载失败: {e}") from e
     rel = local_rel_path(root, result.path)
     thumb = get_runtime(request).thumbnailer

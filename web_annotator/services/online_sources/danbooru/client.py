@@ -1,7 +1,7 @@
 """Danbooru 底层网络: TLS 指纹模拟 + JSON API 请求.
 
 封装 Danbooru 专属网络请求 (curl_cffi 模拟 Chrome TLS 指纹绕过
-Cloudflare); 代理经 ``framework.http.upstream_proxy`` 从统一层读取,
+Cloudflare); 代理从 ``HTTP_PROXY`` / ``HTTPS_PROXY`` 环境变量读取,
 认证 (login / api_key) 由调用方经参数传入.
 
 Callers:
@@ -10,34 +10,39 @@ Callers:
 
 from __future__ import annotations
 
+import os
 from typing import Any
 
 from curl_cffi.requests import AsyncSession
 
-from services.online_sources.framework.http import upstream_proxy
-
 # Danbooru 需模拟 Chrome TLS 指纹绕过 Cloudflare
 _IMPERSONATE = "chrome"
 
-# (代理, 指纹) -> 复用连接池
-_clients: dict[tuple[str, str], AsyncSession] = {}
+# (http_proxy, https_proxy, 指纹) -> 复用连接池
+_clients: dict[tuple[str, str, str], AsyncSession] = {}
 
 
 def _client() -> AsyncSession:
     """按代理复用的 curl_cffi 连接池, 固定 Chrome TLS 指纹.
 
-    代理经 ``upstream_proxy`` 从统一层读取。
+    代理从 ``HTTP_PROXY`` / ``HTTPS_PROXY`` 环境变量读取。
 
     Callers:
         - ``danbooru/client.py:get``
     """
-    p = upstream_proxy()
-    key = (p or "", _IMPERSONATE)
+    http_p = os.environ.get("HTTP_PROXY", "").strip()
+    https_p = os.environ.get("HTTPS_PROXY", "").strip()
+    key = (http_p, https_p, _IMPERSONATE)
     c = _clients.get(key)
     if c is None:
+        proxies = {}
+        if http_p:
+            proxies["http"] = http_p
+        if https_p:
+            proxies["https"] = https_p
         c = AsyncSession(
             impersonate=_IMPERSONATE,  # type: ignore[arg-type]
-            proxies={"http": p, "https": p} if p else None,  # type: ignore[arg-type]
+            proxies=proxies or None,  # type: ignore[arg-type]
         )
         _clients[key] = c
     return c

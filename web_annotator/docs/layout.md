@@ -50,4 +50,4 @@ datasets/                         # 任务根（--data-dir）
 | `--host` / `--port` | 监听地址与端口 |
 | `--thumbnail-size` | 缩略图长边像素 |
 
-图站代理与认证（`UPSTREAM_PROXY`、`X_COOKIES`、`PIXIV_REFRESH_TOKEN`、`DANBOORU_LOGIN`、`DANBOORU_API_KEY`）通过 `web_annotator/.env` 配置，启动时统一加载。`X_COOKIES` 为 Netscape 格式 cookies.txt 路径；`PIXIV_REFRESH_TOKEN` 为 pixiv OAuth refresh token（`gallery-dl oauth:pixiv` 获取）。
+图站代理与认证（`HTTP_PROXY` / `HTTPS_PROXY`、`X_COOKIES`、`PIXIV_REFRESH_TOKEN`、`DANBOORU_LOGIN`、`DANBOORU_API_KEY`）通过 `web_annotator/.env` 配置，启动时统一加载。`X_COOKIES` 为 Netscape 格式 cookies.txt 路径；`PIXIV_REFRESH_TOKEN` 为 pixiv OAuth refresh token（`gallery-dl oauth:pixiv` 获取）。
