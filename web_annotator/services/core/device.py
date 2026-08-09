@@ -138,6 +138,31 @@ class Model:
 
         return cast(Callable, wrapper)
 
+    def __enter__(self) -> object:
+        """上下文管理入口: 进入 ``with`` 块时 ``acquire`` 并返回真实句柄.
+
+        Returns:
+            真实模型句柄, 供 ``with model as handle`` 绑定使用.
+
+        Callers:
+            - ``services/analysis/scoring:run_scoring``
+        """
+        return self.acquire()
+
+    def __exit__(self, *exc: object) -> None:
+        """上下文管理出口: 离开 ``with`` 块时归还引用.
+
+        无论块内成功或异常都会调用 ``release``; 引用归零后模型驻留内存,
+        由超时机制负责彻底释放.
+
+        Args:
+            *exc: 未使用, 仅为满足上下文管理器协议签名.
+
+        Callers:
+            - ``services/analysis/scoring:run_scoring``
+        """
+        self.release()
+
     def acquire(self) -> object:
         """获取真实模型句柄并增加引用计数 (线程安全).
 

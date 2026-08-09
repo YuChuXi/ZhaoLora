@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import torch
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
@@ -36,7 +35,6 @@ class StartBody(BaseModel):
 
     kind: str = Field(default="aesthetic", description="评分类型: 'aesthetic' | 'quality'")
     dirs: list[str] = Field(default_factory=list)
-    device: str = Field(default="cpu")
     write_report: bool = True
 
 
@@ -60,8 +58,6 @@ def dirs(request: Request) -> ScoringDirsResponse:
 
     return ScoringDirsResponse(
         dirs=list_image_subdirs(root),
-        cuda=torch.cuda.is_available(),
-        default_device="cuda" if torch.cuda.is_available() else "cpu",
         aesthetic_ready=len(aes_scores) > 0,
         aesthetic_count=len(aes_scores),
         quality_ready=len(qual_scores) > 0,
@@ -143,12 +139,6 @@ async def start(request: Request, body: StartBody) -> ScoringStartResponse:
     if not selected:
         raise HTTPException(400, "请选择目录")
 
-    device = (body.device or "cpu").lower()
-    if device not in ("cpu", "cuda"):
-        raise HTTPException(400, "设备须为 cpu 或 cuda")
-    if device == "cuda" and not torch.cuda.is_available():
-        raise HTTPException(400, "当前环境无 CUDA")
-
     prog = ScoreProgress()
 
     def run(emit: EmitFn) -> None:
@@ -164,7 +154,6 @@ async def start(request: Request, body: StartBody) -> ScoringStartResponse:
             selected,
             kind=kind,
             root=root,
-            device=device,
             progress=prog,
             on_update=on_update,
         )
@@ -182,5 +171,4 @@ async def start(request: Request, body: StartBody) -> ScoringStartResponse:
         job_id=job_id,
         kind=kind,
         dirs=[p.name if p != root else "." for p in selected],
-        device=device,
     )

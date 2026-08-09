@@ -34,7 +34,6 @@
   function setRunningUi(running) {
     document.getElementById('btn-start').disabled = running;
     document.getElementById('btn-cancel').disabled = !running;
-    document.getElementById('device').disabled = running;
     DirPicker.setDisabled(running);
   }
 
@@ -331,11 +330,6 @@
   async function initPage() {
     var data = await API.request(API.apiPath('/scoring/dirs'));
 
-    var sel = document.getElementById('device');
-    sel.value = 'cpu';
-    var cudaOpt = sel.querySelector('option[value="cuda"]');
-    if (cudaOpt) cudaOpt.disabled = !data.cuda;
-
     if (data.aesthetic_ready) {
       loadResults('aesthetic');
       updateResultBadge('aesthetic', data.aesthetic_count);
@@ -368,7 +362,6 @@
     var body = {
       kind: _currentType,
       dirs: dirs,
-      device: document.getElementById('device').value,
       write_report: true
     };
     var data = await API.request(API.apiPath('/scoring/start'), {

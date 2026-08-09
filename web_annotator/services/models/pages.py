@@ -19,8 +19,6 @@ class ScoringDirsResponse(BaseModel):
     """
 
     dirs: list[WorkDirInfo]
-    cuda: bool
-    default_device: str
     aesthetic_ready: bool
     aesthetic_count: int = 0
     quality_ready: bool
@@ -38,7 +36,6 @@ class ScoringStartResponse(BaseModel):
     job_id: str
     kind: str
     dirs: list[str]
-    device: str
 
 
 class ScoringActiveResponse(BaseModel):

@@ -6,6 +6,7 @@ import os
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import cast
 
 import cv2
 import numpy as np
@@ -15,26 +16,19 @@ from torchvision import transforms
 
 from services.models import JobSnapshot
 from services.core.scanner import IMAGE_EXTS
+from services.core.device import register_model
 
 MODEL_REPO = "ZhengPeng7/BiRefNet"
 IMAGE_SIZE = (1024, 1024)
 IMAGENET_MEAN = [0.485, 0.456, 0.406]
 IMAGENET_STD = [0.229, 0.224, 0.225]
 
-_MODEL_CACHE: tuple | None = None
-
-
-def _load_model(device: str = "cuda") -> tuple:
-    """加载 BiRefNet 模型与预处理变换, 按设备缓存. 
+def _load_model() -> tuple:
+    """加载 BiRefNet 模型与预处理变换 (CPU).
 
     Callers:
-        - ``run_birefnet_mask``
+        - ``device.register_model`` 注册的 load 回调
     """
-    global _MODEL_CACHE
-    device = "cuda" if device == "cuda" and torch.cuda.is_available() else "cpu"
-    if _MODEL_CACHE is not None and _MODEL_CACHE[0] == device:
-        return _MODEL_CACHE[1], _MODEL_CACHE[2]
-
     try:
         from transformers import AutoModelForImageSegmentation, AutoConfig
     except ImportError:
@@ -45,7 +39,7 @@ def _load_model(device: str = "cuda") -> tuple:
         "/media/yuchuxi/Data/Servers/ComfyUI/models/background_removal/birefnet.safetensors",
     )
     config = AutoConfig.from_pretrained(MODEL_REPO, trust_remote_code=True)
-    config.torch_dtype = torch.float16 if device == "cuda" else torch.float32
+    config.torch_dtype = torch.float32
     model = AutoModelForImageSegmentation.from_config(config, trust_remote_code=True)
 
     if weight_path and os.path.isfile(weight_path):
@@ -61,33 +55,51 @@ def _load_model(device: str = "cuda") -> tuple:
         model.load_state_dict(state_dict, strict=False)
     else:
         model = AutoModelForImageSegmentation.from_pretrained(
-            MODEL_REPO, trust_remote_code=True,
-            dtype=torch.float16 if device == "cuda" else torch.float32,
+            MODEL_REPO, trust_remote_code=True, dtype=torch.float32,
         )
 
-    model = model.to(device).eval()
-    if device == "cuda":
-        torch.set_float32_matmul_precision("high")
-
+    model = model.to("cpu").eval()
     transform = transforms.Compose([
         transforms.Resize(IMAGE_SIZE),
         transforms.ToTensor(),
         transforms.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD),
     ])
-    _MODEL_CACHE = (device, model, transform)
     return model, transform
 
 
-def _predict_mask(model, image: Image.Image, transform, device: str) -> np.ndarray:
-    """对单张图片推理, 返回 [0, 255] 的 uint8 mask (H, W). 
+def _unload_model(handle: object) -> None:
+    """释放 BiRefNet 模型.
+
+    Args:
+        handle: ``_load_model`` 返回的 ``(model, transform)`` 元组.
+
+    Callers:
+        - ``device.register_model`` 注册的 unload 回调
+    """
+    model, _transform = cast("tuple", handle)
+    del model, _transform
+
+
+_MODEL = register_model(_load_model, _unload_model)
+
+
+def _predict_mask(model, image: Image.Image, transform) -> np.ndarray:
+    """对单张图片推理, 返回 [0, 255] 的 uint8 mask (H, W).
+
+    Args:
+        model: BiRefNet 模型.
+        image: 输入图片.
+        transform: 预处理变换.
+
+    Returns:
+        ``uint8`` 蒙版 (H, W), 值域 [0, 255].
 
     Callers:
         - ``run_birefnet_mask``
     """
+    device = next(model.parameters()).device
     orig_size = image.size
     input_tensor = transform(image).unsqueeze(0).to(device)
-    if device == "cuda":
-        input_tensor = input_tensor.half()
     with torch.no_grad():
         preds = model(input_tensor)
         pred = preds[-1].sigmoid().cpu() if isinstance(preds, (list, tuple)) else preds.sigmoid().cpu()
@@ -187,12 +199,13 @@ class BirefnetProgress:
         )
 
 
+@_MODEL.auto_release
 def run_birefnet_mask(
     image_rel_paths: list[str],
     data_dir: Path,
     mask_dir: Path,
     *,
-    device: str = "cuda",
+    handle: tuple,
     mask_expand: int = 32,
     mask_shrink: int = 0,
     mask_min: int = 96,
@@ -201,21 +214,21 @@ def run_birefnet_mask(
     progress: BirefnetProgress | None = None,
     on_progress: Callable[[], None] | None = None,
 ) -> tuple[int, int]:
-    """对图片列表生成 BiRefNet 蒙版, 输出到 mask_dir(保留子目录结构). 
+    """对图片列表生成 BiRefNet 蒙版, 输出到 mask_dir(保留子目录结构).
 
     Args:
-        image_rel_paths: 相对数据集根的路径列表(含子目录前缀). 
-        data_dir: 数据集根目录. 
-        mask_dir: 蒙版输出目录. 
-        device: 推理设备. 
-        mask_expand: 蒙版扩展像素数 (0-200). 
-        mask_shrink: 蒙版收缩像素数 (0-200). 
-        mask_min: 蒙版值域下限 (0-255, 默认 96). 
-        mask_max: 蒙版值域上限 (0-255, 默认 255). 
-        skip_existing: 是否跳过已有蒙版文件(默认 True). 
+        image_rel_paths: 相对数据集根的路径列表(含子目录前缀).
+        data_dir: 数据集根目录.
+        mask_dir: 蒙版输出目录.
+        handle: BiRefNet 模型句柄 ``(model, transform)``, 由 ``auto_release`` 注入.
+        mask_expand: 蒙版扩展像素数 (0-200).
+        mask_shrink: 蒙版收缩像素数 (0-200).
+        mask_min: 蒙版值域下限 (0-255, 默认 96).
+        mask_max: 蒙版值域上限 (0-255, 默认 255).
+        skip_existing: 是否跳过已有蒙版文件(默认 True).
 
     Returns:
-        (成功数, 总数). 
+        (成功数, 总数).
 
     Callers:
         - ``routes/birefnet.py``
@@ -223,7 +236,7 @@ def run_birefnet_mask(
     if not image_rel_paths:
         return 0, 0
 
-    model, transform = _load_model(device)
+    model, transform = handle
     mask_dir.mkdir(parents=True, exist_ok=True)
 
     if progress is not None:
@@ -247,7 +260,7 @@ def run_birefnet_mask(
 
         try:
             image = Image.open(src_path).convert("RGB")
-            mask = _predict_mask(model, image, transform, device)
+            mask = _predict_mask(model, image, transform)
             mask = _expand_mask(mask, mask_expand)
             mask = _shrink_mask(mask, mask_shrink)
             mask = _remap_mask(mask, mask_min, mask_max)

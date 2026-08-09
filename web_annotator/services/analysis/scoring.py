@@ -3,11 +3,10 @@
 from __future__ import annotations
 
 import json
-import threading as _th
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 import torch
@@ -17,6 +16,7 @@ from PIL import Image, UnidentifiedImageError
 
 from services.models import JobSnapshot
 from services.core.scanner import IMAGE_EXTS, collect_images
+from services.core.device import register_model
 
 # ---------------------------------------------------------------------------
 # 常量
@@ -156,38 +156,6 @@ def save_score_json(root: Path, filename: str, scores: dict[str, float]) -> None
 # 美学模型(CLIP ViT-L/14 + purplesmartai aesthetic-classifier)
 # ---------------------------------------------------------------------------
 
-_AES_MODELS: dict[str, tuple] = {}
-_AES_LOCK = _th.Lock()
-_CLIP_CACHE: dict[str, tuple] = {}
-_CLIP_LOCK = _th.Lock()
-
-
-def load_clip_encoder(device: str) -> tuple:
-    """加载 CLIP ViT-L/14 视觉编码器, 按设备缓存.
-
-    美学评分复用同一份 CLIP 模型; 仅返回视觉编码器与预处理,
-    不加载美学评分头, 供评分流程直接提取图像特征向量.
-
-    Args:
-        device: 目标设备字符串, 若为 ``cuda`` 但不可用则回退 ``cpu``.
-
-    Returns:
-        tuple: ``(clip_model, preprocess_fn, actual_device)``.
-
-    Callers:
-        - `scoring.py:_load_aes_models`
-    """
-    device = "cuda" if device == "cuda" and torch.cuda.is_available() else "cpu"
-    with _CLIP_LOCK:
-        if device in _CLIP_CACHE:
-            return _CLIP_CACHE[device]
-        import clip
-        clip_model, preprocess = clip.load("ViT-L/14", device=device)
-        clip_model.eval()
-        tup = (clip_model, preprocess, device)
-        _CLIP_CACHE[device] = tup
-        return tup
-
 
 def _raw_to_bin(raw: float) -> int:
     """原始美学分 [0, 1] → 0~9 整数档位. 
@@ -204,23 +172,64 @@ def _raw_to_bin(raw: float) -> int:
     return int(max(0.0, min(0.99, raw)) * 10)
 
 
-@torch.no_grad()
-def _aes_score_one(image: Image.Image, clip_model, preprocess, aes_head, device: str) -> float:
-    """对单张图片执行 CLIP + 美学头评分. 
-
-    Args:
-        image: PIL 图片对象. 
-        clip_model: CLIP ViT-L/14 模型. 
-        preprocess: CLIP 预处理函数. 
-        aes_head: 美学评分 MLP 头. 
-        device: 计算设备. 
+def _load_aes_models() -> tuple:
+    """加载 CLIP ViT-L/14 视觉编码器 + 美学 MLP 头 (CPU).
 
     Returns:
-        float: 原始美学分数(约 0~1). 
+        tuple: ``(clip_model, preprocess_fn, aes_head)``.
 
     Callers:
-        - ``_run_scoring`` (via ``score_one`` lambda)
+        - ``device.register_model`` 注册的 load 回调
     """
+    import clip
+    clip_model, preprocess = clip.load("ViT-L/14", device="cpu")
+    clip_model.eval()
+    ckpt_path = hf_hub_download(repo_id="purplesmartai/aesthetic-classifier", filename="v2.ckpt")
+    state_dict = torch.load(ckpt_path, map_location="cpu")["state_dict"]
+    state_dict = {k.replace("model.", ""): v for k, v in state_dict.items()}
+    aes_head = nn.Sequential(
+        nn.Linear(768, 1024), nn.ReLU(), nn.Dropout(0.5),
+        nn.Linear(1024, 512), nn.ReLU(), nn.Dropout(0.3),
+        nn.Linear(512, 1),
+    )
+    aes_head.load_state_dict(state_dict)
+    aes_head.eval()
+    return clip_model, preprocess, aes_head
+
+
+def _unload_aes_models(handle: object) -> None:
+    """释放美学模型.
+
+    Args:
+        handle: ``_load_aes_models`` 返回的 ``(clip, preprocess, aes_head)`` 元组.
+
+    Callers:
+        - ``device.register_model`` 注册的 unload 回调
+    """
+    clip_model, _pre, aes_head = cast("tuple", handle)
+    del clip_model, aes_head
+
+
+_AES_MODEL = register_model(_load_aes_models, _unload_aes_models)
+
+
+@torch.no_grad()
+def _aes_score_one(image: Image.Image, clip_model, preprocess, aes_head) -> float:
+    """对单张图片执行 CLIP + 美学头评分.
+
+    Args:
+        image: PIL 图片对象.
+        clip_model: CLIP ViT-L/14 模型.
+        preprocess: CLIP 预处理函数.
+        aes_head: 美学评分 MLP 头.
+
+    Returns:
+        float: 原始美学分数(约 0~1).
+
+    Callers:
+        - ``_run_scoring``
+    """
+    device = next(clip_model.parameters()).device
     t = preprocess(image.convert("RGB")).unsqueeze(0).to(device)
     feat = clip_model.encode_image(t).cpu().numpy().astype("float32")
     norm = np.linalg.norm(feat, axis=1, keepdims=True)
@@ -228,64 +237,23 @@ def _aes_score_one(image: Image.Image, clip_model, preprocess, aes_head, device:
     return float(aes_head(torch.tensor(feat, device=device)).item())
 
 
-def _load_aes_models(device: str) -> tuple:
-    """加载 CLIP ViT-L/14 + 美学 MLP 头, 按设备缓存. 
-
-    若设备为 ``cuda`` 但 CUDA 不可用则回退至 ``cpu``. 线程安全. 
-
-    Args:
-        device: 目标设备字符串. 
-
-    Returns:
-        tuple: ``(clip_model, preprocess_fn, aes_head, actual_device)``. 
-
-    Callers:
-        - ``_run_scoring`` (via ``load_models``)
-    """
-    device = "cuda" if device == "cuda" and torch.cuda.is_available() else "cpu"
-    with _AES_LOCK:
-        if device in _AES_MODELS:
-            return _AES_MODELS[device]
-        clip_model, preprocess, device = load_clip_encoder(device)
-        ckpt_path = hf_hub_download(repo_id="purplesmartai/aesthetic-classifier", filename="v2.ckpt")
-        state_dict = torch.load(ckpt_path, map_location=device)["state_dict"]
-        state_dict = {k.replace("model.", ""): v for k, v in state_dict.items()}
-        aes_head = nn.Sequential(
-            nn.Linear(768, 1024), nn.ReLU(), nn.Dropout(0.5),
-            nn.Linear(1024, 512), nn.ReLU(), nn.Dropout(0.3),
-            nn.Linear(512, 1),
-        ).to(device)
-        aes_head.load_state_dict(state_dict)
-        aes_head.eval()
-        _AES_MODELS[device] = (clip_model, preprocess, aes_head, device)
-        return _AES_MODELS[device]
-
-
 # ---------------------------------------------------------------------------
 # 质量模型(Q-ReAlign-Lite-4B)
 # ---------------------------------------------------------------------------
 
-_q_model: tuple | None = None
 
-
-def _load_q_models(device: str) -> tuple:
-    """加载 Q-ReAlign-Lite-4B 模型, 模块级缓存. 
-
-    Args:
-        device: 目标设备字符串. 
+def _load_q_models() -> tuple:
+    """加载 Q-ReAlign-Lite-4B 模型 (CPU).
 
     Returns:
-        tuple: ``(model, processor)``. 
+        tuple: ``(model, processor)``.
 
     Raises:
-        RuntimeError: transformers 版本不足时抛出. 
+        RuntimeError: transformers 版本不足时抛出.
 
     Callers:
-        - ``_run_scoring`` (via ``load_models``)
+        - ``device.register_model`` 注册的 load 回调
     """
-    global _q_model
-    if _q_model is not None:
-        return _q_model
     try:
         from transformers import AutoModelForImageTextToText, AutoProcessor
     except ImportError:
@@ -293,27 +261,43 @@ def _load_q_models(device: str) -> tuple:
     processor = AutoProcessor.from_pretrained("q-future/Q-ReAlign-Lite-4B")
     model = AutoModelForImageTextToText.from_pretrained(
         "q-future/Q-ReAlign-Lite-4B", dtype="auto",
-    ).to(device).eval()
-    _q_model = (model, processor)
-    return _q_model
+    )
+    model = cast("Any", model).to("cpu").eval()
+    return model, processor
+
+
+def _unload_q_models(handle: object) -> None:
+    """释放 Q-ReAlign 模型.
+
+    Args:
+        handle: ``_load_q_models`` 返回的 ``(model, processor)`` 元组.
+
+    Callers:
+        - ``device.register_model`` 注册的 unload 回调
+    """
+    model, _processor = cast("tuple", handle)
+    del model
+
+
+_Q_MODEL = register_model(_load_q_models, _unload_q_models)
 
 
 @torch.no_grad()
-def _q_score_one(src: Path, models: tuple, device: str) -> float:
-    """对单张图片执行 Q-ReAlign 质量评分. 
+def _q_score_one(src: Path, models: tuple) -> float:
+    """对单张图片执行 Q-ReAlign 质量评分.
 
     Args:
-        src: 图片文件路径. 
-        models: ``(model, processor)`` 元组. 
-        device: 计算设备. 
+        src: 图片文件路径.
+        models: ``(model, processor)`` 元组.
 
     Returns:
-        float: 加权质量分(0~1). 
+        float: 加权质量分(0~1).
 
     Callers:
-        - ``_run_scoring`` (via ``score_one``)
+        - ``_run_scoring``
     """
     model, processor = models
+    device = next(model.parameters()).device
     img = Image.open(src)
     levels = ["excellent", "good", "fair", "poor", "bad"]
     weights = [1.0, 0.75, 0.5, 0.25, 0.0]
@@ -379,27 +363,26 @@ def load_quality_scores(root: Path) -> dict[str, float]:
 def _run_scoring(
     dirs: list[Path], *,
     root: Path,
-    device: str,
+    models: Any,
     scores_filename: str,
     model_name: str,
-    load_models: Callable[[str], Any],
-    score_one: Callable[[Path, Any, str], float],
+    score_one: Callable[[Path, Any], float],
     progress: ScoreProgress,
     on_update: Callable[[], None] | None,
 ) -> None:
     """评分主循环引擎. 
 
-    处理完整的评分流水线: 文件收集 → 进度初始化 → 模型加载 →
-    缓存跳过/新评计算 → 定期持久化. 
+    处理完整的评分流水线: 文件收集 → 进度初始化 → 缓存跳过/新评计算 →
+    定期持久化. 模型句柄由调用方经上下文管理器 (``with model as handle``)
+    持有并注入.
 
     Args:
         dirs: 要评分的子目录列表(自动去重). 
         root: 数据集根目录(仅关键字参数). 
-        device: 计算设备(仅关键字参数). 
+        models: 模型句柄, 由 ``run_scoring`` 经上下文管理器注入. 
         scores_filename: 分数 JSON 文件名(仅关键字参数). 
         model_name: 模型名称, 用于进度消息(仅关键字参数). 
-        load_models: ``(device) -> model_state`` 模型加载回调(仅关键字参数). 
-        score_one: ``(src_path, model_state, device) -> float`` 单张评分回调(仅关键字参数). 
+        score_one: ``(src_path, models) -> float`` 单张评分回调(仅关键字参数). 
         progress: 进度追踪实例(仅关键字参数). 
         on_update: 每次状态变更后的回调(仅关键字参数). 
 
@@ -413,7 +396,7 @@ def _run_scoring(
     progress.status = "running"
     progress.phase = "loading"
     progress.message = f"共 {len(items)} 张, 加载{model_name}模型…"
-    progress.log(f"开始: dirs={[d.name for d in dirs]}, device={device}, total={len(items)}")
+    progress.log(f"开始: dirs={[d.name for d in dirs]}, total={len(items)}")
     if on_update: on_update()
 
     if not items:
@@ -422,11 +405,9 @@ def _run_scoring(
         if on_update: on_update()
         return
 
-    device = "cuda" if device == "cuda" and torch.cuda.is_available() else "cpu"
-    models = load_models(device)
     progress.phase = "running"
     progress.message = f"共 {len(items)} 张"
-    progress.log(f"{model_name}模型就绪 ({device})")
+    progress.log(f"{model_name}模型就绪")
     if on_update: on_update()
 
     existing = load_score_json(root, scores_filename)
@@ -450,7 +431,7 @@ def _run_scoring(
             progress.done += 1
         else:
             try:
-                scores[rel] = score_one(src, models, device)
+                scores[rel] = score_one(src, models)
                 progress.ok += 1
                 progress.done += 1
             except (OSError, UnidentifiedImageError, RuntimeError, ValueError) as e:
@@ -478,17 +459,19 @@ def run_scoring(
     dirs: list[Path], *,
     kind: str,
     root: Path,
-    device: str = "cuda",
     progress: ScoreProgress | None = None,
     on_update: Callable[[], None] | None = None,
 ) -> None:
     """执行美学或质量评分. 
 
+    模型句柄经上下文管理器获取并自动归还: 按 ``kind`` 分支进入对应模型的
+    ``with`` 块, 由 ``Model.__enter__/__exit__`` 完成 acquire/release, 无需手动
+    加载与释放. 模型的设备与生命周期由 ``device`` 模块统一管理(默认加载到 CPU).
+
     Args:
         dirs: 要评分的子目录列表. 
         kind: 评分类型, ``"aesthetic"`` 或 ``"quality"``(仅关键字参数). 
         root: 数据集根目录(仅关键字参数). 
-        device: 计算设备(仅关键字, 默认 "cuda"). 
         progress: 进度追踪实例(仅关键字, 为 None 时自动创建). 
         on_update: 每次状态变更后的回调(仅关键字). 
 
@@ -504,23 +487,23 @@ def run_scoring(
         progress = ScoreProgress()
 
     if kind == "aesthetic":
-        _run_scoring(
-            dirs, root=root, device=device,
-            scores_filename=AESTHETIC_SCORES, model_name="美学",
-            load_models=_load_aes_models,
-            score_one=lambda src, models, dev: _aes_score_one(
-                Image.open(src), models[0], models[1], models[2], dev,
-            ),
-            progress=progress, on_update=on_update,
-        )
+        with _AES_MODEL as models:
+            _run_scoring(
+                dirs, root=root, models=models,
+                scores_filename=AESTHETIC_SCORES, model_name="美学",
+                score_one=lambda src, m: _aes_score_one(
+                    Image.open(src), m[0], m[1], m[2],
+                ),
+                progress=progress, on_update=on_update,
+            )
     else:
-        _run_scoring(
-            dirs, root=root, device=device,
-            scores_filename=QUALITY_SCORES, model_name="Q-ReAlign",
-            load_models=_load_q_models,
-            score_one=_q_score_one,
-            progress=progress, on_update=on_update,
-        )
+        with _Q_MODEL as models:
+            _run_scoring(
+                dirs, root=root, models=models,
+                scores_filename=QUALITY_SCORES, model_name="Q-ReAlign",
+                score_one=_q_score_one,
+                progress=progress, on_update=on_update,
+            )
 
 
 # ---------------------------------------------------------------------------
