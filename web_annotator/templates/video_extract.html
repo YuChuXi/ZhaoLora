@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>视频抽帧</title>
+<link rel="stylesheet" href="/static/css/annotator.css">
+<style>
+  html, body { height: 100%; }
+  body.video-extract {
+    display: flex; flex-direction: column; overflow: hidden;
+  }
+  video-extract, .ve-body { display: contents; }
+
+  /* 主预览区: 撑满剩余高度, 居中显示当前帧 */
+  .ve-stage {
+    flex: 1 1 auto; min-height: 0;
+    display: flex; align-items: center; justify-content: center;
+    background: #05070d; overflow: hidden; position: relative;
+  }
+  .ve-stage img {
+    max-width: 100%; max-height: 100%;
+    object-fit: contain; display: block; user-select: none;
+    -webkit-user-drag: none;
+  }
+  .ve-stage .ve-loading {
+    position: absolute; inset: 0; display: none;
+    align-items: center; justify-content: center;
+    color: var(--text-dim); font-size: 13px; gap: 8px;
+  }
+  .ve-stage.loading .ve-loading { display: flex; }
+  .ve-stage.loading img { opacity: 0.35; }
+
+  /* 评分曲线图 */
+  #ve-chart {
+    flex: 0 0 120px; width: 100%; height: 120px;
+    background: var(--surface); border-top: 1px solid var(--border);
+    cursor: crosshair; display: block;
+  }
+
+  /* 缩略图条: 横向滚动, 当前/已存高亮 */
+  .ve-strip {
+    flex: 0 0 auto;
+    display: flex; align-items: center; gap: 6px;
+    padding: 8px 12px; overflow-x: auto;
+    background: var(--surface); border-top: 1px solid var(--border);
+  }
+  .ve-thumb {
+    position: relative; flex-shrink: 0;
+    height: 56px; width: auto; border-radius: 3px;
+    border: 2px solid transparent; cursor: pointer;
+    background: #0a1a30;
+  }
+  .ve-thumb:hover { border-color: var(--text-dim); }
+  .ve-thumb.active { border-color: var(--green); }
+  .ve-thumb.saved { border-color: var(--accent); }
+  .ve-thumb.active.saved { border-color: var(--green); box-shadow: 0 0 0 1px var(--accent); }
+  .ve-thumb img { height: 52px; width: auto; display: block; border-radius: 2px; }
+  .ve-thumb .tag {
+    position: absolute; right: 2px; bottom: 2px;
+    background: rgba(0,0,0,0.7); color: #fff;
+    font-size: 10px; padding: 0 4px; border-radius: 3px;
+    pointer-events: none;
+  }
+
+  /* 状态栏置于底部, 复用全局 .status-bar */
+  .status-bar { justify-content: flex-end; }
+  .status-bar .status-seg { text-align: right; }
+</style>
+</head>
+<body class="video-extract">
+<nav class="app-tabs" id="app-tabs"></nav>
+
+<div class="toolbar compact" id="ve-toolbar">
+  <button type="button" class="btn" id="ve-prev-vid" title="A: 上一个视频">‹ 视频</button>
+  <button type="button" class="btn" id="ve-next-vid" title="D: 下一个视频">视频 ›</button>
+  <span class="sep"></span>
+  <button type="button" class="btn" id="ve-prev-10" title="←: 后退 10 帧">-10</button>
+  <button type="button" class="btn" id="ve-prev-1" title="Q: 上一帧">-1</button>
+  <span class="status-seg" id="ve-frame">0/0</span>
+  <button type="button" class="btn" id="ve-next-1" title="E: 下一帧">+1</button>
+  <button type="button" class="btn" id="ve-next-10" title="→: 前进 10 帧">+10</button>
+  <span class="sep"></span>
+  <button type="button" class="btn green" id="ve-save" title="S/空格: 保存当前帧到 main 目录">存帧</button>
+  <button type="button" class="btn danger" id="ve-del" title="X/Delete: 删除当前帧(已保存)">删帧</button>
+  <span class="sep"></span>
+  <button type="button" class="btn" id="ve-analysis" title="ffprobe 分析每帧编码类型(I/P/B)与包大小">帧类型</button>
+  <span class="sep"></span>
+  <span class="status-seg" id="ve-video">加载中…</span>
+</div>
+
+<div class="ve-stage" id="ve-stage">
+  <img id="ve-img" alt="">
+  <div class="ve-loading" id="ve-loading">读取帧中…</div>
+</div>
+
+<canvas id="ve-chart"></canvas>
+
+<div class="ve-strip" id="ve-strip"></div>
+
+<div class="status-bar">
+  <span class="status-seg" id="ve-progress-seg">帧类型: 未分析</span>
+  <span class="status-seg" id="ve-saved-seg">已保存: 0</span>
+  <span class="status-seg" id="ve-size">-</span>
+</div>
+
+<div class="hint" id="ve-hint">左键存帧 · 右键删帧 · 滚轮调帧 · A/D 切换视频 · Q/E 单帧 · ←/→ 十帧 · S/空格 存帧 · X/Delete 删帧</div>
+<div class="toast" id="toast"></div>
+
+<script src="/static/js/ui.js"></script>
+<script src="/static/js/api.js"></script>
+<script src="/static/js/nav.js"></script>
+<script src="/static/js/video_extract.js"></script>
+</body>
+</html>

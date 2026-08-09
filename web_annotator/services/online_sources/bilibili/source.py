@@ -3,7 +3,7 @@
 `tags` 参数承载 B 站 UID, `extra` 为筛选串 (``type:`` / ``after:`` /
 ``before:`` / ``keyword:``)。搜索时先分页拉取该用户全部动态并解析, 按
 筛选条件过滤后把所有可展示图片展开为扁平列表, 缓存于进程内并按其序号
-分页返回; 下载时按 ``{动态ID}_{图片序号}`` 的 pid 解析原图 URL 并落盘。
+分页返回; 下载时按 ``{动态ID}_{图片序号}`` 的 pid 解析原图 URL 并写入磁盘。
 
 Callers:
     - ``services.online_sources.__init__`` (注册)
@@ -11,6 +11,11 @@ Callers:
 
 from __future__ import annotations
 
+import asyncio
+import os
+import re
+import shutil
+from collections.abc import Callable
 from datetime import date, datetime
 from pathlib import Path
 
@@ -118,6 +123,9 @@ class BilibiliSource(SourceClient):
         """
         source = record.forwarded if record.forwarded is not None else record
         text = source.text or record.text
+        # 视频动态: 携带 bvid 作为帖子 id, 前端据此提供"下载视频"(经 BBDown 写入数据集的 video 目录)
+        bvid = (source.video.bvid or "") if source.video else ""
+        is_video = bool(bvid)
         if source.images:
             items = [
                 (img.url, img.width or 0, img.height or 0) for img in source.images
@@ -129,13 +137,14 @@ class BilibiliSource(SourceClient):
         return [
             BooruPost(
                 source=self.name,
-                id=f"{record.id}_{i}",
+                id=bvid if is_video else f"{record.id}_{i}",
                 width=w,
                 height=h,
                 file_url=url,
                 preview_url=url + "@480w_480h_1e.webp",
                 sample_url=url + "@1280w_1280h_1e.webp",
                 tags=text,
+                is_video=is_video,
             )
             for i, (url, w, h) in enumerate(items)
         ]
@@ -232,15 +241,21 @@ class BilibiliSource(SourceClient):
         anima_format: bool = True,
         include_meta_tags: bool = False,
         keep_underscores: bool = False,
+        emit: Callable[[int, int], None] | None = None,
     ) -> dict:
-        """下载动态某张原图为 PNG, 并写旁路标签 (正文) 与 meta.
+        """下载帖子到 ``out_dir`` (图片帖) 或 ``video`` 目录 (视频帖).
 
-        直接使用 search 阶段已持有的 ``post.file_url`` 与 ``post.tags`` 落盘,
-        不再重新请求动态元数据。实现 ``base.SourceClient.download``。
+        图片帖按 ``post.file_url`` 转 PNG 写入磁盘并写旁路标签与 meta; 视频帖
+        (``post.is_video``) 直接经 ``_download_video`` 用 BBDown 写入 ``out_dir``
+        (即数据集 ``video`` 目录), 并把 BBDown 进度透传给 ``emit``。实现
+        ``base.SourceClient.download``。
 
         Callers:
             - `base.py:SourceClient.download` (经 ``media.download_post`` 委托)
+            - `online_sources/batch.py:download_one`
         """
+        if post.is_video:
+            return await self._download_video(post, out_dir, emit=emit)
         pid = post.id
         stem = Path(post.filename).stem
         image_path = out_dir / post.filename
@@ -277,4 +292,81 @@ class BilibiliSource(SourceClient):
             "stem": stem,
             "id": pid,
             "tags_path": str(tags_path),
+        }
+
+    async def _download_video(
+        self,
+        post: BooruPost,
+        video_dir: Path,
+        *,
+        emit: Callable[[int, int], None] | None = None,
+    ) -> dict:
+        """调用 BBDown 下载视频帖子(BV 号)到 video 目录, 返回写入结果.
+
+        B 站 DASH 音视频混流由专用工具 BBDown 完成, 本层仅委托子进程并
+        透传进度。BBDown 路径取自环境变量 ``BBDOWN_PATH``, 缺省时在 PATH
+        中查找 ``BBDown``。下载以 ``post.id`` (即 BV 号) 为输入, 输出到 ``video_dir``
+        (数据集根 ``video``)。
+
+        Args:
+            post: 视频帖子(``id`` 即 BV 号).
+            video_dir: 输出目录(数据集根 ``video``).
+
+        Returns:
+            dict: 含 ``path``/``stem``/``id``, 供 ``media.download_post`` 包装.
+
+        Raises:
+            ValueError: 缺少 bvid / 未找到 BBDown 工具 / 未产出文件.
+
+        Callers:
+            - `bilibili/source.py:BilibiliSource.download`
+        """
+        bvid = (post.id or "").strip()
+        if not bvid:
+            raise ValueError("视频帖子缺少 bvid (id)")
+        exe = os.environ.get("BBDOWN_PATH") or shutil.which("BBDown")
+        if not exe:
+            raise ValueError(
+                "未找到 BBDown, 请设置环境变量 BBDOWN_PATH 或在 PATH 中提供 BBDown"
+            )
+        video_dir.mkdir(parents=True, exist_ok=True)
+        before = {f.name for f in video_dir.iterdir() if f.is_file()}
+        cmd = [
+            exe, bvid,
+            "-o", str(video_dir),
+            "--skip-cover", "--skip-subtitle", "--skip-ai",
+        ]
+        process = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+        assert process.stdout is not None
+        if emit:
+            emit(1, 100)
+        while True:
+            line = await process.stdout.readline()
+            if not line:
+                break
+            text = line.decode("utf-8", "replace").strip()
+            if not text:
+                continue
+            m = re.search(r"(\d{1,3})\s*%", text)
+            pct = int(m.group(1)) if m else None
+            if pct is not None and emit:
+                emit(pct, 100)
+        await process.wait()
+        if process.returncode != 0:
+            raise RuntimeError(f"BBDown 下载失败, 退出码 {process.returncode}")
+        after = {f.name for f in video_dir.iterdir() if f.is_file()}
+        created = sorted(after - before)
+        if emit:
+            emit(100, 100)
+        if not created:
+            raise ValueError("BBDown 未产出任何文件")
+        video_path = video_dir / created[0]
+        return {
+            "path": str(video_path),
+            "stem": video_path.stem,
+            "id": post.id,
         }

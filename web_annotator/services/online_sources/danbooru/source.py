@@ -13,7 +13,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from services.online_sources.danbooru import client as _client
-from services.online_sources.framework.base import SourceClient
+from services.online_sources.framework.base import ProgressFn, SourceClient
+from services.online_sources.framework.media import download_raw_file, post_is_video
 from services.online_sources.framework.utils import find_downloaded, pil_can_open, sniff_image_kind
 
 if TYPE_CHECKING:
@@ -111,6 +112,7 @@ class DanbooruSource(SourceClient):
         post.source = "danbooru"
         post.preview_url = preview_url(post)
         post.sample_url = post.large_file_url or post.file_url
+        post.is_video = post_is_video(post)
         return post
 
     async def fetch_meta(self, out_dir: Path, pid: str) -> None:
@@ -176,11 +178,16 @@ class DanbooruSource(SourceClient):
 
     async def download(self, post: BooruPost, out_dir: Path, *,
                        overwrite: bool = False, anima_format: bool = True,
-                       include_meta_tags: bool = False, keep_underscores: bool = False) -> dict:
+                       include_meta_tags: bool = False, keep_underscores: bool = False,
+                       emit: ProgressFn | None = None) -> dict:
         """下载 Danbooru 原图并写旁路标签.
 
         直接使用 search 阶段已获取的完整 ``post`` (含原图 URL 与标签字段),
-        不再按 id 重新拉取 ``posts/{pid}.json``。实现 ``base.SourceClient.download``。
+        不再按 id 重新拉取 ``posts/{pid}.json``。视频帖 (``post.is_video``)
+        走 ``download_raw_file`` 下载原始文件。实现 ``base.SourceClient.download``。
+
+        Args:
+            emit: 下载进度回调, 图片来源忽略 (透传签名统一).
 
         Callers:
             - ``base.py:SourceClient.download``
@@ -190,6 +197,9 @@ class DanbooruSource(SourceClient):
         image_path = out_dir / post.filename
         tags_path = out_dir / f"{stem}.txt"
         existing = find_downloaded(out_dir, post.filename)
+
+        if post.is_video:
+            return await download_raw_file(post, out_dir)
 
         if post.file_ext in UNSUPPORTED_FILE_EXT and not post.large_file_url:
             raise ValueError(f"不支持的类型: .{post.file_ext}")

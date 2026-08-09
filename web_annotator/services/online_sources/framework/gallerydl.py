@@ -21,7 +21,7 @@ from gallery_dl.extractor import find as gallery_find
 from gallery_dl.extractor.message import Message
 
 from services.online_sources.framework import http
-from services.online_sources.framework.base import SourceClient
+from services.online_sources.framework.base import ProgressFn, SourceClient
 from services.online_sources.framework.session import SessionStore
 from services.online_sources.framework.utils import find_downloaded
 from services.models import BooruPost
@@ -401,11 +401,16 @@ class GalleryDLSource(SourceClient):
         anima_format: bool = True,
         include_meta_tags: bool = False,
         keep_underscores: bool = False,
+        emit: ProgressFn | None = None,
     ) -> dict:
         """下载指定媒体为 PNG, 并写旁路标签与 meta.
 
         直接使用 search 阶段已持有的 ``post.file_url`` (原图 URL) 与
-        ``post.tags`` 落盘, 不再重新请求帖文元数据。
+        ``post.tags`` 写入磁盘, 不再重新请求帖文元数据。gallery-dl 来源为
+        纯图片, ``emit`` 透传但不起作用。
+
+        Args:
+            emit: 下载进度回调, 图片来源忽略 (透传签名统一).
 
         Callers:
             - `base.py:SourceClient.download` (经 ``media.download_post`` 委托)

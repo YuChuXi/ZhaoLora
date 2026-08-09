@@ -6,7 +6,7 @@
 过滤纯图片 (type=photo) 展开为扁平卡片列表并按序号切片返回。
 
 下载时按 ``{username}_{tweet_id}_{num}`` 的 pid 下载整条推文媒体, 取第
-``num`` 张转为 PNG 落盘。
+``num`` 张转为 PNG 写入磁盘。
 
 访问 X 需要登录 cookies, 从 ``os.environ["X_COOKIES"]`` 读取 (Netscape
 格式, 由 ``server.py`` 解析为绝对路径后写入).

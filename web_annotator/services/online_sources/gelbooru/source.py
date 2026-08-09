@@ -9,7 +9,8 @@ from __future__ import annotations
 from pathlib import Path
 
 from services.online_sources.framework import http
-from services.online_sources.framework.base import SourceClient
+from services.online_sources.framework.base import ProgressFn, SourceClient
+from services.online_sources.framework.media import download_raw_file, post_is_video
 from services.online_sources.framework.utils import find_downloaded
 from services.online_sources.gelbooru.client import GelbooruClient
 from services.models import BooruPost
@@ -64,6 +65,7 @@ class GelbooruSource(SourceClient):
         post.source = "gelbooru"
         post.preview_url = post.preview_url or post.sample_url or post.file_url
         post.sample_url = post.sample_url or post.preview_url
+        post.is_video = post_is_video(post)
         return post
 
     async def fetch_meta(self, out_dir: Path, pid: str) -> None:
@@ -127,24 +129,30 @@ class GelbooruSource(SourceClient):
 
     async def download(self, post: BooruPost, out_dir: Path, *,
                        overwrite: bool = False, anima_format: bool = True,
-                       include_meta_tags: bool = False, keep_underscores: bool = False) -> dict:
+                       include_meta_tags: bool = False, keep_underscores: bool = False,
+                       emit: ProgressFn | None = None) -> dict:
         """下载 Gelbooru 原图并写旁路标签.
 
-        直接使用 search 阶段已持有的 ``post.file_url`` 与 ``post.tags`` 落盘,
+        直接使用 search 阶段已持有的 ``post.file_url`` 与 ``post.tags`` 写入,
         不再重新请求 ``get_post``; 仅 anima 格式需要额外查询标签类型。
+        视频帖 (``post.is_video``) 走 ``download_raw_file`` 下载原始文件。
         实现 ``base.SourceClient.download``。
+
+        Args:
+            emit: 下载进度回调, 图片来源忽略 (透传签名统一).
 
         Callers:
             - ``base.py:SourceClient.download`` (经 ``media.download_post`` 委托)
         """
-        from services.online_sources.framework import http
-
         api = GelbooruClient()
         pid = post.id
         stem = Path(post.filename).stem
         image_path = out_dir / post.filename
         tags_path = out_dir / f"{stem}.txt"
         existing = find_downloaded(out_dir, post.filename)
+
+        if post.is_video:
+            return await download_raw_file(post, out_dir)
 
         if not overwrite and existing is not None and tags_path.is_file():
             return {"skipped": True, "path": str(existing), "stem": stem, "id": pid, "tags_path": str(tags_path)}

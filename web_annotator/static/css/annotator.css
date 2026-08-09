@@ -300,6 +300,27 @@ body {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* 在线视频卡片(B 站视频动态): 标记色 + 下载视频按钮 */
+.card .info.info-video .name {
+  color: #ffb86b;
+}
+.card .info .video-dl-btn {
+  flex: 0 0 auto;
+  padding: 2px 8px;
+  border: 1px solid #5a4a2a;
+  border-radius: 4px;
+  background: #2a2418;
+  color: #ffd28a;
+  font-size: 10px;
+  line-height: 1.4;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background var(--transition), border var(--transition);
+}
+.card .info .video-dl-btn:hover {
+  background: #4a3a20;
+  border-color: #8a6a3a;
+}
 
 /* selected check overlay */
 .card .overlay {

@@ -6,7 +6,7 @@
 后按页切片返回。
 
 下载时按 ``{illust_id}_{num}`` 的 pid 下载作品, 取第 ``num``
-张从 pximg 图床拉取并转为 PNG 落盘。
+张从 pximg 图床拉取并转为 PNG 写入磁盘。
 
 Callers:
     - ``pixiv/__init__.py`` (导出)
@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any
 
 from services.online_sources.framework import http
-from services.online_sources.framework.base import SourceClient
+from services.online_sources.framework.base import ProgressFn, SourceClient
 from services.online_sources.framework.utils import find_downloaded
 from services.models import BooruPost
 from services.online_sources.pixiv.client import fetch_bytes, request_headers
@@ -369,12 +369,16 @@ class PixivSource(SourceClient):
         anima_format: bool = True,
         include_meta_tags: bool = False,
         keep_underscores: bool = False,
+        emit: ProgressFn | None = None,
     ) -> dict:
         """下载指定媒体为 PNG, 并写旁路标签与 meta.
 
         标签直接取自 search 阶段已持有的 ``post.tags``; 原图 URL 需按作品
-        分页拉取 ``original`` (搜索仅返回 regular 缩略图)。实现
-        ``base.SourceClient.download``。
+        分页拉取 ``original`` (搜索仅返回 regular 缩略图)。pixiv 为纯图片源,
+        ``emit`` 透传但不起作用。实现 ``base.SourceClient.download``。
+
+        Args:
+            emit: 下载进度回调, 图片来源忽略 (透传签名统一).
 
         Callers:
             - ``base.py:SourceClient.download``

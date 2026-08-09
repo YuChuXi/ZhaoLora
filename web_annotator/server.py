@@ -41,19 +41,10 @@ from routes.ready import router as ready_router
 from routes.tag_stats import router as tag_stats_router
 from routes.tagging import router as tagging_router
 from routes.tasks import router as tasks_router
+from routes.video import router as video_router
 from services.dataset.runtime import DatasetRegistry
 from services.core.jobs import JobManager
 from services.state.tasks import TaskStore
-
-
-class _DevStaticFiles(StaticFiles):
-    """开发期静态资源不缓存, 避免改 JS 后浏览器仍用旧文件. """
-
-    def file_response(self, *args, **kwargs) -> Response:
-        """关闭静态资源缓存. 引用: 开发期改 JS 后立即生效. """
-        resp = super().file_response(*args, **kwargs)
-        resp.headers["Cache-Control"] = "no-store"
-        return resp
 
 
 app = FastAPI(title="Image Annotator", version="3.1.0")
@@ -67,6 +58,7 @@ _PAGE_TEMPLATES = {
     "tags": "tags.html",
     "tag-check": "tag_check.html",
     "ready": "ready.html",
+    "video_extract": "video_extract.html",
 }
 
 _DS_PATH_RE = re.compile(r"^/(?:api/)?d/([^/]+)(?:/|$)")
@@ -132,7 +124,7 @@ async def _ua_middleware(
 
 static_dir = Path(__file__).parent / "static"
 if static_dir.is_dir():
-    app.mount("/static", _DevStaticFiles(directory=str(static_dir)), name="static")
+    app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 
 dataset_api = APIRouter(prefix="/api/d/{dataset}")
 dataset_api.include_router(images_router)
@@ -146,6 +138,7 @@ dataset_api.include_router(dedupe_router)
 dataset_api.include_router(ready_router)
 dataset_api.include_router(sources_router)
 dataset_api.include_router(birefnet_router)
+dataset_api.include_router(video_router)
 
 app.include_router(dataset_api)
 app.include_router(tasks_router)

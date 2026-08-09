@@ -46,6 +46,8 @@ class BooruPost(BaseModel):
     downloaded: bool = False
     stem: str = ""
     filename: str = ""
+    # 视频帖标记: 下载时落入数据集 video 目录
+    is_video: bool = False
 
     @computed_field
     @property

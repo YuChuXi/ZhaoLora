@@ -1,7 +1,10 @@
-"""工作子目录与相对路径解析(筛选 / 去重 / 图片读写等). """
+"""
+工作子目录与相对路径解析(筛选 / 去重 / 图片读写等). 
+"""
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from services.dataset.layout import NON_BROWSABLE_DIRS
@@ -16,8 +19,9 @@ _BLOCKED = NON_BROWSABLE_DIRS
 def resolve_under(root: Path, rel: str) -> Path:
     """将相对路径解析到 ``root`` 下的绝对路径. 
 
-    两端均 ``resolve()`` 后再用 ``is_relative_to`` 判定. 
-    ``is_relative_to`` 不消除 ``..``, 必须先 ``resolve``(Python pathlib 文档). 
+    仅做词法规范化 (消除 ``..``/``.``) 后判定是否位于 ``root`` 之下, 不跟随
+    符号链接。这样既阻止 ``..`` 越界, 又允许数据集内指向外部存储的合法
+    符号链接 (如 ``video -> /mnt/...``)。
 
     Args:
         root: 允许访问的根目录. 
@@ -39,7 +43,10 @@ def resolve_under(root: Path, rel: str) -> Path:
     text = raw.strip("/")
     if not text:
         raise ValueError(f"非法路径: {rel!r}")
-    path = (root / text).resolve()
+    # os.path.normpath 是标准库唯一的纯词法规范化工具 (消除 ``..``/``.``),
+    # 不触碰文件系统, 因此不会跟随符号链接。pathlib 的 ``PurePath`` 不消除
+    # ``..``, ``Path.resolve`` 会跟随符号链接, 均不适用。
+    path = Path(os.path.normpath(str(root / text)))
     if not path.is_relative_to(root):
         raise ValueError(f"路径越界: {rel}")
     return path

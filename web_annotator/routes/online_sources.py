@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
+from services.core.video_scanner import VIDEO_DIRNAME
+
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
@@ -14,12 +16,11 @@ from curl_cffi.requests.exceptions import RequestException as CffiError
 from services.online_sources.batch import BatchProgress, get_progress, register_progress, run_batch
 from services.online_sources import (
     download_post,
-    file_stem,
     get_source,
     is_downloaded,
     list_source_names,
     local_rel_path,
-    regenerate_captions,
+    regenerate_captions as _regenerate_captions,
     remove_download,
     search_posts,
 )
@@ -204,20 +205,33 @@ async def _cancel_on_disconnect(request: Request, task: asyncio.Task) -> None:
 
 
 @router.post("/download")
-async def download(request: Request, body: DownloadBody) -> BooruDownloadResult:
-    """下载帖子到工作目录; 客户端断开时取消下载. 引用: ``booru_filter.js``. """
+async def download(
+    request: Request, body: DownloadBody
+) -> BooruDownloadResult | JobSubmitResponse:
+    """下载帖子: 图片帖同步, 视频帖提交长任务.
+
+    图片帖同步下载到 ``body.dir`` 子目录; 视频帖 (``post.is_video``) 提交为
+    长任务异步下载到数据集 ``video`` 目录, 返回 ``JobSubmitResponse`` 供前端
+    监听进度. 引用: ``booru_filter.js``.
+
+    Callers:
+        - `static/js/booru_filter.js:downloadOne`
+    """
     source = body.source.strip().lower()
     if source not in list_source_names():
         raise HTTPException(400, f"不支持的源: {body.source}")
     root = get_runtime(request).root
+    if not body.post:
+        raise HTTPException(400, "缺少帖子数据 post")
+    post = BooruPost.model_validate(body.post)
+
+    if post.is_video:
+        return await _submit_video_download(request, source, post, root)
+
     try:
         name, out_dir = resolve_subdir(root, body.dir)
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
-
-    if not body.post:
-        raise HTTPException(400, "缺少帖子数据 post")
-    post = BooruPost.model_validate(body.post)
 
     task = asyncio.create_task(
         download_post(
@@ -253,6 +267,72 @@ async def download(request: Request, body: DownloadBody) -> BooruDownloadResult:
             "tags_path": local_rel_path(root, Path(result.tags_path)),
         }
     )
+
+
+async def _submit_video_download(
+    request: Request, source: str, post: BooruPost, root: Path
+) -> JobSubmitResponse:
+    """提交视频下载长任务, 经 ``download_post`` 写入数据集 ``video`` 目录.
+
+    工作线程内运行 ``download_post`` (视频帖进入对应来源的 ``download`` 视频
+    分支, B 站用 BBDown, 其余来源下载原始文件); 异常由 ``JobManager`` 捕获并
+    置为 error 状态, 本函数无需自行兜底。
+
+    Args:
+        request: 请求对象.
+        source: 来源名.
+        post: 视频帖 (``is_video`` 为真).
+        root: 数据集根目录.
+
+    Returns:
+        JobSubmitResponse: 任务提交结果, 前端据 ``job_id`` 监听进度.
+
+    Raises:
+        HTTPException: 已有进行中的视频下载任务时返回 409.
+
+    Callers:
+        - `routes/online_sources.py:download`
+    """
+    rt = get_runtime(request)
+    mgr = jobs(request)
+    if mgr.find_active(dataset=rt.name, kind="video_download") is not None:
+        raise HTTPException(409, "视频下载已在进行中")
+    video_dir = root / VIDEO_DIRNAME
+
+    def run(emit: EmitFn) -> None:
+        """工作线程入口. 引用: ``JobManager.submit``. """
+        def on_progress(pct: int, total: int) -> None:
+            """把来源的 ``(pct, total)`` 进度转为 JobSnapshot 推送. 引用: ``download_post``. """
+            emit(
+                JobSnapshot(
+                    status="running", phase="downloading",
+                    total=total, done=pct, pct=pct,
+                    message=f"正在下载视频 {pct}%",
+                )
+            )
+        emit(
+            JobSnapshot(
+                status="running", phase="downloading", total=1, done=0, pct=0,
+                message="正在下载视频",
+            )
+        )
+        result = asyncio.run(
+            download_post(source, post, video_dir, overwrite=False, emit=on_progress)
+        )
+        emit(
+            JobSnapshot(
+                status="done", phase="done", total=1, done=1, pct=100,
+                message=f"视频下载完成: {Path(result.path).name}",
+            )
+        )
+
+    job_id = await mgr.submit(
+        kind="video_download",
+        group="network",
+        dataset=rt.name,
+        run=run,
+    )
+    return JobSubmitResponse(ok=True, job_id=job_id)
 
 
 @router.post("/undownload")
@@ -406,7 +486,7 @@ async def regenerate_captions(request: Request, body: RegenerateCaptionsBody) ->
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
 
-    count = await regenerate_captions(
+    count = await _regenerate_captions(
         out_dir,
         anima_format=body.anima_format,
         include_meta_tags=body.include_meta_tags,

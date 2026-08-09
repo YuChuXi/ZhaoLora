@@ -302,6 +302,26 @@ var BooruFilter = (function () {
         el.appendChild(para);
       },
     },
+    video: {
+      remote: true,
+      bar: null,
+      nameLabel: '视频',
+      noJump: true,
+      hintText: '本地 video 目录 · 点击进入抽帧',
+      buildRequest: function () { return { tags: '', extra: '', order: '' }; },
+      thumb: function (post) {
+        return API.apiPath('/video/cover') + '?path=' + encodeURIComponent(post.path);
+      },
+      // 点击/右键均进入抽帧页
+      onClick: function (post) {
+        location.href = '/d/' + encodeURIComponent(API.dataset())
+          + '/video_extract?path=' + encodeURIComponent(post.path);
+      },
+      label: function (post) {
+        var dur = post.duration ? (Math.round(post.duration) + 's ') : '';
+        return dur + post.name;
+      },
+    },
   };
 
   /** 当前来源定义. 引用: 各来源相关函数. */
@@ -1267,14 +1287,17 @@ var BooruFilter = (function () {
   }
 
   function cardLabel(post) {
+    var srcDef = _SOURCES[post.source] || {};
+    if (srcDef.label) return srcDef.label(post);
     var st = _status[post.key] || '';
     var stLabel = st === 'downloading' ? '保存中…'
       : st === 'done' ? '已保存'
       : st === 'error' ? '失败'
       : '未保存';
+    var tag = post.is_video ? '视频' : stLabel;
     var rs = resText(post);
     var stem = post.stem || (((_SOURCES[post.source] || {}).stemPrefix || 'g') + post.id);
-    return stLabel + ' · ' + (rs ? rs + ' ' : '') + stem;
+    return tag + ' · ' + (rs ? rs + ' ' : '') + stem;
   }
 
   /** 帖子是否有真实宽高. 引用: cardLabel / createCard / showPreview. */
@@ -1357,10 +1380,16 @@ var BooruFilter = (function () {
     if (_selected[post.key]) card.classList.add('selected');
     card.dataset.key = post.key;
     if (post.page) card.dataset.page = String(post.page);
-    card.addEventListener('click', onCardClick.bind(null, post));
+    // 来源可自定义卡片点击(如视频进入抽帧页); 否则走默认下载/预览.
+    var srcDef = _SOURCES[post.source] || {};
+    card.addEventListener('click', function (e) {
+      if (srcDef.onClick) { srcDef.onClick(post); return; }
+      onCardClick(post);
+    });
     card.addEventListener('contextmenu', function (e) {
       e.preventDefault();
       e.stopPropagation();
+      if (srcDef.onClick) { srcDef.onClick(post); return; }
       showPreview(post);
     });
 
@@ -1378,10 +1407,25 @@ var BooruFilter = (function () {
 
     var info = document.createElement('div');
     info.className = 'info';
+    if (post.is_video) info.classList.add('info-video');
     var name = document.createElement('span');
     name.className = 'name';
     name.textContent = cardLabel(post);
     info.appendChild(name);
+    if (post.is_video) {
+      var vbtn = document.createElement('button');
+      vbtn.className = 'video-dl-btn';
+      vbtn.textContent = '下载视频';
+      vbtn.title = '用 BBDown 下载视频到 video 目录';
+      vbtn.addEventListener('click', function (e) {
+        e.stopPropagation();
+        e.preventDefault();
+        downloadOne(post).catch(function (err) {
+          toast('视频下载失败: ' + (err.message || err));
+        });
+      });
+      info.appendChild(vbtn);
+    }
     card.appendChild(info);
 
     var overlay = document.createElement('div');
@@ -1618,6 +1662,24 @@ var BooruFilter = (function () {
       throw err;
     }
     var data = await res.json();
+    // 视频帖: 后端返回长任务, 需监听进度; 图片帖直接返回写入结果
+    if (data.job_id) {
+      toast('视频下载中…');
+      API.watchJob(data.job_id, function (s) {
+        if (s.status === 'done') {
+          _status[post.key] = 'done';
+          updateCard(post.key);
+          toast('视频下载完成 · ' + (s.message || ''));
+          refreshDiskCount();
+        } else if (s.status === 'error') {
+          _status[post.key] = 'error';
+          updateCard(post.key);
+          delete _selected[post.key];
+          toast('视频下载失败: ' + (s.message || ''));
+        }
+      });
+      return data;
+    }
     _status[post.key] = 'done';
     if (data.stem) post.stem = data.stem;
     if (data.filename) post.filename = data.filename;
@@ -2026,7 +2088,31 @@ var BooruFilter = (function () {
     }
   }
 
+  /** 加载本地 ``video`` 目录视频并渲染封面瀑布流. 引用: ``search``(视频来源). */
+  async function loadVideos() {
+    if (_loading) return;
+    _source = mode();
+    _loading = true;
+    updatePageStatus();
+    try {
+      var res = await fetch(API.apiPath('/videos'));
+      if (!res.ok) throw new Error(await res.text());
+      var list = await res.json();
+      _posts = (list || []).map(function (v) {
+        return {
+          source: 'video', path: v.path, key: v.path, stem: v.stem, name: v.name,
+          width: v.width, height: v.height, duration: v.duration,
+        };
+      });
+      render();
+    } finally {
+      _loading = false;
+      updatePageStatus();
+    }
+  }
+
   async function search(dir, fromFirst) {
+    if (mode() === 'video') return loadVideos();
     if (_loading) return;
     var isReset = dir === true || dir === 'reset';
     var isUp = dir === 'up';

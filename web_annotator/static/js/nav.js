@@ -17,7 +17,7 @@
     { page: 'ready', label: '就绪' },
   ];
 
-  var HIDE_DIR = { filter: 0, crop: 1, paint: 0, ready: 1, scoring: 0, dedupe: 0, tags: 0, 'tag-check': 0 };
+  var HIDE_DIR = { filter: 0, crop: 1, paint: 0, ready: 1, scoring: 0, dedupe: 0, tags: 0, 'tag-check': 0, video_extract: 1 };
 
   /**
    * @returns {{dataset: string|null, page: string}}

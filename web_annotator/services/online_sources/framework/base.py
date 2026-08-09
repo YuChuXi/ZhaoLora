@@ -14,9 +14,8 @@ from __future__ import annotations
 import asyncio
 import io
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterator, Mapping
+from collections.abc import AsyncIterator, Callable
 from pathlib import Path
-from typing import Any
 from urllib.parse import urlparse
 
 from PIL import Image
@@ -27,12 +26,14 @@ from services.online_sources.framework.utils import (
     _GENDER_TAGS,
     sniff_image_kind,
     _tags_to_caption,
-    find_downloaded,
 )
 from services.models.booru import BooruPost
 
 
 _SOURCES: dict[str, SourceClient] = {}
+
+# 下载进度回调: (当前进度, 总量), 数值为整数(如 20, 100). 仅视频帖有意义.
+ProgressFn = Callable[[int, int], None]
 
 
 class SourceClient(ABC):
@@ -73,20 +74,55 @@ class SourceClient(ABC):
             - `routes/online_sources.py:search`
             - `base.py:search_posts`
         """
+    async def search_session(
+        self,
+        tags: str,
+        session: str,
+        order: str,
+        extra: str,
+    ) -> tuple[list[BooruPost], bool, str]:
+        """按会话续拉下一批结果, 返回 (posts, has_more, session_token).
+
+        游标式来源 (Bilibili/X) 覆盖此方法; 页码式来源不应调用, 默认抛错。
+
+        Returns:
+            ``(posts, has_more, session_token)``.
+
+        Raises:
+            NotImplementedError: 非会话式来源调用时.
+
+        Callers:
+            - `routes/online_sources.py:search`
+        """
+        raise NotImplementedError("非会话式来源不支持 search_session")
     @abstractmethod
     async def download(self, post: BooruPost, out_dir: Path, *,
                        overwrite: bool = False, anima_format: bool = True,
-                       include_meta_tags: bool = False, keep_underscores: bool = False) -> dict:
-        """下载帖子原图并写旁路标签与 meta.
+                       include_meta_tags: bool = False, keep_underscores: bool = False,
+                       emit: ProgressFn | None = None) -> dict:
+        """下载帖子并写旁路标签与 meta.
 
         入参直接吃 search 阶段已返回的 ``BooruPost`` (含原图 URL 与标签),
-        各实现据此下载, 不再凭 id 重新请求帖文元数据。
+        各实现据此下载, 不再凭 id 重新请求帖文元数据。视频帖 (``post.is_video``)
+        同样经此方法写入 ``out_dir`` (即数据集 ``video`` 目录)。``emit`` 为
+        下载进度回调 ``(当前进度, 总量)``, 仅视频帖 (如 B 站 BBDown) 有意义,
+        图片来源可忽略。
 
-        Callers:
-            - `base.py:SourceClient.download`
+        Args:
+            post: 帖子.
+            out_dir: 输出目录(图片帖为筛选子目录, 视频帖为数据集 ``video``).
+            overwrite: 是否覆盖已下载文件.
+            anima_format: 按 Anima 格式输出标签.
+            include_meta_tags: 是否保留元数据标签.
+            keep_underscores: 是否保留下划线.
+            emit: 下载进度回调, 形如 ``(pct, total)``.
+
+        Returns:
+            dict: 含 ``path``/``stem``/``id`` 等写入结果的字典.
 
         Callers:
             - `online_sources/batch.py:download_one`
+            - `media.py:download_post`
         """
 
     async def autocomplete(self, query: str, limit: int = 10) -> list[dict]:
@@ -261,7 +297,7 @@ class SourceClient(ABC):
             post.model_dump_json(indent=2) + "\n", encoding="utf-8")
 
     async def _save_png(self, data: bytes, dest: Path) -> None:
-        """将下载字节转为 PNG 落盘.
+        """将下载字节转为 PNG 写入磁盘.
 
         图片解码/重编码是 CPU 密集的同步操作, 移入线程池执行以避免阻塞事件
         循环; 转码核心逻辑见 ``_save_png_sync``。
@@ -283,7 +319,7 @@ class SourceClient(ABC):
         await asyncio.to_thread(self._save_png_sync, data, dest)
 
     def _save_png_sync(self, data: bytes, dest: Path) -> None:
-        """同步执行 PNG 字节转码落盘 (经 ``asyncio.to_thread`` 调用).
+        """同步执行 PNG 字节转码写入 (经 ``asyncio.to_thread`` 调用).
 
         Args:
             data: 原始字节。

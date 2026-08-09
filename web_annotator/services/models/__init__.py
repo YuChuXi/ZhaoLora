@@ -95,6 +95,13 @@ from services.models.pages import (
     TaggingDirsResponse,
     TaggingStartResponse,
 )
+from services.models.video import (
+    VideoInfo,
+    VideoDetail,
+    FrameType,
+    FrameSaveBody,
+    FrameSaveResponse,
+)
 
 __all__ = [
     'ScannedImage',
@@ -165,4 +172,9 @@ __all__ = [
     'ScoringActiveResponse',
     'TaggingDirsResponse',
     'TaggingStartResponse',
+    'VideoInfo',
+    'VideoDetail',
+    'FrameType',
+    'FrameSaveBody',
+    'FrameSaveResponse',
 ]
