@@ -229,10 +229,10 @@ var BooruFilter = (function () {
         return { tags: _val('bilibili-uid').trim(), extra: _val('bilibili-extra').trim(), order: '' };
       },
       thumb: function (post) {
-        return API.apiPath('/online-sources/bili-image') + '?url=' + encodeURIComponent(post.preview_url || post.sample_url || '');
+        return API.apiPath('/online-sources/bilibili-image') + '?url=' + encodeURIComponent(post.preview_url || post.sample_url || '');
       },
       sample: function (post) {
-        return API.apiPath('/online-sources/bili-image') + '?url=' + encodeURIComponent(post.sample_url || post.file_url || post.preview_url || '');
+        return API.apiPath('/online-sources/bilibili-image') + '?url=' + encodeURIComponent(post.sample_url || post.file_url || post.preview_url || '');
       },
       pageUrl: function (post) {
         var i = post.id.lastIndexOf('_');
