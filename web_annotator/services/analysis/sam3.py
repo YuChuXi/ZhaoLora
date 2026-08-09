@@ -16,15 +16,14 @@ from __future__ import annotations
 import base64
 import io
 import os
-import threading
 from collections.abc import Callable
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import numpy as np
 from PIL import Image
 
-from services.core.device import cuda_device
+from services.core.device import register_model
 
 if TYPE_CHECKING:
     import torch
@@ -46,64 +45,60 @@ _OVERLAY_ALPHA = 150
 # 概念分割单次前向的图片批大小; 输入会被 processor 缩放到统一尺寸, 故可混合分辨率
 _BATCH_SIZE = 4
 
-_MODEL: Sam3Model | None = None
-_PROCESSOR: Sam3Processor | None = None
-_DEVICE: str = "cpu"
-_LOCK = threading.Lock()
+
+def _load_model() -> tuple[Sam3Model, Sam3Processor, str]:
+    """从本地 ModelScope 缓存加载概念分割模型与处理器 (统一加载到 CPU).
+
+    Returns:
+        ``(model, processor, device)`` 三元组作为句柄; device 恒为 ``"cpu"``.
+
+    Callers:
+        - ``device.register_model`` 注册的 load 回调
+    """
+    from transformers import Sam3Model, Sam3Processor
+
+    model = Sam3Model.from_pretrained(_MODEL_PATH, trust_remote_code=True)
+    model.eval()
+    processor = Sam3Processor.from_pretrained(_MODEL_PATH, trust_remote_code=True)
+    return model, processor, "cpu"
+
+
+def _unload_model(handle: object) -> None:
+    """释放概念分割模型与处理器, 归还显存.
+
+    Args:
+        handle: ``_load_model`` 返回的 ``(model, processor, device)`` 三元组.
+
+    Callers:
+        - ``device.register_model`` 注册的 unload 回调
+    """
+    model, processor, _dev = cast("tuple", handle)
+    del model, processor
+
+
+_MODEL = register_model(_load_model, _unload_model)
 
 
 def model_ready() -> tuple[bool, str]:
-    """检查概念分割模型是否已加载，未加载时从本地 ModelScope 缓存加载.
+    """检查概念分割模型是否可加载（含权重目录与依赖检查，不实际加载）.
 
     Returns:
-        ``(ok, message)``. ok 为 True 时表示模型可用.
+        ``(ok, message)``. ok 为 True 时表示权重就绪、可加载.
 
     Callers:
         - ``routes/tag_stats:concept_query``
     """
-    global _MODEL, _PROCESSOR, _DEVICE
-
-    if _MODEL is not None:
-        return True, "模型已加载"
-
-    with _LOCK:
-        if _MODEL is not None:
-            return True, "模型已加载"
-        if not os.path.isdir(_MODEL_PATH):
-            return False, f"未找到 ModelScope 下载的模型: {_MODEL_PATH}"
-        try:
-            import torch
-            from transformers import Sam3Model, Sam3Processor
-
-            device = cuda_device()
-            _DEVICE = str(device) if device is not None else "cpu"
-            model_kwargs: dict = {}
-            if device is not None:
-                model_kwargs["torch_dtype"] = torch.float16
-                model_kwargs["device_map"] = "auto"
-            _MODEL = Sam3Model.from_pretrained(_MODEL_PATH, trust_remote_code=True, **model_kwargs)
-            _MODEL.eval()
-            _PROCESSOR = Sam3Processor.from_pretrained(_MODEL_PATH, trust_remote_code=True)
-            return True, f"模型加载成功: {_MODEL_PATH}"
-        except Exception as e:  # 权重文件缺失或加载失败时向上反馈明确原因
-            return False, f"模型加载失败: {e}"
+    if not os.path.isdir(_MODEL_PATH):
+        return False, f"未找到 ModelScope 下载的模型: {_MODEL_PATH}"
+    try:
+        from transformers import Sam3Model, Sam3Processor  # noqa: F401
+        return True, f"模型就绪: {_MODEL_PATH}"
+    except Exception as e:
+        return False, f"模型不可用: {e}"
 
 
-def _get_model() -> tuple[Sam3Model, Sam3Processor, str]:
-    """获取已加载的模型与处理器（确保已调用 ``model_ready``）.
-
-    Returns:
-        ``(model, processor, device)``.
-
-    Callers:
-        - ``segment_concept_mask``
-    """
-    if _MODEL is None:
-        ok, msg = model_ready()
-        if not ok:
-            raise RuntimeError(msg)
-    assert _MODEL is not None and _PROCESSOR is not None
-    return _MODEL, _PROCESSOR, _DEVICE
+# 概念分割模型句柄: (model, processor, device), 由 auto_release 注入
+Sam3Handle = tuple["Sam3Model", "Sam3Processor", str]
 
 
 def _merge_masks(masks) -> np.ndarray | None:
@@ -130,10 +125,11 @@ def _merge_masks(masks) -> np.ndarray | None:
     return (union * 255).astype(np.uint8)
 
 
-def segment_concept_mask(image: Image.Image, text: str) -> np.ndarray | None:
+def segment_concept_mask(handle: Sam3Handle, image: Image.Image, text: str) -> np.ndarray | None:
     """对单张图片执行文本提示概念分割.
 
     Args:
+        handle: ``_load_model`` 返回的 ``(model, processor, device)`` 句柄.
         image: 待分割图片 (RGB).
         text: 概念提示词, 如 "cat" / "yellow school bus".
 
@@ -147,7 +143,7 @@ def segment_concept_mask(image: Image.Image, text: str) -> np.ndarray | None:
     Callers:
         - ``services/analysis/sam3:run_concept_query``
     """
-    model, processor, device = _get_model()
+    model, processor, device = handle
     import torch
 
     if image.mode != "RGB":
@@ -165,13 +161,14 @@ def segment_concept_mask(image: Image.Image, text: str) -> np.ndarray | None:
     return _merge_masks(results.get("masks"))
 
 
-def segment_concept_masks_batch(images: list[Image.Image], text: str) -> list[np.ndarray | None]:
+def segment_concept_masks_batch(handle: Sam3Handle, images: list[Image.Image], text: str) -> list[np.ndarray | None]:
     """对一批图片执行文本提示概念分割（单次前向）.
 
     processor 会把同批图片缩放到统一尺寸后一次前向, post_process 依据各图
     ``original_sizes`` 还原为原尺寸掩码; 适合批量场景以减少推理开销.
 
     Args:
+        handle: ``_load_model`` 返回的 ``(model, processor, device)`` 句柄.
         images: 待分割图片列表 (均为 RGB).
         text: 概念提示词.
 
@@ -185,7 +182,7 @@ def segment_concept_masks_batch(images: list[Image.Image], text: str) -> list[np
     Callers:
         - ``services/analysis/sam3:run_concept_query``
     """
-    model, processor, device = _get_model()
+    model, processor, device = handle
     import torch
 
     texts = [text] * len(images)
@@ -252,12 +249,18 @@ def overlay_png_base64(mask: np.ndarray) -> str:
     return "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
 
 
+@_MODEL.auto_release
 def run_concept_query(
     candidates: list[tuple[str, Path]],
     text: str,
     on_progress: Callable[[int, int], None] | None = None,
+    handle: Sam3Handle | None = None,
 ) -> list[dict]:
     """对候选图片列表分批执行概念分割并汇总结果.
+
+    作为概念分割的推理执行入口, 由 ``auto_release`` 注入模型句柄并管理其生命周期:
+    进入时 ``acquire`` 并持有引用, 退出时 ``release`` (引用归零后模型驻留内存供
+    复用, 空闲超时才彻底释放).
 
     以 ``_BATCH_SIZE`` 为一批读取图片并单次前向推理, 减少模型调用次数;
     每批结束后即释放图片对象, 避免一次性占用过多内存.
@@ -266,6 +269,8 @@ def run_concept_query(
         candidates: ``[(相对路径, 图片绝对路径), ...]``.
         text: 概念提示词.
         on_progress: 进度回调 ``(done, total)``.
+        handle: ``_load_model`` 返回的 ``(model, processor, device)`` 句柄,
+            由 ``auto_release`` 注入, 调用方无需传.
 
     Returns:
         按掩码占比降序的结果列表, 每项为
@@ -275,12 +280,13 @@ def run_concept_query(
     Callers:
         - ``routes/tag_stats:concept_query``
     """
+    assert handle is not None
     n = len(candidates)
     items: list[dict] = []
     for start in range(0, n, _BATCH_SIZE):
         batch = candidates[start:start + _BATCH_SIZE]
         images = [Image.open(abs_path).convert("RGB") for _, abs_path in batch]
-        masks = segment_concept_masks_batch(images, text)
+        masks = segment_concept_masks_batch(handle, images, text)
         for (rel, _abs_path), mask in zip(batch, masks):
             if mask is None:
                 items.append({"path": rel, "ratio": 0.0, "mask_data": ""})

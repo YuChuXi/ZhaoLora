@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-import threading
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable, Iterable
+from typing import TYPE_CHECKING, Callable, Iterable, cast
 
 import numpy as np
 from PIL import Image
@@ -13,6 +12,7 @@ from PIL import Image
 from services.models import JobSnapshot, WorkDirInfo
 from services.core.scanner import IMAGE_EXTS, collect_images
 from services.online_sources.framework.utils import _GENDER_TAGS
+from services.core.device import register_model
 
 if TYPE_CHECKING:
     from onnxruntime import InferenceSession
@@ -24,10 +24,8 @@ WD14_MODEL_DIR = _REPO_ROOT / "wd14_tagger_model" / "SmilingWolf_wd-vit-large-ta
 WD14_ONNX_PATH = WD14_MODEL_DIR / "model.onnx"
 WD14_CSV_PATH = WD14_MODEL_DIR / "selected_tags.csv"
 
-_WD14_SESSION: InferenceSession | None = None
-# (标签名, 是否角色) 元组列表, 与模型输出索引对齐; 角色取自 selected_tags.csv category=4
-_WD14_LABELS: list[tuple[str, bool]] = []
-_WD14_LOCK = threading.Lock()
+# WD14 模型句柄: (onnx 会话, [(标签名, 是否角色), ...]), 由 device 管理生命周期
+_WD14_HANDLE = tuple["InferenceSession", list[tuple[str, bool]]]
 
 
 class Tags:
@@ -215,41 +213,73 @@ def model_ready() -> tuple[bool, str]:
     return False, f"找不到本地 WD14 模型: {rel}"
 
 
-def _get_wd14() -> tuple[InferenceSession, list[tuple[str, bool]]]:
-    """加载或复用 WD14 ONNX 会话. 
-    
+def _load_model() -> _WD14_HANDLE:
+    """加载 WD14 ONNX 会话与标签表.
+
+    读取 ``selected_tags.csv`` 构建 ``(标签名, 是否角色)`` 标签表; 依据 CUDA 可用性
+    选择执行提供程序, 创建 ONNX 推理会话.
+
     Returns:
         ``(session, labels)`` — ``labels`` 为 ``(标签名, 是否角色)`` 元组列表,
         与模型输出索引对齐.
 
-    引用: ``run_wd14_on_image_scored``.
+    Callers:
+        - ``device.register_model`` 注册的 load 回调
     """
-    global _WD14_SESSION, _WD14_LABELS
-    with _WD14_LOCK:
-        if _WD14_SESSION is not None:
-            return _WD14_SESSION, _WD14_LABELS
-        ok, msg = model_ready()
-        if not ok:
-            raise RuntimeError(msg)
-        import onnxruntime as ort
-        import pandas as pd
-        import torch
+    ok, msg = model_ready()
+    if not ok:
+        raise RuntimeError(msg)
+    import onnxruntime as ort
+    import pandas as pd
+    import torch
 
-        df = pd.read_csv(WD14_CSV_PATH)
-        is_character = (df["category"].astype(str) == "4").tolist()
-        _WD14_LABELS = list(zip(df["name"].tolist(), is_character))
-        providers = (
-            ["CUDAExecutionProvider", "CPUExecutionProvider"]
-            if torch.cuda.is_available()
-            else ["CPUExecutionProvider"]
-        )
-        _WD14_SESSION = ort.InferenceSession(str(WD14_ONNX_PATH), providers=providers)
-        return _WD14_SESSION, _WD14_LABELS
+    df = pd.read_csv(WD14_CSV_PATH)
+    is_character = (df["category"].astype(str) == "4").tolist()
+    labels: list[tuple[str, bool]] = list(zip(df["name"].tolist(), is_character))
+    providers = (
+        ["CUDAExecutionProvider", "CPUExecutionProvider"]
+        if torch.cuda.is_available()
+        else ["CPUExecutionProvider"]
+    )
+    session = ort.InferenceSession(str(WD14_ONNX_PATH), providers=providers)
+    return session, labels
 
 
-def run_wd14_on_image_scored(img: Image.Image, threshold: float) -> list[tuple[str, float, bool]]:
-    """对单张图跑 WD14, 返回 (tag, score, is_character). 引用: process_one. """
-    session, labels = _get_wd14()
+def _unload_model(handle: object) -> None:
+    """释放 WD14 ONNX 会话.
+
+    Args:
+        handle: ``_load_model`` 返回的 ``(session, labels)`` 元组.
+
+    Callers:
+        - ``device.register_model`` 注册的 unload 回调
+    """
+    session, _labels = cast("_WD14_HANDLE", handle)
+    del session, _labels
+
+
+_MODEL = register_model(_load_model, _unload_model)
+
+
+def _infer_wd14(
+    img: Image.Image,
+    threshold: float,
+    handle: _WD14_HANDLE,
+) -> list[tuple[str, float, bool]]:
+    """对单张图跑 WD14, 返回 (tag, score, is_character).
+
+    Args:
+        img: 待打标图片.
+        threshold: 置信度阈值.
+        handle: WD14 模型句柄 ``(session, labels)``, 由 ``run_batch`` 经 ``auto_release`` 持有.
+
+    Returns:
+        ``[(tag, score, is_character), ...]``, 已按置信度过滤阈值以上.
+
+    Callers:
+        - ``_process_one``
+    """
+    session, labels = handle
     if img.mode == "RGBA":
         rgb = Image.new("RGB", img.size, (255, 255, 255))
         rgb.paste(img, mask=img.split()[3])
@@ -332,15 +362,24 @@ class TaggingProgress:
             self.logs = self.logs[-300:]
 
 
-def process_one(
+def _process_one(
     src: Path,
     *,
+    handle: _WD14_HANDLE,
     threshold: float,
     disable_orig_tags: bool,
     force: bool,
     artist_tag: str = "",
 ) -> str:
     """处理单张图片: WD14 推理 → 合并原标签 → 写入同名 .txt. 
+
+    Args:
+        src: 图片绝对路径.
+        handle: WD14 模型句柄, 由 ``run_batch`` 持有并透传.
+        threshold: 置信度阈值.
+        disable_orig_tags: 是否丢弃原标签.
+        force: 是否覆盖已存在的 ``.txt``.
+        artist_tag: 追加的画师标签 (以 ``@`` 开头).
 
     Returns:
         ``"skip"`` 或 ``"ok"``. 
@@ -356,15 +395,17 @@ def process_one(
     base: list[str] = []
     if not disable_orig_tags:
         base = Tags.split_caption(_load_text(out_txt_path))
-    wd_scored = run_wd14_on_image_scored(img, threshold)
+    wd_scored = _infer_wd14(img, threshold, handle)
     caption = Tags.merge_for_disk_by_confidence(base, wd_scored, artist_tag=artist_tag)
     out_txt_path.write_text(caption, encoding="utf-8")
     return "ok"
 
 
+@_MODEL.auto_release
 def run_batch(
     dirs: list[Path],
     *,
+    handle: _WD14_HANDLE,
     threshold: float,
     disable_orig_tags: bool,
     force: bool,
@@ -400,7 +441,6 @@ def run_batch(
         return
 
     progress.log("加载 WD14 模型…")
-    _get_wd14()
     progress.phase = "running"
     progress.message = f"共 {len(items)} 张"
     if on_update:
@@ -423,8 +463,9 @@ def run_batch(
             on_update()
 
         try:
-            result = process_one(
+            result = _process_one(
                 src,
+                handle=handle,
                 threshold=threshold,
                 disable_orig_tags=disable_orig_tags,
                 force=force,

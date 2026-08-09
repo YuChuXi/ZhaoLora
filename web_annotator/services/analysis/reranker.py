@@ -15,7 +15,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
-from services.core.device import cuda_device
+from services.core.device import cuda_device, register_model
 
 if TYPE_CHECKING:
     from sentence_transformers import CrossEncoder
@@ -28,66 +28,71 @@ _PROMPT = "Retrieve images or text relevant to the user's query."
 # 单次 predict 的配对数量; Reranker 须逐张前向计算, 分批避免一次性占用过多显存
 _BATCH_SIZE = 8
 
-_RERANK_MODEL: CrossEncoder | None = None
-_RERANK_LOCK = threading.Lock()
+
+def _load_model() -> CrossEncoder:
+    """从 HuggingFace 加载重排序模型 (统一加载到 CPU).
+
+    ``huggingface_hub`` 下载模型时遵循 ``HTTP_PROXY`` / ``HTTPS_PROXY`` 环境变量.
+
+    Returns:
+        CrossEncoder 实例.
+
+    Callers:
+        - ``device.register_model`` 注册的 load 回调
+    """
+    from sentence_transformers import CrossEncoder
+
+    return CrossEncoder(
+        _MODEL_NAME,
+        trust_remote_code=True,
+    )
+
+
+def _unload_model(model: object) -> None:
+    """释放重排序模型, 归还显存.
+
+    Args:
+        model: 待卸载的 CrossEncoder 实例 (device 以 object 形式传入).
+
+    Callers:
+        - ``device.register_model`` 注册的 unload 回调
+    """
+    del model
+
+
+_MODEL = register_model(_load_model, _unload_model)
 
 
 def model_ready() -> tuple[bool, str]:
-    """检查重排序模型是否已加载，未加载时从 HuggingFace 加载。
-
-    ``huggingface_hub`` 下载模型时遵循 ``HTTP_PROXY`` / ``HTTPS_PROXY`` 环境变量。
+    """检查重排序模型是否可用（含依赖与 CUDA 检测，不实际加载）.
 
     Returns:
-        ``(ok, message)``. ok 为 True 时表示模型可用。
+        ``(ok, message)``. ok 为 True 时表示依赖就绪、可加载.
 
     Callers:
         - ``routes/tag_stats:embedding_status``
         - ``routes/tag_stats:embedding_query``
     """
-    global _RERANK_MODEL
-
-    if _RERANK_MODEL is not None:
-        return True, "模型已加载"
-
-    with _RERANK_LOCK:
-        if _RERANK_MODEL is not None:
-            return True, "模型已加载"
-        try:
-            from sentence_transformers import CrossEncoder
-
-            device = cuda_device()
-            model_kwargs: dict = {}
-            if device is not None:
-                model_kwargs["device"] = str(device)
-
-            _RERANK_MODEL = CrossEncoder(
-                _MODEL_NAME,
-                trust_remote_code=True,
-                **model_kwargs,
-            )
-            return True, f"模型加载成功: {_MODEL_NAME}"
-        except Exception as e:
-            return False, f"模型加载失败: {e}"
+    try:
+        from sentence_transformers import CrossEncoder  # noqa: F401
+        cuda_device()
+        return True, f"模型就绪: {_MODEL_NAME}"
+    except Exception as e:
+        return False, f"模型不可用: {e}"
 
 
-def _get_model() -> CrossEncoder:
-    """获取已加载的模型（确保已调用 ``model_ready``）。
-
-    Returns:
-        CrossEncoder 实例。
-
-    Callers:
-        - ``services/analysis/reranker:rerank``
-    """
-    return cast("CrossEncoder", _RERANK_MODEL)
-
-
+@_MODEL.auto_release
 def rerank(
     query_text: str,
     candidates: list[tuple[str, Path]],
     on_progress: Callable[[int, int], None] | None = None,
+    handle: CrossEncoder | None = None,
 ) -> list[tuple[str, float]]:
-    """对候选图片与查询文本逐张实时计算相似度。
+    """对候选图片与查询文本逐张实时计算相似度.
+
+    作为相似度评分的推理执行入口, 由 ``auto_release`` 注入模型句柄并管理其
+    生命周期: 进入时 ``acquire`` 并持有引用, 退出时 ``release`` (引用归零后
+    模型驻留内存供复用, 空闲超时才彻底释放).
 
     因 Reranker 为 cross-encoder，须对每张候选图构造 (query, image) 配对并
     执行前向计算，无法复用预计算缓存。分批调用模型并逐批上报进度，
@@ -97,6 +102,7 @@ def rerank(
         query_text: 查询文本。
         candidates: ``[(相对路径, 图片绝对路径), ...]``。
         on_progress: 进度回调 ``(done, total)``, 每完成一批调用一次。
+        handle: CrossEncoder 实例, 由 ``auto_release`` 注入, 调用方无需传.
 
     Returns:
         ``[(相对路径, 相似度), ...]``，按相似度降序排列。相似度经 sigmoid
@@ -105,7 +111,8 @@ def rerank(
     Callers:
         - ``routes/tag_stats:embedding_query``
     """
-    model = _get_model()
+    assert handle is not None
+    model = handle
 
     # 构造 (query, image) 配对; 图片以本地路径 dict 形式传入, 由模型自行加载
     pairs: list[tuple[str, dict[str, str]]] = [

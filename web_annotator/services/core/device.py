@@ -1,14 +1,41 @@
-"""CUDA 设备检测工具, 供各分析模块共享使用. """
+"""设备检测与 GPU 模型生命周期统一管理.
+
+生命周期模型: **初始化到内存 → 加载到 GPU ↔ 卸载到内存 → 超时完全释放**.
+
+- ``cuda_device``: 惰性检测可用 CUDA 设备并缓存.
+- ``release_cuda``: 归还未用显存, 供卸载后复用.
+- ``Model``: 封装单个模型的完整生命周期, 以对象而非名字维系.
+
+  生命周期由 ``Model`` 对象自持 (线程安全), 与对象绑定:
+
+  - 初始化到内存: 首次 ``acquire`` 时 ``_load`` 从磁盘载入权重.
+  - 任务使用: ``acquire`` 增加引用并确保权重在内存 (已在则复用, 不重复加载),
+    返回句柄供推理使用.
+  - 任务结束只释放: ``release`` 引用归零后模型**保持驻留内存**, 不销毁,
+    仅启动空闲计时.
+  - 超时完全释放: 空闲超过 ``_IDLE_TIMEOUT`` 仍无引用时, 才真正 ``unload``
+    销毁并清空. 这样避免频繁重建模型, 短时间内再次使用直接复用内存中的权重.
+
+- ``register_model``: 登记模型并返回其 ``Model`` 单例, 供模块持有所属模型对象.
+- ``Model.auto_release``: 方法装饰器, 进入时 ``acquire`` 并以固定形参 ``handle``
+  注入真实句柄, 退出时 ``release``.
+"""
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+import functools
+import threading
+from collections.abc import Callable
+from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:  # torch 惰性导入, 仅用于类型注解
     import torch
 
 _TORCH_DEVICE: torch.device | None = None
 _DEVICE_CHECKED = False
+
+# 空闲超时(秒): 模型引用归零后, 超过该时长仍无引用则彻底释放
+_IDLE_TIMEOUT = 10 * 60
 
 
 def cuda_device() -> torch.device | None:
@@ -34,3 +61,153 @@ def cuda_device() -> torch.device | None:
             _TORCH_DEVICE = None
         _DEVICE_CHECKED = True
     return _TORCH_DEVICE
+
+
+def release_cuda() -> None:
+    """回收可释放的 CUDA 显存缓存.
+
+    模型卸载后调用 ``torch.cuda.empty_cache()`` 归还未用显存, 供其他任务复用.
+    无 CUDA 或未安装 torch 时静默跳过.
+
+    Callers:
+        - ``device:Model._evict``
+    """
+    if not _DEVICE_CHECKED:
+        cuda_device()
+    if _TORCH_DEVICE is None:
+        return
+    try:
+        import torch
+        torch.cuda.empty_cache()
+    except ImportError:  # torch 不可用时不具备卸载场景
+        return
+
+
+class Model:
+    """单个 GPU 模型的句柄, 自持加载 / 引用计数 / 驻留复用 / 超时释放.
+
+    Callers:
+        - ``device:register_model``
+        - ``services/analysis/reranker``
+        - ``services/analysis/sam3``
+    """
+
+    def __init__(
+        self,
+        load: Callable[[], object],
+        unload: Callable[[object], None],
+    ) -> None:
+        """初始化模型句柄.
+
+        Args:
+            load: 加载回调, 无参, 返回真实模型句柄.
+            unload: 卸载回调, 接收真实模型句柄并释放其占用的资源.
+        """
+        self._load = load
+        self._unload = unload
+        self._handle: object | None = None
+        self._refs = 0
+        self._lock = threading.Lock()
+
+    def auto_release(self, func: Callable) -> Callable:
+        """装饰器: 包装任务执行函数, 自动持有并注入本模型句柄, 退出时释放.
+
+        任务进入前 ``acquire`` 增加引用并确保权重在内存, 将真实句柄以固定形参名
+        ``handle`` 注入被装饰函数; 退出 (成功或异常) 时经 ``finally`` 调用
+        ``release``. 引用归零后模型驻留内存供复用, 空闲超时才彻底释放; 并行任务
+        共享本模型时由引用计数保证不误卸载.
+
+        Args:
+            func: 任务执行函数, 需声明形参 ``handle`` 以接收模型句柄.
+
+        Returns:
+            包装后的函数.
+
+        Callers:
+            - ``services/analysis/reranker:rerank`` (@_MODEL.auto_release)
+            - ``services/analysis/sam3:run_concept_query`` (@_MODEL.auto_release)
+        """
+
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs) -> object:
+            handle = self.acquire()
+            try:
+                return func(*args, handle=handle, **kwargs)
+            finally:
+                self.release()
+
+        return cast(Callable, wrapper)
+
+    def acquire(self) -> object:
+        """获取真实模型句柄并增加引用计数 (线程安全).
+
+        首次调用触发 ``load`` 回调载入权重并驻留; 引用加一. 已在内存时直接复用,
+        不重复加载. 使用完毕后须调用 ``release`` 归还.
+
+        Returns:
+            真实模型句柄, 供推理使用.
+
+        Callers:
+            - ``device:auto_release``
+        """
+        with self._lock:
+            if self._handle is None:
+                self._handle = self._load()
+            self._refs += 1
+            return self._handle
+
+    def release(self) -> None:
+        """归还引用, 归零后模型驻留内存并安排超时彻底释放 (线程安全).
+
+        引用减一; 归零时**不销毁模型**, 仅启动空闲计时 (见 ``_schedule_eviction``),
+        使短时间内再次使用可直接复用内存中的权重; 仅当空闲超时仍无引用才真正卸载.
+
+        Callers:
+            - ``device:auto_release``
+        """
+        with self._lock:
+            self._refs -= 1
+            if self._refs > 0:
+                return
+            self._refs = 0
+        self._schedule_eviction()
+
+    def _schedule_eviction(self) -> None:
+        """为已空闲(引用归零)的模型安排超时彻底释放.
+
+        延迟 ``_IDLE_TIMEOUT`` 后检查: 若期间被重新获取(引用 > 0)或已释放则放弃;
+        否则调用 ``_unload`` 销毁并清空句柄.
+
+        Callers:
+            - ``device:Model.release``
+        """
+
+        def evict() -> None:
+            with self._lock:
+                if self._refs > 0 or self._handle is None:
+                    return  # 期间被复用或已由其他路径释放
+                handle = self._handle
+                self._handle = None
+            self._unload(handle)
+            release_cuda()
+
+        timer = threading.Timer(_IDLE_TIMEOUT, evict)
+        timer.daemon = True
+        timer.start()
+
+
+def register_model(load: Callable[[], object], unload: Callable[[object], None]) -> Model:
+    """登记一个 GPU 模型并返回其 ``Model`` 单例.
+
+    Args:
+        load: 加载回调, 无参, 返回真实模型句柄.
+        unload: 卸载回调, 接收真实模型句柄并释放其占用的资源.
+
+    Returns:
+        与模型对应的 ``Model`` 对象, 模块应持有该对象供 ``auto_release`` 使用.
+
+    Callers:
+        - ``services/analysis/reranker``
+        - ``services/analysis/sam3``
+    """
+    return Model(load, unload)
