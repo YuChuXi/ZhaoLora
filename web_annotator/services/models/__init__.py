@@ -63,6 +63,9 @@ from services.models.tags import (
     EmbeddingQueryResult,
     EmbeddingBatchTagBody,
     EmbeddingBatchTagResponse,
+    ConceptQueryBody,
+    ConceptQueryItem,
+    ConceptQueryResult,
 )
 from services.models.jobs import (
     AestheticSummary,
@@ -160,6 +163,9 @@ __all__ = [
     'EmbeddingQueryResult',
     'EmbeddingBatchTagBody',
     'EmbeddingBatchTagResponse',
+    'ConceptQueryBody',
+    'ConceptQueryItem',
+    'ConceptQueryResult',
     'AestheticSummary',
     'JobSubmitResponse',
     'JobResult',

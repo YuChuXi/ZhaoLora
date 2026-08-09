@@ -111,9 +111,16 @@
   }
   .emb-dlg-row { display: flex; align-items: center; gap: 8px; }
   .emb-dlg-row label { font-size: 13px; color: var(--text-dim); white-space: nowrap; }
-  #emb-query { flex: 1; background: var(--input-bg); color: var(--text); border: 1px solid var(--border); border-radius: 4px; padding: 4px 8px; font-size: 13px; }
-  #emb-threshold { width: 80px; background: var(--input-bg); color: var(--text); border: 1px solid var(--border); border-radius: 4px; padding: 3px 6px; font-size: 13px; text-align: center; }
-  #emb-operator, #emb-action { background: var(--card-bg); color: var(--text); border: 1px solid var(--border); border-radius: 4px; padding: 3px 6px; font-size: 13px; }
+  /* 语义检索对话框输入控件统一外观 */
+  .emb-dlg-row input[type="text"],
+  .emb-dlg-row input[type="number"],
+  .emb-dlg-row select {
+    background: var(--card-bg); color: var(--text);
+    border: 1px solid var(--border); border-radius: 4px;
+    padding: 4px 8px; font-size: 13px;
+  }
+  #emb-query, #emb-tag, #emb-engine { flex: 1; }
+  #emb-threshold { width: 80px; text-align: center; }
   #emb-fuzzy-wrap { display: flex; align-items: center; gap: 3px; color: var(--text-dim); white-space: nowrap; font-size: 13px; }
   #emb-fuzzy-wrap input { margin: 0; }
   #emb-status { color: var(--text-dim); font-size: 11px; white-space: nowrap; }
@@ -147,16 +154,23 @@
   <button class="btn single-only" type="button" id="btn-fit" title="切换 contain/cover">⊞</button>
 </div>
 
-<!-- 向量嵌入对话框 -->
+<!-- 语义检索对话框: 相似度(Reranker) 与 概念分割(SAM3) 两种引擎 -->
 <div class="modal" id="emb-dlg" aria-hidden="true">
-  <div class="modal-panel" role="dialog" aria-labelledby="emb-dlg-title" style="width:min(480px,92vw);height:auto;max-height:min(360px,64vh);">
+  <div class="modal-panel" role="dialog" aria-labelledby="emb-dlg-title" style="width:min(480px,92vw);height:auto;">
     <div class="modal-head">
-      <span class="modal-title" id="emb-dlg-title">相似度搜索</span>
+      <span class="modal-title" id="emb-dlg-title">语义检索</span>
     </div>
     <div class="modal-body" style="display:flex;flex-direction:column;gap:12px;padding:16px;">
       <div class="emb-dlg-row">
-        <label>查询文本</label>
-        <input type="text" id="emb-query" placeholder="查询文本" spellcheck="false" style="flex:1;">
+        <label>引擎</label>
+        <select id="emb-engine">
+          <option value="similarity">相似度 · Qwen3-VL-Reranker-2B</option>
+          <option value="concept">概念分割 · SAM3</option>
+        </select>
+      </div>
+      <div class="emb-dlg-row">
+        <label id="emb-query-label">查询文本</label>
+        <input type="text" id="emb-query" placeholder="查询文本 / 概念提示词" spellcheck="false">
       </div>
       <div class="emb-dlg-row">
         <button class="btn green" type="button" id="emb-sort">按相似度排序</button>
@@ -171,7 +185,7 @@
       <hr style="border:none;border-top:1px solid var(--border);margin:0;">
       <div class="emb-dlg-row">
         <label>标签</label>
-        <input type="text" id="emb-tag" placeholder="要添加或删除的标签" spellcheck="false" style="flex:1;">
+        <input type="text" id="emb-tag" placeholder="要添加或删除的标签" spellcheck="false">
       </div>
       <div class="emb-dlg-row">
         <label>位置</label>
@@ -182,12 +196,12 @@
           <option value="add">添加标签</option>
           <option value="delete">删除标签</option>
         </select>
-        <label>相似度</label>
+        <label id="emb-metric-label">相似度</label>
         <select id="emb-operator">
           <option value="gt">&gt;=</option>
           <option value="lt">&lt;=</option>
         </select>
-        <input type="number" id="emb-threshold" value="0.5" min="0" max="1" step="0.05" style="width:80px;">
+        <input type="number" id="emb-threshold" value="0.5" min="0" max="1" step="0.05">
         <label id="emb-fuzzy-wrap" style="display:none"><input type="checkbox" id="emb-fuzzy">模糊匹配</label>
       </div>
     </div>
@@ -201,7 +215,7 @@
 <!-- 多图视图 (瀑布流) -->
 <div class="view-multi" id="view-multi">
   <div class="masonry" id="masonry"></div>
-  <div class="hint" id="check-hint">输入标签并检查 · 绿色=位置符合 · 红色=位置不符 · 点击卡片添加/删除标签 · 右键卡片进入单图 · 无标签时显示全部图片 · 支持相似度排序与批量标记</div>
+  <div class="hint" id="check-hint">输入标签并检查 · 绿色=位置符合 · 红色=位置不符 · 点击卡片添加/删除标签 · 右键卡片进入单图 · 无标签时显示全部图片 · 支持相似度排序、概念分割与批量标记</div>
   <div class="status-bar" id="check-status">
     <span class="status-seg">共<b id="stat-total">0</b></span>
     <span class="status-seg">符合<b id="stat-ok">0</b></span>

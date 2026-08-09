@@ -61,10 +61,23 @@
     } else {
       card.title = '(无 .txt)';
     }
-    // 相似度 (与 A / Q 指标同栏); 余弦相似度可为负值, 仅 null 表示无相似度
+    // 相似度 S 前缀 / 掩码占比 R 前缀 (与 A / Q 指标同栏); 仅 null 表示无对应值
     var nameEl = card.querySelector('.name');
     if (nameEl && img._sim != null) {
       nameEl.textContent = 'S' + img._sim.toFixed(3) + ' ' + nameEl.textContent;
+    }
+    if (nameEl && img._ratio != null) {
+      nameEl.textContent = 'R' + img._ratio.toFixed(3) + ' ' + nameEl.textContent;
+    }
+    // 概念分割掩码叠加: 命中概念时叠加半透明 PNG, 覆盖在图片区
+    var overlay = card.querySelector('.mask-overlay');
+    if (overlay) overlay.remove();
+    if (img._mask) {
+      var mo = document.createElement('img');
+      mo.className = 'mask-overlay';
+      mo.src = img._mask;
+      mo.alt = '';
+      card.insertBefore(mo, card.querySelector('.info'));
     }
   }
 
@@ -146,14 +159,16 @@
 
   /**
    * 调用 /tags/check 加载检查结果并渲染。
+   * @param {boolean} [preserveSort] 为 true 时保留既有顺序与排序指标, 仅原位更新
+   *   各图片的标签状态 (exists/position_ok/caption_preview); 语义排序后批量改标签用它.
    * @returns {Promise<void>}
    */
-  async function runCheck() {
+  async function runCheck(preserveSort) {
     var tag = document.getElementById('check-tag').value.trim();
     var dirs = DirPicker.getDirs();
     var position = getCheckPosition();
 
-    _embSortActive = false;
+    if (!preserveSort) _embSortActive = false;
     var btn = document.getElementById('btn-check');
     btn.disabled = true;
     try {
@@ -161,7 +176,20 @@
         method: 'POST',
         body: JSON.stringify({ dirs: dirs, tag: tag, position: position }),
       });
-      _items = res.items || [];
+      if (preserveSort) {
+        // 仅按 path 原位更新状态, 不动顺序与 _sim/_ratio/_mask
+        var byPath = {};
+        (res.items || []).forEach(function (it) { byPath[it.path] = it; });
+        for (var i = 0; i < _items.length; i++) {
+          var it = byPath[_items[i].path];
+          if (!it) continue;
+          _items[i].exists = it.exists;
+          _items[i].position_ok = it.position_ok;
+          _items[i].caption_preview = it.caption_preview;
+        }
+      } else {
+        _items = res.items || [];
+      }
       if (_strip) _strip.refresh();
       hideSingle();
       Masonry.render(_items);
@@ -360,7 +388,8 @@
         } else {
           acClose();
         }
-        runCheck().catch(function (err) { toast('检查失败: ' + String(err.message || err)); });
+        // 语义排序状态下保留排序, 仅刷新标签状态
+        runCheck(_embSortActive).catch(function (err) { toast('检查失败: ' + String(err.message || err)); });
       }
     });
   }
@@ -597,9 +626,53 @@
     stage.addEventListener('scroll', update);
   }
 
-  // ---- 向量嵌入 ----
+  // ---- 语义检索 ----
 
   var _embSortActive = false;  // 是否处于排序模式
+  var _embEngine = 'similarity';  // 当前引擎: similarity(相似度) | concept(概念分割)
+
+  /**
+   * 当前引擎选择。
+   * @returns {string}
+   */
+  function embEngine() {
+    var el = document.getElementById('emb-engine');
+    return el ? el.value : 'similarity';
+  }
+
+  /**
+   * 引擎切换: 更新相关控件文案; 引擎真正变化时清空既有排序状态。
+   * @param {boolean} [reset] 是否重置排序状态; 打开对话框仅同步文案时传 false。
+   */
+  function embSetEngine(reset) {
+    var engine = embEngine();
+    var sortBtn = document.getElementById('emb-sort');
+    var metric = document.getElementById('emb-metric-label');
+    var qLabel = document.getElementById('emb-query-label');
+    var q = document.getElementById('emb-query');
+    if (sortBtn) sortBtn.textContent = engine === 'concept' ? '按掩码占比排序' : '按相似度排序';
+    if (metric) metric.textContent = engine === 'concept' ? '掩码占比' : '相似度';
+    if (qLabel) qLabel.textContent = engine === 'concept' ? '概念提示词' : '查询文本';
+    if (q) q.placeholder = engine === 'concept' ? '概念提示词, 如 cat' : '查询文本';
+    // 概念分割模式: 标签默认取概念词
+    if (engine === 'concept' && q && q.value.trim()) {
+      var tagEl = document.getElementById('emb-tag');
+      if (tagEl && !tagEl.value.trim()) tagEl.value = q.value.trim();
+    }
+    var changed = _embEngine !== engine;
+    _embEngine = engine;
+    if (!changed || reset === false) return;
+    // 引擎真正切换时清空既有排序与掩码, 重新渲染原始瀑布流
+    _embSortActive = false;
+    for (var i = 0; i < _items.length; i++) {
+      _items[i]._sim = null;
+      _items[i]._ratio = null;
+      _items[i]._mask = null;
+    }
+    hideSingle();
+    Masonry.render(_items);
+    updateStats();
+  }
 
   /**
    * 更新向量查询进度条（query 采用 JobManager，SSE 推送进度）。
@@ -623,18 +696,22 @@
   }
 
   /**
-   * 按查询文本相似度排序瀑布流（提交 JobManager 实时相似度评分，SSE 订阅进度）。
+   * 按查询文本排序瀑布流（提交 JobManager 实时计算，SSE 订阅进度）。
+   * - similarity 引擎: 按相似度评分排序
+   * - concept 引擎: 按掩码占比排序并叠加掩码
    * @returns {Promise<void>}
    */
   async function embSort() {
     var query = document.getElementById('emb-query').value.trim();
     if (!query) { toast('请输入查询文本'); return; }
+    var engine = embEngine();
+    var endpoint = engine === 'concept' ? '/tags/concept/query' : '/tags/embedding/query';
 
     var btn = document.getElementById('emb-sort');
     btn.disabled = true;
     document.getElementById('emb-status').textContent = '提交中…';
     try {
-      var res = await API.request(API.apiPath('/tags/embedding/query'), {
+      var res = await API.request(API.apiPath(endpoint), {
         method: 'POST',
         body: JSON.stringify({ query: query, dirs: DirPicker.getDirs() }),
       });
@@ -652,28 +729,35 @@
             document.getElementById('emb-status').textContent = '无匹配结果';
             return;
           }
-          // 构建 path -> similarity 映射
-          var simMap = {};
+          var simMap = {}, ratioMap = {}, maskMap = {};
           for (var i = 0; i < items.length; i++) {
             simMap[items[i].path] = items[i].similarity;
+            ratioMap[items[i].path] = items[i].ratio;
+            maskMap[items[i].path] = items[i].mask_data || null;
           }
-          // 将相似度写入 _items; 余弦相似度可为负值, 未命中者用 null 表示无相似度
-          for (var i = 0; i < _items.length; i++) {
-            var v = simMap[_items[i].path];
-            _items[i]._sim = v !== undefined ? v : null;
+          for (var j = 0; j < _items.length; j++) {
+            var p = _items[j].path;
+            _items[j]._sim = engine === 'concept' ? null : (simMap[p] !== undefined ? simMap[p] : null);
+            _items[j]._ratio = engine === 'concept' ? (ratioMap[p] !== undefined ? ratioMap[p] : null) : null;
+            _items[j]._mask = engine === 'concept' ? (maskMap[p] || null) : null;
           }
-          // 降序排列, 无相似度(null)排最后
+          // 降序排列; 相似度/占比可为 0, 仅 null 表示无值, 排最后
           _items.sort(function (a, b) {
-            var sa = a._sim == null ? -Infinity : a._sim;
-            var sb = b._sim == null ? -Infinity : b._sim;
+            var va = engine === 'concept' ? a._ratio : a._sim;
+            var vb = engine === 'concept' ? b._ratio : b._sim;
+            var sa = va == null ? -Infinity : va;
+            var sb = vb == null ? -Infinity : vb;
             return sb - sa;
           });
           _embSortActive = true;
           hideSingle();
           Masonry.render(_items);
           updateStats();
-          document.getElementById('emb-status').textContent = '已按相似度排序 (' + items.length + ' 条)';
-          toast('已按相似度排序');
+          var doneMsg = engine === 'concept'
+            ? '已按掩码占比排序 (' + items.length + ' 条)'
+            : '已按相似度排序 (' + items.length + ' 条)';
+          document.getElementById('emb-status').textContent = doneMsg;
+          toast(doneMsg);
         } else if (s.status === 'error') {
           btn.disabled = false;
           document.getElementById('emb-status').textContent = '查询失败';
@@ -688,16 +772,21 @@
   }
 
   /**
-   * 基于已排序瀑布流缓存的相似度，按阈值筛选匹配图片并批量添加/删除标签。
+   * 基于已排序瀑布流缓存的指标（相似度/掩码占比），按阈值筛选匹配图片并批量添加/删除标签。
    *
-   * 相似度来自 embSort 实时相似度评分结果（_items[i]._sim），本函数仅做前端筛选后
-   * 提交同步写接口，因此开销极小，无需长任务与进度条。
+   * 指标来自 embSort 的实时计算结果（_items[i]._sim / _items[i]._ratio），本函数仅做
+   * 前端筛选后提交同步写接口，因此开销极小，无需长任务与进度条。
+   * 概念分割模式下标签默认取概念词。
    * @returns {Promise<void>}
    */
   async function embBatchTag() {
+    var engine = embEngine();
     var tag = document.getElementById('emb-tag').value.trim();
+    if (!tag && engine === 'concept') {
+      tag = document.getElementById('emb-query').value.trim();
+    }
     if (!tag) { toast('请输入标签'); return; }
-    if (!_embSortActive) { toast('请先按相似度排序'); return; }
+    if (!_embSortActive) { toast('请先按' + (engine === 'concept' ? '掩码占比' : '相似度') + '排序'); return; }
 
     var operator = document.getElementById('emb-operator').value;
     var threshold = parseFloat(document.getElementById('emb-threshold').value);
@@ -711,7 +800,7 @@
     // 按阈值筛选匹配路径
     var paths = [];
     for (var i = 0; i < _items.length; i++) {
-      var s = _items[i]._sim;
+      var s = engine === 'concept' ? _items[i]._ratio : _items[i]._sim;
       if (s == null) continue;
       if ((operator === 'gt' && s >= threshold) || (operator === 'lt' && s <= threshold)) {
         paths.push(_items[i].path);
@@ -735,8 +824,8 @@
       });
       document.getElementById('emb-status').textContent = res.message || '完成';
       toast(res.message || '批量执行完成');
-      // 执行后刷新检查结果
-      runCheck().catch(function (e) { toast('刷新失败: ' + String(e.message || e)); });
+      // 刷新标签状态, 保留语义排序与顺序
+      runCheck(true).catch(function (e) { toast('刷新失败: ' + String(e.message || e)); });
     } catch (e) {
       document.getElementById('emb-status').textContent = '执行失败';
       toast('批量执行失败: ' + String(e.message || e));
@@ -800,12 +889,12 @@
     });
 
     document.getElementById('btn-check').addEventListener('click', function () {
-      _embSortActive = false;
-      runCheck().catch(function (e) { toast('检查失败: ' + String(e.message || e)); });
+      // 语义排序状态下保留排序, 仅刷新标签状态
+      runCheck(_embSortActive).catch(function (e) { toast('检查失败: ' + String(e.message || e)); });
     });
     document.getElementById('check-position').addEventListener('change', function () {
-      _embSortActive = false;
-      runCheck().catch(function (e) { toast('检查失败: ' + String(e.message || e)); });
+      // 语义排序状态下保留排序, 仅刷新标签状态
+      runCheck(_embSortActive).catch(function (e) { toast('检查失败: ' + String(e.message || e)); });
     });
 
     // ---- 向量嵌入事件 ----
@@ -829,6 +918,7 @@
       dlg.setAttribute('aria-hidden', 'false');
       document.getElementById('emb-position-display').textContent = embPositionLabel();
       embUpdateAction();
+      embSetEngine(false);
       document.getElementById('emb-query').focus();
     }
     function closeEmbDlg() {
@@ -847,6 +937,7 @@
       }
     });
     document.getElementById('emb-action').addEventListener('change', embUpdateAction);
+    document.getElementById('emb-engine').addEventListener('change', embSetEngine);
     document.getElementById('emb-sort').addEventListener('click', function () {
       embSort().catch(function (e) { toast('排序失败: ' + String(e.message || e)); });
     });

@@ -55,10 +55,14 @@
     display: flex; align-items: center; gap: 4px;
     font-size: 12px; color: var(--text-dim); cursor: pointer; user-select: none;
   }
-  .tagging-panel-actions input[type="number"] {
-    width: 56px; background: #0a1a30; color: var(--text);
-    border: 1px solid var(--border); border-radius: 4px; padding: 2px 4px; font-size: 12px;
+  .tagging-panel-actions input[type="number"],
+  .tagging-panel-actions input[type="text"] {
+    background: #0a1a30; color: var(--text);
+    border: 1px solid var(--border); border-radius: 4px;
+    padding: 2px 4px; font-size: 12px;
   }
+  .tagging-panel-actions input[type="number"] { width: 56px; }
+  #artist-tag { width: 120px; }
   .tagging-panel-actions .meta-inline {
     font-size: 12px; color: var(--text-dim); white-space: nowrap;
   }
@@ -128,7 +132,7 @@
         <input type="number" id="threshold" value="0.1" min="0" max="1" step="0.01">
       </label>
       <label>画师
-        <input type="text" id="artist-tag" placeholder="@画师名" spellcheck="false" style="width:120px;">
+        <input type="text" id="artist-tag" placeholder="@画师名" spellcheck="false">
       </label>
       <label><input type="checkbox" id="chk-disable-orig" checked> 忽略已有</label>
       <label><input type="checkbox" id="chk-force"> 覆盖</label>

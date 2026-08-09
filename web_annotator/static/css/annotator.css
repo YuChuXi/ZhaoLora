@@ -284,6 +284,17 @@ body {
   display: block;
   background: #111;
 }
+/* 语义检索-概念分割: 掩码半透明叠加, 覆盖在图片区且不拦截点击; 需透明背景以透出下层原图 */
+.card .mask-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: auto;
+  pointer-events: none;
+  z-index: 2;
+  background: transparent;
+}
 .card .info {
   padding: 6px 8px;
   font-size: 11px;

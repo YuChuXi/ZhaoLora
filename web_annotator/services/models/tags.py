@@ -182,3 +182,24 @@ class EmbeddingBatchTagResponse(BaseModel):
     matched_count: int = 0
     message: str = ""
 
+
+class ConceptQueryBody(BaseModel):
+    """概念分割查询请求. 引用: ``POST /tags/concept/query``."""
+
+    query: str = Field(..., description="概念提示词")
+    dirs: list[str] | None = Field(default=None, description="子目录名, 空/省略=全选")
+
+
+class ConceptQueryItem(BaseModel):
+    """概念分割查询结果项. 引用: ``POST /tags/concept/query``."""
+
+    path: str
+    ratio: float = Field(0.0, description="掩码占比 [0,1]")
+    mask_data: str = Field("", description="半透明叠加 PNG 的 base64 data URL, 未命中时为空")
+
+
+class ConceptQueryResult(BaseModel):
+    """概念分割查询长任务结束结果. 引用: ``POST /tags/concept/query`` 的 job 终态 result."""
+
+    items: list[ConceptQueryItem] = Field(default_factory=list)
+

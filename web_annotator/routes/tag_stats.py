@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request
@@ -32,12 +31,19 @@ from services.models import (
     EmbeddingQueryResult,
     EmbeddingBatchTagBody,
     EmbeddingBatchTagResponse,
+    ConceptQueryBody,
+    ConceptQueryItem,
+    ConceptQueryResult,
 )
 from services.tagging.clean import add_tag_to_caption, batch_edit_tags, check_tag_in_caption, clean_txt_dirs, delete_tag_from_caption, split_header_body, join_tags_line
 from services.tagging.stats import count_tags, load_translation_map, resolve_selected_dirs, translate_missing_tags
 from services.analysis.reranker import (
     rerank,
     model_ready as reranker_model_ready,
+)
+from services.analysis.sam3 import (
+    run_concept_query,
+    model_ready as concept_model_ready,
 )
 
 router = APIRouter(prefix="/tags", tags=["tags"])
@@ -631,3 +637,73 @@ def delete_tag_from_caption_fuzzy(raw: str, tag: str) -> str:
     if body:
         return join_tags_line(header) + " ||| " + join_tags_line(body)
     return join_tags_line(header)
+
+
+@router.post("/concept/query")
+async def concept_query(request: Request, body: ConceptQueryBody) -> JobSubmitResponse:
+    """按概念提示词对候选图片执行文本提示概念分割（异步长任务，带进度条）。
+
+    SAM3 对每张图片逐张分割并计算掩码占比，耗时较长，故提交 JobManager，
+    由前端以 SSE 订阅进度；任务完成时在 result 中携带按掩码占比降序的结果
+    及每张图的半透明叠加 PNG（base64）。
+
+    引用: tag_check.js。
+    """
+    rt = get_runtime(request)
+    root = rt.root
+    selected = resolve_selected_dirs(root, body.dirs)
+    if not selected:
+        raise HTTPException(400, "请选择目录")
+
+    if not body.query.strip():
+        raise HTTPException(400, "概念提示词不能为空")
+
+    ok, msg = concept_model_ready()
+    if not ok:
+        raise HTTPException(400, msg)
+
+    candidates: list[tuple[str, Path]] = []
+    for work in selected:
+        if work == root:
+            prefix = ""
+        else:
+            prefix = work.name
+        for img in scan_images(work, path_prefix=prefix):
+            candidates.append((img.path, root / img.path))
+
+    concept = body.query.strip()
+    total = len(candidates)
+
+    def run(emit: EmitFn) -> ConceptQueryResult:
+        """工作线程: 逐张概念分割并回报进度。引用: ``JobManager.submit``。"""
+        emit(JobSnapshot(
+            status="running", phase="concept",
+            message="正在概念分割…", pct=0, total=total,
+        ))
+
+        def on_progress(done: int, n_total: int) -> None:
+            emit(JobSnapshot(
+                status="running", phase="concept",
+                message=f"正在概念分割 {done}/{n_total}…",
+                pct=round(done / n_total * 100, 1) if n_total else 100,
+                done=done, total=n_total,
+            ))
+
+        hits = run_concept_query(candidates, concept, on_progress=on_progress)
+        items = [
+            ConceptQueryItem(
+                path=it["path"],
+                ratio=round(it["ratio"], 6),
+                mask_data=it["mask_data"],
+            )
+            for it in hits
+        ]
+        result = ConceptQueryResult(items=items)
+        emit(JobSnapshot(
+            status="done", phase="done",
+            message=f"完成，共 {len(items)} 张", pct=100, result=result,
+        ))
+        return result
+
+    job_id = await jobs(request).submit(kind="concept_query", group="compute", dataset=rt.name, run=run)
+    return JobSubmitResponse(ok=True, job_id=job_id)
