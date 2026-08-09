@@ -83,7 +83,7 @@ def caption_to_multiline_txt(caption: Any) -> str:
         lines.append(f"{k}:")
         lines.extend(ls)
         lines.append("")
-    # 兜底：写入未知字段
+    # 写入未显式映射的其余字段
     for k in sorted(caption.keys()):
         if k in used:
             continue

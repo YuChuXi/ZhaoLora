@@ -1093,7 +1093,7 @@ class LabelTool:
                     x2 = x1 + sw
                     y2 = y1 + sh
             else:
-                # new 模式已按候选生成，此处仅兜底
+                # new 模式已按候选生成，此处仅做边界钳位
                 x2 = min(iw, x1 + sw)
                 y2 = min(ih, y1 + sh)
             self.matched = (cand["target_w"], cand["target_h"], cand["zoom"])

@@ -159,6 +159,35 @@ async def video_frame(
     )
 
 
+@router.get("/video/segment")
+async def video_segment(
+    request: Request,
+    path: str = Query(...),
+    start: int = Query(..., ge=0),
+    end: int = Query(..., ge=0),
+) -> Response:
+    """返回 ``[start, end]`` 帧窗口的正常 I/P/B H.264 Annex-B 裸流.
+
+    首帧为关键帧、段自包含可从头解码, 供前端 WebCodecs 逐帧解码: 窗口内前向
+    增量解码, 向后/随机定位从最近关键帧重解。窗口内定位不重复请求; 移出窗口后
+    再请求新段。引用: 抽帧页主预览.
+    """
+    rt = get_runtime(request)
+    resolve_path(rt.root, path)
+    store, _ = _stores(request)
+    if end < start:
+        raise HTTPException(400, "end 不能小于 start")
+    try:
+        data = await asyncio.to_thread(store.segment_bytes, path, start, end)
+    except VideoFrameError as e:
+        raise HTTPException(400, str(e)) from e
+    return Response(
+        content=data,
+        media_type="video/h264",
+        headers={"Cache-Control": "no-store"},
+    )
+
+
 @router.post("/video/frame/save")
 async def save_frame(request: Request, body: FrameSaveBody) -> FrameSaveResponse:
     """保存指定帧为 PNG 到 ``main`` 目录. 引用: 抽帧页左键. """

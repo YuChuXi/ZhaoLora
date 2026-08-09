@@ -8,8 +8,10 @@
 
 from __future__ import annotations
 
+import functools
 import hashlib
 import json
+import os
 import subprocess
 from pathlib import Path
 
@@ -36,6 +38,71 @@ class VideoScanError(RuntimeError):
     """
 
 
+def _ffmpeg_supports_rawvideo(path: str) -> bool:
+    """检测 ffmpeg 是否具备 rawvideo demuxer(窗口帧编码的前提).
+
+    受限静态构建(如随 IDE 分发的 ffmpeg)可能缺少 rawvideo demuxer, 无法从原始帧
+    编码; 返回 True 表示可正常用于 ``_encode_h264_annexb``。
+
+    Args:
+        path: ffmpeg 可执行路径.
+
+    Returns:
+        bool: 是否支持 rawvideo demuxer.
+
+    Callers:
+        - `video_scanner.resolve_ffmpeg`
+    """
+    try:
+        out = subprocess.run(
+            [path, "-hide_banner", "-demuxers"],
+            capture_output=True, text=True, timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return "rawvideo" in out.stdout
+
+
+@functools.lru_cache(maxsize=1)
+def resolve_ffmpeg() -> str:
+    """解析一个支持 rawvideo demuxer 的 ffmpeg 可执行路径.
+
+    PATH 中受限静态构建可能优先于系统完整版, 故遍历 PATH 候选并补充常见完整版
+    路径, 返回首个支持 rawvideo 的; 均不支持时抛出 ``VideoScanError``。
+
+    Returns:
+        str: ffmpeg 可执行路径.
+
+    Raises:
+        VideoScanError: 未找到支持 rawvideo 的 ffmpeg.
+
+    Callers:
+        - 模块级常量 ``FFMPEG`` / ``FFPROBE`` 的初始化
+    """
+    seen: set[str] = set()
+    candidates: list[str] = []
+    for d in os.environ.get("PATH", "").split(os.pathsep):
+        if not d:
+            continue
+        p = os.path.join(d, "ffmpeg")
+        rp = os.path.realpath(p)
+        if os.path.isfile(p) and rp not in seen:
+            seen.add(rp)
+            candidates.append(p)
+    for extra in ("/usr/bin/ffmpeg", "/bin/ffmpeg"):
+        if extra not in seen and os.path.isfile(extra):
+            candidates.append(extra)
+    for c in candidates:
+        if _ffmpeg_supports_rawvideo(c):
+            return c
+    raise VideoScanError("未找到支持 rawvideo 的 ffmpeg")
+
+
+# 集中解析的 ffmpeg/ffprobe 路径, 供视频扫描与抽帧复用, 避免 PATH 中受限构建干扰
+FFMPEG = resolve_ffmpeg()
+FFPROBE = os.path.join(os.path.dirname(FFMPEG), "ffprobe")
+
+
 def _probe(path: Path) -> tuple[int, int, float]:
     """用 ffprobe 读取视频宽高与时长的纯逻辑.
 
@@ -49,7 +116,7 @@ def _probe(path: Path) -> tuple[int, int, float]:
         - `video_scanner.probe_video`
     """
     cmd = [
-        "ffprobe", "-v", "error",
+        FFPROBE, "-v", "error",
         "-select_streams", "v:0",
         "-show_entries", "stream=width,height",
         "-show_entries", "format=duration",
@@ -192,7 +259,7 @@ def ensure_cover(video_path: Path, cover_dir: Path, video_rel_path: str) -> Path
     mid = max(0.0, dur / 2.0) if dur > 0 else 0.0
     vm = f"scale={COVER_MAX_SIDE}:-2" if w else "scale=-2:240"
     cmd = [
-        "ffmpeg", "-y", "-v", "error",
+        FFMPEG, "-y", "-v", "error",
         "-ss", f"{mid:g}", "-i", str(video_path),
         "-frames:v", "1", "-vf", vm, "-q:v", "3",
         str(out),

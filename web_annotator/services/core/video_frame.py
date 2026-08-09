@@ -16,7 +16,7 @@ from pathlib import Path
 
 import numpy as np
 
-from services.core.video_scanner import cover_hash
+from services.core.video_scanner import FFMPEG, FFPROBE, cover_hash
 from services.core.work_dir import resolve_under
 from services.models.video import BitstreamTypes
 
@@ -24,6 +24,8 @@ from services.models.video import BitstreamTypes
 CACHE_DIRNAME = ".video_cache"
 # 保存帧文件名模板
 FRAME_NAME_TPL = "{stem}_frame_{idx:06d}.png"
+# 帧窗口段最大边长(像素), 等比缩略以控制传输体积
+SEGMENT_MAX_EDGE = 1280
 # 包大小量化档位: 字节 / 1024 = KB
 _SIZE_KB = 1024
 # ffprobe 单次分析的超时上限(秒), 大视频较长
@@ -139,6 +141,70 @@ class VideoFrameStore:
         tmp = self._bitstream_path(video_rel).with_suffix(".tmp")
         tmp.write_text(json.dumps(bits.model_dump()), encoding="utf-8")
         tmp.replace(self._bitstream_path(video_rel))
+
+    def segment_bytes(
+        self,
+        video_rel: str,
+        start: int,
+        end: int,
+        max_edge: int = SEGMENT_MAX_EDGE,
+    ) -> bytes:
+        """把 ``[start, end]`` 帧窗口编码为正常 H.264 Annex-B 字节流.
+
+        用 OpenCV 精确指定起始帧并顺序读取, 保证窗口帧序列与源帧号一一对应;
+        逐帧等比缩略到 ``max_edge`` 后经 ffmpeg 编码为正常 I/P/B 编码(窗口首帧
+        设为关键帧, 见 ``_encode_h264_annexb``), 使段自包含可从头解码, 前端
+        WebCodecs 从最近关键帧解算到目标帧。纯内存管道, 不落盘。
+
+        Args:
+            video_rel: 相对数据集根的视频路径.
+            start: 窗口起始帧索引.
+            end: 窗口结束帧索引.
+            max_edge: 输出帧最长边像素上限, 用于控制传输体积.
+
+        Returns:
+            bytes: H.264 Annex-B 裸流.
+
+        Raises:
+            VideoFrameError: 视频无法打开或窗口内无可用帧.
+
+        Callers:
+            - `routes/video.py:video_segment`
+        """
+        path = self._video_path(video_rel)
+        cap = cv2.VideoCapture(str(path))
+        try:
+            if not cap.isOpened():
+                raise VideoFrameError("无法打开视频")
+            cap.set(cv2.CAP_PROP_POS_FRAMES, int(start))
+            fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+            frames: list[np.ndarray] = []
+            for _ in range(int(start), int(end) + 1):
+                ok, frame = cap.read()
+                if not ok or frame is None:
+                    break
+                frames.append(frame)
+        finally:
+            cap.release()
+        if not frames:
+            raise VideoFrameError(f"帧 {int(start)}..{int(end)} 无可用帧")
+        if max_edge:
+            h, w = frames[0].shape[:2]
+            longest = max(w, h)
+            if longest > max_edge:
+                scale = max_edge / longest
+                w, h = int(w * scale), int(h * scale)
+            # libx264 的 yuv420p 要求宽高为偶数, 等比缩放取整或源帧本身为奇数时
+            # 需向下取偶, 否则编码报错
+            w -= w % 2
+            h -= h % 2
+            w, h = max(w, 2), max(h, 2)
+            if frames[0].shape[1] != w or frames[0].shape[0] != h:
+                frames = [
+                    cv2.resize(f, (w, h), interpolation=cv2.INTER_AREA)
+                    for f in frames
+                ]
+        return _encode_h264_annexb(frames, fps)
 
     # ---- 帧读取与编码 ----
 
@@ -355,7 +421,7 @@ class VideoFrameStore:
             return cached
 
         cmd = [
-            "ffprobe", "-v", "error",
+            FFPROBE, "-v", "error",
             "-select_streams", "v:0",
             "-show_entries", "frame=pict_type,pkt_size",
             "-of", "csv=p=0",
@@ -433,3 +499,50 @@ def total_frames(video_rel: str, data_dir: Path) -> int:
         return max(0, n)
     finally:
         cap.release()
+
+
+def _encode_h264_annexb(frames: list[np.ndarray], fps: float) -> bytes:
+    """把同尺寸 BGR 帧序列编码为正常 I/P/B H.264 Annex-B 字节流.
+
+    正常 I/P/B 编码以压缩体积; 关键帧间隔 ``-g`` 设为帧序列长度, 使输出首帧即
+    为关键帧、整个段自包含可从头解码, 前端 WebCodecs 从最近关键帧解算即可到达
+    窗口内任意帧(向后/随机重解最长一整个窗口)。
+
+    帧序列拼为单个 bytes 经 stdin 一次性传入、编码结果从 stdout 收集, 全程内存、
+    不写临时文件。用 ``subprocess.run`` 的 ``capture_output`` 让标准库同时排空
+    stdout/stderr, 避免任何单向管道缓冲占满导致死锁。
+
+    Args:
+        frames: 同尺寸 BGR 帧序列.
+        fps: 输入帧率(用于 ffmpeg 时间基准).
+
+    Returns:
+        bytes: H.264 Annex-B 裸流.
+
+    Raises:
+        VideoFrameError: ffmpeg 编码失败.
+
+    Callers:
+        - `VideoFrameStore.segment_bytes`
+    """
+    h, w = frames[0].shape[:2]
+    keyint = len(frames)
+    cmd = [
+        FFMPEG, "-y",
+        "-f", "rawvideo", "-pix_fmt", "bgr24",
+        "-s", f"{w}x{h}", "-r", str(fps or 30.0),
+        "-i", "-",
+        "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
+        "-g", str(keyint), "-pix_fmt", "yuv420p",
+        "-f", "h264", "-",
+    ]
+    proc = subprocess.run(
+        cmd,
+        input=b"".join(f.tobytes() for f in frames),
+        capture_output=True,
+        timeout=120,
+    )
+    if proc.returncode != 0:
+        detail = proc.stderr.decode(errors="replace")[:300]
+        raise VideoFrameError(f"帧窗口编码失败: {detail}")
+    return proc.stdout

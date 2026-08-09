@@ -18,10 +18,10 @@
     display: flex; align-items: center; justify-content: center;
     background: #05070d; overflow: hidden; position: relative;
   }
-  .ve-stage img {
+  .ve-stage canvas {
     max-width: 100%; max-height: 100%;
-    object-fit: contain; display: block; user-select: none;
-    -webkit-user-drag: none;
+    width: auto; height: auto;
+    display: block; user-select: none;
   }
   .ve-stage .ve-loading {
     position: absolute; inset: 0; display: none;
@@ -29,7 +29,7 @@
     color: var(--text-dim); font-size: 13px; gap: 8px;
   }
   .ve-stage.loading .ve-loading { display: flex; }
-  .ve-stage.loading img { opacity: 0.35; }
+  .ve-stage.loading canvas { opacity: 0.35; }
 
   /* 帧类型图区: 全局图 + 局部图左右并排(参照桌面工具 QHBoxLayout 双图布局)。
      每个 SVG 渲染整条时间轴, 容器 overflow-x:auto 提供浏览器原生横向滚动 */
@@ -152,8 +152,8 @@
 </div>
 
 <div class="ve-stage" id="ve-stage">
-  <img id="ve-img" alt="">
-  <div class="ve-loading" id="ve-loading">读取帧中…</div>
+  <canvas id="ve-canvas"></canvas>
+  <div class="ve-loading" id="ve-loading">解码帧中…</div>
 </div>
 
 <div class="ve-charts">

@@ -276,7 +276,7 @@ async def _submit_video_download(
 
     工作线程内运行 ``download_post`` (视频帖进入对应来源的 ``download`` 视频
     分支, B 站用 BBDown, 其余来源下载原始文件); 异常由 ``JobManager`` 捕获并
-    置为 error 状态, 本函数无需自行兜底。
+    置为 error 状态, 本函数无需自行捕获处理异常。
 
     Args:
         request: 请求对象.

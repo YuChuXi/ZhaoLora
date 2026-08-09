@@ -13,7 +13,7 @@ datasets/                         # 任务根（--data-dir）
     main/                         # 源图；裁剪 / 蒙版输入
     mask/                         # Alpha 蒙版（与 main 同 stem）
     head/ foot/ …                 # 部位裁剪输出
-    crops/                        # 未命名选区兜底
+    crops/                        # 未命名选区的存放目录
     .thumbnails/                  # 缩略图与色调指纹缓存
     .trash/                       # 回收站
     .annotator_state.json         # 选中态与回收站索引
