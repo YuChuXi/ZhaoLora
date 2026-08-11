@@ -21,7 +21,7 @@ from urllib.parse import urlparse
 from PIL import Image
 
 from services.core.scanner import IMAGE_EXTS
-from services.online_sources.framework import http
+from services.online_sources.framework.http import HttpClient
 from services.online_sources.framework.utils import (
     _GENDER_TAGS,
     sniff_image_kind,
@@ -223,7 +223,7 @@ class SourceClient(ABC):
 
         Raises:
             ValueError: URL 非法或不属于本来源图床.
-            http.NetworkError: 网络或上游错误.
+            NetworkError: 网络或上游错误.
 
         Callers:
             - `routes/online_sources.py:proxy_image`
@@ -235,11 +235,12 @@ class SourceClient(ABC):
             host = u.hostname.lower()
             if not any(host == h or host.endswith("." + h) for h in self.image_hosts):
                 raise ValueError("非本站图床")
-        return await http.stream_response(
-            url,
-            referer=self.image_referer or None,
-            timeout=self.image_timeout_for(kind),
-        )
+        async with HttpClient() as client:
+            return await client.stream_response(
+                url,
+                referer=self.image_referer or None,
+                timeout=self.image_timeout_for(kind),
+            )
 
     @property
     def meta_subdir(self) -> str:

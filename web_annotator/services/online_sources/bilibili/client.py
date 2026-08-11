@@ -32,7 +32,7 @@ from services.online_sources.bilibili.models import (
     TopicInfo,
     VideoInfo,
 )
-from services.online_sources.framework import http
+from services.online_sources.framework.http import DEFAULT_UA, HttpClient, NetworkError
 
 # 转发链递归解析的最大深度, 防止异常深链造成栈溢出
 MAX_FORWARD_DEPTH = 8
@@ -47,7 +47,7 @@ FILTER_TYPES = {"DYNAMIC_TYPE_LIVE_RCMD"}
 # 接口在未登录会话下会被 412 风控拦截, 故单条详情改用此接口
 _DESKTOP_DETAIL_API = "https://api.bilibili.com/x/polymer/web-dynamic/desktop/v1/detail"
 _BILI_HEADERS = {
-    "user-agent": http.DEFAULT_UA,
+    "user-agent": DEFAULT_UA,
     "referer": "https://www.bilibili.com/",
     "accept": "application/json, text/plain, */*",
 }
@@ -80,12 +80,14 @@ async def _desktop_detail(
     last_exc: Exception | None = None
     for attempt in range(1, retries + 1):
         try:
-            resp = await http.request(
-                _DESKTOP_DETAIL_API,
-                headers=_BILI_HEADERS,
-                params={"id": dynamic_id, "timezone_offset": str(-480)},
-                timeout=30.0,
-            )
+            async with HttpClient() as client:
+                resp = await client.get(
+                    _DESKTOP_DETAIL_API,
+                    headers=_BILI_HEADERS,
+                    params={"id": dynamic_id, "timezone_offset": str(-480)},
+                    timeout=30.0,
+                    follow_redirects=True,
+                )
             resp.raise_for_status()
             data = resp.json()
             code = data.get("code")
@@ -129,7 +131,7 @@ async def _retry_coro(
     for attempt in range(1, retries + 1):
         try:
             return await factory()
-        except (NetworkException, http.NetworkError) as exc:
+        except (NetworkException, NetworkError) as exc:
             last_exc = exc
             if attempt < retries:
                 wait = base_sleep * (2 ** (attempt - 1))
@@ -461,19 +463,20 @@ async def fetch_bili_bytes(
         tuple[bytes, str]: ``(字节内容, Content-Type)``。
 
     Raises:
-        http.NetworkError: 网络或 HTTP 状态错误 (重试后仍失败)。
+        NetworkError: 网络或 HTTP 状态错误 (重试后仍失败)。
 
     Callers:
         - ``routes.online_sources.booru_bili_image``
     """
-    last_exc: http.NetworkError | None = None
+    last_exc: NetworkError | None = None
     for attempt in range(1, retries + 1):
         try:
-            return await http.get_bytes(
-                url, headers=_BILI_HEADERS, timeout=120.0,
-            )
-        except http.NetworkError as exc:
+            async with HttpClient() as client:
+                return await client.get_bytes(
+                    url, headers=_BILI_HEADERS, timeout=120.0,
+                )
+        except NetworkError as exc:
             last_exc = exc
             if attempt < retries:
                 await asyncio.sleep(base_sleep * (2 ** (attempt - 1)))
-    raise last_exc or http.NetworkError(f"图片拉取失败: {url}")
+    raise last_exc or NetworkError(f"图片拉取失败: {url}")

@@ -25,7 +25,7 @@ from services.online_sources import (
     remove_download,
     search_posts,
 )
-from services.online_sources.framework import http as _http
+from services.online_sources.framework.http import HttpClient, NetworkError as _NetworkError
 from routes.deps import get_runtime, jobs
 from services.core.jobs import EmitFn
 from services.models import (
@@ -45,7 +45,7 @@ from services.core.work_dir import resolve_subdir
 
 router = APIRouter(prefix="/online-sources", tags=["online-sources"])
 
-_NETWORK_ERRORS = (RuntimeError, OSError, _http.NetworkError, CffiError)
+_NETWORK_ERRORS = (RuntimeError, OSError, _NetworkError, CffiError)
 
 
 class SearchBody(BaseModel):
@@ -178,7 +178,7 @@ async def proxy_image(
         ctype, chunks = await src.proxy_image(url, kind=kind)
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
-    except _http.NetworkError as e:
+    except _NetworkError as e:
         raise HTTPException(502, f"图片拉取失败: {e}") from e
     return StreamingResponse(
         chunks, media_type=ctype,
@@ -254,7 +254,7 @@ async def download(
         msg = str(e)
         code = 429 if "429" in msg else 502
         raise HTTPException(code, f"下载失败: {e}") from e
-    except (OSError, _http.NetworkError, CffiError) as e:
+    except (OSError, _NetworkError, CffiError) as e:
         raise HTTPException(502, f"下载失败: {e}") from e
     rel = local_rel_path(root, result.path)
     thumb = get_runtime(request).thumbnailer

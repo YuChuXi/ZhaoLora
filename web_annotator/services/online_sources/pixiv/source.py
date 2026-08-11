@@ -18,7 +18,7 @@ import asyncio
 from pathlib import Path
 from typing import Any
 
-from services.online_sources.framework import http
+from services.online_sources.framework.http import HttpClient
 from services.online_sources.framework.base import ProgressFn, SourceClient
 from services.online_sources.framework.utils import find_downloaded
 from services.models import BooruPost
@@ -88,7 +88,7 @@ class PixivSource(SourceClient):
             dict: API 响应 JSON.
 
         Raises:
-            http.NetworkError: HTTP 错误。
+            NetworkError: HTTP 错误。
             RuntimeError: API 返回 ``error: true``。
 
         Callers:
@@ -98,12 +98,13 @@ class PixivSource(SourceClient):
             - `PixivSource._fetch_pages`
             - `PixivSource._fetch_detail`
         """
-        resp = await http.request(url, headers=request_headers())
-        resp.raise_for_status()
-        data = resp.json()
-        if data.get("error"):
-            raise RuntimeError(data.get("message", "pixiv API 错误"))
-        return data
+        async with HttpClient() as client:
+            resp = await client.get(url, headers=request_headers(), follow_redirects=True)
+            resp.raise_for_status()
+            data = resp.json()
+            if data.get("error"):
+                raise RuntimeError(data.get("message", "pixiv API 错误"))
+            return data
 
     @staticmethod
     def _extract_tags(item: dict) -> str:

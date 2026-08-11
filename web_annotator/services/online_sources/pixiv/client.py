@@ -15,18 +15,18 @@ import asyncio
 import os
 from pathlib import Path
 
-from services.online_sources.framework import http
+from services.online_sources.framework.http import DEFAULT_UA, HttpClient, NetworkError
 
 # pixiv web AJAX 请求头
 _WEB_HEADERS = {
-    "user-agent": http.WINDOWS_UA,
+    "user-agent": DEFAULT_UA,
     "referer": "https://www.pixiv.net/",
     "accept": "application/json",
 }
 
 # pximg 图床防盗链: 需带 pixiv Referer
 _IMG_HEADERS = {
-    "user-agent": http.WINDOWS_UA,
+    "user-agent": DEFAULT_UA,
     "referer": "https://www.pixiv.net/",
     "accept": "image/avif,image/webp,image/*,*/*;q=0.8",
 }
@@ -84,20 +84,22 @@ async def fetch_bytes(url: str) -> tuple[bytes, str]:
         tuple[bytes, str]: ``(字节内容, Content-Type)``。
 
     Raises:
-        http.NetworkError: 网络或 HTTP 状态错误 (重试后仍失败)。
+        NetworkError: 网络或 HTTP 状态错误 (重试后仍失败)。
 
     Callers:
         - ``pixiv/source.py:PixivSource.download``
         - ``routes/online_sources.py`` (图片代理)
     """
-    last_exc: http.NetworkError | None = None
+    last_exc: NetworkError | None = None
     for attempt in range(1, 4):
         try:
-            return await http.get_bytes(
-                url, headers=_IMG_HEADERS, timeout=120.0,
-            )
-        except http.NetworkError as exc:
+            async with HttpClient() as client:
+                result = await client.get_bytes(
+                    url, headers=_IMG_HEADERS, timeout=120.0,
+                )
+            return result
+        except NetworkError as exc:
             last_exc = exc
             if attempt < 3:
                 await asyncio.sleep(1.5 * (2 ** (attempt - 1)))
-    raise last_exc or http.NetworkError(f"图片拉取失败: {url}")
+    raise last_exc or NetworkError(f"图片拉取失败: {url}")

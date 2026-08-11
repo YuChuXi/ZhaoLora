@@ -21,7 +21,7 @@ from gallery_dl import config
 from gallery_dl.extractor import find as gallery_find
 from gallery_dl.extractor.message import Message
 
-from services.online_sources.framework import http
+from services.online_sources.framework.http import HttpClient
 from services.online_sources.framework.base import ProgressFn, SourceClient
 from services.online_sources.framework.session import SessionStore
 from services.online_sources.framework.utils import find_downloaded
@@ -439,7 +439,8 @@ class GalleryDLSource(SourceClient):
         caption = (post.tags or "").strip()
         if include_meta_tags:
             caption = (caption + (" " + self.name) if caption else self.name).strip()
-        data, _ = await http.get_bytes(image_url)
+        async with HttpClient() as client:
+            data, _ = await client.get_bytes(image_url)
 
         await self._save_png(data, image_path)
         self._clean_old_files(out_dir, pid, image_path)

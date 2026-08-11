@@ -12,7 +12,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from services.online_sources.framework import http
+from services.online_sources.framework.http import HttpClient, NetworkError
 
 _GELBOORU_BASE = "https://gelbooru.com/index.php"
 
@@ -34,14 +34,15 @@ class GelbooruClient:
             dict: API 响应 JSON.
 
         Raises:
-            http.NetworkError: 网络错误.
+            NetworkError: 网络错误.
 
         Callers:
             - ``GelbooruClient.get_post`` / ``search`` / ``get_tag_types``
         """
-        resp = await http.request(_GELBOORU_BASE, params=params)
-        resp.raise_for_status()
-        return resp.json()
+        async with HttpClient() as client:
+            resp = await client.get(_GELBOORU_BASE, params=params, follow_redirects=True)
+            resp.raise_for_status()
+            return resp.json()
 
     async def get_post(self, pid: int) -> dict:
         """获取单帖元数据.
@@ -53,7 +54,7 @@ class GelbooruClient:
             dict: 帖子数据; 未找到时返回空字典.
 
         Raises:
-            http.NetworkError: 网络错误.
+            NetworkError: 网络错误.
 
         Callers:
             - ``GelbooruSource.download`` / ``fetch_meta``
@@ -79,7 +80,7 @@ class GelbooruClient:
             dict: API 响应 JSON.
 
         Raises:
-            http.NetworkError: 网络错误.
+            NetworkError: 网络错误.
 
         Callers:
             - ``GelbooruSource.search``
@@ -98,7 +99,7 @@ class GelbooruClient:
 
         Raises:
             ValueError: 帖子无 file_url.
-            http.NetworkError: 网络错误.
+            NetworkError: 网络错误.
 
         Callers:
             - ``GelbooruSource.download``
@@ -107,9 +108,10 @@ class GelbooruClient:
         file_url = post.get("file_url")
         if not file_url:
             raise ValueError(f"帖子 {pid} 无 file_url")
-        data, _ = await http.get_bytes(
-            file_url, referer="https://gelbooru.com/",
-        )
+        async with HttpClient() as client:
+            data, _ = await client.get_bytes(
+                file_url, referer="https://gelbooru.com/",
+            )
         Path(path).write_bytes(data)
 
     def _auth_params(self) -> dict[str, str]:
@@ -143,7 +145,7 @@ class GelbooruClient:
             dict[str, int]: 标签名 -> 类型编号 (0=general, 1=artist, 3=copyright, 4=character, 5=meta).
 
         Raises:
-            http.NetworkError: 网络错误.
+            NetworkError: 网络错误.
 
         Callers:
             - ``GelbooruSource.download``
@@ -174,7 +176,7 @@ class GelbooruClient:
             规范化的建议列表: 每项为 ``{"name", "category", "count"}``。
 
         Raises:
-            http.NetworkError: 网络错误.
+            NetworkError: 网络错误.
 
         Callers:
             - ``GelbooruSource.autocomplete``

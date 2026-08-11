@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from services.online_sources.framework import http
+from services.online_sources.framework.http import HttpClient
 from services.online_sources.framework.base import ProgressFn, SourceClient
 from services.online_sources.framework.media import download_raw_file, post_is_video
 from services.online_sources.framework.utils import find_downloaded
@@ -161,10 +161,11 @@ class GelbooruSource(SourceClient):
             raise ValueError("无 file_url")
 
         if overwrite or not image_path.is_file():
-            data, _ = await http.get_bytes(
-                post.file_url, referer=self.image_referer,
-            )
-            await self._save_png(data, image_path)
+            async with HttpClient() as client:
+                data, _ = await client.get_bytes(
+                    post.file_url, referer=self.image_referer,
+                )
+                await self._save_png(data, image_path)
             self._clean_old_files(out_dir, pid, image_path)
 
         api_post = post
