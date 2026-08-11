@@ -564,8 +564,8 @@
    * 初始化跟随鼠标的圆形放大镜。
    *
    * 监听 stage 的 mousemove, 鼠标位于图片 object-fit 实际显示区域内时显示放大镜;
-   * 放大镜用内部 img 元素显示放大区域 (尺寸=实际显示区域×zoom, 偏移使鼠标点居中)。
-   * 位置默认在鼠标上方, 顶部不足翻下方, 并约束在视口内不脱离屏幕。
+   * 放大镜以图像原始分辨率为基准 (尺寸=naturalWidth×zoom, 最邻近插值),
+   * 偏移使鼠标点居中。位置默认在鼠标上方, 顶部不足翻下方, 并约束在视口内。
    *
    * Callers:
    * - `tag_check.js:init`: 初始化时调用一次。
@@ -576,7 +576,8 @@
     var lens = document.getElementById('magnifier');
     var lensImg = document.getElementById('magnifier-img');
     var LENS = 180;      // 放大镜直径 (与 CSS width/height 一致)
-    var ZOOM = 2;        // 放大倍数
+    var ZOOM = 4;        // 当前放大倍数 (相对原始分辨率)
+    var ZOOM_MIN = 1, ZOOM_MAX = 32;
     var lastE = null;    // 最近一次 mousemove 事件, 供 scroll 时重算
 
     // 计算图片实际显示矩形 (相对视口): cover=图片元素直接; contain=object-fit 居中偏移
@@ -612,18 +613,29 @@
       if (ly + LENS > window.innerHeight) ly = window.innerHeight - LENS;
       lens.style.left = lx + 'px';
       lens.style.top = ly + 'px';
-      // 放大图: 尺寸=实际显示区域×zoom, 偏移使鼠标点位于放大镜中心
+      // 放大图: 以原始分辨率为基准, 鼠标点映射到原始坐标再×zoom居中
+      var iw = imgEl.naturalWidth, ih = imgEl.naturalHeight;
+      var origX = x / fr.width * iw;
+      var origY = y / fr.height * ih;
       lensImg.src = imgEl.src;
-      lensImg.style.width = (fr.width * ZOOM) + 'px';
-      lensImg.style.height = (fr.height * ZOOM) + 'px';
-      lensImg.style.left = (-x * ZOOM + LENS / 2) + 'px';
-      lensImg.style.top = (-y * ZOOM + LENS / 2) + 'px';
+      lensImg.style.width = (iw * ZOOM) + 'px';
+      lensImg.style.height = (ih * ZOOM) + 'px';
+      lensImg.style.left = (-origX * ZOOM + LENS / 2) + 'px';
+      lensImg.style.top = (-origY * ZOOM + LENS / 2) + 'px';
     }
 
     stage.addEventListener('mousemove', function (e) { lastE = e; update(); });
     stage.addEventListener('mouseleave', function () { lens.classList.remove('show'); lastE = null; });
     // cover 模式 stage 可滚动, 滚动时图片视口位置变化需重算放大镜
     stage.addEventListener('scroll', update);
+    // 滚轮调整放大倍数: 放大镜激活时拦截滚轮, 否则不干扰 cover 模式滚动
+    stage.addEventListener('wheel', function (e) {
+      if (!lens.classList.contains('show')) return;
+      e.preventDefault();
+      var delta = e.deltaY < 0 ? 1.25 : 0.8;
+      ZOOM = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, ZOOM * delta));
+      update();
+    }, { passive: false });
   }
 
   // ---- 语义检索 ----
