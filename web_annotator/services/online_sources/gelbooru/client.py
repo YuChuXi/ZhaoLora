@@ -25,7 +25,7 @@ class GelbooruClient:
     """
 
     async def _api(self, params: dict[str, str | int]) -> dict:
-        """调用 Gelbooru JSON API, 返回解析后的响应.
+        """调用 Gelbooru JSON API, 自动注入认证参数, 返回解析后的响应.
 
         Args:
             params: 查询参数 (含 page=dapi&s=post&q=index&json=1 等).
@@ -37,8 +37,9 @@ class GelbooruClient:
             NetworkError: 网络错误.
 
         Callers:
-            - ``GelbooruClient.get_post`` / ``search`` / ``get_tag_types``
+            - ``GelbooruClient.get_post`` / ``search`` / ``get_tag_types`` / ``autocomplete``
         """
+        params.update(self._auth_params())
         async with HttpClient() as client:
             resp = await client.get(_GELBOORU_BASE, params=params, follow_redirects=True)
             resp.raise_for_status()
@@ -117,15 +118,15 @@ class GelbooruClient:
     def _auth_params(self) -> dict[str, str]:
         """从环境变量读取 Gelbooru API 认证参数.
 
-        Gelbooru tag 索引查询需 api_key + user_id, 否则返回 401。
+        Gelbooru 的 post / tag 索引查询均需 api_key + user_id, 否则返回 401。
         凭据直接经 ``os.environ`` 读取 (GELBOORU_API_KEY / GELBOORU_USER_ID),
-        不跨层传参。
+        不跨层传参; 未配置时返回空字典。
 
         Returns:
             dict[str, str]: 认证查询参数; 未配置时为空字典.
 
         Callers:
-            - ``GelbooruClient.get_tag_types`` / ``autocomplete``
+            - ``GelbooruClient._api``
         """
         out: dict[str, str] = {}
         key = os.environ.get("GELBOORU_API_KEY", "").strip()
@@ -154,7 +155,6 @@ class GelbooruClient:
             "page": "dapi", "s": "tag", "q": "index", "json": "1",
             "names": " ".join(tags),
         }
-        params.update(self._auth_params())
         data = await self._api(params)
         result: dict[str, int] = {}
         for tag in data.get("tag", []):
@@ -185,7 +185,6 @@ class GelbooruClient:
             "page": "dapi", "s": "tag", "q": "index", "json": "1",
             "name_pattern": query, "limit": str(limit), "order": "count",
         }
-        params.update(self._auth_params())
         data = await self._api(params)
         raw = data.get("tag")
         tags = [raw] if isinstance(raw, dict) else (raw if isinstance(raw, list) else [])

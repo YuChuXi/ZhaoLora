@@ -29,6 +29,8 @@ from services.models import (
     EmbeddingQueryBody,
     EmbeddingQueryItem,
     EmbeddingQueryResult,
+    EmbeddingHistoryItem,
+    EmbeddingHistoryResponse,
     EmbeddingBatchTagBody,
     EmbeddingBatchTagResponse,
     ConceptQueryBody,
@@ -512,7 +514,13 @@ async def embedding_query(request: Request, body: EmbeddingQueryBody) -> JobSubm
     (query, image) 评分，耗时较长，故提交 JobManager，由前端以 SSE 订阅进度，
     任务完成时在 result 中携带排序结果。
 
-    引用: tag_check.js。
+    同一数据集最近 ``MAX_ENTRIES`` 次查询结果缓存于 ``DatasetRuntime.sort_cache``：
+    命中（查询文本与目录集合一致）时任务立即返回缓存排序，无需重复调用模型；
+    命中即提升该查询在最近列表中的位置，避免被后续查询挤出。
+    缓存排序之后新增的图片会重新调用模型评分，按相似度并入结果并回写缓存，
+    保证返回结果覆盖当前全部候选。
+
+    引用: tag_check.js / app.js。
     """
     rt = get_runtime(request)
     root = rt.root
@@ -523,11 +531,12 @@ async def embedding_query(request: Request, body: EmbeddingQueryBody) -> JobSubm
     if not body.query.strip():
         raise HTTPException(400, "查询文本不能为空")
 
-    ok, msg = reranker_model_ready()
-    if not ok:
-        raise HTTPException(400, msg)
+    query_text = body.query.strip()
+    dirs_key = tuple(sorted(p.name if p != root else "." for p in selected))
+    cache = rt.sort_cache
+    cached = cache.get(query_text, dirs_key)
 
-    # 收集所有候选图片的相对路径与绝对路径
+    # 收集所有候选图片的相对路径与绝对路径（命中缓存时用于补全，未命中时用于评分）
     candidates: list[tuple[str, Path]] = []
     for work in selected:
         if work == root:
@@ -537,11 +546,62 @@ async def embedding_query(request: Request, body: EmbeddingQueryBody) -> JobSubm
         for img in scan_images(work, path_prefix=prefix):
             candidates.append((img.path, root / img.path))
 
-    query_text = body.query.strip()
+    if cached is not None:
+        # 找出缓存排序之后新增的图片，命中时重新调用模型评分后并入结果
+        ordered_paths = {p for p, _ in cached}
+        missing = [c for c in candidates if c[0] not in ordered_paths]
+
+        def run(emit: EmitFn) -> EmbeddingQueryResult:
+            """工作线程: 命中缓存, 新图重新评分后按相似度并入并更新缓存。引用: ``JobManager.submit``。"""
+            if missing:
+                emit(JobSnapshot(
+                    status="running", phase="querying",
+                    message=f"正在补全 {len(missing)} 张新图评分…", pct=0, total=len(missing),
+                ))
+
+                def on_progress(done: int, n_total: int) -> None:
+                    emit(JobSnapshot(
+                        status="running", phase="querying",
+                        message=f"正在补全评分 {done}/{n_total}…",
+                        pct=round(done / n_total * 100, 1) if n_total else 100,
+                        done=done, total=n_total,
+                    ))
+
+                new_hits = rerank(query_text, missing, on_progress=on_progress)
+                hits = sorted(cached + new_hits, key=lambda x: x[1], reverse=True)
+                cache.put(query_text, dirs_key, hits)
+            else:
+                hits = cached
+
+            items = [
+                EmbeddingQueryItem(path=p, stem=Path(p).stem, similarity=round(s, 6))
+                for p, s in hits
+            ]
+            result = EmbeddingQueryResult(items=items)
+            emit(JobSnapshot(
+                status="done", phase="done",
+                message=f"命中缓存，共 {len(items)} 张", pct=100, result=result,
+            ))
+            return result
+
+        if missing:
+            ok, msg = reranker_model_ready()
+            if not ok:
+                raise HTTPException(400, msg)
+
+        job_id = await jobs(request).submit(
+            kind="embedding_query", group="compute", dataset=rt.name, run=run
+        )
+        return JobSubmitResponse(ok=True, job_id=job_id)
+
+    ok, msg = reranker_model_ready()
+    if not ok:
+        raise HTTPException(400, msg)
+
     total = len(candidates)
 
     def run(emit: EmitFn) -> EmbeddingQueryResult:
-        """工作线程: 逐张相似度评分并回报进度。引用: ``JobManager.submit``。"""
+        """工作线程: 逐张相似度评分、写入缓存并回报进度。引用: ``JobManager.submit``。"""
         emit(JobSnapshot(
             status="running", phase="querying",
             message="正在相似度评分…", pct=0, total=total,
@@ -556,6 +616,7 @@ async def embedding_query(request: Request, body: EmbeddingQueryBody) -> JobSubm
             ))
 
         hits = rerank(query_text, candidates, on_progress=on_progress)
+        cache.put(query_text, dirs_key, hits)
         items = [
             EmbeddingQueryItem(path=p, stem=Path(p).stem, similarity=round(s, 6))
             for p, s in hits
@@ -569,6 +630,21 @@ async def embedding_query(request: Request, body: EmbeddingQueryBody) -> JobSubm
 
     job_id = await jobs(request).submit(kind="embedding_query", group="compute", dataset=rt.name, run=run)
     return JobSubmitResponse(ok=True, job_id=job_id)
+
+
+@router.get("/embedding/history", response_model=EmbeddingHistoryResponse)
+def embedding_history(request: Request) -> EmbeddingHistoryResponse:
+    """返回当前数据集最近若干次语义排序查询历史（新的在前，至多 10 条）。
+
+    引用: app.js（筛选页语义搜索对话框下拉展示）。
+    """
+    rt = get_runtime(request)
+    return EmbeddingHistoryResponse(
+        queries=[
+            EmbeddingHistoryItem(query=q, time=t)
+            for q, t in rt.sort_cache.recent()
+        ]
+    )
 
 
 @router.post("/embedding/batch-tag", response_model=EmbeddingBatchTagResponse)

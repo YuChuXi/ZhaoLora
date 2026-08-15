@@ -68,6 +68,21 @@
   .toolbar-group { display: contents; }
   .toolbar-group.is-off { display: none !important; }
 
+  /* 语义搜索排序对话框（参考标签检查页语义检索对话框） */
+  .emb-dlg-row {
+    display: flex; align-items: center; gap: 8px;
+  }
+  .emb-dlg-row label { font-size: 13px; color: var(--text-dim); white-space: nowrap; }
+  .emb-dlg-row input[type="text"],
+  .emb-dlg-row select {
+    background: var(--card-bg); color: var(--text);
+    border: 1px solid var(--border); border-radius: 4px;
+    padding: 4px 8px; font-size: 13px;
+  }
+  #search-query { flex: 1; }
+  #search-history { flex: 1; }
+  #search-status { color: var(--text-dim); font-size: 11px; white-space: nowrap; }
+
   .booru-preview {
     position: fixed; inset: 0; z-index: 500;
     display: none; align-items: stretch; justify-content: center;
@@ -217,8 +232,10 @@
         <option value="aesthetic">美学</option>
         <option value="quality">质量</option>
         <option value="pixels">像素</option>
+        <option value="search">搜索</option>
       </select>
     </label>
+    <button class="btn" id="btn-search-dlg" type="button" hidden title="语义搜索排序（Qwen3-VL-Reranker-2B）">搜索</button>
     <span class="sep"></span>
     <button class="btn" id="btn-select-all" title="Ctrl+A">全选</button>
     <button class="btn" id="btn-deselect-all" title="Ctrl+Shift+A">取消全选</button>
@@ -336,6 +353,38 @@
       <button type="button" class="btn danger" id="booru-batch-stop" hidden>停止</button>
       <button type="button" class="btn green" id="booru-batch-start">开始</button>
       <button type="button" class="btn" id="booru-batch-close">关闭</button>
+    </div>
+  </div>
+</div>
+
+<!-- 语义搜索排序对话框（参考标签检查页语义检索对话框） -->
+<div class="modal" id="search-dlg" aria-hidden="true">
+  <div class="modal-panel" role="dialog" aria-labelledby="search-dlg-title" style="width:min(480px,92vw);height:auto;">
+    <div class="modal-head">
+      <span class="modal-title" id="search-dlg-title">语义搜索排序</span>
+    </div>
+    <div class="modal-body" style="display:flex;flex-direction:column;gap:12px;padding:16px;">
+      <div class="emb-dlg-row">
+        <label>查询文本</label>
+        <input type="text" id="search-query" placeholder="查询文本，回车或点击排序" spellcheck="false">
+      </div>
+      <div class="emb-dlg-row">
+        <label>最近搜索</label>
+        <select id="search-history" hidden></select>
+      </div>
+      <div class="emb-dlg-row">
+        <button class="btn green" type="button" id="btn-search-sort">按相似度排序</button>
+      </div>
+      <div class="job-progress compact" id="search-progress" hidden>
+        <div class="job-progress-track">
+          <div class="job-progress-fill" id="search-progress-fill"></div>
+        </div>
+        <span class="job-progress-pct" id="search-progress-pct">0%</span>
+      </div>
+      <span id="search-status"></span>
+    </div>
+    <div class="modal-foot">
+      <button class="btn" type="button" id="btn-search-close">关闭</button>
     </div>
   </div>
 </div>

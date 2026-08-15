@@ -8,6 +8,8 @@ var Store = (function() {
   var _listeners = [];
   var _toggleListeners = [];
   var _sortBy = localStorage.getItem('annotator_sort') || 'name';
+  var _searchOrder = [];   // 语义搜索排序的有序路径列表（新的排序覆盖旧值）
+  var _searchSim = {};     // 路径 -> 相似度，用于卡片标注 S 前缀
 
   function setSort(by) {
     _sortBy = by || 'name';
@@ -15,6 +17,32 @@ var Store = (function() {
   }
 
   function getSort() { return _sortBy; }
+
+  /**
+   * 记录一次语义搜索排序结果。
+   * @param {Array<{path: string, similarity: number}>} items 按相似度降序的结果
+   */
+  function setSearchResult(items) {
+    _searchOrder = [];
+    _searchSim = {};
+    for (var i = 0; i < items.length; i++) {
+      _searchOrder.push(items[i].path);
+      _searchSim[items[i].path] = items[i].similarity;
+    }
+  }
+
+  /** 清空语义搜索排序结果。 */
+  function clearSearch() { setSearchResult([]); }
+
+  /** @returns {boolean} 是否存在已生效的语义搜索排序 */
+  function isSearchActive() { return _searchOrder.length > 0; }
+
+  /**
+   * 取某路径的相似度（不存在返回 undefined）。
+   * @param {string} path
+   * @returns {number|undefined}
+   */
+  function getSearchSim(path) { return _searchSim[path]; }
 
   function _sortList(list) {
     var out = list.slice();
@@ -38,6 +66,16 @@ var Store = (function() {
         var pb = (b.width || 0) * (b.height || 0);
         if (pb !== pa) return pb - pa;
         return (a.stem || '').localeCompare(b.stem || '', 'en');
+      });
+    } else if (_sortBy === 'search') {
+      // 按语义搜索结果顺序重排；未命中排序的图片置于末尾，按名称稳定排序
+      var pos = {};
+      for (var i = 0; i < _searchOrder.length; i++) pos[_searchOrder[i]] = i;
+      out.sort(function (a, b) {
+        var pa = (pos[a.path] !== undefined) ? pos[a.path] : Number.MAX_SAFE_INTEGER;
+        var pb = (pos[b.path] !== undefined) ? pos[b.path] : Number.MAX_SAFE_INTEGER;
+        if (pa !== pb) return pa - pb;
+        return (a.stem || '').localeCompare(b.stem || '', 'en', { numeric: true });
       });
     } else {
       out.sort(function (a, b) {
@@ -173,5 +211,7 @@ var Store = (function() {
     invert: invert, applyDelete: applyDelete, restore: restore,
     stats: stats, onChange: onChange, onToggle: onToggle,
     setSort: setSort, getSort: getSort,
+    setSearchResult: setSearchResult, clearSearch: clearSearch,
+    isSearchActive: isSearchActive, getSearchSim: getSearchSim,
   };
 })();

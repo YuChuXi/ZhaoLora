@@ -165,6 +165,19 @@ class EmbeddingQueryResult(BaseModel):
     items: list[EmbeddingQueryItem] = Field(default_factory=list)
 
 
+class EmbeddingHistoryItem(BaseModel):
+    """一次历史语义排序查询记录. 引用: ``GET /tags/embedding/history``."""
+
+    query: str = Field(..., description="查询文本")
+    time: float = Field(0.0, description="执行时间戳（epoch 秒）")
+
+
+class EmbeddingHistoryResponse(BaseModel):
+    """语义排序查询历史. 引用: ``GET /tags/embedding/history``."""
+
+    queries: list[EmbeddingHistoryItem] = Field(default_factory=list)
+
+
 class EmbeddingBatchTagBody(BaseModel):
     """批量标记请求. 引用: ``POST /tags/embedding/batch-tag``."""
 

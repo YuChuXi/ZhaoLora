@@ -1,18 +1,52 @@
+"""Gelbooru API 客户端（下载 / 标签类型查询 / 随机检索）。
+
+API 凭据 (api_key / user_id) 的设置优先级从高到低：
+1. 构造函数参数：``Gelbooru(api_key=..., user_id=...)``
+2. 环境变量：``GELBOORU_API_KEY`` / ``GELBOORU_USER_ID``
+3. 模块默认常量 ``_DEFAULT_API_KEY`` / ``_DEFAULT_USER_ID``
+
+Callers:
+    - ``download_dataset.py`` / ``gelbooru_interactive_download.py``
+    - ``gelbooru_tag_cooccurrence.py`` / ``DanbooruApi/__init__.py``
+"""
+
 import re
 import asyncio
 import httpx
 import json
+import os
 import random
 from urllib.parse import quote
 from .Danbooru import Danbooru
+
+
+# Gelbooru API 凭据默认值（未通过环境变量或构造参数指定时使用）
+_DEFAULT_API_KEY = "***REMOVED***"
+_DEFAULT_USER_ID = "***REMOVED***"
+
 
 class Gelbooru(Danbooru):
 
     # 站点内容确认（含受限标签检索）
     _COOKIES = {"fringeBenefits": "yup"}
 
-    def __init__(self, *args, **kwargs) -> None:
+    def __init__(self, *args, api_key: str | None = None, user_id: str | None = None, **kwargs) -> None:
+        """初始化 Gelbooru 客户端并解析 API 凭据。
+
+        凭据优先级：构造参数 > 环境变量 ``GELBOORU_API_KEY`` / ``GELBOORU_USER_ID``
+        > 模块默认常量。
+
+        Args:
+            api_key (str | None): Gelbooru API 密钥，不传时依次取环境变量与默认常量。
+            user_id (str | None): Gelbooru 用户 ID，不传时依次取环境变量与默认常量。
+
+        Callers:
+            - ``DanbooruApi/__init__.py`` / ``download_dataset.py``
+            - ``gelbooru_interactive_download.py`` / ``gelbooru_tag_cooccurrence.py``
+        """
         super().__init__(*args, **kwargs)
+        self.api_key = api_key or os.environ.get("GELBOORU_API_KEY") or _DEFAULT_API_KEY
+        self.user_id = user_id or os.environ.get("GELBOORU_USER_ID") or _DEFAULT_USER_ID
 
     async def get(self, url: str) -> httpx.Response:
         """发起 Gelbooru HTTP GET，并附带 fringeBenefits cookie。
@@ -29,9 +63,7 @@ class Gelbooru(Danbooru):
             return await client.get(url=url, headers=self.headers)
 
     async def getJson(self, args: str) -> dict:
-        api_key = "***REMOVED***"
-        user_id = "***REMOVED***"
-        url = f"https://gelbooru.com/index.php?page=dapi&s=post&q=index&json=1&{args}&api_key={api_key}&user_id={user_id}"
+        url = f"https://gelbooru.com/index.php?page=dapi&s=post&q=index&json=1&{args}&api_key={self.api_key}&user_id={self.user_id}"
         req: httpx.Response = await self.get(url)
         if not req.content:
             return {}
@@ -63,9 +95,7 @@ class Gelbooru(Danbooru):
         if not names:
             return {}
         enc = quote(" ".join(names), safe="")
-        api_key = "***REMOVED***"
-        user_id = "***REMOVED***"
-        url = f"https://gelbooru.com/index.php?page=dapi&s=tag&q=index&json=1&names={enc}&api_key={api_key}&user_id={user_id}"
+        url = f"https://gelbooru.com/index.php?page=dapi&s=tag&q=index&json=1&names={enc}&api_key={self.api_key}&user_id={self.user_id}"
         req = await self.get(url)
         if not req.content:
             return {}

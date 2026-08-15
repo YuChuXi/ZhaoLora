@@ -68,8 +68,147 @@
     }
   }
 
+  // ---- 语义搜索排序（本地筛选，Qwen3-VL-Reranker-2B） ----
+  var _searchBusy = false;
+
+  /**
+   * 依据当前排序方式显隐「搜索」按钮：仅当排序方式为「搜索」时显示。
+   */
+  function searchShowButton() {
+    var sel = document.getElementById('sort-by');
+    var btn = document.getElementById('btn-search-dlg');
+    if (!btn) return;
+    btn.hidden = !(sel && sel.value === 'search');
+  }
+
+  /**
+   * 卡片装饰：搜索排序生效时在名称前标注相似度 S 前缀（参考标签检查页）。
+   * @param {HTMLElement} card
+   * @param {object} img
+   */
+  function searchDecorate(card, img) {
+    if (Store.getSort() !== 'search') return;
+    var sim = Store.getSearchSim(img.path);
+    if (sim == null) return;
+    var name = card.querySelector('.name');
+    if (name) name.textContent = 'S' + sim.toFixed(3) + ' ' + name.textContent;
+  }
+
+  /**
+   * 更新语义搜索进度条。
+   * @param {Object} s - 任务快照
+   */
+  function searchProgress(s) {
+    var bar = document.getElementById('search-progress');
+    var running = s.status === 'running' || s.status === 'queued';
+    if (bar) bar.hidden = !running;
+    var fill = document.getElementById('search-progress-fill');
+    if (fill) fill.classList.toggle('indeterminate', s.status === 'queued');
+    if (fill && s.status === 'running') fill.style.width = Math.min(100, s.pct || 0) + '%';
+    var pctEl = document.getElementById('search-progress-pct');
+    if (pctEl) pctEl.textContent = s.status === 'queued' ? '…' : (Math.min(100, Math.round(s.pct || 0)) + '%');
+    var statusEl = document.getElementById('search-status');
+    if (statusEl && s.message) statusEl.textContent = s.message;
+  }
+
+  /**
+   * 加载最近搜索历史并填充下拉框。
+   */
+  function searchLoadHistory() {
+    API.request(API.apiPath('/tags/embedding/history')).then(function (res) {
+      var sel = document.getElementById('search-history');
+      if (!sel) return;
+      var queries = (res && res.queries) || [];
+      sel.innerHTML = '';
+      for (var i = 0; i < queries.length; i++) {
+        var opt = document.createElement('option');
+        opt.value = queries[i].query;
+        opt.textContent = queries[i].query;
+        sel.appendChild(opt);
+      }
+      sel.hidden = queries.length === 0;
+    }).catch(function () {
+      var sel = document.getElementById('search-history');
+      if (sel) sel.hidden = true;
+    });
+  }
+
+  /**
+   * 提交语义搜索排序：调用后端长任务，完成后按相似度重排本地列表。
+   * @returns {Promise<void>}
+   */
+  async function searchSort() {
+    var query = document.getElementById('search-query').value.trim();
+    if (!query) { toast('请输入查询文本'); return; }
+    if (_searchBusy) return;
+    _searchBusy = true;
+    var btn = document.getElementById('btn-search-sort');
+    btn.disabled = true;
+    document.getElementById('search-status').textContent = '提交中…';
+    try {
+      var res = await API.request(API.apiPath('/tags/embedding/query'), {
+        method: 'POST',
+        body: JSON.stringify({ query: query, dirs: DirPicker.getDirs() }),
+      });
+      if (!res.job_id) {
+        document.getElementById('search-status').textContent = '查询失败';
+        btn.disabled = false;
+        _searchBusy = false;
+        return;
+      }
+      API.watchJob(res.job_id, function (s) {
+        searchProgress(s);
+        if (s.status === 'done') {
+          btn.disabled = false;
+          _searchBusy = false;
+          var items = (s.result && s.result.items) || [];
+          if (items.length === 0) {
+            document.getElementById('search-status').textContent = '无匹配结果';
+            return;
+          }
+          var sel = document.getElementById('sort-by');
+          if (sel) sel.value = 'search';
+          Store.setSort('search');
+          Store.setSearchResult(items);
+          searchShowButton();
+          refreshView();
+          document.getElementById('search-status').textContent = '已按相似度排序 (' + items.length + ' 张)';
+          toast('已按相似度排序 (' + items.length + ' 张)');
+        } else if (s.status === 'error') {
+          btn.disabled = false;
+          _searchBusy = false;
+          document.getElementById('search-status').textContent = '查询失败';
+          toast('查询失败: ' + (s.message || ''));
+        }
+      });
+    } catch (e) {
+      document.getElementById('search-status').textContent = '查询失败';
+      toast('查询失败: ' + String(e.message || e));
+      btn.disabled = false;
+      _searchBusy = false;
+    }
+  }
+
+  /**
+   * 打开语义搜索对话框并加载历史。
+   */
+  function searchOpen() {
+    var dlg = document.getElementById('search-dlg');
+    dlg.classList.add('open');
+    dlg.setAttribute('aria-hidden', 'false');
+    searchLoadHistory();
+    document.getElementById('search-query').focus();
+  }
+
+  /** 关闭语义搜索对话框。 */
+  function searchClose() {
+    var dlg = document.getElementById('search-dlg');
+    dlg.classList.remove('open');
+    dlg.setAttribute('aria-hidden', 'true');
+  }
+
   function init() {
-    Masonry.init('masonry');
+    Masonry.init('masonry', { decorate: searchDecorate });
 
     var colsSlider = document.getElementById('cols-slider');
     var colsLabel = document.getElementById('cols-label');
@@ -157,8 +296,37 @@
       sortSel.addEventListener('change', function () {
         Store.setSort(sortSel.value);
         refreshView();
+        searchShowButton();
       });
     }
+    searchShowButton();
+
+    // ---- 语义搜索对话框事件 ----
+    document.getElementById('btn-search-dlg').addEventListener('click', searchOpen);
+    document.getElementById('btn-search-close').addEventListener('click', searchClose);
+    document.getElementById('search-dlg').addEventListener('click', function (e) {
+      if (e.target === this) searchClose();
+    });
+    document.getElementById('btn-search-sort').addEventListener('click', function () {
+      searchSort().catch(function (e) { toast('查询失败: ' + String(e.message || e)); });
+    });
+    document.getElementById('search-query').addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        searchSort().catch(function (e) { toast('查询失败: ' + String(e.message || e)); });
+      }
+    });
+    document.getElementById('search-history').addEventListener('change', function () {
+      var q = this.value;
+      if (!q) return;
+      document.getElementById('search-query').value = q;
+      searchSort().catch(function (e) { toast('查询失败: ' + String(e.message || e)); });
+    });
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape' && document.getElementById('search-dlg').classList.contains('open')) {
+        searchClose();
+      }
+    });
 
     DirPicker.onChange(function () {
       if (typeof BooruFilter !== 'undefined' && BooruFilter.isRemote()) {
