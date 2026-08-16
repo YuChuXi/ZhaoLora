@@ -9,10 +9,12 @@ Callers:
 
 from __future__ import annotations
 
+import asyncio
 import os
 from pathlib import Path
 
 from services.online_sources.framework.http import HttpClient, NetworkError
+from services.online_sources.framework.utils import save_png_bytes
 
 _GELBOORU_BASE = "https://gelbooru.com/index.php"
 
@@ -58,8 +60,7 @@ class GelbooruClient:
             NetworkError: 网络错误.
 
         Callers:
-            - ``GelbooruSource.download`` / ``fetch_meta``
-            - ``GelbooruClient.get_image``
+            - ``gelbooru/source.py:GelbooruSource.fetch_meta``
         """
         data = await self._api({
             "page": "dapi", "s": "post", "q": "index", "json": "1",
@@ -91,29 +92,28 @@ class GelbooruClient:
             "tags": tags, "pid": str(pid), "limit": "100",
         })
 
-    async def get_image(self, pid: int, path: str) -> None:
-        """下载帖子原图到本地文件.
+    async def get_image(self, file_url: str, path: str, *, referer: str = "https://gelbooru.com/") -> None:
+        """下载原图字节, 校验后转为 PNG 写入磁盘.
+
+        校验与落盘逻辑与 ``SourceClient._save_png`` 一致 (共用
+        ``utils.save_png_bytes``), 保证写盘内容必为可识别图片; 下载到的
+        HTML/zip/video 等非图片数据在此被拒绝, 不会以图片扩展名落盘。
 
         Args:
-            pid: 帖子 ID.
-            path: 目标文件路径.
+            file_url: 原图 URL (取自帖子 file_url).
+            path: 目标 PNG 文件路径.
+            referer: 防盗链 Referer.
 
         Raises:
-            ValueError: 帖子无 file_url.
+            ValueError: 下载内容非图片 (html/zip/video/webm 等).
             NetworkError: 网络错误.
 
         Callers:
-            - ``GelbooruSource.download``
+            - ``gelbooru/source.py:GelbooruSource.download``
         """
-        post = await self.get_post(pid)
-        file_url = post.get("file_url")
-        if not file_url:
-            raise ValueError(f"帖子 {pid} 无 file_url")
         async with HttpClient() as client:
-            data, _ = await client.get_bytes(
-                file_url, referer="https://gelbooru.com/",
-            )
-        Path(path).write_bytes(data)
+            data, _ = await client.get_bytes(file_url, referer=referer)
+        await asyncio.to_thread(save_png_bytes, data, Path(path))
 
     def _auth_params(self) -> dict[str, str]:
         """从环境变量读取 Gelbooru API 认证参数.

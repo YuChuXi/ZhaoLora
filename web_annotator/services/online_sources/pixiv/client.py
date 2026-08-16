@@ -36,6 +36,8 @@ def _read_phpsessid() -> str | None:
     """从 Netscape 格式 cookies 文件读出 PHPSESSID 值.
 
     pixiv web AJAX API 只认 PHPSESSID, 无需加载整个 cookie jar。
+    注意 HttpOnly cookie 的域名带 ``#HttpOnly_`` 前缀, 属真实 cookie 行,
+    不能与 ``#`` 注释行一样跳过。
 
     File path is read from ``os.environ["PIXIV_COOKIES"]``.
 
@@ -46,7 +48,9 @@ def _read_phpsessid() -> str | None:
     if not path:
         return None
     for line in Path(path).read_text().splitlines():
-        if line.startswith("#") or not line.strip():
+        if not line.strip():
+            continue
+        if line.startswith("#") and not line.startswith("#HttpOnly_"):
             continue
         parts = line.split("\t")
         if len(parts) >= 7 and parts[5] == "PHPSESSID":

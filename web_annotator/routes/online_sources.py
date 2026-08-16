@@ -42,6 +42,7 @@ from services.models import (
 )
 from services.core.scanner import IMAGE_EXTS
 from services.core.work_dir import resolve_subdir
+from services.online_sources.framework.base import search_session_posts as _search_session_posts
 
 router = APIRouter(prefix="/online-sources", tags=["online-sources"])
 
@@ -116,8 +117,8 @@ async def search(request: Request, body: SearchBody) -> BooruSearchResult:
 
     try:
         if src.session_based:
-            raw_posts, has_more, session = await src.search_session(
-                body.tags, body.session or "", order, body.extra or "",
+            raw_posts, has_more, session = await _search_session_posts(
+                source, body.tags, body.session or "", order=order, extra=body.extra or "",
             )
         else:
             raw_posts, has_more = await search_posts(
@@ -129,11 +130,6 @@ async def search(request: Request, body: SearchBody) -> BooruSearchResult:
         raise HTTPException(400, str(e)) from e
     except _NETWORK_ERRORS as e:
         raise HTTPException(502, f"搜索失败: {e}") from e
-
-    if src.session_based:
-        for post in raw_posts:
-            post.stem = src.file_stem(post.id)
-            post.filename = f"{post.stem}.png"
 
     posts: list[BooruPost] = []
     for post in raw_posts:

@@ -15,7 +15,7 @@ from services.dataset.layout import DatasetLayout, resolve_dataset_layout
 from services.models import JobSnapshot
 from services.state.annotator import StateManager
 from services.core.thumbnailer import Thumbnailer
-from services.analysis.sort_cache import SemanticSortCache
+from services.analysis.sort_cache import CACHE_FILENAME, SemanticSortCache
 
 if TYPE_CHECKING:
     from services.core.jobs import JobManager
@@ -33,8 +33,8 @@ class DatasetRuntime:
     thumbnailer: Thumbnailer
     state_manager: StateManager
     mask_dir: Path
+    sort_cache: SemanticSortCache
     color_index: ColorIndex | None = None
-    sort_cache: SemanticSortCache = field(default_factory=SemanticSortCache)
 
     @property
     def root(self) -> Path:
@@ -116,6 +116,7 @@ class DatasetRegistry:
             thumbnailer=thumbnailer,
             state_manager=state_manager,
             mask_dir=mask_dir,
+            sort_cache=SemanticSortCache(layout.root / CACHE_FILENAME),
         )
         self.by_name[name] = rt
         if self.job_manager is not None:

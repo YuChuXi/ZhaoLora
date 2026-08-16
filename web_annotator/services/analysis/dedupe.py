@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import threading
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
@@ -44,25 +45,67 @@ class ImageRecord:
 
 class UnionFind:
     def __init__(self, n: int) -> None:
-        """并查集初始化. 引用: find_duplicate_groups. """
+        """并查集初始化.
+
+        Args:
+            n: 元素数量.
+
+        Returns:
+            None.
+
+        Callers:
+            - `dedupe.py:find_duplicate_groups`
+        """
         self.p = list(range(n))
 
     def find(self, x: int) -> int:
-        """查找并压缩路径. 引用: union / find_duplicate_groups. """
+        """查找并压缩路径.
+
+        Args:
+            x: 元素索引.
+
+        Returns:
+            int: x 所属集合的代表元素.
+
+        Callers:
+            - `dedupe.py:UnionFind.union`
+            - `dedupe.py:find_duplicate_groups`
+        """
         while self.p[x] != x:
             self.p[x] = self.p[self.p[x]]
             x = self.p[x]
         return x
 
     def union(self, a: int, b: int) -> None:
-        """合并两个集合. 引用: find_duplicate_groups. """
+        """合并两个集合.
+
+        Args:
+            a: 元素索引.
+            b: 元素索引.
+
+        Returns:
+            None.
+
+        Callers:
+            - `dedupe.py:find_duplicate_groups`
+        """
         ra, rb = self.find(a), self.find(b)
         if ra != rb:
             self.p[rb] = ra
 
 
 def _blockiness(gray: np.ndarray) -> float:
-    """估计 JPEG 块效应强度. 引用: _load_one. """
+    """估计 JPEG 块效应强度.
+
+    Args:
+        gray: 灰度图数组.
+
+    Returns:
+        float: 块效应强度, 用于组内清晰度比较.
+
+    Callers:
+        - `dedupe.py:_load_one`
+    """
     if gray is None or gray.ndim != 2 or gray.shape[0] < 16 or gray.shape[1] < 16:
         return 0.0
     g = gray.astype(np.float32)
@@ -82,7 +125,17 @@ def _blockiness(gray: np.ndarray) -> float:
 
 
 def _load_one(path: Path) -> ImageRecord | None:
-    """读图并生成 128×128 指纹. 引用: load_records. """
+    """读图并生成 128×128 指纹.
+
+    Args:
+        path: 图像文件路径.
+
+    Returns:
+        ImageRecord | None: 记录; 解码失败时为 None.
+
+    Callers:
+        - `dedupe.py:load_records`
+    """
     gray = cv2.imread(str(path), cv2.IMREAD_GRAYSCALE)
     blockiness = _blockiness(gray)
     try:
@@ -184,6 +237,35 @@ def extract_fft_features(
     return records
 
 
+# ORB 探测器与 BFMatcher 均为无状态只读实例, 可被多线程安全复用:
+# detectAndCompute / knnMatch 不修改实例状态, 并发调用结果与串行一致.
+_ORB = cv2.ORB_create(nfeatures=ORB_NFEATURES)
+_MATCHER = cv2.BFMatcher(cv2.NORM_HAMMING)
+
+
+def _orb_feature_one(path: Path) -> np.ndarray | None:
+    """提取单张图的 ORB 描述子; 无法解码时返回 None.
+
+    Args:
+        path: 图像路径.
+
+    Returns:
+        np.ndarray | None: (k, 32) uint8 描述子; 解码失败为 None.
+
+    Callers:
+        - `dedupe.py:extract_orb_features`
+    """
+    try:
+        with Image.open(path) as im:
+            gray = im.convert("L")
+            gray.thumbnail((ORB_MAX, ORB_MAX))
+            arr = np.asarray(gray, dtype=np.uint8)
+            _, des = _ORB.detectAndCompute(arr, None)
+            return des
+    except (OSError, UnidentifiedImageError):
+        return None
+
+
 def extract_orb_features(
     records: list[ImageRecord],
     *,
@@ -193,7 +275,8 @@ def extract_orb_features(
     """为记录填充 ORB 局部特征(压缩后灰度图的关键点描述子).
 
     每张图按最长边 ``ORB_MAX`` 等比压缩, 灰度化后提取不超过 ``ORB_NFEATURES``
-    个 ORB 描述子, 供基于局部特征匹配的相似度去重使用. 纯 CPU 计算.
+    个 ORB 描述子, 供基于局部特征匹配的相似度去重使用. 各图并行提取, 共享
+    无状态只读探测器 ``_ORB``, 进度经锁保护后逐张上报.
 
     Args:
         records: 已有指纹的记录列表.
@@ -206,28 +289,53 @@ def extract_orb_features(
     Callers:
         - `routes/dedupe.py:scan_duplicates`
     """
-    orb = cv2.ORB_create(nfeatures=ORB_NFEATURES)
     total = len(records)
-    for i, r in enumerate(records):
-        try:
-            with Image.open(r.path) as im:
-                gray = im.convert("L")
-                gray.thumbnail((ORB_MAX, ORB_MAX))
-                arr = np.asarray(gray, dtype=np.uint8)
-                _, des = orb.detectAndCompute(arr, None)
-                r.orb_des = des
-        except (OSError, UnidentifiedImageError):
-            r.orb_des = None
-        if progress is not None:
-            progress.done = i + 1
-            progress.current = r.rel
-        if on_step is not None:
-            on_step(i + 1, total)
+    if not total:
+        return records
+    workers = max(1, min(16, (os.cpu_count() or 4) + 2))
+    lock = threading.Lock()
+    done = [0]
+
+    def run(idx: int) -> None:
+        """提取单张并上报进度.
+
+        Args:
+            idx: 记录索引.
+
+        Returns:
+            None.
+
+        Callers:
+            - `dedupe.py:extract_orb_features`
+        """
+        des = _orb_feature_one(records[idx].path)
+        with lock:
+            records[idx].orb_des = des
+            done[0] += 1
+            if progress is not None:
+                progress.done = done[0]
+                progress.current = records[idx].rel
+            if on_step is not None:
+                on_step(done[0], total)
+
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        for _ in ex.map(run, range(total)):
+            pass
     return records
 
 
 def collect_paths(data_dir: Path) -> list[Path]:
-    """列出目录内图像路径. 引用: load_records. """
+    """列出目录内图像路径.
+
+    Args:
+        data_dir: 数据目录.
+
+    Returns:
+        list[Path]: 按名称排序的图像路径列表.
+
+    Callers:
+        - `dedupe.py:load_records`
+    """
     data_dir = data_dir.resolve()
     out = []
     for p in sorted(data_dir.iterdir()):
@@ -237,7 +345,18 @@ def collect_paths(data_dir: Path) -> list[Path]:
 
 
 def load_records(data_dir: Path, workers: int | None = None) -> list[ImageRecord]:
-    """并行加载去重指纹. 引用: ``routes/dedupe.py``. """
+    """并行加载去重指纹.
+
+    Args:
+        data_dir: 数据目录.
+        workers: 并行工作线程数; None 时按 CPU 核数决定.
+
+    Returns:
+        list[ImageRecord]: 已排序的记录列表.
+
+    Callers:
+        - `routes/dedupe.py:scan_duplicates`
+    """
     paths = collect_paths(data_dir)
     if not paths:
         return []
@@ -273,8 +392,7 @@ def _pairwise_dots_upper(
         (rows, cols, dots): 上三角点积的压缩索引与值, 均为 float32/int64 数组.
 
     Callers:
-        - `dedupe.py:find_duplicate_groups`
-        - `dedupe.py:pairwise_values`
+        - `dedupe.py:_pairwise_values`
     """
     n = mat.shape[0]
     rows: list[np.ndarray] = []
@@ -318,47 +436,38 @@ def _pairwise_dots_upper(
     )
 
 
-def _bits_ratio(b1: np.ndarray, b2: np.ndarray) -> float:
-    """两个位矩阵之间的 ORB 匹配比例相似度.
+def _match_ratio(des1: np.ndarray, des2: np.ndarray) -> float:
+    """两张图 ORB 描述子的匹配比例相似度.
 
-    汉明距离由位计数与位点积推出: ``dist = cnt1 + cnt2 - 2·(b1 @ b2.T)``,
-    其中点积用 BLAS 加速. 对每行取最小的两个距离做 Lowe 比率检验筛选
-    可靠匹配, 返回可靠匹配数占两图较小描述子数的比例 (0~1, 越高越相似).
+    用 ``cv2.BFMatcher`` 的汉明距离 + Lowe 比率检验筛选可靠匹配. C++ 实现
+    比展开 float32 位矩阵做 BLAS 点积快一个数量级, 是 ORB 两两比较加速的关键.
 
     Args:
-        b1: 第一张图的位矩阵 (k1, 256) float32.
-        b2: 第二张图的位矩阵 (k2, 256) float32.
+        des1: 第一张图的 ORB 描述子 (k1, 32) uint8.
+        des2: 第二张图的 ORB 描述子 (k2, 32) uint8.
 
     Returns:
-        float: 匹配比例相似度.
+        float: 匹配比例相似度 (可靠匹配数 / 两图较小描述子数).
 
     Callers:
         - `dedupe.py:_orb_similarity`
-        - `dedupe.py:_compare_orb_edges`
-        - `dedupe.py:pairwise_values`
+        - `dedupe.py:_orb_upper`
     """
-    same = b1 @ b2.T
-    dist = b1.sum(1, keepdims=True) + b2.sum(1) - 2.0 * same
-    two = np.partition(dist, 1, axis=1)[:, :2]
-    d0 = two.min(axis=1)
-    d1 = two.max(axis=1)
-    good = int(np.count_nonzero(d0 < ORB_RATIO * d1))
+    matches = _MATCHER.knnMatch(des1, des2, k=2)
+    good = 0
+    for pair in matches:
+        if len(pair) < 2:
+            continue
+        m, n = pair
+        if m.distance < ORB_RATIO * n.distance:
+            good += 1
     if good == 0:
         return 0.0
-    return float(good) / float(min(len(b1), len(b2)))
-
-
-def _orb_bits(des: np.ndarray | None) -> np.ndarray | None:
-    """把 ORB 描述子展开为位矩阵 (k, 256) float32, 供汉明距离点积使用. """
-    if des is None or len(des) < 2:
-        return None
-    return np.unpackbits(des, axis=1).astype(np.float32)
+    return float(good) / float(min(len(des1), len(des2)))
 
 
 def _orb_similarity(des1: np.ndarray, des2: np.ndarray) -> float:
     """两张图 ORB 描述子的匹配比例相似度.
-
-    以展开位矩阵 + BLAS 点积替代逐对 ``cv2.BFMatcher`` 计算汉明距离.
 
     Args:
         des1: 第一张图的 ORB 描述子 (k1, 32) uint8.
@@ -370,37 +479,127 @@ def _orb_similarity(des1: np.ndarray, des2: np.ndarray) -> float:
     Callers:
         - `dedupe.py:_member_similarity`
     """
-    b1 = _orb_bits(des1)
-    b2 = _orb_bits(des2)
-    if b1 is None or b2 is None:
+    if des1 is None or des2 is None or len(des1) < 2 or len(des2) < 2:
         return 0.0
-    return _bits_ratio(b1, b2)
+    return _match_ratio(des1, des2)
 
 
-def _compare_orb_edges(
-    records: list[ImageRecord],
-    pool: list[int],
-    threshold: float,
-) -> list[tuple[int, int]]:
-    """ORB 匹配比例高于阈值的边. 引用: find_duplicate_groups.
+def _orb_upper(
+    des_list: list[np.ndarray],
+    *,
+    workers: int | None = None,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """并行计算 ORB 上三角匹配比例, 返回 (rows, cols, vals).
 
-    预处理将池内每图描述子展开为位矩阵一次, 之后两两比较仅做 BLAS 点积.
+    对每对图做 BFMatcher 匹配, 分块提交线程池并行执行, 供分组阈值与
+    直方图一次性复用, 避免 O(N^2) 两两比较被重复计算.
+
+    Args:
+        des_list: 参与比较的每图 ORB 描述子 (k, 32) uint8.
+        workers: 并行工作线程数; None 时按 CPU 核数决定.
+
+    Returns:
+        (rows, cols, vals): 上三角配对索引与匹配比例.
+
+    Callers:
+        - `dedupe.py:_pairwise_values`
     """
-    bits = [_orb_bits(records[p].orb_des) for p in pool]
-    n = len(pool)
-    thr = float(threshold)
-    edges: list[tuple[int, int]] = []
-    for i in range(n):
-        b_i = bits[i]
-        if b_i is None:
-            continue
-        for j in range(i + 1, n):
-            b_j = bits[j]
-            if b_j is None:
-                continue
-            if _bits_ratio(b_i, b_j) >= thr:
-                edges.append((i, j))
-    return edges
+    n = len(des_list)
+    pairs = [(i, j) for i in range(n) for j in range(i + 1, n)]
+    if not pairs:
+        return (
+            np.empty(0, np.int64),
+            np.empty(0, np.int64),
+            np.empty(0, np.float32),
+        )
+    workers = workers or max(1, min(16, (os.cpu_count() or 4) + 2))
+
+    def compute(chunk: list[tuple[int, int]]) -> list[float]:
+        """计算一批配对的匹配比例.
+
+        Args:
+            chunk: 配对索引列表.
+
+        Returns:
+            list[float]: 各配对的匹配比例.
+
+        Callers:
+            - `dedupe.py:_orb_upper`
+        """
+        return [_match_ratio(des_list[i], des_list[j]) for i, j in chunk]
+
+    # 按核数分块, 减少线程池任务数, 摊薄调度开销
+    chunk_size = max(1, (len(pairs) + workers - 1) // workers // 4)
+    chunks = [pairs[k:k + chunk_size] for k in range(0, len(pairs), chunk_size)]
+    results: list[float] = []
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        for chunk_res in ex.map(compute, chunks):
+            results.extend(chunk_res)
+    rows = np.fromiter((p[0] for p in pairs), dtype=np.int64, count=len(pairs))
+    cols = np.fromiter((p[1] for p in pairs), dtype=np.int64, count=len(pairs))
+    return rows, cols, np.asarray(results, dtype=np.float32)
+
+
+def _pairwise_values(
+    records: list[ImageRecord],
+    algorithm: str,
+    *,
+    device=None,
+    block: int = 2048,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, list[int]]:
+    """统一计算当前算法下全部两两相似度(上三角, 不含自身).
+
+    返回 (rows, cols, vals, pool): ``pool`` 为参与比较的记录索引,
+    rows/cols 均为 ``pool`` 内的位置, 供并查集分组直接使用.
+
+    Args:
+        records: 图像记录, 需已含对应算法所需特征.
+        algorithm: 相似度算法, ``"mse"`` / ``"fft"`` / ``"orb"``.
+        device: CUDA 设备, 为 None 时用 numpy.
+        block: 矩阵乘法批行数(仅 mse/fft).
+
+    Returns:
+        (rows, cols, vals, pool): 上三角索引与相似度值(rows/cols 为 pool 位置);
+        mse 为 MSE 值, fft 为余弦, orb 为匹配比例.
+
+    Callers:
+        - `dedupe.py:find_duplicate_groups`
+        - `dedupe.py:pairwise_values`
+    """
+    if algorithm == "mse":
+        n = len(records)
+        fp = np.stack([r.fingerprint for r in records], axis=0)
+        fp_flat = np.ascontiguousarray(fp.reshape(n, -1), dtype=np.float32)
+        sq = np.sum(fp_flat * fp_flat, axis=1, dtype=np.float32)
+        rows, cols, dots = _pairwise_dots_upper(fp_flat, device, block=block)
+        mse = (sq[rows] + sq[cols] - 2.0 * dots) * (1.0 / float(fp_flat.shape[1]))
+        return rows, cols, mse.astype(np.float32), list(range(n))
+    if algorithm == "fft":
+        good = [i for i, r in enumerate(records) if r.fft_feature is not None]
+        if not good:
+            return (
+                np.empty(0, np.int64),
+                np.empty(0, np.int64),
+                np.empty(0, np.float32),
+                [],
+            )
+        vec = np.ascontiguousarray(
+            np.stack([cast(np.ndarray, records[i].fft_feature) for i in good]),
+            dtype=np.float32,
+        )
+        rows, cols, dots = _pairwise_dots_upper(vec, device, block=block)
+        return rows, cols, dots.astype(np.float32), good
+    good = [i for i, r in enumerate(records) if r.orb_des is not None and len(r.orb_des) >= 2]
+    if not good:
+        return (
+            np.empty(0, np.int64),
+            np.empty(0, np.int64),
+            np.empty(0, np.float32),
+            [],
+        )
+    des_list = [cast(np.ndarray, records[i].orb_des) for i in good]
+    rows, cols, vals = _orb_upper(des_list)
+    return rows, cols, vals, good
 
 
 def pairwise_values(
@@ -408,6 +607,9 @@ def pairwise_values(
     algorithm: str,
 ) -> np.ndarray:
     """收集当前算法下全部两两相似度值(上三角, 不含自身).
+
+    复用 ``_pairwise_values`` 的统一计算, 仅取相似度值数组, 供直方图等
+    可视化使用; 分组内部直接调用 ``_pairwise_values`` 避免重复计算.
 
     Args:
         records: 图像记录, 需已含对应算法所需特征.
@@ -419,34 +621,7 @@ def pairwise_values(
     Callers:
         - `routes/dedupe.py:scan_duplicates`
     """
-    if algorithm == "mse":
-        n = len(records)
-        fp = np.stack([r.fingerprint for r in records], axis=0)
-        fp_flat = np.ascontiguousarray(fp.reshape(n, -1), dtype=np.float32)
-        sq = np.sum(fp_flat * fp_flat, axis=1, dtype=np.float32)
-        rows, cols, dots = _pairwise_dots_upper(fp_flat, cuda_device())
-        mse = (sq[rows] + sq[cols] - 2.0 * dots) * (1.0 / float(fp_flat.shape[1]))
-        return mse.astype(np.float32)
-    if algorithm == "fft":
-        feats = [r.fft_feature for r in records if r.fft_feature is not None]
-        if not feats:
-            return np.empty(0, np.float32)
-        vec = np.ascontiguousarray(np.stack(feats), dtype=np.float32)
-        _, _, dots = _pairwise_dots_upper(vec, cuda_device())
-        return dots.astype(np.float32)
-    bits = [_orb_bits(r.orb_des) for r in records]
-    n = len(records)
-    vals: list[float] = []
-    for i in range(n):
-        b_i = bits[i]
-        if b_i is None:
-            continue
-        for j in range(i + 1, n):
-            b_j = bits[j]
-            if b_j is None:
-                continue
-            vals.append(_bits_ratio(b_i, b_j))
-    return np.asarray(vals, dtype=np.float32)
+    return _pairwise_values(records, algorithm)[2]
 
 
 def _member_similarity(
@@ -493,7 +668,19 @@ def _member_similarity(
 
 
 def suggest_keep_index(records: list[ImageRecord], idxs: list[int], similar_res_ratio: float) -> int:
-    """组内建议保留索引. 引用: find_duplicate_groups. """
+    """组内建议保留索引.
+
+    Args:
+        records: 全部记录.
+        idxs: 组内记录索引列表.
+        similar_res_ratio: 分辨率是否相近的比例阈值.
+
+    Returns:
+        int: 建议保留的记录索引.
+
+    Callers:
+        - `dedupe.py:find_duplicate_groups`
+    """
     areas = [records[k].width * records[k].height for k in idxs]
     amax = max(areas)
     amin = min(areas)
@@ -549,39 +736,25 @@ def find_duplicate_groups(
     Raises:
         ValueError: ``algorithm`` 非法, 或对应模式缺少特征时抛出.
 
-    引用:
-        - ``routes/dedupe.py``.
+    Callers:
+        - `routes/dedupe.py:scan_duplicates`
     """
-    n = len(records)
-    if n < 2:
+    if len(records) < 2:
         return []
 
     device = cuda_device()
-    if algorithm == "fft":
-        good = [i for i, r in enumerate(records) if r.fft_feature is not None]
-        if not good:
-            raise ValueError("没有可用的 FFT 特征")
-        feats = np.stack([cast(np.ndarray, records[i].fft_feature) for i in good], axis=0)
-        vec = np.ascontiguousarray(feats, dtype=np.float32)
-        rows, cols, dots = _pairwise_dots_upper(vec, device, block=j_chunk)
-        mask = dots >= float(sim_threshold)
-        edges = [(int(i), int(j)) for i, j in zip(rows[mask], cols[mask])]
-        pool = good
-    elif algorithm == "orb":
-        good = [i for i, r in enumerate(records) if r.orb_des is not None and len(r.orb_des) >= 2]
-        if not good:
-            raise ValueError("没有可用的 ORB 特征")
-        edges = _compare_orb_edges(records, good, float(sim_threshold))
-        pool = good
+    rows, cols, vals, pool = _pairwise_values(
+        records, algorithm, device=device, block=j_chunk,
+    )
+    if vals.size == 0:
+        name = {"fft": "FFT", "orb": "ORB"}.get(algorithm)
+        if name is not None:
+            raise ValueError(f"没有可用的 {name} 特征")
+    if algorithm == "mse":
+        mask = vals < float(mse_threshold)
     else:
-        fp = np.stack([r.fingerprint for r in records], axis=0)
-        fp_flat = np.ascontiguousarray(fp.reshape(n, -1), dtype=np.float32)
-        sq = np.sum(fp_flat * fp_flat, axis=1, dtype=np.float32)
-        rows, cols, dots = _pairwise_dots_upper(fp_flat, device, block=j_chunk)
-        mse = (sq[rows] + sq[cols] - 2.0 * dots) * (1.0 / float(fp_flat.shape[1]))
-        below = mse < float(mse_threshold)
-        edges = [(int(i), int(j)) for i, j in zip(rows[below], cols[below])]
-        pool = list(range(n))
+        mask = vals >= float(sim_threshold)
+    edges = [(int(i), int(j)) for i, j in zip(rows[mask], cols[mask])]
 
     uf = UnionFind(len(pool))
     for i, j in edges:

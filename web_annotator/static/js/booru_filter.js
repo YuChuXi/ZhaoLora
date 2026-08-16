@@ -188,6 +188,7 @@ var BooruFilter = (function () {
       remote: true,
       bar: 'booru',
       batchDialog: true,
+      metaTools: true, // 对话框内显示「重生成 Caption / 刷新元数据」booru 专用按钮
       stemPrefix: 'g',
       nameLabel: 'Gelbooru',
       buildRequest: _booruRequest,
@@ -209,6 +210,7 @@ var BooruFilter = (function () {
       remote: true,
       bar: 'booru',
       batchDialog: true,
+      metaTools: true, // 对话框内显示「重生成 Caption / 刷新元数据」booru 专用按钮
       stemPrefix: 'd',
       nameLabel: 'Danbooru',
       buildRequest: _booruRequest,
@@ -219,7 +221,7 @@ var BooruFilter = (function () {
     bilibili: {
       remote: true,
       bar: 'bilibili',
-      batchDialog: false,
+      batchDialog: true,
       stemPrefix: 'bi',
       nameLabel: 'Bilibili',
       noJump: true, // 游标式分页: 仅能顺序翻页, 禁用跳页
@@ -248,7 +250,7 @@ var BooruFilter = (function () {
     x: {
       remote: true,
       bar: 'x',
-      batchDialog: false,
+      batchDialog: true,
       stemPrefix: 'x',
       nameLabel: 'X',
       noJump: true, // 游标式分页: 仅能顺序翻页, 禁用跳页
@@ -277,7 +279,7 @@ var BooruFilter = (function () {
     pixiv: {
       remote: true,
       bar: 'pixiv',
-      batchDialog: false,
+      batchDialog: true,
       stemPrefix: 'p',
       nameLabel: 'Pixiv',
       requireTags: true,
@@ -1693,6 +1695,12 @@ var BooruFilter = (function () {
     if (!dlg) return;
     dlg.classList.toggle('show', !!show);
     dlg.setAttribute('aria-hidden', show ? 'false' : 'true');
+    // 「重生成 Caption / 刷新元数据」仅对 booru 来源有效, 其余来源隐藏
+    var metaTools = !!cur().metaTools;
+    ['booru-batch-regenerate', 'booru-batch-refresh-meta'].forEach(function (id) {
+      var b = document.getElementById(id);
+      if (b) b.hidden = !metaTools;
+    });
     if (!show && !_batchRunning) setBatchProgress(null);
     syncBatchCloseBtn();
     syncBatchStopBtn();

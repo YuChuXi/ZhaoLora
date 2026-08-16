@@ -241,8 +241,11 @@ class PixivSource(SourceClient):
     ) -> tuple[list[BooruPost], int]:
         """拉取一页标签搜索结果, 展开为扁平卡片列表.
 
-        搜索结果中每项不含 ``urls`` 字典, 只有方形缩略图 ``url``,
-        预处理为 regular URL 再展开.
+        使用 ``/ajax/search/artworks`` 合并接口, 该接口返回 ``illustManga``
+        (插画+漫画+动图) 合并列表, 避免 ``/ajax/search/illustrations`` 仅含
+        插画+动图而导致漫画整类缺失; 用 ``type=all`` 取全量再按 ``illustType``
+        过滤出目标类型。搜索结果中每项不含 ``urls`` 字典, 只有方形缩略图
+        ``url``, 预处理为 regular URL 再展开.
 
         Args:
             tag: 标签词。
@@ -255,11 +258,11 @@ class PixivSource(SourceClient):
             - `PixivSource._serve_tag_page`
         """
         data = await self._request(
-            f"https://www.pixiv.net/ajax/search/illustrations/{tag}"
+            f"https://www.pixiv.net/ajax/search/artworks/{tag}"
             f"?word={tag}&order=date_d&mode=all&p={page}"
-            f"&s_mode=s_tag_full&type=illust_and_ugoira&lang=zh",
+            f"&s_mode=s_tag_full&type=all&lang=zh",
         )
-        illust = data.get("body", {}).get("illust", {})
+        illust = data.get("body", {}).get("illustManga", {})
         items = illust.get("data", [])
         posts: list[BooruPost] = []
         for item in items:

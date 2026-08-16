@@ -12,19 +12,16 @@ Callers:
 from __future__ import annotations
 
 import asyncio
-import io
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Callable
 from pathlib import Path
 from urllib.parse import urlparse
 
-from PIL import Image
-
 from services.core.scanner import IMAGE_EXTS
 from services.online_sources.framework.http import HttpClient
 from services.online_sources.framework.utils import (
     _GENDER_TAGS,
-    sniff_image_kind,
+    save_png_bytes,
     _tags_to_caption,
 )
 from services.models.booru import BooruPost
@@ -324,6 +321,8 @@ class SourceClient(ABC):
     def _save_png_sync(self, data: bytes, dest: Path) -> None:
         """同步执行 PNG 字节转码写入 (经 ``asyncio.to_thread`` 调用).
 
+        校验与转码核心逻辑集中在 ``utils.save_png_bytes``。
+
         Args:
             data: 原始字节。
             dest: 目标 PNG 路径。
@@ -331,18 +330,7 @@ class SourceClient(ABC):
         Callers:
             - `SourceClient._save_png`
         """
-        kind = sniff_image_kind(data)
-        if kind in ("html", "zip", "video", "webm"):
-            raise ValueError(f"不支持该文件类型({kind})")
-        if kind == "png":
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            dest.write_bytes(data)
-            return
-        img = Image.open(io.BytesIO(data))
-        img.load()
-        out = img.convert("RGBA") if img.mode in ("RGBA", "LA", "P") else img.convert("RGB")
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        out.save(dest, format="PNG", optimize=True)
+        save_png_bytes(data, dest)
 
     def _clean_old_files(self, out_dir: Path, pid: str, keep: Path) -> None:
         from services.online_sources.framework.utils import stem_candidates
@@ -525,3 +513,30 @@ async def search_posts(
         post.stem = src.file_stem(post.id)
         post.filename = f"{post.stem}.png"
     return posts, has_more
+
+
+async def search_session_posts(
+    source: str, tags: str, session: str, *, order: str = "",
+    extra: str = "",
+) -> tuple[list[BooruPost], bool, str]:
+    """按会话续拉搜索结果, 并补全每帖 ``stem``/``filename``.
+
+    与会话式来源的 ``search_session`` 相比, 本函数额外补全文件名 (与
+    ``search_posts`` 对页码式来源的补全一致), 供搜索路由与批量下载统一复用,
+    避免各调用方重复补全。仅限 ``session_based`` 来源调用。
+
+    Returns:
+        ``(posts, has_more, session_token)``.
+
+    Callers:
+        - `routes/online_sources.py:search`
+        - `online_sources/batch.py:_run_async`
+    """
+    src = get_source(source)
+    posts, has_more, token = await src.search_session(
+        tags, session, order, extra,
+    )
+    for post in posts:
+        post.stem = src.file_stem(post.id)
+        post.filename = f"{post.stem}.png"
+    return posts, has_more, token

@@ -42,6 +42,38 @@ def pil_can_open(data: bytes) -> bool:
         return False
 
 
+def save_png_bytes(data: bytes, dest: Path) -> None:
+    """将图片字节按 PNG 写入磁盘, 并校验其确为可识别图片.
+
+    校验规则: 先按魔数排除 html/zip/video/webm 等非图片; PNG 原样写入;
+    其余格式经 PIL 解码重编码为 PNG。PIL 无法识别或解码失败时抛出异常,
+    保证磁盘上不会出现以图片扩展名存放的非图片数据。
+
+    Args:
+        data: 原始字节.
+        dest: 目标 PNG 路径 (父目录不存在时自动创建).
+
+    Raises:
+        ValueError: 非图片类型 (html/zip/video/webm).
+        UnidentifiedImageError / OSError: 数据无法被 PIL 解码.
+
+    Callers:
+        - ``base.py:SourceClient._save_png_sync``
+        - ``gelbooru/client.py:GelbooruClient.get_image``
+    """
+    kind = sniff_image_kind(data)
+    if kind in ("html", "zip", "video", "webm"):
+        raise ValueError(f"不支持该文件类型({kind})")
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    if kind == "png":
+        dest.write_bytes(data)
+        return
+    img = Image.open(io.BytesIO(data))
+    img.load()
+    out = img.convert("RGBA") if img.mode in ("RGBA", "LA", "P") else img.convert("RGB")
+    out.save(dest, format="PNG", optimize=True)
+
+
 def stem_candidates(post_id: str, *, file_stem_fn) -> list[str]:
     """生成候选文件名 stem: 规范名 + 纯 id. 
 
