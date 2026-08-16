@@ -564,7 +564,6 @@ def _pairwise_values(
 
     Callers:
         - `dedupe.py:find_duplicate_groups`
-        - `dedupe.py:pairwise_values`
     """
     if algorithm == "mse":
         n = len(records)
@@ -600,28 +599,6 @@ def _pairwise_values(
     des_list = [cast(np.ndarray, records[i].orb_des) for i in good]
     rows, cols, vals = _orb_upper(des_list)
     return rows, cols, vals, good
-
-
-def pairwise_values(
-    records: list[ImageRecord],
-    algorithm: str,
-) -> np.ndarray:
-    """收集当前算法下全部两两相似度值(上三角, 不含自身).
-
-    复用 ``_pairwise_values`` 的统一计算, 仅取相似度值数组, 供直方图等
-    可视化使用; 分组内部直接调用 ``_pairwise_values`` 避免重复计算.
-
-    Args:
-        records: 图像记录, 需已含对应算法所需特征.
-        algorithm: 相似度算法, ``"mse"`` / ``"fft"`` / ``"orb"``.
-
-    Returns:
-        np.ndarray: 两两相似度值; mse 为 MSE 值, fft 为余弦, orb 为匹配比例.
-
-    Callers:
-        - `routes/dedupe.py:scan_duplicates`
-    """
-    return _pairwise_values(records, algorithm)[2]
 
 
 def _member_similarity(
@@ -711,7 +688,7 @@ def find_duplicate_groups(
     sim_threshold: float = 0.95,
     similar_res_ratio: float = 1.05,
     j_chunk: int = 2048,
-) -> list[DedupeGroup]:
+) -> tuple[list[DedupeGroup], np.ndarray]:
     """返回仅含重复的组；每组含 members / keep / suggested_remove.
 
     按 ``algorithm`` 选择相似度度量:
@@ -720,7 +697,8 @@ def find_duplicate_groups(
     - ``"fft"``: 图像 FFT 低频特征, 余弦相似度 >= ``sim_threshold`` 判为重复.
     - ``"orb"``: ORB 局部特征匹配比例 >= ``sim_threshold`` 判为重复.
 
-    三种算法共用同一套并查集分组与"建议保留更清晰样本"策略.
+    三种算法共用同一套并查集分组与"建议保留更清晰样本"策略. 两两相似度
+    只计算一次, 第二返回值供直方图等可视化复用, 避免重复计算.
 
     Args:
         records: 图像记录, 需含 ``fingerprint``(mse) 或 ``fft_feature``(fft) 或 ``orb_des``(orb).
@@ -731,7 +709,8 @@ def find_duplicate_groups(
         j_chunk: FFT/MSE 分块比较的列数.
 
     Returns:
-        list[DedupeGroup]: 仅含重复的组列表, 按组大小降序.
+        (groups, vals): 仅含重复的组列表(按组大小降序)与全部两两相似度值
+        (mse 为 MSE 值, fft 为余弦, orb 为匹配比例).
 
     Raises:
         ValueError: ``algorithm`` 非法, 或对应模式缺少特征时抛出.
@@ -740,7 +719,7 @@ def find_duplicate_groups(
         - `routes/dedupe.py:scan_duplicates`
     """
     if len(records) < 2:
-        return []
+        return [], np.empty(0, np.float32)
 
     device = cuda_device()
     rows, cols, vals, pool = _pairwise_values(
@@ -795,4 +774,4 @@ def find_duplicate_groups(
         )
 
     groups.sort(key=lambda g: (-g.size, g.keep))
-    return groups
+    return groups, vals

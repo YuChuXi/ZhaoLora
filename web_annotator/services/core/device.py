@@ -49,7 +49,6 @@ def cuda_device() -> torch.device | None:
 
     Callers:
         - `analysis/dedupe.py:extract_fft_features`
-        - `analysis/dedupe.py:pairwise_values`
         - `analysis/dedupe.py:find_duplicate_groups`
     """
     global _TORCH_DEVICE, _DEVICE_CHECKED

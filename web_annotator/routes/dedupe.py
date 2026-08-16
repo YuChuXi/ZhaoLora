@@ -11,7 +11,6 @@ from services.analysis.dedupe import (
     extract_orb_features,
     find_duplicate_groups,
     load_records,
-    pairwise_values,
 )
 from services.core.jobs import EmitFn
 from services.models import (
@@ -210,7 +209,7 @@ async def scan_duplicates(request: Request, body: ScanBody) -> JobSubmitResponse
                 pct=None,
             )
         )
-        groups = find_duplicate_groups(
+        groups, vals = find_duplicate_groups(
             records,
             algorithm=algorithm,
             mse_threshold=mse,
@@ -223,7 +222,7 @@ async def scan_duplicates(request: Request, body: ScanBody) -> JobSubmitResponse
                 if not thumbnailer.exists(m.path):
                     thumbnailer.generate(m.path)
 
-        histogram = similarity_histogram(pairwise_values(records, algorithm), algorithm)
+        histogram = similarity_histogram(vals, algorithm)
 
         result = DedupeScanResult(
             dirs=[s for s, _ in pairs],
