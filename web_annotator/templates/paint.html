@@ -25,6 +25,8 @@
   #bg-style:has(option[value="custom"]:checked) ~ #bg-color { display: inline-block; }
   .modal-row input { width: 80px; background: var(--input-bg, #333); color: var(--text, #ddd); border: 1px solid var(--border, #555); border-radius: 4px; padding: 4px 8px; font-size: 13px; }
   .modal-row input[type="checkbox"] { width: auto; margin: 0; }
+  .modal-row select { background: var(--input-bg, #333); color: var(--text, #ddd); border: 1px solid var(--border, #555); border-radius: 4px; padding: 4px 8px; font-size: 13px; }
+  .modal-row #sam3-expression { width: 100%; min-width: 280px; box-sizing: border-box; }
   .modal-actions { display: flex; gap: 8px; justify-content: flex-end; }
 </style>
 </head>
@@ -36,7 +38,7 @@
   <button class="btn" id="btn-skip">跳过</button>
   <button class="btn green" id="btn-save">保存</button>
   <span class="sep"></span>
-  <button class="btn" id="btn-birefnet-mask" title="BiRefNet 批量生成蒙版到 mask/">生成蒙版</button>
+  <button class="btn" id="btn-birefnet-mask" title="生成蒙版(BiRefNet / SAM3)到 mask/">生成蒙版</button>
   <span class="sep"></span>
   <button class="btn" id="btn-clear">全透明</button>
   <button class="btn" id="btn-fill">全不透明</button>
@@ -84,16 +86,36 @@
 </div>
 
 <div class="modal-overlay" id="birefnet-dlg" hidden>
-  <div class="modal-dlg">
-    <h3>BiRefNet 蒙版生成</h3>
+  <div class="modal-dlg" id="mask-dlg">
+    <h3>蒙版生成</h3>
     <p style="margin:0 0 12px;font-size:12px;color:var(--text-dim);">默认仅重新生成当前图片蒙版，勾选「批量」处理整个目录。</p>
     <div class="modal-row">
-      <label>扩展像素<br><input type="number" id="birefnet-expand" value="32" min="0" max="200"></label>
-      <label>收缩像素<br><input type="number" id="birefnet-shrink" value="0" min="0" max="200"></label>
+      <label>生成方式<br>
+        <select id="mask-mode">
+          <option value="birefnet">BiRefNet 背景移除</option>
+          <option value="sam3">SAM3 概念分割</option>
+        </select>
+      </label>
     </div>
-    <div class="modal-row">
-      <label>最小值<br><input type="number" id="birefnet-min" value="96" min="0" max="255" step="1"></label>
-      <label>最大值<br><input type="number" id="birefnet-max" value="255" min="0" max="255" step="1"></label>
+    <!-- BiRefNet 参数区 -->
+    <div id="birefnet-params">
+      <div class="modal-row">
+        <label>扩展像素<br><input type="number" id="birefnet-expand" value="32" min="0" max="200"></label>
+        <label>收缩像素<br><input type="number" id="birefnet-shrink" value="0" min="0" max="200"></label>
+      </div>
+      <div class="modal-row">
+        <label>最小值<br><input type="number" id="birefnet-min" value="96" min="0" max="255" step="1"></label>
+        <label>最大值<br><input type="number" id="birefnet-max" value="255" min="0" max="255" step="1"></label>
+      </div>
+    </div>
+    <!-- SAM3 参数区 -->
+    <div id="sam3-params" hidden>
+      <div class="modal-row">
+        <label>逻辑表达式<br>
+          <input type="text" id="sam3-expression" value='(默认蒙板-("白色背景"+"对话气泡"))' placeholder='(默认蒙板-("白色背景"+"对话气泡"))'>
+        </label>
+      </div>
+      <p style="margin:0 0 12px;font-size:12px;color:var(--text-dim);">支持 + (并集) / - (差集) / 括号组合; "概念文本" 为 SAM3 分割提示。</p>
     </div>
     <div class="modal-row">
       <label class="inline"><input type="checkbox" id="birefnet-batch"> 批量处理整个目录</label>

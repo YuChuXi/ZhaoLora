@@ -549,7 +549,7 @@
     btn.textContent = _fitMode === 'cover' ? '⊟' : '⊞';
   }
 
-  /** 导航：delta = +1(下一张) / -1(上一张)。 */
+  /** 切帧：delta = +1(下一张) / -1(上一张)。 */
   function navigateSingle(delta) {
     var n = _singleIndex + delta;
     if (n < 0) n = _items.length - 1;
@@ -1005,7 +1005,7 @@
       singleTagOp('delete');
     });
 
-    // 单图键盘导航 (AD 与左右键等价)
+    // 单图键盘切帧 (AD 与左右键等价)
     document.addEventListener('keydown', function (e) {
       if (_singleIndex < 0) return;
       if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return;

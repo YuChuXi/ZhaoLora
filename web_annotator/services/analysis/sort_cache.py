@@ -37,7 +37,7 @@ class SemanticSortCache:
 
     以查询文本为键；条目与执行时选中的目录集合绑定，目录变化视为未命中，
     避免跨目录复用过期结果。命中条目同时登记到最近列表，供前端下拉展示。
-    每次写入即原子落盘，重启后由 ``_load`` 恢复。
+    每次写入即原子持久化，重启后由 ``_load`` 恢复。
     """
 
     def __init__(self, path: Path) -> None:
@@ -160,7 +160,7 @@ class SemanticSortCache:
     def put(self, query: str, dirs: tuple[str, ...], hits: list[tuple[str, float]]) -> None:
         """写入一次排序结果并登记为最近查询，超出上限时淘汰最旧条目.
 
-        写入后立即原子落盘，保证重启后仍可恢复。
+        写入后立即原子持久化，保证重启后仍可恢复。
 
         Args:
             query (str): 查询文本。

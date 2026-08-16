@@ -592,10 +592,21 @@
     updateStatusBar();
   }
 
-  // BiRefNet 蒙版批量生成
+  // 蒙版生成 (BiRefNet / SAM3)
   var birefnetBtn = document.getElementById('btn-birefnet-mask');
   var birefnetDlg = document.getElementById('birefnet-dlg');
   if (birefnetBtn && birefnetDlg) {
+    var maskModeEl = document.getElementById('mask-mode');
+    var birefnetParamsEl = document.getElementById('birefnet-params');
+    var sam3ParamsEl = document.getElementById('sam3-params');
+    // 按生成方式切换参数区: BiRefNet 显示扩展/收缩/值域, SAM3 显示逻辑表达式
+    var syncMaskMode = function () {
+      var isSam3 = maskModeEl.value === 'sam3';
+      birefnetParamsEl.hidden = isSam3;
+      sam3ParamsEl.hidden = !isSam3;
+    };
+    maskModeEl.addEventListener('change', syncMaskMode);
+    syncMaskMode();
     birefnetBtn.addEventListener('click', function () { birefnetDlg.hidden = false; });
     document.getElementById('birefnet-cancel').addEventListener('click', function () { birefnetDlg.hidden = true; });
     // 「跳过已有蒙版」仅批量模式可用: 单图模式禁用(灰显由 CSS 派生), disabled 只能 JS 设
@@ -605,26 +616,28 @@
     document.getElementById('birefnet-batch').addEventListener('change', syncSkipEnabled);
     syncSkipEnabled();
     document.getElementById('birefnet-start').addEventListener('click', function () {
-      var expand = parseInt(document.getElementById('birefnet-expand').value) || 32;
-      var shrink = parseInt(document.getElementById('birefnet-shrink').value) || 0;
-      var maskMin = parseInt(document.getElementById('birefnet-min').value) || 96;
-      var maskMax = parseInt(document.getElementById('birefnet-max').value) || 255;
+      var mode = maskModeEl.value;
       var batch = document.getElementById('birefnet-batch').checked;
       // 单图模式无「跳过已有蒙版」概念, 始终重新生成; 仅批量模式应用该选项
       var skipExisting = batch ? document.getElementById('birefnet-skip').checked : false;
-      var body = {
-        dir: currentDir(),
-        mask_expand: expand, mask_shrink: shrink,
-        mask_min: maskMin, mask_max: maskMax,
-        skip_existing: skipExisting,
-      };
+      var body = { dir: currentDir(), mode: mode, skip_existing: skipExisting };
+      if (mode === 'sam3') {
+        var expression = document.getElementById('sam3-expression').value.trim();
+        if (!expression) { toast('请输入逻辑表达式'); return; }
+        body.expression = expression;
+      } else {
+        body.mask_expand = parseInt(document.getElementById('birefnet-expand').value) || 32;
+        body.mask_shrink = parseInt(document.getElementById('birefnet-shrink').value) || 0;
+        body.mask_min = parseInt(document.getElementById('birefnet-min').value) || 96;
+        body.mask_max = parseInt(document.getElementById('birefnet-max').value) || 255;
+      }
       // 默认单图: 仅重新生成当前图片; 勾选「批量」处理整个目录
       if (!batch) {
         if (!_cur || !_cur.item) { toast('当前没有图片'); return; }
         body.path = _cur.item.path;
       }
       birefnetDlg.hidden = true;
-      fetch('/api/d/' + API.dataset() + '/birefnet-mask', {
+      fetch('/api/d/' + API.dataset() + '/mask-generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body)
@@ -659,6 +672,12 @@
       if (snap.status === 'done') {
         evtSource.close();
         location.reload();
+        return;
+      }
+      if (snap.status === 'error') {
+        evtSource.close();
+        text.textContent = '失败: ' + (snap.message || '未知错误');
+        setTimeout(function () { bar.hidden = true; }, 5000);
         return;
       }
       if (snap.status === 'cancelled') {

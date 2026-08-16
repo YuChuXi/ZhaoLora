@@ -17,6 +17,7 @@ import base64
 import io
 import os
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
@@ -24,6 +25,9 @@ import numpy as np
 from PIL import Image
 
 from services.core.device import register_model
+from services.analysis.mask_expression import evaluate, extract_concepts, parse
+from services.models import JobSnapshot
+from services.state.mask import load_mask
 
 if TYPE_CHECKING:
     import torch
@@ -303,3 +307,136 @@ def run_concept_query(
             on_progress(min(start + _BATCH_SIZE, n), n)
     items.sort(key=lambda it: it["ratio"], reverse=True)
     return items
+
+
+@dataclass
+class Sam3MaskProgress:
+    """SAM3 表达式蒙版生成进度. 引用: ``routes/birefnet.py:mask_generate``. """
+
+    done: int = 0
+    total: int = 0
+    failed: int = 0
+    cancel_requested: bool = False
+
+    def snapshot(self) -> JobSnapshot:
+        """当前进度快照. 引用: ``routes/birefnet.py:mask_generate``. """
+        return JobSnapshot(
+            status="running",
+            kind="sam3_mask",
+            dataset="",
+            job_id="",
+            done=self.done,
+            total=self.total,
+            failed=self.failed,
+            message=f"{self.done}/{self.total}" if self.total else "准备中",
+        )
+
+
+@_MODEL.auto_release
+def run_sam3_expression_mask(
+    image_rel_paths: list[tuple[str, Path]],
+    mask_dir: Path,
+    expression: str,
+    *,
+    handle: Sam3Handle | None = None,
+    skip_existing: bool = True,
+    progress: Sam3MaskProgress | None = None,
+    on_progress: Callable[[], None] | None = None,
+) -> tuple[int, int]:
+    """对图片列表按逻辑表达式生成蒙板并保存.
+
+    流程:
+    1. 解析表达式提取概念列表, 并过滤掉 ``skip_existing`` 命中的图片.
+    2. 逐概念分批推理 (SAM3 ``segment_concept_masks_batch``), 得到各图概念掩码.
+    3. 逐图加载默认蒙板 (已保存的蒙板, 无则全不透明 255), 求值并保存.
+
+    概念掩码经 SAM3 ``original_sizes`` 还原为原图尺寸, 与默认蒙板尺寸一致.
+
+    Args:
+        image_rel_paths: ``[(rel, abs_path), ...]`` 相对数据集根路径与绝对路径.
+        mask_dir: 蒙板输出目录.
+        expression: 逻辑表达式, 如 ``(默认蒙板-("白色背景"+"对话气泡"))``.
+        handle: SAM3 模型句柄, 由 ``auto_release`` 注入.
+        skip_existing: 如果输出文件已存在则跳过.
+        progress: 进度对象.
+        on_progress: 进度回调, 每处理一张后调用.
+
+    Returns:
+        (成功数, 总数).
+
+    Callers:
+        - ``routes/birefnet.py:mask_generate``
+    """
+    assert handle is not None
+    total = len(image_rel_paths)
+    if total == 0:
+        return 0, 0
+
+    ast = parse(expression)
+    concepts = extract_concepts(ast)
+
+    if progress is not None:
+        progress.total = total
+        progress.done = 0
+        progress.failed = 0
+
+    # 过滤跳过已有蒙板的图片, 避免无谓推理; 已存在的计入 done, 使进度可达 total
+    skipped = 0
+    pending: list[tuple[str, Path]] = []
+    for rel, abs_path in image_rel_paths:
+        if skip_existing and (mask_dir / Path(rel).with_suffix(".png")).is_file():
+            skipped += 1
+        else:
+            pending.append((rel, abs_path))
+
+    if progress is not None:
+        progress.total = total
+        progress.done = skipped
+        progress.failed = 0
+
+    # 1) 为每个概念生成掩码: concept -> {rel: mask | None}
+    concept_masks: dict[str, dict[str, np.ndarray | None]] = {}
+    for text in concepts:
+        per_rel: dict[str, np.ndarray | None] = {}
+        for start in range(0, len(pending), _BATCH_SIZE):
+            batch = pending[start:start + _BATCH_SIZE]
+            images = [Image.open(abs_path).convert("RGB") for _rel, abs_path in batch]
+            masks = segment_concept_masks_batch(handle, images, text)
+            for (rel, _abs), mask in zip(batch, masks):
+                per_rel[rel] = mask
+            del images, masks  # 及时释放图片与前向输出
+        concept_masks[text] = per_rel
+
+    # 2) 逐图组装并求值: 成功计入 done, 失败计入 failed, 跳过计入 done 起点
+    done = skipped
+    failed = 0
+    for rel, abs_path in pending:
+        if progress is not None and progress.cancel_requested:
+            break
+
+        try:
+            img_size = Image.open(abs_path).size  # (W, H)
+            default = load_mask(mask_dir, rel, img_size)
+            if default is None:
+                default = np.full((img_size[1], img_size[0]), 255, dtype=np.uint8)
+
+            per_concept = {text: concept_masks[text].get(rel) for text in concepts}
+            result = evaluate(ast, per_concept, default)
+
+            out_path = mask_dir / Path(rel).with_suffix(".png")
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            white = Image.new("L", (img_size[0], img_size[1]), 255)
+            Image.merge(
+                "RGBA", (white, white, white, Image.fromarray(result, mode="L"))
+            ).save(out_path, format="PNG")
+            done += 1
+        except Exception:
+            failed += 1
+
+        if progress is not None:
+            progress.done = done
+            progress.failed = failed
+        if on_progress:
+            on_progress()
+
+    return done, total

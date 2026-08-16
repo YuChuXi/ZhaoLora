@@ -95,9 +95,9 @@ class GelbooruClient:
     async def get_image(self, file_url: str, path: str, *, referer: str = "https://gelbooru.com/") -> None:
         """下载原图字节, 校验后转为 PNG 写入磁盘.
 
-        校验与落盘逻辑与 ``SourceClient._save_png`` 一致 (共用
+        校验与写入逻辑与 ``SourceClient._save_png`` 一致 (共用
         ``utils.save_png_bytes``), 保证写盘内容必为可识别图片; 下载到的
-        HTML/zip/video 等非图片数据在此被拒绝, 不会以图片扩展名落盘。
+        HTML/zip/video 等非图片数据在此被拒绝, 不会以图片扩展名写入磁盘。
 
         Args:
             file_url: 原图 URL (取自帖子 file_url).
