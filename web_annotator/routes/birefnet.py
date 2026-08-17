@@ -13,7 +13,7 @@ from services.analysis.birefnet import (
     collect_images,
     run_birefnet_mask,
 )
-from services.analysis.mask_expression import ExpressionError, extract_concepts, parse
+from services.analysis.mask_expression import ExpressionError, parse
 from services.analysis.sam3 import (
     Sam3MaskProgress,
     run_sam3_expression_mask,
@@ -30,7 +30,7 @@ class MaskGenerateBody(BaseModel):
     dir: str = Field("main", description="批量模式: 目标子目录名, 默认 main")
     path: str | None = Field(None, description="单图模式: 图片相对数据集根路径(含子目录名), 仅处理该图; 缺省处理整个目录")
     mode: str = Field("birefnet", description="生成方式: birefnet | sam3")
-    expression: str | None = Field(None, description="sam3 模式的逻辑表达式, 如 (默认蒙板-(\"白色背景\"+\"对话气泡\"))")
+    expression: str | None = Field(None, description="sam3 模式的逻辑表达式, 如 (当前蒙板-(\"白色背景\"+\"对话气泡\"))")
     mask_expand: int = Field(32, ge=0, le=200, description="BiRefNet: 蒙版向外扩展的像素数")
     mask_shrink: int = Field(0, ge=0, le=200, description="BiRefNet: 蒙版向内收缩的像素数")
     mask_min: int = Field(96, ge=0, le=255, description="BiRefNet: 蒙版值域下限 (0-255)")
@@ -77,14 +77,9 @@ async def mask_generate(request: Request, body: MaskGenerateBody) -> MaskGenerat
         if not expression.strip():
             raise HTTPException(400, "SAM3 模式需要逻辑表达式")
         try:
-            ast = parse(expression)
+            parse(expression)
         except ExpressionError as e:
             raise HTTPException(400, f"表达式错误: {e}")
-        if not extract_concepts(ast):
-            raise HTTPException(
-                400,
-                "表达式至少需要一个概念, 例如 (默认蒙板-(\"白色背景\"+\"对话气泡\"))",
-            )
 
     prog = Sam3MaskProgress() if body.mode == "sam3" else BirefnetProgress()
 

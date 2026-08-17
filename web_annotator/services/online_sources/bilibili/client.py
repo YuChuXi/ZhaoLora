@@ -19,10 +19,11 @@ from __future__ import annotations
 
 import asyncio
 import re
+from collections.abc import Callable
 from typing import Any
 
 from bilibili_api import user
-from bilibili_api.exceptions import NetworkException
+from bilibili_api.exceptions import NetworkException, ResponseCodeException
 
 from services.online_sources.bilibili.models import (
     Author,
@@ -37,8 +38,12 @@ from services.online_sources.framework.http import DEFAULT_UA, HttpClient, Netwo
 # 转发链递归解析的最大深度, 防止异常深链造成栈溢出
 MAX_FORWARD_DEPTH = 8
 
-# feed 接口偶发返回空响应 (同一 offset 请求结果不稳定), 连续多次为空才判定抓完
-MAX_EMPTY_RETRIES = 3
+# feed 接口在风控/限流时偶发返回空心响应 (无 items 且无 offset), 与真实末页
+# 结构一致、无法单次区分; 空响应的连续确认交由有记忆的调用方 (批量下载)
+# 完成, 本模块如实上报 (records, next_offset, has_more), 不自行判定抓完
+
+# 风控/限流的业务错误码, 视为瞬时异常退避重试 (如 -352 风控校验失败)
+TRANSIENT_CODES = frozenset({-352, -509, -799})
 
 # 需要过滤的条目类型: 直播推荐卡片并非用户主动发布的动态
 FILTER_TYPES = {"DYNAMIC_TYPE_LIVE_RCMD"}
@@ -106,20 +111,22 @@ async def _desktop_detail(
 
 
 async def _retry_coro(
-    factory: Any, *, what: str, retries: int = 3, base_sleep: float = 3.0
+    factory: Any, *, what: str, retries: int = 3, base_sleep: float = 3.0,
+    is_transient: Callable[[Exception], bool] | None = None,
 ) -> dict:
-    """对间歇性风控异常退避重试接口调用.
+    """对间歇性网络/风控异常退避重试接口调用.
 
     未登录会话存在间歇性风控: 请求偶发被 412 拒绝 (库抛 ``NetworkException``),
-    等待冷却后自动恢复。此函数仅对网络类异常 (含风控) 按指数退避重试,
-    业务错误 (如 ``ResponseCodeException``) 直接抛出; 重试耗尽后抛出最后一次
-    异常, 不吞没错误。
+    或 API 返回业务错误码 (``ResponseCodeException``, 如 -352), 等待冷却后
+    自动恢复。默认仅对网络类异常重试; ``is_transient`` 可扩展判定规则 (如
+    把风控业务码视为瞬时异常), 重试耗尽后抛出最后一次异常, 不吞没错误。
 
     Args:
         factory: 无参异步可调用, 返回接口结果 (dict)。
         what (str): 请求描述, 用于提示信息。
         retries (int): 最大尝试次数 (含首次), 默认 3。
         base_sleep (float): 首次退避秒数, 之后指数递增, 默认 3.0。
+        is_transient: 额外判定异常是否为瞬时可重试的可调用对象, 默认 None。
 
     Returns:
         dict: 接口结果。
@@ -133,13 +140,17 @@ async def _retry_coro(
             return await factory()
         except (NetworkException, NetworkError) as exc:
             last_exc = exc
-            if attempt < retries:
-                wait = base_sleep * (2 ** (attempt - 1))
-                print(
-                    f"{what} 请求失败 ({exc}), {wait:.0f} 秒后重试 "
-                    f"({attempt}/{retries - 1})..."
-                )
-                await asyncio.sleep(wait)
+        except Exception as exc:
+            if is_transient is None or not is_transient(exc):
+                raise
+            last_exc = exc
+        if attempt < retries:
+            wait = base_sleep * (2 ** (attempt - 1))
+            print(
+                f"{what} 请求失败 ({last_exc}), {wait:.0f} 秒后重试 "
+                f"({attempt}/{retries - 1})..."
+            )
+            await asyncio.sleep(wait)
     raise last_exc or RuntimeError(f"{what} 重试失败")
 
 
@@ -376,32 +387,33 @@ async def fetch_dynamics(
     解析结果会写入进程内 ``_dynamic_cache``, 供后续按 ID 下载取图。
     每页条数由接口决定 (约 20 条), 页大小不由调用方指定。
 
+    风控/限流时接口会返回空心响应 (无 ``items`` 且无 ``offset``), 与真实末页
+    结构一致、无法单次区分; 本函数只如实上报 ``(records, next_offset, has_more)``,
+    不在此判定抓完, 由有记忆的调用方 (如批量下载) 连续空页确认后自行停止。
+
     Args:
         uid (int): B 站用户 UID。
         offset (str): 翻页游标, 首页传空字符串。
 
     Returns:
         tuple[list[DynamicRecord], str, bool]: ``(本页动态, 下一页游标, 是否还有更多)``;
-        游标为空串表示已到末页。
+        游标为空串表示本页无后续游标。
     """
     u = user.User(uid=uid)
+    data = await _retry_coro(
+        lambda: u.get_dynamics_new(offset), what="动态一页",
+        is_transient=lambda exc: (
+            isinstance(exc, ResponseCodeException) and exc.code in TRANSIENT_CODES
+        ),
+    )
     records: list[DynamicRecord] = []
-    data: dict[str, Any] = {}
-    # feed 接口偶发返回空 items 且 has_more=False (风控暂歇), 仅凭 items
-    # 非空即视为有效页, 空则退避重试同一游标
-    for _ in range(MAX_EMPTY_RETRIES):
-        data = await _retry_coro(lambda: u.get_dynamics_new(offset), what="动态一页")
-        records = []
-        for item in data.get("items") or []:
-            if item.get("type") in FILTER_TYPES:
-                continue
-            record = _parse_item(item)
-            if record is not None:
-                _dynamic_cache[record.id] = record
-                records.append(record)
-        if records:
-            break
-        await asyncio.sleep(0.5)
+    for item in data.get("items") or []:
+        if item.get("type") in FILTER_TYPES:
+            continue
+        record = _parse_item(item)
+        if record is not None:
+            _dynamic_cache[record.id] = record
+            records.append(record)
     next_offset = data.get("offset") or ""
     has_more = bool(data.get("has_more")) and bool(next_offset) and next_offset != offset
     return records, next_offset, has_more

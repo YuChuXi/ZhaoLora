@@ -112,10 +112,11 @@
     <div id="sam3-params" hidden>
       <div class="modal-row">
         <label>逻辑表达式<br>
-          <input type="text" id="sam3-expression" value='(默认蒙板-("白色背景"+"对话气泡"))' placeholder='(默认蒙板-("白色背景"+"对话气泡"))'>
+          <input type="text" id="sam3-expression" value='(当前蒙板-("白色背景"+"对话气泡"))' placeholder='(当前蒙板-("白色背景"+"对话气泡"))'>
         </label>
+        <span style="font-size:12px;color:var(--text-dim);align-self:flex-end;padding-bottom:6px;">数值 ×255</span>
       </div>
-      <p style="margin:0 0 12px;font-size:12px;color:var(--text-dim);">支持 + (并集) / - (差集) / 括号组合; "概念文本" 为 SAM3 分割提示。</p>
+      <p style="margin:0 0 12px;font-size:12px;color:var(--text-dim);">运算符: + 相加 / - 相减 / * 相乘(0-1域) / min(a,b) / max(a,b) / 比较 > < >= <= == !=; 运算在 0-1 域进行, 数值按 0-1 书写 (×255 为蒙板值, 支持任意实数, 如 0.5 半透明); "概念文本" 为 SAM3 分割提示。</p>
     </div>
     <div class="modal-row">
       <label class="inline"><input type="checkbox" id="birefnet-batch"> 批量处理整个目录</label>

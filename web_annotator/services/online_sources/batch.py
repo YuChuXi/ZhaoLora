@@ -17,8 +17,28 @@ from services.online_sources.framework.media import download_post, local_rel_pat
 from services.online_sources.framework.utils import is_downloaded
 from services.models import JobSnapshot
 
-EMPTY_STREAK_MAX = 8
+# 连续空页判定抓完的阈值: 会话式来源(如 B 站)的风控空心响应与真实末页结构
+# 一致, 需连续多次空页(退避重试同一游标)才能确认抓完, 避免批量提前停止
+EMPTY_STREAK_MAX = 6
+# 空页退避基数 (秒), 指数递增并封顶, 用于会话式来源空页后的重试等待
+_EMPTY_BACKOFF_BASE = 1.5
+_EMPTY_BACKOFF_CAP = 15.0
 EmitFn = Callable[[JobSnapshot], None]
+
+
+def _empty_backoff(streak: int) -> float:
+    """计算第 streak 次空页后的重试退避秒数(指数递增, 封顶).
+
+    Args:
+        streak (int): 连续空页次数 (从 1 起)。
+
+    Returns:
+        float: 退避秒数。
+
+    Callers:
+        - ``batch.py:fill_buffer``
+    """
+    return min(_EMPTY_BACKOFF_BASE * (2 ** (streak - 1)), _EMPTY_BACKOFF_CAP)
 
 
 @dataclass
@@ -230,19 +250,24 @@ async def _run_async(
                 extra=extra,
             )
             page += 1
-        if not has_more:
-            has_more_pages = False
-        if not posts:
-            empty_streak += 1
-            if empty_streak >= EMPTY_STREAK_MAX:
+        if posts:
+            empty_streak = 0
+            if not has_more:
+                # 拿到末页(记录存在且无后续游标), 判定抓完
                 has_more_pages = False
+            for p in posts:
+                if is_downloaded(out_dir, p.filename):
+                    progress.skipped += 1
+                else:
+                    buffer.append(p)
             return
-        empty_streak = 0
-        for p in posts:
-            if is_downloaded(out_dir, p.filename):
-                progress.skipped += 1
-            else:
-                buffer.append(p)
+        # 空页: 页码式来源 has_more=False 即为末页; 会话式来源的空响应可能是
+        # 风控(与末页结构一致), 需连续多次空页(退避重试同一游标)才判定抓完
+        empty_streak += 1
+        if (not has_more and not src.session_based) or empty_streak >= EMPTY_STREAK_MAX:
+            has_more_pages = False
+        elif src.session_based:
+            await asyncio.sleep(_empty_backoff(empty_streak))
 
     async def next_post() -> Any | None:
         """取下一个未下载帖. 引用: ``worker``. """
@@ -318,6 +343,10 @@ async def _run_async(
         """并发槽位. 引用: 主循环. """
         while not progress.cancel_requested:
             if slot >= progress.conn:
+                # 空闲槽位: 无并发额度时挂起等待, 但批量结束(达限或翻完且无
+                # 在途下载)时一并退出, 避免 gather 因空转槽位永不返回
+                if progress.done >= progress.limit or (not has_more_pages and inflight <= 0):
+                    return
                 await asyncio.sleep(0.1)
                 continue
             if progress.done >= progress.limit:

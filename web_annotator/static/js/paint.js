@@ -645,7 +645,7 @@
         .then(function (r) { return r.json(); })
         .then(function (resp) {
           if (resp.ok && resp.job_id) {
-            watchBirefnetJob(resp.job_id);
+            watchBirefnetJob(resp.job_id, batch);
           } else {
             toast('启动失败');
           }
@@ -654,7 +654,12 @@
     });
   }
 
-  function watchBirefnetJob(jobId) {
+  /**
+   * 订阅蒙版生成任务进度. batch 为真表示批量模式(整目录), 完成后使全部图片的
+   * 蒙板缓存失效; 单图模式仅当前图变化, 由 reloadCurrentMask 就地更新.
+   * Callers: birefnet-start 点击处理.
+   */
+  function watchBirefnetJob(jobId, batch) {
     var bar = document.getElementById('birefnet-bar');
     var fill = document.getElementById('birefnet-fill');
     var pct = document.getElementById('birefnet-pct');
@@ -671,7 +676,22 @@
       }
       if (snap.status === 'done') {
         evtSource.close();
-        location.reload();
+        fill.style.width = '100%';
+        pct.textContent = '100%';
+        text.textContent = '完成 ' + snap.done + '/' + snap.total;
+        setTimeout(function () { bar.hidden = true; }, 1500);
+        if (batch) {
+          // 批量: 整目录蒙板可能都已更新, 清空缓存并重拉列表刷新状态;
+          // 保持当前图片位置, 切换图片时重新加载新蒙板
+          _preloadCache = {};
+          refreshAfterMaskDone().catch(function (e) { toast(String(e.message || e)); });
+        } else {
+          // 单图: 仅当前图蒙板更新, 标记 has_mask 后只重载当前图蒙板, 不重拉列表
+          if (_cur && _cur.item) {
+            _cur.item.has_mask = true;
+            reloadCurrentMask().catch(function (e) { toast(String(e.message || e)); });
+          }
+        }
         return;
       }
       if (snap.status === 'error') {
@@ -686,6 +706,47 @@
       }
     };
     evtSource.onerror = function () { evtSource.close(); };
+  }
+
+  /**
+   * 批量蒙版生成完成后: 重拉图片列表刷新各图蒙版状态, 并只重新加载当前图片的蒙板.
+   * 不重载整张图片, 保持当前图片位置. 单图模式不走此函数(仅 reloadCurrentMask).
+   * Callers: watchBirefnetJob(批量任务完成).
+   */
+  async function refreshAfterMaskDone() {
+    var curPath = _cur && _cur.item ? _cur.item.path : null;
+    var res = await (await api('/api/paint/images?dir=' + encodeURIComponent(currentDir()))).json();
+    _images = res;
+    if (_strip) _strip.refresh();
+    if (!curPath) { updateNav(); return; }
+    // 按路径定位当前图片(列表顺序可能变化), 更新 _cur 指向后只重载其蒙板
+    for (var i = 0; i < _images.length; i++) {
+      if (_images[i].path === curPath) {
+        _cur.index = i;
+        _cur.item = _images[i];
+        break;
+      }
+    }
+    await reloadCurrentMask();
+  }
+
+  /**
+   * 只重新加载当前图片的蒙板并重绘, 不重载整张图片.
+   * Callers: watchBirefnetJob(单图完成)、refreshAfterMaskDone(批量完成).
+   */
+  async function reloadCurrentMask() {
+    if (!_cur || !_cur.item || !_cur.item.has_mask) return;
+    var blob = await _fetchBlob('/paint/mask', _cur.item.path);
+    var el = await _decodeImage(blob);
+    var mCanvas = document.createElement('canvas');
+    mCanvas.width = _cur.w; mCanvas.height = _cur.h;
+    mCanvas.getContext('2d').drawImage(el, 0, 0);
+    _cur.mask = mCanvas;
+    // 同步预加载缓存, 切回该图时直接命中新蒙板
+    _preloadCache[_cur.item.path] = { img: _cur.rgbImg, mask: mCanvas, w: _cur.w, h: _cur.h };
+    _initAlphaCanvas(_cur);
+    _scheduleRender();
+    updateNav();
   }
 
   if (typeof DirPicker !== 'undefined') {

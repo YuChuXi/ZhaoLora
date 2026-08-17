@@ -25,7 +25,7 @@ import numpy as np
 from PIL import Image
 
 from services.core.device import register_model
-from services.analysis.mask_expression import evaluate, extract_concepts, parse
+from services.analysis.mask_expression import evaluate, extract_concepts, parse, to_uint8
 from services.models import JobSnapshot
 from services.state.mask import load_mask
 
@@ -348,14 +348,14 @@ def run_sam3_expression_mask(
     流程:
     1. 解析表达式提取概念列表, 并过滤掉 ``skip_existing`` 命中的图片.
     2. 逐概念分批推理 (SAM3 ``segment_concept_masks_batch``), 得到各图概念掩码.
-    3. 逐图加载默认蒙板 (已保存的蒙板, 无则全不透明 255), 求值并保存.
+    3. 逐图加载当前蒙板 (已保存的蒙板, 无则全不透明 255), 求值并保存.
 
-    概念掩码经 SAM3 ``original_sizes`` 还原为原图尺寸, 与默认蒙板尺寸一致.
+    概念掩码经 SAM3 ``original_sizes`` 还原为原图尺寸, 与当前蒙板尺寸一致.
 
     Args:
         image_rel_paths: ``[(rel, abs_path), ...]`` 相对数据集根路径与绝对路径.
         mask_dir: 蒙板输出目录.
-        expression: 逻辑表达式, 如 ``(默认蒙板-("白色背景"+"对话气泡"))``.
+        expression: 逻辑表达式, 如 ``(当前蒙板-("白色背景"+"对话气泡"))``.
         handle: SAM3 模型句柄, 由 ``auto_release`` 注入.
         skip_existing: 如果输出文件已存在则跳过.
         progress: 进度对象.
@@ -421,7 +421,7 @@ def run_sam3_expression_mask(
                 default = np.full((img_size[1], img_size[0]), 255, dtype=np.uint8)
 
             per_concept = {text: concept_masks[text].get(rel) for text in concepts}
-            result = evaluate(ast, per_concept, default)
+            result = to_uint8(evaluate(ast, per_concept, default))
 
             out_path = mask_dir / Path(rel).with_suffix(".png")
             out_path.parent.mkdir(parents=True, exist_ok=True)

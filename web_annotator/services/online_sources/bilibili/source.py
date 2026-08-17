@@ -178,6 +178,11 @@ class BilibiliSource(SourceClient):
         (session 为空或查询键变化) 或会话超过一天无翻页时由 ``SessionStore``
         重建会话。
 
+        风控/限流时接口返回空心响应 (无记录且无游标), 与真实末页结构一致、
+        无法单次区分; 会话**不锁存**末页判定: 空心页直接返回空结果且不推进
+        游标, 由有记忆的调用方 (批量下载) 连续空页确认后才判定抓完, 避免
+        瞬时风控导致批量提前停止。
+
         Callers:
             - `routes/online_sources.py:search`
         """
@@ -188,21 +193,25 @@ class BilibiliSource(SourceClient):
         async with sess.lock:
             st = sess.state
             if not st:
-                st.update(offsets=[""], has_more=True)
+                st.update(offsets=[""])
             page_posts: list[BooruPost] = []
-            while st["has_more"] and not page_posts:
+            has_more = False
+            while not page_posts:
                 records, next_offset, has_more = await fetch_dynamics(
                     uid, offset=st["offsets"][-1]
                 )
-                st["offsets"].append(next_offset)
-                st["has_more"] = has_more
+                if not records and not next_offset:
+                    # 空心响应(风控或末页): 不推进游标, 交由上层连续确认
+                    return [], False, sess.token
+                if next_offset and next_offset != st["offsets"][-1]:
+                    st["offsets"].append(next_offset)
                 page_posts = [
                     post
                     for record in records
                     if self._matches(record, f)
                     for post in self._expand(record)
                 ]
-        return page_posts, st["has_more"], sess.token
+        return page_posts, has_more, sess.token
 
     def _split_pid(self, pid: str) -> tuple[str, int]:
         """将 ``{动态ID}_{图片序号}`` 拆为 (动态ID, 序号).
