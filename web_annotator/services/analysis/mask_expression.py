@@ -1,296 +1,66 @@
-"""蒙板逻辑表达式: 解析与掩码求值.
+"""蒙板表达式: 解析与掩码求值.
 
+概述
+----
 蒙板以 0-255 灰度值表示 (非二值). 表达式运算全程在 0-1 域进行: 数值字面量
 直接按 0-1 书写 (1 对应蒙板值 255, 支持任意实数), ``当前蒙板`` 与概念掩码
 在求值前除以 255 归一化; 运算结果统一在最后钳位到 0-255 并转换为整数
 (``to_uint8``), 中间过程不出现 255 这样的整数域值. 前端输入框外标注 ``×255`` 提示.
 
-支持的运算符 (均为逐像素二元运算, 在 0-1 域计算, 每次结果钳位到 [0, 1]):
+语法与优先级
+------------
+遵循 Python 表达式优先级 (由高到低):
 
-- ``+``: 钳位加, ``clip(a+b, 0, 1)``.
-- ``-``: 钳位减, ``clip(a-b, 0, 1)``.
-- ``*``: 0-1 域乘法, ``clip(a*b, 0, 1)``.
-- ``min(a, b)``: 逐像素取较小值.
-- ``max(a, b)``: 逐像素取较大值.
-- 比较 ``>`` ``<`` ``>=`` ``<=`` ``==`` ``!=``: 逐像素比较, 结果为 0/1 掩码.
+- 括号 ``()`` 与函数式 ``min(a, b)`` / ``max(a, b)`` / ``blur(掩码, 半径)``:
+  优先级最高.
+- 乘法 ``*``: 0-1 域乘法, ``clip(a*b, 0, 1)``.
+- 加减 ``+`` / ``-``: 钳位加 / 钳位减, ``clip(a±b, 0, 1)``.
+- 比较 ``>`` ``<`` ``>=`` ``<=`` ``==`` ``!=``: 逐像素比较, 结果为 0/1 掩码;
+  不支持链式比较 (如 ``a < b < c``).
 
-操作数有四类:
+``blur(掩码, 半径)`` 对掩码做高斯模糊 (半径单位为像素, 标准差), 用于平滑
+SAM 概念分割产生的生硬边缘; 掩码参数可为任意子表达式.
 
+操作数
+------
 - ``当前蒙板``: 当前已保存的蒙板; 不存在时视为全不透明 (255).
 - ``"概念文本"``: SAM3 文本提示概念分割得到的二值掩码, 引号可为 ASCII ``"``
   或中文全角 ``""``.
 - 数值字面量 (0-1 域, 任意实数): 纯值蒙板, 如 ``0`` 全透明 / ``1`` 全不透明 /
   ``0.5`` 半透明 / ``2`` 或 ``-1`` 等中间量亦可.
-- 括号与函数式 ``min(a, b)`` / ``max(a, b)``.
 
-表达式示例: ``(当前蒙板-("白色背景"+"对话气泡"))`` 表示从当前蒙板中减去
-白色背景与对话气泡相加的区域; ``(当前蒙板*0.5)`` 表示当前蒙板透明度减半.
+示例
+----
+``(当前蒙板-("白色背景"+"对话气泡"))`` 表示从当前蒙板中减去白色背景与对话气泡
+相加的区域; ``(当前蒙板*0.5)`` 表示当前蒙板透明度减半.
 
-``+``/``-``/``*`` 同级且左结合, 括号与函数式提升优先级.
+实现说明
+--------
+解析复用标准库 ``ast`` (Python 表达式语法子集, 自动获得标准运算优先级),
+仅接受受支持的节点 (``Constant`` / ``Name`` / ``UnaryOp`` / ``BinOp`` /
+``Compare`` / ``Call``), 由自定义求值器 ``evaluate`` 实现逐像素掩码语义,
+不执行任意代码.
 
 Callers:
+    - ``routes/birefnet.py:mask_generate``
     - ``services/analysis/sam3.py:run_sam3_expression_mask``
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Union
+import ast
 
+import cv2
 import numpy as np
 
-
-@dataclass(frozen=True)
-class Concept:
-    """SAM3 概念操作数. 引用: ``parse`` / ``evaluate``. """
-
-    text: str
-
-
-@dataclass(frozen=True)
-class Default:
-    """当前蒙板操作数. 引用: ``parse`` / ``evaluate``. """
-
-
-@dataclass(frozen=True)
-class Number:
-    """数值操作数 (0-1, 对应蒙板值 0-255). 引用: ``parse`` / ``evaluate``. """
-
-    value: float
-
-
-@dataclass(frozen=True)
-class BinOp:
-    """二元运算 ``+`` / ``-`` / ``*`` / ``min`` / ``max`` / 比较符. 引用: ``parse`` / ``evaluate``. """
-
-    op: str
-    left: "Expr"
-    right: "Expr"
-
-
-Expr = Union[Concept, Default, Number, BinOp]
-
-# 表达式内可接受的概念引号定界符: ASCII 与中文全角
-_QUOTES = ('"', "\u201c", "\u201d")
 # 当前蒙板关键字
-_DEFAULT_WORD = "当前蒙板"
-# 独立 token 字符: 括号、二元运算符与函数参数分隔符
-_TOKEN_CHARS = set("()+-*,")
+_CURRENT_WORD = "当前蒙板"
 # 函数式运算符 (接收两个以逗号分隔的参数)
-_FUNC_OPS = ("min", "max")
-# 中缀运算符 (左结合)
-_INFIX_OPS = ("+", "-", "*", ">", "<", ">=", "<=", "==", "!=")
-# 负号字面量的合法前缀: 表达式开头、运算符、左括号、逗号
-_PREFIX_CTX = frozenset(_INFIX_OPS + _FUNC_OPS + ("(", ","))
+_FUNC_OPS = {"min", "max", "blur"}
 
 
 class ExpressionError(ValueError):
     """表达式语法或语义错误. 引用: ``parse``. """
-
-
-def _tokenize(expr: str) -> list[str]:
-    """将表达式切分为 token 列表.
-
-    空白被跳过; ``(`` ``)`` ``+`` ``-`` ``*`` ``,`` 各为独立 token; 比较运算符
-    ``>`` ``<`` 为单字符、``>=`` ``<=`` ``==`` ``!=`` 为双字符; 引号内的概念
-    文本作为一个整体 token (保留原文本); 以数字或小数点开头的连续片段视为
-    数值字面量; 其余连续字符视为关键字 token (``当前蒙板`` / ``min`` / ``max``
-    或裸概念).
-
-    Args:
-        expr: 原始表达式字符串.
-
-    Returns:
-        list[str]: token 列表.
-
-    Raises:
-        ExpressionError: 引号未闭合.
-
-    Callers:
-        - ``mask_expression:parse``
-    """
-    tokens: list[str] = []
-    i, n = 0, len(expr)
-    while i < n:
-        ch = expr[i]
-        if ch.isspace():
-            i += 1
-            continue
-        if ch in "><=!":
-            # 比较运算符: 单字符 > <, 双字符 >= <= == !=; 孤立的 = ! 由解析器报错
-            if i + 1 < n and expr[i + 1] == "=":
-                tokens.append(ch + "=")
-                i += 2
-            else:
-                tokens.append(ch)
-                i += 1
-            continue
-        if ch == "-" and i + 1 < n and (
-            expr[i + 1].isdigit()
-            or (expr[i + 1] == "." and i + 2 < n and expr[i + 2].isdigit())
-        ):
-            # 负号字面量 (任意负数): 仅当前一 token 不是操作数结尾 (开头/运算符/括号/逗号)
-            # 时并入数字, 如 -1 / -0.5 / 当前蒙板-0.5 中的中缀 - 不受影响
-            if not tokens or tokens[-1] in _PREFIX_CTX:
-                j = i + 1
-                while j < n and (expr[j].isdigit() or expr[j] == "."):
-                    j += 1
-                tokens.append(expr[i:j])
-                i = j
-                continue
-        if ch in _TOKEN_CHARS:
-            tokens.append(ch)
-            i += 1
-            continue
-        if ch in _QUOTES:
-            j = i + 1
-            buf: list[str] = []
-            closed = False
-            while j < n:
-                if expr[j] in _QUOTES:
-                    closed = True
-                    break
-                buf.append(expr[j])
-                j += 1
-            if not closed:
-                raise ExpressionError(f"引号未闭合: 位置 {i}")
-            tokens.append("".join(buf))
-            i = j + 1
-            continue
-        if ch.isdigit() or (ch == "." and i + 1 < n and expr[i + 1].isdigit()):
-            j = i
-            while j < n and (expr[j].isdigit() or expr[j] == "."):
-                j += 1
-            tokens.append(expr[i:j])
-            i = j
-            continue
-        j = i
-        while j < n and not expr[j].isspace() and expr[j] not in _TOKEN_CHARS and expr[j] not in _QUOTES:
-            j += 1
-        tokens.append(expr[i:j])
-        i = j
-    return tokens
-
-
-class _Parser:
-    """递归下降解析器: expr := term ((中缀运算符) term)* ;
-    term := '(' expr ')' | 'min'/'max' '(' expr ',' expr ')' | 数值 | 关键字 | 概念. """
-
-    def __init__(self, tokens: list[str]) -> None:
-        self._tokens = tokens
-        self._pos = 0
-
-    def parse(self) -> Expr:
-        """解析完整表达式并返回 AST 根节点.
-
-        Returns:
-            Expr: AST 根节点.
-
-        Raises:
-            ExpressionError: token 耗尽或语法错误.
-
-        Callers:
-            - ``mask_expression:parse``
-        """
-        node = self._expr()
-        if self._pos != len(self._tokens):
-            raise ExpressionError(f"多余内容: {self._tokens[self._pos]}")
-        return node
-
-    def _peek(self) -> str | None:
-        return self._tokens[self._pos] if self._pos < len(self._tokens) else None
-
-    def _expr(self) -> Expr:
-        node = self._term()
-        while True:
-            op = self._peek()
-            if op not in _INFIX_OPS:
-                return node
-            self._pos += 1
-            right = self._term()
-            node = BinOp(op=op, left=node, right=right)
-
-    def _term(self) -> Expr:
-        tok = self._peek()
-        if tok is None:
-            raise ExpressionError("表达式不完整")
-        if tok == "(":
-            self._pos += 1
-            node = self._expr()
-            if self._peek() != ")":
-                raise ExpressionError("缺少右括号")
-            self._pos += 1
-            return node
-        if tok in _FUNC_OPS:
-            self._pos += 1
-            if self._peek() != "(":
-                raise ExpressionError(f"{tok} 需要括号参数")
-            self._pos += 1
-            left = self._expr()
-            if self._peek() != ",":
-                raise ExpressionError(f"{tok} 需要逗号分隔两个参数")
-            self._pos += 1
-            right = self._expr()
-            if self._peek() != ")":
-                raise ExpressionError(f"{tok} 缺少右括号")
-            self._pos += 1
-            return BinOp(op=tok, left=left, right=right)
-        if tok in _INFIX_OPS or tok in (",", ")"):
-            raise ExpressionError(f"意外的 token: {tok}")
-        self._pos += 1
-        if tok == _DEFAULT_WORD:
-            return Default()
-        try:
-            value = float(tok)
-        except ValueError:
-            return Concept(text=tok)
-        return Number(value=value)
-
-
-def parse(expression: str) -> Expr:
-    """解析蒙板逻辑表达式为 AST.
-
-    Args:
-        expression: 原始表达式字符串.
-
-    Returns:
-        Expr: AST 根节点.
-
-    Raises:
-        ExpressionError: 语法错误或引号未闭合.
-
-    Callers:
-        - ``services/analysis/sam3.py:run_sam3_expression_mask``
-    """
-    if not expression or not expression.strip():
-        raise ExpressionError("表达式为空")
-    return _Parser(_tokenize(expression)).parse()
-
-
-def extract_concepts(node: Expr) -> list[str]:
-    """按出现顺序提取 AST 中全部 SAM3 概念文本 (去重).
-
-    Args:
-        node: ``parse`` 返回的 AST 根节点.
-
-    Returns:
-        list[str]: 概念文本列表; 无概念时为空列表.
-
-    Callers:
-        - ``services/analysis/sam3.py:run_sam3_expression_mask``
-    """
-    seen: list[str] = []
-
-    def walk(n: Expr) -> None:
-        if isinstance(n, Concept):
-            if n.text not in seen:
-                seen.append(n.text)
-        elif isinstance(n, BinOp):
-            walk(n.left)
-            walk(n.right)
-
-    walk(node)
-    return seen
 
 
 def _add(a: np.ndarray, b: np.ndarray) -> np.ndarray:
@@ -316,6 +86,32 @@ def _min(a: np.ndarray, b: np.ndarray) -> np.ndarray:
 def _max(a: np.ndarray, b: np.ndarray) -> np.ndarray:
     """逐像素取较大值. 引用: ``evaluate``. """
     return np.maximum(a, b)
+
+
+def _blur(mask: np.ndarray, sigma: float) -> np.ndarray:
+    """对 0-1 域掩码做高斯模糊, 平滑概念掩码生硬边缘.
+
+    标准差 ``sigma`` 单位为像素; ``sigma <= 0`` 时原样返回。核尺寸取约
+    6σ 的奇数并最小为 3, 边界按 OpenCV 反射填充, 避免边缘被腐蚀。
+
+    Args:
+        mask: 0-1 域掩码 (H, W)。
+        sigma: 高斯核标准差 (像素)。
+
+    Returns:
+        np.ndarray: 模糊后的 0-1 域掩码 (H, W)。
+
+    Callers:
+        - ``mask_expression:evaluate``
+    """
+    if sigma <= 0:
+        return mask
+    ksize = int(round(sigma * 6)) | 1
+    if ksize < 3:
+        ksize = 3
+    return cv2.GaussianBlur(
+        mask.astype(np.float32), (ksize, ksize), float(sigma)
+    ).astype(np.float64)
 
 
 def _gt(a: np.ndarray, b: np.ndarray) -> np.ndarray:
@@ -348,53 +144,199 @@ def _ne(a: np.ndarray, b: np.ndarray) -> np.ndarray:
     return (a != b).astype(np.float64)
 
 
-_OPS = {
-    "+": _add, "-": _sub, "*": _mul,
-    "min": _min, "max": _max,
-    ">": _gt, "<": _lt, ">=": _ge, "<=": _le,
-    "==": _eq, "!=": _ne,
+# 二元算术: ast 运算符类型 → 求值函数
+_BIN_OPS = {
+    ast.Add: _add,
+    ast.Sub: _sub,
+    ast.Mult: _mul,
+}
+# 比较: ast 运算符类型 → 求值函数
+_CMP_OPS = {
+    ast.Gt: _gt,
+    ast.Lt: _lt,
+    ast.GtE: _ge,
+    ast.LtE: _le,
+    ast.Eq: _eq,
+    ast.NotEq: _ne,
 }
 
 
+def _normalize(expression: str) -> str:
+    """将中文全角引号规范为 ASCII 引号.
+
+    全角引号与 ASCII 引号宽度相同, 替换后字符位置偏移为 0, 不影响语法
+    错误定位.
+
+    Args:
+        expression: 原始表达式字符串.
+
+    Returns:
+        str: 规范化后的表达式.
+
+    Callers:
+        - ``mask_expression:parse``
+    """
+    return expression.replace("\u201c", '"').replace("\u201d", '"')
+
+
+def parse(expression: str) -> ast.AST:
+    """解析蒙板表达式为 AST (基于标准库 ``ast``).
+
+    复用 Python 表达式语法, 自动获得标准运算优先级; 引号支持 ASCII ``"`` 与
+    中文全角 ``""``.
+
+    Args:
+        expression: 原始表达式字符串.
+
+    Returns:
+        ast.AST: Python 表达式 AST (仅含受支持节点).
+
+    Raises:
+        ExpressionError: 表达式为空或语法错误.
+
+    Callers:
+        - ``routes/birefnet.py:mask_generate``
+        - ``services/analysis/sam3.py:run_sam3_expression_mask``
+    """
+    text = expression.strip()
+    if not text:
+        raise ExpressionError("表达式为空")
+    try:
+        return ast.parse(_normalize(text), mode="eval").body
+    except SyntaxError as e:
+        raise ExpressionError(f"语法错误: {e.msg}")
+
+
+def extract_concepts(node: ast.AST) -> list[str]:
+    """按出现顺序提取 AST 中全部概念文本 (去重).
+
+    Args:
+        node: ``parse`` 返回的表达式 AST.
+
+    Returns:
+        list[str]: 概念文本列表; 无概念时为空列表.
+
+    Callers:
+        - ``services/analysis/sam3.py:run_sam3_expression_mask``
+    """
+    seen: list[str] = []
+
+    def walk(n: ast.AST) -> None:
+        if isinstance(n, ast.Constant) and isinstance(n.value, str):
+            if n.value not in seen:
+                seen.append(n.value)
+        elif isinstance(n, ast.UnaryOp):
+            walk(n.operand)
+        elif isinstance(n, ast.BinOp):
+            walk(n.left)
+            walk(n.right)
+        elif isinstance(n, ast.Compare):
+            walk(n.left)
+            for comparator in n.comparators:
+                walk(comparator)
+        elif isinstance(n, ast.Call):
+            for arg in n.args:
+                walk(arg)
+
+    walk(node)
+    return seen
+
+
+def _apply(op, left: np.ndarray, right: np.ndarray) -> np.ndarray:
+    """校验尺寸一致后应用逐像素运算. 引用: ``evaluate``. """
+    if left.shape != right.shape:
+        raise ExpressionError("掩码尺寸不一致")
+    return op(left, right)
+
+
+def _concept_mask(
+    concepts: dict[str, np.ndarray | None], text: str, default: np.ndarray
+) -> np.ndarray:
+    """取概念掩码并归一化到 0-1 域; 缺失的概念视为全零. 引用: ``evaluate``. """
+    mask = concepts.get(text)
+    if mask is None:
+        return np.zeros(default.shape, dtype=np.float64)
+    return mask.astype(np.float64) / 255.0
+
+
 def evaluate(
-    node: Expr,
+    node: ast.AST,
     concepts: dict[str, np.ndarray | None],
     default: np.ndarray,
 ) -> np.ndarray:
     """对 AST 求值, 得到 0-1 域浮点掩码 (最终转换见 ``to_uint8``).
 
     全程在 0-1 域计算: 当前蒙板与概念掩码求值前除以 255 归一化; 数值字面量
-    为任意实数直接参与. 缺失的概念 (值为 ``None``) 视为全零掩码. 结果尺寸与
-    ``default`` 一致, 值域通常钳位到 [0, 1].
+    为任意实数直接参与 (一元负号取负, 越界由 ``to_uint8`` 收敛). 缺失的概念
+    (值为 ``None``) 视为全零掩码. 结果尺寸与 ``default`` 一致.
 
     Args:
-        node: ``parse`` 返回的 AST 根节点.
+        node: ``parse`` 返回的表达式 AST.
         concepts: 概念名 → 二值掩码 (H, W) 或 ``None``(未命中).
         default: 当前蒙板 (H, W), 0-255 uint8, 作为 ``当前蒙板`` 操作数的值.
 
     Returns:
-        np.ndarray: 中间掩码 (H, W), float64, 值域 [0, 1].
+        np.ndarray: 中间掩码 (H, W), float64, 值域通常钳位到 [0, 1].
 
     Raises:
-        ExpressionError: 掩码尺寸不一致.
+        ExpressionError: 不支持的节点/运算符/链式比较/掩码尺寸不一致.
 
     Callers:
-        - ``mask_expression:to_uint8``
+        - ``services/analysis/sam3.py:run_sam3_expression_mask``
     """
-    if isinstance(node, Default):
-        return default.astype(np.float64) / 255.0
-    if isinstance(node, Concept):
-        mask = concepts.get(node.text)
-        if mask is None:
-            return np.zeros(default.shape, dtype=np.float64)
-        return mask.astype(np.float64) / 255.0
-    if isinstance(node, Number):
-        return np.full(default.shape, node.value, dtype=np.float64)
-    left = evaluate(node.left, concepts, default)
-    right = evaluate(node.right, concepts, default)
-    if left.shape != right.shape:
-        raise ExpressionError("掩码尺寸不一致")
-    return _OPS[node.op](left, right)
+    if isinstance(node, ast.Constant):
+        if isinstance(node.value, bool):
+            raise ExpressionError("不支持布尔字面量")
+        if isinstance(node.value, (int, float)):
+            return np.full(default.shape, float(node.value), dtype=np.float64)
+        if isinstance(node.value, str):
+            return _concept_mask(concepts, node.value, default)
+        raise ExpressionError("不支持的常量类型")
+    if isinstance(node, ast.Name):
+        if node.id == _CURRENT_WORD:
+            return default.astype(np.float64) / 255.0
+        return _concept_mask(concepts, node.id, default)
+    if isinstance(node, ast.UnaryOp):
+        operand = evaluate(node.operand, concepts, default)
+        if isinstance(node.op, ast.USub):
+            return -operand
+        if isinstance(node.op, ast.UAdd):
+            return operand
+        raise ExpressionError("不支持的一元运算符")
+    if isinstance(node, ast.BinOp):
+        op = _BIN_OPS.get(type(node.op))
+        if op is None:
+            raise ExpressionError(f"不支持的运算符: {type(node.op).__name__}")
+        left = evaluate(node.left, concepts, default)
+        right = evaluate(node.right, concepts, default)
+        return _apply(op, left, right)
+    if isinstance(node, ast.Compare):
+        if len(node.ops) != 1:
+            raise ExpressionError("不支持链式比较")
+        op = _CMP_OPS.get(type(node.ops[0]))
+        if op is None:
+            raise ExpressionError("不支持的比较运算符")
+        left = evaluate(node.left, concepts, default)
+        right = evaluate(node.comparators[0], concepts, default)
+        return _apply(op, left, right)
+    if isinstance(node, ast.Call):
+        if not isinstance(node.func, ast.Name) or node.func.id not in _FUNC_OPS:
+            raise ExpressionError("只支持 min / max / blur 函数")
+        if len(node.args) != 2:
+            raise ExpressionError(f"{node.func.id} 需要两个参数")
+        if node.func.id == "blur":
+            # 第二参数为数值字面量 (模糊半径), 第一参数可为任意掩码子表达式
+            radius = node.args[1]
+            if not isinstance(radius, ast.Constant) or not isinstance(
+                radius.value, (int, float)
+            ):
+                raise ExpressionError("blur 的半径必须是数值")
+            return _blur(evaluate(node.args[0], concepts, default), float(radius.value))
+        left = evaluate(node.args[0], concepts, default)
+        right = evaluate(node.args[1], concepts, default)
+        op = _min if node.func.id == "min" else _max
+        return _apply(op, left, right)
+    raise ExpressionError(f"不支持的表达式节点: {type(node).__name__}")
 
 
 def to_uint8(mask: np.ndarray) -> np.ndarray:

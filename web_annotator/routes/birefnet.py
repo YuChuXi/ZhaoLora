@@ -30,7 +30,7 @@ class MaskGenerateBody(BaseModel):
     dir: str = Field("main", description="批量模式: 目标子目录名, 默认 main")
     path: str | None = Field(None, description="单图模式: 图片相对数据集根路径(含子目录名), 仅处理该图; 缺省处理整个目录")
     mode: str = Field("birefnet", description="生成方式: birefnet | sam3")
-    expression: str | None = Field(None, description="sam3 模式的逻辑表达式, 如 (当前蒙板-(\"白色背景\"+\"对话气泡\"))")
+    expression: str | None = Field(None, description="sam3 模式的蒙板表达式, 如 (当前蒙板-(\"白色背景\"+\"对话气泡\"))")
     mask_expand: int = Field(32, ge=0, le=200, description="BiRefNet: 蒙版向外扩展的像素数")
     mask_shrink: int = Field(0, ge=0, le=200, description="BiRefNet: 蒙版向内收缩的像素数")
     mask_min: int = Field(96, ge=0, le=255, description="BiRefNet: 蒙版值域下限 (0-255)")
@@ -51,7 +51,7 @@ async def mask_generate(request: Request, body: MaskGenerateBody) -> MaskGenerat
 
     依据 ``mode`` 分发:
     - ``"birefnet"``: 背景移除蒙版, 使用 BiRefNet.
-    - ``"sam3"``: 概念分割蒙版, 需 ``expression`` 逻辑表达式组合概念与默认蒙版.
+    - ``"sam3"``: 概念分割蒙版, 需 ``expression`` 蒙板表达式组合概念与默认蒙版.
 
     单图模式 ``path`` 仅处理该图; 批量模式处理 ``dir`` 目录下全部图片.
 
@@ -75,7 +75,7 @@ async def mask_generate(request: Request, body: MaskGenerateBody) -> MaskGenerat
     expression = body.expression or ""
     if body.mode == "sam3":
         if not expression.strip():
-            raise HTTPException(400, "SAM3 模式需要逻辑表达式")
+            raise HTTPException(400, "SAM3 模式需要蒙板表达式")
         try:
             parse(expression)
         except ExpressionError as e:

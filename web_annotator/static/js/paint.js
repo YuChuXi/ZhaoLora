@@ -14,6 +14,8 @@
   var _brushRadius = 80, _brushPct = 3, _defaultAlpha = 255;
   var _tool = 'brush', _isDrawing = false, _isTouch = false, _paintValue = 0;
   var _rectStart = null, _mouseScreen = null;
+  // shift 直线模式: 落笔按下 shift 后, 从落笔点画直线到抬笔点
+  var _lineMode = false, _lineStart = null, _lineEnd = null;
   var _preloadCache = {};
   var _renderScheduled = false;
   var _rgbScaledCanvas = null;
@@ -359,6 +361,16 @@
     ctx.clearRect(0, 0, cur.w, cur.h);
     // 蒙版透明区透过 CSS 背景显示(棋盘格/纯色), 画布只负责图像+蒙版合成
     ctx.drawImage(_compCanvas, 0, 0);
+    // shift 直线模式: 半透明红线预览落笔到抬笔的走向
+    if (_lineMode && _lineStart && _lineEnd) {
+      ctx.strokeStyle = 'rgba(255, 0, 0, 0.55)';
+      ctx.lineWidth = Math.max(1, _brushRadius * 2);
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(_lineStart[0], _lineStart[1]);
+      ctx.lineTo(_lineEnd[0], _lineEnd[1]);
+      ctx.stroke();
+    }
   }
 
   // ---- 笔刷预览 ----
@@ -467,24 +479,51 @@
     var pos = screenToOrig(e.clientX, e.clientY);
     var swapped = document.getElementById('chk-swap-buttons').checked;
     _paintValue = (e.button === 0) ? (swapped ? 255 : 0) : (swapped ? 0 : 255);
+    if (_tool === 'brush' && e.shiftKey) {
+      // shift 直线: 只记录起点, 橡皮筋预览, 抬笔时画落笔到抬笔的直线
+      _lineMode = true; _lineStart = pos; _lineEnd = pos;
+      stampDisc(pos[0], pos[1], _brushRadius, _paintValue);
+      _scheduleRender();
+      document.addEventListener('mousemove', _docMouseMove);
+      document.addEventListener('mouseup', _docMouseUp);
+      return;
+    }
     if (_tool === 'brush') stampDisc(pos[0], pos[1], _brushRadius, _paintValue);
     _rectStart = pos; _scheduleRender();
+    // 按住鼠标后用 document 事件跟踪, 离开画布仍可绘制
+    document.addEventListener('mousemove', _docMouseMove);
+    document.addEventListener('mouseup', _docMouseUp);
   });
+  // 画布内 mouse 事件: 仅用于未按下时的预览 (按下后绘制由 _docMouseMove 接管)
   canvas.addEventListener('mousemove', function(e) {
     _mouseScreen = [e.clientX, e.clientY];
-    if (!_cur || !_cur.alpha) return;
+    if (!_cur || !_cur.alpha || _isDrawing) return;
     _updateBrushPreview();
-    if (!_isDrawing) return;
+  });
+  canvas.addEventListener('mouseleave', function() { _brushPreview.style.display = 'none'; });
+  // 文档级跟踪: 按住鼠标后离开画布仍可绘制, 坐标由 screenToOrig 钳位到图片边缘
+  function _docMouseMove(e) {
+    _mouseScreen = [e.clientX, e.clientY];
+    if (!_isDrawing || !_cur || !_cur.alpha) return;
+    _updateBrushPreview();
+    if (_lineMode) { _lineEnd = screenToOrig(e.clientX, e.clientY); _scheduleRender(); return; }
     var pos = screenToOrig(e.clientX, e.clientY);
     if (_tool === 'brush' && _rectStart) { strokeLine(_rectStart[0], _rectStart[1], pos[0], pos[1], _brushRadius, _paintValue); _rectStart = pos; }
     _scheduleRender();
-  });
-  canvas.addEventListener('mouseup', function(e) {
+  }
+  function _docMouseUp(e) {
     if (!_isDrawing || !_cur || !_cur.alpha) return;
-    if (_tool === 'rect' && _rectStart) { var pos = screenToOrig(e.clientX, e.clientY); fillRect(_rectStart[0], _rectStart[1], pos[0], pos[1], _paintValue); }
-    _isDrawing = false; _rectStart = null; _brushPreview.style.display = 'none'; _cur.modified = true; _scheduleRender();
-  });
-  canvas.addEventListener('mouseleave', function() { _isDrawing = false; _rectStart = null; _mouseScreen = null; _brushPreview.style.display = 'none'; });
+    if (_lineMode) {
+      var end = screenToOrig(e.clientX, e.clientY);
+      strokeLine(_lineStart[0], _lineStart[1], end[0], end[1], _brushRadius, _paintValue);
+    } else if (_tool === 'rect' && _rectStart) {
+      var pos = screenToOrig(e.clientX, e.clientY); fillRect(_rectStart[0], _rectStart[1], pos[0], pos[1], _paintValue);
+    }
+    _isDrawing = false; _rectStart = null; _lineMode = false; _lineStart = null; _lineEnd = null;
+    _brushPreview.style.display = 'none'; _cur.modified = true; _scheduleRender();
+    document.removeEventListener('mousemove', _docMouseMove);
+    document.removeEventListener('mouseup', _docMouseUp);
+  }
   canvas.addEventListener('contextmenu', function(e) { e.preventDefault(); });
   canvas.addEventListener('wheel', function(e) {
     e.preventDefault();
@@ -599,7 +638,7 @@
     var maskModeEl = document.getElementById('mask-mode');
     var birefnetParamsEl = document.getElementById('birefnet-params');
     var sam3ParamsEl = document.getElementById('sam3-params');
-    // 按生成方式切换参数区: BiRefNet 显示扩展/收缩/值域, SAM3 显示逻辑表达式
+    // 按生成方式切换参数区: BiRefNet 显示扩展/收缩/值域, SAM3 显示蒙板表达式
     var syncMaskMode = function () {
       var isSam3 = maskModeEl.value === 'sam3';
       birefnetParamsEl.hidden = isSam3;
@@ -623,7 +662,7 @@
       var body = { dir: currentDir(), mode: mode, skip_existing: skipExisting };
       if (mode === 'sam3') {
         var expression = document.getElementById('sam3-expression').value.trim();
-        if (!expression) { toast('请输入逻辑表达式'); return; }
+        if (!expression) { toast('请输入蒙板表达式'); return; }
         body.expression = expression;
       } else {
         body.mask_expand = parseInt(document.getElementById('birefnet-expand').value) || 32;

@@ -343,7 +343,7 @@ def run_sam3_expression_mask(
     progress: Sam3MaskProgress | None = None,
     on_progress: Callable[[], None] | None = None,
 ) -> tuple[int, int]:
-    """对图片列表按逻辑表达式生成蒙板并保存.
+    """对图片列表按蒙板表达式生成蒙板并保存.
 
     流程:
     1. 解析表达式提取概念列表, 并过滤掉 ``skip_existing`` 命中的图片.
@@ -355,7 +355,7 @@ def run_sam3_expression_mask(
     Args:
         image_rel_paths: ``[(rel, abs_path), ...]`` 相对数据集根路径与绝对路径.
         mask_dir: 蒙板输出目录.
-        expression: 逻辑表达式, 如 ``(当前蒙板-("白色背景"+"对话气泡"))``.
+        expression: 蒙板表达式, 如 ``(当前蒙板-("白色背景"+"对话气泡"))``.
         handle: SAM3 模型句柄, 由 ``auto_release`` 注入.
         skip_existing: 如果输出文件已存在则跳过.
         progress: 进度对象.
