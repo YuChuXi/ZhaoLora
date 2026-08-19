@@ -119,53 +119,53 @@ def get_existing_mask(request: Request, path: str = Query(...)) -> Response:
     return Response(content=buf.read(), media_type="image/png")
 
 
-def compose_mask_preview(src: Path, alpha: np.ndarray, max_size: int = _PAINT_PREVIEW_MAX) -> bytes:
-    """合成"棋盘格底 + 蒙板抠图"并编码为 AVIF 字节.
+def compose_mask_preview(base: Path, alpha: np.ndarray, max_size: int = _PAINT_PREVIEW_MAX) -> bytes:
+    """把底图按蒙板 alpha 合成为透明抠图并编码为 AVIF 字节.
 
-    以灰阶棋盘格(204/153, 格宽 8px)为底, 原图按蒙板 alpha 逐像素混合出抠图,
-    长边压缩到 ``max_size`` 后以 AVIF 编码。
+    输出 RGBA: 底图 RGB 保留, 蒙板写入 alpha 通道; 透明区由前端 CSS 棋盘格背景透出,
+    因此不在此烘焙棋盘格, 棋盘格随屏幕固定大小显示、不随图片缩放。
 
     Args:
-        src: 原图绝对路径。
-        alpha: 蒙板灰度数组 ``(h, w)``, 0-255。
-        max_size: 输出长边上限。
+        base: 底图绝对路径(优先缩略图, 无缩略图时用原图).
+        alpha: 蒙板灰度数组 ``(h, w)``, 0-255; 尺寸与底图不一致时缩放到底图尺寸.
+        max_size: 输出长边上限.
 
     Returns:
-        bytes: AVIF 编码的预览图字节。
+        bytes: AVIF 编码的透明抠图字节.
 
     Callers:
         - ``routes.alpha_paint.serve_mask_preview``
     """
-    rgba = Image.open(src).convert("RGBA")
-    h, w = alpha.shape
-    yy, xx = np.indices((h, w))
-    checker = np.where(((xx // 8 + yy // 8) % 2) == 0, 204, 153).astype(np.uint8)
-    bg = np.stack([checker] * 3, axis=-1)
-    alpha_f = (alpha[:, :, None].astype(np.float32) / 255.0)
-    out = (bg * (1.0 - alpha_f) + np.asarray(rgba)[:, :, :3] * alpha_f).astype(np.uint8)
-    preview = Image.fromarray(out, "RGB")
-    if max(preview.size) > max_size:
-        preview.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
+    rgba = Image.open(base).convert("RGBA")
+    if alpha.shape[::-1] != rgba.size:
+        alpha = np.array(
+            Image.fromarray(alpha, mode="L").resize(rgba.size, Image.Resampling.LANCZOS),
+            dtype=np.uint8,
+        )
+    rgba.putalpha(Image.fromarray(alpha, mode="L"))
+    if max(rgba.size) > max_size:
+        rgba.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
     buf = io.BytesIO()
-    preview.save(buf, format="AVIF", quality=80)
+    rgba.save(buf, format="AVIF", quality=80)
     buf.seek(0)
     return buf.getvalue()
 
 
 @router.get("/mask-preview")
 def serve_mask_preview(request: Request, path: str = Query(...)) -> Response:
-    """返回应用蒙板后的预览图: 棋盘格底 + 蒙板抠图, AVIF 编码.
+    """返回应用蒙板后的透明抠图: 底图 RGB + 蒙板 alpha, AVIF 编码.
 
-    以灰阶棋盘格为底, 原图按蒙板 alpha 逐像素混合出抠图; 无蒙板时退回原图预览(白底)。
-    由后端一次合成, 前端瀑布图直接以此图为缩略图即可显示"应用蒙板"效果。
+    优先使用缩略图作为底图, 降低瀑布流批量加载的图片解码开销; 无缩略图时退回原图;
+    无蒙板时退回原图预览(白底)。
 
     Args:
-        path: 相对数据集根的图片路径(含子目录名). 
+        path: 相对数据集根的图片路径(含子目录名).
 
     Callers:
         - ``tag_check.js`` (标签检查页瀑布图"蒙板"开关)
     """
     root, mask_dir = _services(request)
+    thumbnailer = get_runtime(request).thumbnailer
     src = resolve_path(root, path)
     if not src.is_file():
         raise HTTPException(404, f"Image not found: {path}")
@@ -174,7 +174,10 @@ def serve_mask_preview(request: Request, path: str = Query(...)) -> Response:
     alpha = load_mask(mask_dir, path, size)
     if alpha is None:
         return serve_original_image(request, path=path)
-    return Response(content=compose_mask_preview(src, alpha), media_type="image/avif")
+    base = thumbnailer.get_path(path)
+    if not base.is_file():
+        base = src
+    return Response(content=compose_mask_preview(base, alpha), media_type="image/avif")
 
 
 @router.post("/upload-mask")

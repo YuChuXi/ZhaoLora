@@ -282,7 +282,8 @@ body {
   width: 100%;
   height: auto;
   display: block;
-  background: #111;
+  /* 棋盘格底: 常驻显示, 不透明图完全盖住背景, 透明图(蒙板抠图)透出棋盘格 */
+  background: repeating-conic-gradient(rgb(204,204,204) 0 25%, rgb(153,153,153) 0 50%) 0 0 / 24px 24px;
 }
 /* 语义检索-概念分割: 掩码半透明叠加, 覆盖在图片区且不拦截点击; 需透明背景以透出下层原图 */
 .card .mask-overlay {
