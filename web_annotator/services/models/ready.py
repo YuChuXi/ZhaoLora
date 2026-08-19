@@ -70,6 +70,7 @@ class ReadyTomlResult(BaseModel):
     mask_stats: list[MaskStats] = Field(default_factory=list)
     mask: str | None = None
     num_repeats: int = 1
+    resolutions: list[int] = Field(default_factory=list, description="多分辨率列表, 空表示单块无 resolution")
     mask_status: Literal["完整", "无"] = "无"
     mask_complete: int = 0
     mask_none: int = 0

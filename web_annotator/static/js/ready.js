@@ -71,10 +71,19 @@
       toast('num_repeats 无效');
       return;
     }
+    var resText = document.getElementById('resolutions').value.trim();
+    var resolutions = [];
+    if (resText) {
+      resolutions = resText.split(/\s*,\s*/).map(function (v) {
+        var n = parseInt(v, 10);
+        if (!(n > 0)) throw new Error('无效分辨率: ' + v);
+        return n;
+      });
+    }
     var data = await api(API.apiPath('/ready/toml'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ dirs: null, num_repeats: repeats })
+      body: JSON.stringify({ dirs: null, num_repeats: repeats, resolutions: resolutions })
     });
     document.getElementById('toml-box').value = data.toml || '';
     var subsets = data.subsets || [];

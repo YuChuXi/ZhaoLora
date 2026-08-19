@@ -18,6 +18,7 @@ class ReadyBody(BaseModel):
 
     dirs: list[str] | None = None
     num_repeats: int = Field(default=1, ge=1, le=100)
+    resolutions: list[int] = Field(default_factory=list, description="多分辨率, 如 [512, 1024, 1536]; 为空时生成单块无 resolution")
 
 
 @router.get("/dirs")
@@ -48,7 +49,12 @@ def toml(request: Request, body: ReadyBody) -> ReadyTomlResult:
     生成 TOML 预览文本. 引用: ready.js. 
     """
     root = get_runtime(request).root
-    result = build_ready_toml(root, dirs=body.dirs, num_repeats=body.num_repeats)
+    result = build_ready_toml(
+        root,
+        dirs=body.dirs,
+        num_repeats=body.num_repeats,
+        resolutions=body.resolutions,
+    )
     if not result.subsets:
         raise HTTPException(400, "没有可导出的图片目录")
     return result

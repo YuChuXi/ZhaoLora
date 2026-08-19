@@ -50,6 +50,13 @@
       style="width:64px;background:#0a1a30;color:var(--text);border:1px solid var(--border);border-radius:4px;padding:3px 6px;">
   </label>
   <span class="sep"></span>
+  <label style="font-size:12px;color:var(--text-dim);display:flex;align-items:center;gap:4px;"
+    title="逗号分隔的多个分辨率, 每个分辨率生成一个 [[datasets]] 块; 留空则生成单块">
+    resolution
+    <input type="text" id="resolutions" value="1536,1024,512" placeholder="如 1536,1024,512"
+      style="width:110px;background:#0a1a30;color:var(--text);border:1px solid var(--border);border-radius:4px;padding:3px 6px;">
+  </label>
+  <span class="sep"></span>
   <span class="status-seg" id="stat-summary">-</span>
 </div>
 
