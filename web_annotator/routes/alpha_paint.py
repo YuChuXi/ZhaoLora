@@ -14,7 +14,7 @@ from PIL import Image
 from routes.deps import get_runtime, resolve_path
 from services.core.scanner import scan_images
 from services.core.thumbnailer import image_size
-from services.state.mask import has_mask, load_mask, save_mask
+from services.state.mask import has_mask, load_mask, mask_out_path, save_mask
 from services.models import DefaultAlphaResponse, PaintImageItem, PaintSaveResponse
 
 router = APIRouter(prefix="/paint", tags=["paint"])
@@ -155,8 +155,9 @@ def compose_mask_preview(base: Path, alpha: np.ndarray, max_size: int = _PAINT_P
 def serve_mask_preview(request: Request, path: str = Query(...)) -> Response:
     """返回应用蒙板后的透明抠图: 底图 RGB + 蒙板 alpha, AVIF 编码.
 
-    优先使用缩略图作为底图, 降低瀑布流批量加载的图片解码开销; 无缩略图时退回原图;
-    无蒙板时退回原图预览(白底)。
+    优先使用缩略图作为底图; 合成结果缓存到缩略图目录(``<hash>_mask.avif``),
+    缓存命中时直接返回已编码字节, 绕过解码-编码循环; 底图或蒙板被修改后
+    自动失效重生成。无缩略图时退回原图; 无蒙板时退回原图预览(白底)。
 
     Args:
         path: 相对数据集根的图片路径(含子目录名).
@@ -177,7 +178,16 @@ def serve_mask_preview(request: Request, path: str = Query(...)) -> Response:
     base = thumbnailer.get_path(path)
     if not base.is_file():
         base = src
-    return Response(content=compose_mask_preview(base, alpha), media_type="image/avif")
+    cache_path = thumbnailer.thumb_dir / f"{thumbnailer.hash_for(path)}_mask.avif"
+    mask_file = mask_out_path(mask_dir, path)
+    base_mtime = base.stat().st_mtime
+    mask_mtime = mask_file.stat().st_mtime
+    if cache_path.is_file() and cache_path.stat().st_mtime >= max(base_mtime, mask_mtime):
+        return Response(content=cache_path.read_bytes(), media_type="image/avif")
+    data = compose_mask_preview(base, alpha)
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    cache_path.write_bytes(data)
+    return Response(content=data, media_type="image/avif")
 
 
 @router.post("/upload-mask")
