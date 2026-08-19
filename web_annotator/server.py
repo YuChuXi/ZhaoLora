@@ -219,7 +219,7 @@ def main() -> int:
     )
     parser.add_argument("--host", type=str, default="0.0.0.0", help="监听地址")
     parser.add_argument("--port", type=int, default=8765, help="监听端口")
-    parser.add_argument("--thumbnail-size", type=int, default=2560, help="缩略图长边像素")
+    parser.add_argument("--thumbnail-size", type=int, default=1280, help="缩略图长边像素")
     parser.add_argument(
         "--block-chinese-ua",
         action="store_true",

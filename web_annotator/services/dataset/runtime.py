@@ -66,7 +66,7 @@ class DatasetRegistry:
     """
 
     task_root: Path
-    thumbnail_size: int = 2560
+    thumbnail_size: int = 1280
     job_manager: JobManager | None = None
     by_name: dict[str, DatasetRuntime] = field(default_factory=dict)
 

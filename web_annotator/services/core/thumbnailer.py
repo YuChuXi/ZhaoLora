@@ -17,7 +17,7 @@ from PIL import Image, UnidentifiedImageError
 from services.dataset.layout import NON_BROWSABLE_DIRS
 
 THUMB_DIRNAME = ".thumbnails"
-DEFAULT_SIZE = 2560  # 长边像素(与 server --thumbnail-size 默认一致)
+DEFAULT_SIZE = 1280  # 长边像素(与 server --thumbnail-size 默认一致)
 DEFAULT_QUALITY = 50  # AVIF 质量 (0-100)
 
 _size_cache: dict[str, tuple[float, int, int]] = {}
