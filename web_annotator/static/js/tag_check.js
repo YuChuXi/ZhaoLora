@@ -14,6 +14,7 @@
   var _busyPaths = {};
   var _centerOnLoad = false;  // 进入单图/切换 fit 时置 true, img.load 时居中滚动, 切换图片不置 (保持偏移)
   var _strip = null;          // 横排预览条控制器(Filmstrip)
+  var _applyMask = false;     // 瀑布图是否应用蒙板显示(去背 + 棋盘格背景)
 
   // ---- 标签补全 ----
   var _acTags = [];          // [{tag, count, zh}] 按频次降序
@@ -24,6 +25,19 @@
   var _acDebounce = null;    // 输入防抖计时器
   var _acReqId = 0;          // 统计请求序号(丢弃过期响应)
   var _AC_LIMIT = 60;        // 最多显示建议数
+
+  /**
+   * 卡片图片 URL 构造: 开启"应用蒙板"时改用后端合成图(棋盘格底 + 蒙板抠图, AVIF).
+   *
+   * @param {object} img
+   * @returns {string}
+   */
+  function imageSrc(img) {
+    if (_applyMask) {
+      return API.apiPath('/paint/mask-preview') + '?path=' + encodeURIComponent(img.path);
+    }
+    return API.thumbnailUrl(img.thumbnail_hash);
+  }
 
   /**
    * 更新工具栏统计。
@@ -851,6 +865,7 @@
       getData: function () { return _items; },
       onClick: onCardClick,
       decorate: decorateCard,
+      imageSrc: imageSrc,
     });
     acInit();
     magnifierInit();
@@ -908,6 +923,15 @@
       // 语义排序状态下保留排序, 仅刷新标签状态
       runCheck(_embSortActive).catch(function (e) { toast('检查失败: ' + String(e.message || e)); });
     });
+    // 应用蒙板显示开关: 切换后重建瀑布流(重新触发合成/恢复)
+    var chkMask = document.getElementById('chk-apply-mask');
+    if (chkMask) {
+      chkMask.addEventListener('change', function () {
+        _applyMask = chkMask.checked;
+        hideSingle();
+        Masonry.render(_items);
+      });
+    }
 
     // ---- 向量嵌入事件 ----
     function embPositionLabel() {

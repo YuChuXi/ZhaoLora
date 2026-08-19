@@ -74,7 +74,7 @@ def load_mask(out_dir: Path, src_path: str, size: tuple[int, int]) -> np.ndarray
 
 
 def save_mask(out_dir: Path, src_path: str, alpha: np.ndarray) -> Path:
-    """保存 mask PNG(白底 RGB + 蒙版 A 通道, 无损). 
+    """保存蒙板为灰度 PNG(单通道 L, 像素值即 0-255 蒙板, 无损).
 
     Args:
         out_dir: mask 根目录. 
@@ -89,7 +89,5 @@ def save_mask(out_dir: Path, src_path: str, alpha: np.ndarray) -> Path:
     """
     dest = mask_out_path(out_dir, src_path)
     dest.parent.mkdir(parents=True, exist_ok=True)
-    h, w = alpha.shape
-    white = Image.new("L", (w, h), 255)
-    Image.merge("RGBA", (white, white, white, Image.fromarray(alpha, mode="L"))).save(dest, format="PNG")
+    Image.fromarray(alpha, mode="L").save(dest, format="PNG")
     return dest

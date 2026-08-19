@@ -119,6 +119,64 @@ def get_existing_mask(request: Request, path: str = Query(...)) -> Response:
     return Response(content=buf.read(), media_type="image/png")
 
 
+def compose_mask_preview(src: Path, alpha: np.ndarray, max_size: int = _PAINT_PREVIEW_MAX) -> bytes:
+    """合成"棋盘格底 + 蒙板抠图"并编码为 AVIF 字节.
+
+    以灰阶棋盘格(204/153, 格宽 8px)为底, 原图按蒙板 alpha 逐像素混合出抠图,
+    长边压缩到 ``max_size`` 后以 AVIF 编码。
+
+    Args:
+        src: 原图绝对路径。
+        alpha: 蒙板灰度数组 ``(h, w)``, 0-255。
+        max_size: 输出长边上限。
+
+    Returns:
+        bytes: AVIF 编码的预览图字节。
+
+    Callers:
+        - ``routes.alpha_paint.serve_mask_preview``
+    """
+    rgba = Image.open(src).convert("RGBA")
+    h, w = alpha.shape
+    yy, xx = np.indices((h, w))
+    checker = np.where(((xx // 8 + yy // 8) % 2) == 0, 204, 153).astype(np.uint8)
+    bg = np.stack([checker] * 3, axis=-1)
+    alpha_f = (alpha[:, :, None].astype(np.float32) / 255.0)
+    out = (bg * (1.0 - alpha_f) + np.asarray(rgba)[:, :, :3] * alpha_f).astype(np.uint8)
+    preview = Image.fromarray(out, "RGB")
+    if max(preview.size) > max_size:
+        preview.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
+    buf = io.BytesIO()
+    preview.save(buf, format="AVIF", quality=80)
+    buf.seek(0)
+    return buf.getvalue()
+
+
+@router.get("/mask-preview")
+def serve_mask_preview(request: Request, path: str = Query(...)) -> Response:
+    """返回应用蒙板后的预览图: 棋盘格底 + 蒙板抠图, AVIF 编码.
+
+    以灰阶棋盘格为底, 原图按蒙板 alpha 逐像素混合出抠图; 无蒙板时退回原图预览(白底)。
+    由后端一次合成, 前端瀑布图直接以此图为缩略图即可显示"应用蒙板"效果。
+
+    Args:
+        path: 相对数据集根的图片路径(含子目录名). 
+
+    Callers:
+        - ``tag_check.js`` (标签检查页瀑布图"蒙板"开关)
+    """
+    root, mask_dir = _services(request)
+    src = resolve_path(root, path)
+    if not src.is_file():
+        raise HTTPException(404, f"Image not found: {path}")
+    with Image.open(src) as im:
+        size = im.size
+    alpha = load_mask(mask_dir, path, size)
+    if alpha is None:
+        return serve_original_image(request, path=path)
+    return Response(content=compose_mask_preview(src, alpha), media_type="image/avif")
+
+
 @router.post("/upload-mask")
 async def upload_mask(request: Request, path: str = Query(...)) -> PaintSaveResponse:
     """接收蒙版 RGBA PNG 并写入 mask 目录(取 A 通道). 

@@ -145,6 +145,10 @@
   <button class="btn multi-only" type="button" id="btn-emb-dlg" title="相似度搜索与批量标记">相似度</button>
   <span class="sep multi-only"></span>
   <button class="btn green multi-only" type="button" id="btn-check">检查</button>
+  <label class="multi-only" style="display:flex;align-items:center;gap:3px;font-size:12px;color:var(--text-dim);cursor:pointer;user-select:none;"
+    title="将每张图的蒙板应用到图片(去背), 透明区显示棋盘格">
+    <input type="checkbox" id="chk-apply-mask" style="margin:0;">蒙板
+  </label>
   <label class="cols-ctl multi-only" id="cols-ctl"><span>列</span><input type="range" id="cols-slider" min="0" max="16" value="0" step="1"><span id="cols-label">自动</span></label>
   <button class="btn multi-only" type="button" id="btn-single-mode">单图</button>
   <span class="sep single-only"></span>

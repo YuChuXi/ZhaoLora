@@ -15,6 +15,7 @@ var Masonry = (function() {
     getData: null,   // function() → 图片数组; 用于 setColumns 触发的重绘
     onClick: null,   // function(img, card, event); 覆盖默认 Store.toggle
     decorate: null,  // function(card, img); 创建卡片后追加自定义样式/属性
+    imageSrc: null,  // function(img) → 缩略图 URL; 省略则用 API.thumbnailUrl
   };
 
   /**
@@ -31,6 +32,7 @@ var Masonry = (function() {
       _config.getData = config.getData || null;
       _config.onClick = config.onClick || null;
       _config.decorate = config.decorate || null;
+      _config.imageSrc = config.imageSrc || null;
     }
   }
 
@@ -150,7 +152,7 @@ var Masonry = (function() {
 
     var imgEl = document.createElement('img');
     imgEl.alt = img.stem;
-    imgEl.dataset.src = API.thumbnailUrl(img.thumbnail_hash);
+    imgEl.dataset.src = _config.imageSrc ? _config.imageSrc(img) : API.thumbnailUrl(img.thumbnail_hash);
     imgEl.dataset.full = API.imageUrl(img.path);
     // 占位高度，避免未加载时卡片塌缩导致整页被当成「可见」
     var ph = Math.max(1, Math.round(colW * (img.height || 1) / (img.width || 1)));
