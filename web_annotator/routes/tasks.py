@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
 import random
-from pathlib import Path
 from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 from routes.deps import registry
 from services.dataset.runtime import DatasetRuntime
 from services.models import (
+    ScannedImage,
     TaskCard,
     TaskCandidatesResponse,
     TaskListResponse,
@@ -37,25 +38,31 @@ def _store(request: Request) -> TaskStore:
     return request.app.state.task_store
 
 
-async def _preview_hashes(rt: DatasetRuntime, limit: int = 4) -> list[str]:
-    """
-    从 main 随机取最多 limit 张已有或可生成的缩略图 hash. 
+async def _preview_hashes(
+    rt: DatasetRuntime, images: list[ScannedImage], limit: int = 4
+) -> list[str]:
+    """从 images 随机取最多 limit 张缩略图 hash, 缺失缩略图并发生成.
 
-    引用: GET /api/tasks. 
+    Args:
+        rt: 数据集运行时(用于 thumbnailer).
+        images: 已扫描的图片列表(由调用方传入, 避免重复扫描).
+        limit: 最多选取的图片数.
+
+    Returns:
+        缩略图 hash 列表.
+
+    Callers:
+        - ``routes.tasks.list_tasks``
     """
-    main = rt.main_dir
-    if not main.is_dir():
-        return []
-    images = scan_images(main, path_prefix="main")
     if not images:
         return []
     picks = images if len(images) <= limit else random.sample(images, limit)
-    hashes: list[str] = []
-    for img in picks:
-        rel = img.path
-        await rt.thumbnailer.ensure_async(rel)
-        hashes.append(rt.thumbnailer.hash_for(rel))
-    return hashes
+    missing = [img.path for img in picks if not rt.thumbnailer.exists(img.path)]
+    if missing:
+        await asyncio.gather(
+            *(rt.thumbnailer.ensure_async(rel) for rel in missing)
+        )
+    return [rt.thumbnailer.hash_for(img.path) for img in picks]
 
 
 @router.get("")
@@ -80,8 +87,9 @@ async def list_tasks(
         report_ready = False
         if (task_dir / "main").is_dir():
             rt = await reg.ensure(name)
-            image_count = len(scan_images(rt.main_dir, path_prefix="main"))
-            previews = await _preview_hashes(rt, 4)
+            images = scan_images(rt.main_dir, path_prefix="main")
+            image_count = len(images)
+            previews = await _preview_hashes(rt, images, 4)
             report_ready = (rt.root / "aesthetic_report.html").is_file()
         items.append(
             TaskCard(
