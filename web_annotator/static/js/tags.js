@@ -130,6 +130,9 @@
       per_sample: document.getElementById('opt-per-sample').checked,
       min_count: Math.max(1, parseInt(document.getElementById('opt-min').value, 10) || 1),
       section: document.getElementById('opt-section').value,
+      include: parseTagList(document.getElementById('opt-include').value),
+      exclude: parseTagList(document.getElementById('opt-exclude').value),
+      match_mode: document.getElementById('opt-match-mode').value,
     };
     var data = await api(API.apiPath('/tags/stats'), {
       method: 'POST',
@@ -143,7 +146,8 @@
     });
     _selected = keep;
     document.getElementById('stat-summary').textContent =
-      '样本 ' + data.sample_count + ' · 标签 ' + data.tag_count;
+      '样本 ' + data.sample_count + ' · 标签 ' + data.tag_count
+      + (data.skipped ? ' · 排除 ' + data.skipped : '');
     renderTable();
   }
 

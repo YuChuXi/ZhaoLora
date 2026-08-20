@@ -11,6 +11,7 @@ import httpx
 
 from services.core.work_dir import list_work_dirs
 from services.models import TagStatRow, TagStatsResult
+from services.tagging.clean import make_tag_matcher, tag_key
 
 _SHARED_CACHE_NAME = ".translation_cache.json"
 _BATCH_SIZE = 128
@@ -105,6 +106,9 @@ def count_tags(
     per_sample: bool = True,
     min_count: int = 1,
     section: str = "all",
+    include: list[str] | None = None,
+    exclude: list[str] | None = None,
+    match_mode: str = "exact",
 ) -> TagStatsResult:
     """统计若干目录内旁路 ``.txt`` 的标签频率.
 
@@ -112,6 +116,11 @@ def count_tags(
     - ``"all"``: 整行所有标签.
     - ``"before"``: 只统计 ``|||`` 之前(头部)的标签.
     - ``"after"``: 只统计 ``|||`` 之后(正文)的标签.
+
+    ``include`` / ``exclude`` 按指定 ``match_mode`` 对样本(图片)做筛选:
+    命中 include 任一模式的样本才纳入统计; 命中 exclude 任一模式的样本被排除.
+    匹配基于 ``tag_key``(小写无下划线) 归一化, 与 ``batch_edit_tags`` 的
+    ``match_mode`` 语义一致(``exact`` | ``regex`` | ``danbooru``).
 
     Args:
         dirs: 待统计的工作目录列表.
@@ -122,22 +131,30 @@ def count_tags(
         per_sample: 是否按图去重.
         min_count: 最少出现次数过滤.
         section: 统计范围, ``"all"`` / ``"before"`` / ``"after"``.
+        include: 样本须命中的标签模式列表; None/空表示不限.
+        exclude: 样本须未命中的标签模式列表; None/空表示不限.
+        match_mode: 标签匹配模式, ``"exact"`` / ``"regex"`` / ``"danbooru"``.
 
     Returns:
-        TagStatsResult: 统计结果.
+        TagStatsResult: 统计结果, 含被筛选跳过的样本数 ``skipped``.
 
     Raises:
-        ValueError: ``section`` 非法.
+        ValueError: ``section`` 或 ``match_mode`` 非法.
 
     引用:
         ``routes/tag_stats.py``.
     """
     if section not in ("all", "before", "after"):
         raise ValueError(f"section 非法: {section}")
+    if match_mode not in ("exact", "regex", "danbooru"):
+        raise ValueError(f"match_mode 非法: {match_mode}")
     zh_map = zh_map or {}
+    include_matcher = make_tag_matcher(include, match_mode) if include else None
+    exclude_matcher = make_tag_matcher(exclude, match_mode) if exclude else None
     counter: Counter[str] = Counter()
     total_tag_occurrences = 0
     failed = 0
+    skipped = 0
     files: list[Path] = []
 
     for d in dirs:
@@ -160,6 +177,15 @@ def count_tags(
             parts = text.split("|||", 1)
             text = parts[1] if len(parts) > 1 else ""
         tags = split_tags_line(text)
+        # 样本筛选: 基于 tag_key 归一化与匹配模式判定
+        if include_matcher is not None or exclude_matcher is not None:
+            keys = [tag_key(t) for t in tags]
+            if include_matcher is not None and not any(include_matcher(k) for k in keys):
+                skipped += 1
+                continue
+            if exclude_matcher is not None and any(exclude_matcher(k) for k in keys):
+                skipped += 1
+                continue
         normed = [
             normalize_tag(t, lower=lower, underscores=underscores)
             for t in tags
@@ -170,7 +196,7 @@ def count_tags(
         counter.update(normed)
         total_tag_occurrences += len(normed)
 
-    n_files = len(files) - failed
+    n_files = len(files) - failed - skipped
     denom = n_files if per_sample else total_tag_occurrences
     rows: list[TagStatRow] = []
     for tag, c in counter.items():
@@ -191,6 +217,7 @@ def count_tags(
     return TagStatsResult(
         sample_count=n_files,
         failed=failed,
+        skipped=skipped,
         file_count=len(files),
         tag_count=len(rows),
         total_occurrences=total_tag_occurrences,

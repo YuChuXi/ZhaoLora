@@ -72,6 +72,9 @@ class StatsBody(BaseModel):
     per_sample: bool = True
     min_count: int = 1
     section: str = Field(default="all", description="统计范围: all | before | after")
+    include: list[str] = Field(default_factory=list, description="样本须命中的标签模式; 空表示不限")
+    exclude: list[str] = Field(default_factory=list, description="样本须未命中的标签模式; 空表示不限")
+    match_mode: str = Field("exact", description="标签匹配模式: exact | regex | danbooru")
 
 
 class CleanBody(BaseModel):
@@ -111,6 +114,8 @@ def stats(request: Request, body: StatsBody) -> TagStatsResult:
         raise HTTPException(400, "最少出现次数至少为 1")
     if body.section not in ("all", "before", "after"):
         raise HTTPException(400, "section 须为 all / before / after")
+    if body.match_mode not in ("exact", "regex", "danbooru"):
+        raise HTTPException(400, "match_mode 须为 exact / regex / danbooru")
 
     zh_map = load_translation_map(root)
     result = count_tags(
@@ -122,6 +127,9 @@ def stats(request: Request, body: StatsBody) -> TagStatsResult:
         per_sample=body.per_sample,
         min_count=body.min_count,
         section=body.section,
+        include=body.include or None,
+        exclude=body.exclude or None,
+        match_mode=body.match_mode,
     )
     return result.model_copy(
         update={

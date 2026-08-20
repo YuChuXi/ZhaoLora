@@ -30,6 +30,7 @@ class TagStatsResult(BaseModel):
 
     sample_count: int
     failed: int = 0
+    skipped: int = Field(0, description="因不满足 include/exclude 筛选条件而跳过的样本数")
     file_count: int = 0
     tag_count: int = 0
     total_occurrences: int = 0

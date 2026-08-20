@@ -678,7 +678,7 @@ def clean_txt_dirs(
     )
 
 
-def _classify(patterns: list[str], mode: str) -> tuple[set[str], dict[str, re.Pattern[str]]]:
+def classify_patterns(patterns: list[str], mode: str) -> tuple[set[str], dict[str, re.Pattern[str]]]:
     """把标签/模式分类为 精确 key 集合 与 模式正则字典.
 
     Args:
@@ -690,7 +690,7 @@ def _classify(patterns: list[str], mode: str) -> tuple[set[str], dict[str, re.Pa
         pattern_re 为 ``dict[模式原文, re.Pattern]``; exact 模式 pattern_re 为空. 
 
     Callers:
-        - ``_make_tag_matcher``
+        - ``make_tag_matcher``
         - ``batch_edit_tags``
     """
     if mode == "exact":
@@ -749,21 +749,22 @@ def _regex_replace(key: str, rx: re.Pattern[str], template: str) -> str | None:
     return _expand_template(m, template) if _has_backref(template) else template
 
 
-def _make_tag_matcher(patterns: list[str], mode: str) -> Callable[[str], bool]:
+def make_tag_matcher(patterns: list[str], mode: str) -> Callable[[str], bool]:
     """按匹配模式构造标签命中判定函数(任一模式命中即命中).
 
     Args:
         patterns: 标签或模式列表. 仅 ``exact`` 模式支持逗号分隔批量传入
             (其余模式按原样使用, 逗号是模式字符). 
-        mode: 匹配模式, 语义同 ``_classify``. 
+        mode: 匹配模式, 语义同 ``classify_patterns``. 
 
     Returns:
         接受 ``tag_key`` 归一化字符串、返回是否命中的函数. 
 
     Callers:
         - ``batch_edit_tags`` (conditional 添加判定)
+        - ``services/tagging/stats.py:count_tags`` (include/exclude 样本过滤)
     """
-    keys, pats = _classify(patterns, mode)
+    keys, pats = classify_patterns(patterns, mode)
     return lambda key: key in keys or any(re_.search(key) for re_ in pats.values())
 
 
@@ -851,7 +852,7 @@ def batch_edit_tags(
 
     引用: ``routes/tag_stats.py``. 
     """
-    del_keys, del_pats = _classify(delete_tags or [], match_mode)
+    del_keys, del_pats = classify_patterns(delete_tags or [], match_mode)
 
     # 替换: exact 用 key→新标签映射; 模式用 pattern→(编译正则, 新标签)
     replace_map: dict[str, str] = {}
@@ -923,7 +924,7 @@ def batch_edit_tags(
         existing = header + body
         for t in add_list:
             if conditional:
-                add_matcher = _make_tag_matcher([t], match_mode)
+                add_matcher = make_tag_matcher([t], match_mode)
                 hits = [x for x in existing if add_matcher(tag_key(x))]
                 if not hits:
                     continue

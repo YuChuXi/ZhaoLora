@@ -161,11 +161,11 @@
 
 <!-- 统计条件对话框 -->
 <div class="modal" id="stats-options-modal" aria-hidden="true">
-  <div class="modal-panel" role="dialog" aria-labelledby="stats-options-title" style="width:min(420px,92vw);height:auto;max-height:min(360px,64vh);">
+  <div class="modal-panel" role="dialog" aria-labelledby="stats-options-title" style="width:min(440px,92vw);height:auto;max-height:min(520px,84vh);">
     <div class="modal-head">
       <span class="modal-title" id="stats-options-title">统计条件</span>
     </div>
-    <div style="padding:14px 16px;display:flex;flex-direction:column;gap:12px;font-size:12px;color:var(--text-dim);">
+    <div style="padding:14px 16px;display:flex;flex-direction:column;gap:12px;font-size:12px;color:var(--text-dim);overflow:auto;">
       <div style="display:flex;flex-direction:column;gap:6px;">
         <label style="display:flex;align-items:center;gap:6px;cursor:pointer;"><input type="checkbox" id="opt-lower" checked> 忽略大小写</label>
         <label style="display:flex;align-items:center;gap:6px;cursor:pointer;"><input type="checkbox" id="opt-underscores" checked> 统一空格</label>
@@ -180,6 +180,22 @@
           <option value="before">||| 前</option>
           <option value="after">||| 后</option>
         </select>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:6px;border-top:1px solid var(--border);padding-top:10px;">
+        <div style="display:flex;align-items:center;gap:6px;">样本筛选匹配方式
+          <select id="opt-match-mode" style="background:var(--card-bg);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:2px 6px;font-size:12px;">
+            <option value="exact">精确</option>
+            <option value="danbooru">Danbooru 通配(*)</option>
+            <option value="regex">正则</option>
+          </select>
+        </div>
+        <label style="display:flex;flex-direction:column;gap:3px;">仅含标签（逗号分隔; 留空表示不限）
+          <input type="text" id="opt-include" placeholder="tag1, tag2" style="background:#0a1a30;color:var(--text);border:1px solid var(--border);border-radius:4px;padding:4px 8px;font-size:12px;">
+        </label>
+        <label style="display:flex;flex-direction:column;gap:3px;">排除标签（逗号分隔; 留空表示不限）
+          <input type="text" id="opt-exclude" placeholder="tag1, tag2" style="background:#0a1a30;color:var(--text);border:1px solid var(--border);border-radius:4px;padding:4px 8px;font-size:12px;">
+        </label>
+        <span style="opacity:.75;">通配: * 匹配任意字符；正则作用于归一化标签(小写无下划线)</span>
       </div>
     </div>
     <div class="modal-foot">
