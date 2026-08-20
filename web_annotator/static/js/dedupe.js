@@ -290,38 +290,48 @@
           similar_res_ratio: ratio
         }),
       });
-      var data = await new Promise(function (resolve, reject) {
-        API.watchJob(submitted.job_id, function (s) {
-          updateProgress(s, main);
-          if (s.status === 'queued') return;
-          if (s.status === 'running') {
-            main.innerHTML = '<div class="dedupe-empty">' + (s.message || '扫描中…') + '</div>';
-            return;
-          }
-          if (s.status === 'done') {
-            resolve(s.result || {});
-            return;
-          }
-          if (s.status === 'error' || s.status === 'cancelled') {
-            reject(new Error(s.message || s.status));
-          }
-        });
-      });
-      _groups = data.groups || [];
-      _algorithm = data.algorithm || 'mse';
-      showHistogram(data);
-      _selected = {};
-      _groups.forEach(function (g) {
-        (g.suggested_remove || []).forEach(function (p) { _selected[p] = true; });
-      });
-      render();
-      toast('完成 ' + _groups.length + ' 组');
+      await watchScan(submitted.job_id);
     } catch (e) {
       main.innerHTML = '<div class="dedupe-empty">扫描失败</div>';
       toast(String(e.message || e));
     } finally {
       document.getElementById('btn-scan').disabled = false;
     }
+  }
+
+  /**
+   * 订阅扫描任务并处理结果(提交与重连共用).
+   * @param {string} jobId
+   * 引用: ``scan`` / IIFE 末尾重连.
+   */
+  async function watchScan(jobId) {
+    var main = document.getElementById('dedupe-main');
+    var data = await new Promise(function (resolve, reject) {
+      API.watchJob(jobId, function (s) {
+        updateProgress(s, main);
+        if (s.status === 'queued') return;
+        if (s.status === 'running') {
+          main.innerHTML = '<div class="dedupe-empty">' + (s.message || '扫描中…') + '</div>';
+          return;
+        }
+        if (s.status === 'done') {
+          resolve(s.result || {});
+          return;
+        }
+        if (s.status === 'error' || s.status === 'cancelled') {
+          reject(new Error(s.message || s.status));
+        }
+      });
+    });
+    _groups = data.groups || [];
+    _algorithm = data.algorithm || 'mse';
+    showHistogram(data);
+    _selected = {};
+    _groups.forEach(function (g) {
+      (g.suggested_remove || []).forEach(function (p) { _selected[p] = true; });
+    });
+    render();
+    toast('完成 ' + _groups.length + ' 组');
   }
 
   function suggestAll() {
@@ -453,4 +463,17 @@
   });
   updateStats();
   syncAlgorithmUI();
+
+  // 页面加载时恢复未结束的扫描任务
+  API.findActiveJob('dedupe_scan', API.dataset()).then(function (snap) {
+    if (!snap) return;
+    document.getElementById('btn-scan').disabled = true;
+    watchScan(snap.job_id).catch(function (e) {
+      document.getElementById('dedupe-main').innerHTML =
+        '<div class="dedupe-empty">扫描失败</div>';
+      toast(String(e.message || e));
+    }).finally(function () {
+      document.getElementById('btn-scan').disabled = false;
+    });
+  });
 })();

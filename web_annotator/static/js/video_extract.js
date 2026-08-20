@@ -892,6 +892,29 @@ var VideoExtract = (function () {
    *   - `bindToolbar` 分析按钮
    *   - `loadDetail` 自动分析
    */
+  /**
+   * 帧类型分析 SSE 回调(提交与重连共用).
+   * @param {object} s JobSnapshot
+   * 引用: ``toggleAnalysis`` / ``resumeAnalysis``.
+   */
+  function onAnalysisStatus(s) {
+    if (s.status === 'running') {
+      setProgress(s.pct || 0, (s.done || 0) + '/' + (s.total || 0)
+        + (s.message ? ' · ' + s.message : ''));
+    } else if (s.status === 'done') {
+      stopAnalysis();
+      setStatus('分析: 完成');
+      analysisDone();
+    } else if (s.status === 'error') {
+      stopAnalysis();
+      setStatus('分析: 失败');
+      toast('帧类型分析失败: ' + (s.message || ''));
+    } else if (s.status === 'cancelled') {
+      stopAnalysis();
+      setStatus('分析: 已取消');
+    }
+  }
+
   async function toggleAnalysis() {
     if (state.analyzing) {
       stopAnalysis();
@@ -905,23 +928,21 @@ var VideoExtract = (function () {
     var btn = $('ve-analysis');
     if (btn) btn.textContent = '停止';
     setProgress(0, '提交中…');
-    state.jobWatch = API.watchJob(data.job_id, function (s) {
-      if (s.status === 'running') {
-        setProgress(s.pct || 0, (s.done || 0) + '/' + (s.total || 0)
-          + (s.message ? ' · ' + s.message : ''));
-      } else if (s.status === 'done') {
-        stopAnalysis();
-        setStatus('分析: 完成');
-        analysisDone();
-      } else if (s.status === 'error') {
-        stopAnalysis();
-        setStatus('分析: 失败');
-        toast('帧类型分析失败: ' + (s.message || ''));
-      } else if (s.status === 'cancelled') {
-        stopAnalysis();
-        setStatus('分析: 已取消');
-      }
-    });
+    state.jobWatch = API.watchJob(data.job_id, onAnalysisStatus);
+  }
+
+  /**
+   * 页面刷新后恢复未结束的帧类型分析任务.
+   * 引用: ``init``.
+   */
+  async function resumeAnalysis() {
+    var snap = await API.findActiveJob('video_analysis', API.dataset());
+    if (!snap) return;
+    state.analyzing = true;
+    var btn = $('ve-analysis');
+    if (btn) btn.textContent = '停止';
+    setProgress(snap.pct || 0, snap.message || '恢复中…');
+    state.jobWatch = API.watchJob(snap.job_id, onAnalysisStatus);
   }
 
   /** 分析完成后回读帧类型并重绘柱状图。Callers: toggleAnalysis。 */
@@ -1130,6 +1151,7 @@ var VideoExtract = (function () {
     }
 
     await setPath(state.path);
+    resumeAnalysis();
   }
 
   document.addEventListener('DOMContentLoaded', function () {

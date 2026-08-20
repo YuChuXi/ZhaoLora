@@ -140,6 +140,18 @@ var Tagging = (function () {
     toast('正在取消…');
   }
 
+  /**
+   * 页面刷新后恢复未结束的打标任务.
+   * 引用: ``init``.
+   */
+  async function resumeActive() {
+    var snap = await API.findActiveJob('tagging', API.dataset());
+    if (!snap) return;
+    applyStatus(snap);
+    startWatch(snap.job_id);
+    toast('已恢复打标进度');
+  }
+
   function open() {
     var m = modal();
     if (!m) return;
@@ -184,6 +196,7 @@ var Tagging = (function () {
     });
 
     initModel().catch(function (e) { toast(String(e.message || e)); });
+    resumeActive();
   }
 
   if (document.readyState === 'loading') {

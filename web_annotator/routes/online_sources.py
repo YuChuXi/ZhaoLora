@@ -366,7 +366,7 @@ async def batch_start(
     """
     提交批量下载长任务. 
 
-    进度见 GET /api/jobs/{id}/events；刷新后用 GET /online-sources/batch/active 重连. 
+    进度见 GET /api/jobs/{id}/events；刷新后用 GET /api/jobs/active?kind=online_batch&dataset={dataset} 重连.
     引用: ``booru_filter.js``. 
     """
     source = body.source.strip().lower()
