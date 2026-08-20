@@ -44,10 +44,11 @@
   <button class="btn green" id="btn-gen">生成</button>
   <button class="btn" id="btn-copy">复制</button>
   <span class="sep"></span>
-  <label style="font-size:12px;color:var(--text-dim);display:flex;align-items:center;gap:4px;">
-    num_repeats
-    <input type="number" id="num-repeats" value="1" min="1" max="100" step="1"
-      style="width:64px;background:#0a1a30;color:var(--text);border:1px solid var(--border);border-radius:4px;padding:3px 6px;">
+  <label style="font-size:12px;color:var(--text-dim);display:flex;align-items:center;gap:4px;"
+    title="目标图片数: 系统据此计算 num_repeats = ceil(目标 / 实际图片数), 使重复后图片数 >= 目标">
+    目标图片数
+    <input type="number" id="target-images" value="512" min="1" step="1"
+      style="width:72px;background:#0a1a30;color:var(--text);border:1px solid var(--border);border-radius:4px;padding:3px 6px;">
   </label>
   <span class="sep"></span>
   <label style="font-size:12px;color:var(--text-dim);display:flex;align-items:center;gap:4px;"

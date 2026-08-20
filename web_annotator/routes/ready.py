@@ -17,7 +17,7 @@ class ReadyBody(BaseModel):
     """就绪 TOML 生成请求. 引用: ``POST /ready/toml``. """
 
     dirs: list[str] | None = None
-    num_repeats: int = Field(default=1, ge=1, le=100)
+    target_images: int = Field(default=512, ge=1, description="目标图片数, 据此计算 num_repeats 使重复后图片数 >= 目标")
     resolutions: list[int] = Field(default_factory=list, description="多分辨率, 如 [512, 1024, 1536]; 为空时生成单块无 resolution")
 
 
@@ -52,7 +52,7 @@ def toml(request: Request, body: ReadyBody) -> ReadyTomlResult:
     result = build_ready_toml(
         root,
         dirs=body.dirs,
-        num_repeats=body.num_repeats,
+        target_images=body.target_images,
         resolutions=body.resolutions,
     )
     if not result.subsets:

@@ -66,9 +66,9 @@
   }
 
   async function generate() {
-    var repeats = parseInt(document.getElementById('num-repeats').value, 10);
-    if (!(repeats >= 1)) {
-      toast('num_repeats 无效');
+    var target = parseInt(document.getElementById('target-images').value, 10);
+    if (!(target >= 1)) {
+      toast('目标图片数无效');
       return;
     }
     var resText = document.getElementById('resolutions').value.trim();
@@ -83,15 +83,19 @@
     var data = await api(API.apiPath('/ready/toml'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ dirs: null, num_repeats: repeats, resolutions: resolutions })
+      body: JSON.stringify({ dirs: null, target_images: target, resolutions: resolutions })
     });
     document.getElementById('toml-box').value = data.toml || '';
     var subsets = data.subsets || [];
     var totalImages = subsets.reduce(function (sum, s) {
       return sum + (s.image_count || 0);
     }, 0);
+    var repeatsList = data.repeats || [];
+    var sumRepeats = repeatsList.reduce(function (a, b) { return a + b; }, 0);
+    var repeated = totalImages * sumRepeats;
+    var repStr = repeatsList.length > 1 ? '(' + repeatsList.join('+') + ')' : (repeatsList[0] || 0);
     document.getElementById('stat-summary').textContent =
-      subsets.length + ' 个 subset · 共 ' + totalImages + ' 张图片';
+      subsets.length + ' 个 subset · ' + totalImages + ' 张 × ' + repStr + ' = ' + repeated + ' 张';
     renderSide(data);
     toast('已生成');
   }

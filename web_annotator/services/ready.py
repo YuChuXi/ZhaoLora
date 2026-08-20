@@ -51,16 +51,20 @@ def build_ready_toml(
     root: Path,
     *,
     dirs: list[str] | None = None,
-    num_repeats: int = 1,
+    target_images: int = 512,
     resolutions: list[int] | None = None,
 ) -> ReadyTomlResult:
-    """
-    生成 TOML 文本与 subset 元数据.
+    """生成 TOML 文本与 subset 元数据.
 
     某子目录蒙版状态为「完整」时, 对应 subset 附带 conditioning_data_dir(指向 mask/子目录);
     按是否带 conditioning_data_dir 分组, 每组渲染为一个 [[datasets]] 块.
     传入 ``resolutions`` 时, 按每个分辨率 × 每组各渲染一个 [[datasets]] 块,
     块内首行 ``resolution = N``; 不传则保持单块且不带 resolution 行.
+
+    ``target_images`` 为目标图片数: 据此计算总重复次数 ``total_repeats = ceil(target_images / 总图片数)``,
+    再按分辨率块数均分: base = floor(total_repeats / block_count), remainder 个 +1
+    优先分配给最靠近 1024 的分辨率(同距则高分辨率优先), 使跨所有块的总重复图片数 >= target_images;
+    不传分辨率时块数为 1, num_repeats = total_repeats. 总图片数为 0 时 total_repeats 取 1.
 
     引用: ``routes/ready.py``.
     """
@@ -76,23 +80,41 @@ def build_ready_toml(
         ordered.append("main")
     ordered.extend(sorted(n for n in names if n != "main"))
 
-    repeats = max(1, int(num_repeats))
+    # 先确定有图片的目录并统计总图片数
+    valid_names = [n for n in ordered if _has_images((root / n).resolve())]
+    total = sum(available[n].image_count for n in valid_names)
+
     # 过滤非法分辨率(须为正整数), 保留输入顺序
     res_list = [r for r in (resolutions or []) if isinstance(r, int) and r > 0]
     if not res_list:
         res_list = [None]
 
+    # total_repeats = ceil(target / total): 跨所有分辨率块的总重复次数
+    # 按 block_count 均分: base = floor(total_repeats/block_count), remainder 个 +1
+    # 优先分配给最靠近 1024 的分辨率, 同距则高分辨率优先
+    block_count = len(res_list)
+    total_repeats = max(1, -(-target_images // total)) if total else 1
+    base = total_repeats // block_count
+    remainder = total_repeats % block_count
+
+    def _res_priority(i: int) -> tuple[int, int]:
+        """分辨率块 i 的 +1 优先级: (距 1024 的绝对差, 负分辨率), 越小越优先."""
+        r = res_list[i]
+        return (abs(r - 1024), -r) if r is not None else (0, 0)
+
+    order = sorted(range(block_count), key=_res_priority)
+    res_repeats = [base] * block_count
+    for i in order[:remainder]:
+        res_repeats[i] += 1
+
     subsets: list[ReadySubset] = []
     mask_stats: list[MaskStats] = []
-    for name in ordered:
+    for name in valid_names:
         image_dir = (root / name).resolve()
-        if not _has_images(image_dir):
-            continue
         info = available[name]
         entry = ReadySubset(
             name=name,
             image_dir=str(image_dir),
-            num_repeats=repeats,
             image_count=info.image_count,
         )
         mstats = subdir_mask_stats(root, name)
@@ -102,7 +124,7 @@ def build_ready_toml(
         subsets.append(entry)
 
     # 按是否带 conditioning_data_dir 分组(带蒙版在前), 组内保持原顺序;
-    # 每个组内按分辨率渲染 [[datasets]] 块, 其下所有 subset 均为 [[datasets.subsets]]
+    # 每个组内按分辨率渲染 [[datasets]] 块, 块内 num_repeats 取该分辨率的 res_repeats
     groups = [
         [s for s in subsets if s.conditioning_data_dir],
         [s for s in subsets if not s.conditioning_data_dir],
@@ -111,16 +133,17 @@ def build_ready_toml(
     for group in groups:
         if not group:
             continue
-        for res in res_list:
+        for res_idx, res in enumerate(res_list):
             lines = ["[[datasets]]"]
             if res is not None:
                 lines.append(f"resolution = {res}")
+            rep = res_repeats[res_idx]
             for s in group:
                 lines.append("  [[datasets.subsets]]")
                 lines.append(f'  image_dir = "{s.image_dir}"')
                 if s.conditioning_data_dir:
                     lines.append(f'  conditioning_data_dir = "{s.conditioning_data_dir}"')
-                lines.append(f"  num_repeats = {s.num_repeats}")
+                lines.append(f"  num_repeats = {rep}")
             blocks.append("\n".join(lines))
 
     toml = "\n\n".join(blocks)
@@ -135,7 +158,8 @@ def build_ready_toml(
         dirs=list(available.values()),
         mask_stats=mask_stats,
         mask=str((root / "mask").resolve()) if main_ms.mask_status == "完整" else None,
-        num_repeats=repeats,
+        target_images=target_images,
+        repeats=res_repeats,
         resolutions=[r for r in res_list if r is not None],
         mask_status=main_ms.mask_status,
         mask_complete=main_ms.mask_complete,
