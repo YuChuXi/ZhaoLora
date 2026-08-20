@@ -38,19 +38,6 @@ class ScoringStartResponse(BaseModel):
     dirs: list[str]
 
 
-class ScoringActiveResponse(BaseModel):
-    """统一评分任务重连回执. 
-
-    引用:
-        ``routes.scoring.active``. 
-    """
-
-    ok: bool = True
-    job_id: str | None = None
-    kind: str | None = None
-    status: JobSnapshot | None = None
-
-
 class TaggingDirsResponse(BaseModel):
     """打标页目录与模型状态. 
 

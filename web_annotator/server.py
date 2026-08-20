@@ -42,6 +42,7 @@ from routes.ready import router as ready_router
 from routes.tag_stats import router as tag_stats_router
 from routes.tagging import router as tagging_router
 from routes.tasks import router as tasks_router
+from routes.tasks import archive_router as archived_router
 from routes.video import router as video_router
 from services.dataset.runtime import DatasetRegistry
 from services.core.jobs import JobManager
@@ -149,6 +150,7 @@ dataset_api.include_router(video_router)
 
 app.include_router(dataset_api)
 app.include_router(tasks_router)
+app.include_router(archived_router)
 app.include_router(datasets_router)
 app.include_router(jobs_router)
 app.include_router(docs_router)

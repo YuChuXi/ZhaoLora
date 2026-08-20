@@ -7,11 +7,14 @@ import random
 from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
-from routes.deps import registry
+from routes.deps import jobs, registry
 from services.dataset.runtime import DatasetRuntime
 from services.models import (
+    ArchivedListResponse,
+    JobSubmitResponse,
     ScannedImage,
     TaskCard,
     TaskCandidatesResponse,
@@ -20,6 +23,13 @@ from services.models import (
     SetNoteBody,
 )
 from services.core.scanner import scan_images
+from services.state.archiver import (
+    PACKED_DIR,
+    archive_task,
+    find_archive,
+    list_archives,
+    restore_task,
+)
 from services.state.tasks import TaskStore, validate_task_name
 
 router = APIRouter(prefix="/api/tasks", tags=["tasks"])
@@ -218,3 +228,100 @@ def reorder_tasks(request: Request, body: ReorderBody) -> dict:
     except KeyError as e:
         raise HTTPException(400, str(e)) from None
     return {"ok": True}
+
+
+# ── 归档 ──
+
+
+@router.post("/{name}/archive")
+async def archive_task_route(request: Request, name: str) -> JobSubmitResponse:
+    """归档已完成任务: 7z 极限压缩 → 校验 → 删除目录.
+
+    须为协程: 内部提交 JobManager 任务, 后者依赖事件循环.
+
+    Callers:
+        - ``home.js``
+    """
+    store = _store(request)
+    entries = {e.name: e for e in store.list_entries()}
+    if name not in entries:
+        raise HTTPException(404, f"未知任务: {name}")
+    if not entries[name].completed:
+        raise HTTPException(400, "任务未完成, 无法归档")
+    task_dir = store.root / name
+    if not (task_dir / "main").is_dir():
+        raise HTTPException(400, "任务目录不存在")
+    reg = registry(request)
+    rt = await reg.ensure(name)
+
+    def run(emit):
+        """归档执行体(工作线程). 引用: JobManager._execute. """
+        meta = archive_task(task_dir, name, store.root, rt.thumbnailer, emit)
+        store.remove(name)
+        return meta
+
+    job_id = await jobs(request).submit(
+        kind="archive", group=f"archive_{name}", dataset=name, run=run,
+    )
+    return JobSubmitResponse(ok=True, job_id=job_id)
+
+
+archive_router = APIRouter(prefix="/api/archived", tags=["archive"])
+
+
+@archive_router.get("")
+def list_archived(request: Request) -> ArchivedListResponse:
+    """列出所有已归档任务.
+
+    Callers:
+        - ``home.js``
+    """
+    store = _store(request)
+    return ArchivedListResponse(archives=list_archives(store.root))
+
+
+@archive_router.post("/{base}/restore")
+async def restore_task_route(request: Request, base: str) -> JobSubmitResponse:
+    """解压归档恢复任务目录.
+
+    须为协程: 内部提交 JobManager 任务, 后者依赖事件循环.
+
+    Callers:
+        - ``home.js``
+    """
+    store = _store(request)
+    meta = find_archive(store.root, base)
+    if meta is None:
+        raise HTTPException(404, f"归档不存在: {base}")
+    archive_path = store.root / PACKED_DIR / meta.archive_file
+    if not archive_path.is_file():
+        raise HTTPException(404, "归档文件缺失")
+
+    def run(emit):
+        """解压执行体(工作线程). 引用: JobManager._execute. """
+        restore_task(archive_path, store.root, emit)
+        info = store.add(meta.name)
+        store.set_completed(info.name, True)
+
+    job_id = await jobs(request).submit(
+        kind="archive", group=f"restore_{base}", dataset=meta.name, run=run,
+    )
+    return JobSubmitResponse(ok=True, job_id=job_id)
+
+
+@archive_router.get("/{base}/preview/{filename}")
+def serve_archive_preview(request: Request, base: str, filename: str) -> FileResponse:
+    """提供归档预览缩略图.
+
+    Args:
+        base: 归档基本名(name-timestamp).
+        filename: 缩略图文件名({hash}.avif).
+
+    Callers:
+        - ``home.js``
+    """
+    store = _store(request)
+    f = store.root / PACKED_DIR / f"{base}.previews" / filename
+    if not f.is_file():
+        raise HTTPException(404, "预览不存在")
+    return FileResponse(f, media_type="image/avif")

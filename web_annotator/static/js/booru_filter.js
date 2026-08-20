@@ -1999,9 +1999,9 @@ var BooruFilter = (function () {
    * 引用：init。
    */
   async function resumeBatch() {
-    var data = await API.request(API.apiPath('/online-sources/batch/active'));
-    if (!data || !data.job_id) return;
-    if (data.status) applyBatchSnapshot(data.status);
+    var data = await API.findActiveJob('online_batch', API.dataset());
+    if (!data) return;
+    applyBatchSnapshot(data);
     watchBatch(data.job_id);
     toast('已恢复批量下载进度');
   }

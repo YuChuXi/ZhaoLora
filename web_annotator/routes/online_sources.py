@@ -29,7 +29,6 @@ from services.online_sources.framework.http import HttpClient, NetworkError as _
 from routes.deps import get_runtime, jobs
 from services.core.jobs import EmitFn
 from services.models import (
-    BatchActiveResponse,
     BatchParamsBody,
     BatchStartBody,
     BooruPost,
@@ -358,16 +357,6 @@ def undownload(request: Request, body: DownloadBody) -> BooruUndownloadResult:
             path.unlink()
 
     return result.model_copy(update={"dir": name})
-
-
-@router.get("/batch/active")
-def batch_active(request: Request) -> BatchActiveResponse:
-    """查询本数据集未结束的批量下载任务. 引用: ``booru_filter.js`` 刷新重连. """
-    rt = get_runtime(request)
-    job = jobs(request).find_active(dataset=rt.name, kind="online_batch")
-    if job is None:
-        return BatchActiveResponse(ok=True, job_id=None, status=None)
-    return BatchActiveResponse(ok=True, job_id=job.id, status=job.latest)
 
 
 @router.post("/batch/start")

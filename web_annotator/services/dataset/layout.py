@@ -27,6 +27,7 @@ RESERVED_DIR_NAMES = frozenset({
     ".thumbs",
     ".thumbnails",
     "__pycache__",
+    "__packed__",         # 归档压缩包存放目录
 })
 
 # 保留目录中不含可浏览图片的(蒙版/报告/缓存/回收站); 派生自 RESERVED_DIR_NAMES

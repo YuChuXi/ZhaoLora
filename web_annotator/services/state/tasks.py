@@ -148,6 +148,21 @@ class TaskStore:
         self._write(data)
         return TaskInfo(name=name, completed=bool(completed), note=entry.note)
 
+    def remove(self, name: str) -> None:
+        """从清单中移除任务(不删除目录).
+
+        Raises:
+            KeyError: 任务名不在清单中.
+
+        Callers:
+            - ``routes.tasks.archive_task_route``
+        """
+        data = self._read()
+        if name not in data.tasks:
+            raise KeyError(name)
+        del data.tasks[name]
+        self._write(data)
+
     def set_note(self, name: str, note: str) -> TaskInfo:
         """修改任务备注. 
 

@@ -343,10 +343,12 @@
   }
 
   async function resumeActive() {
-    var active = await API.request(API.apiPath('/scoring/active'));
-    if (active && active.job_id) {
+    var ds = API.dataset();
+    var active = await API.findActiveJob('aesthetic', ds);
+    if (!active) active = await API.findActiveJob('quality', ds);
+    if (active) {
       _currentType = active.kind;
-      applyStatus({ status: active.status ? active.status.status : 'running' });
+      applyStatus({ status: active.status || 'running' });
       startWatch(active.job_id);
       toast('\u5DF2\u6062\u590D' + (active.kind === 'quality' ? '\u8D28\u91CF' : '\u7F8E\u5B66') + '\u8BC4\u5206\u8FDB\u5EA6');
       return;

@@ -160,11 +160,3 @@ class BatchParamsBody(BaseModel):
     conn: int | None = Field(None, ge=1, le=8)
     rate_rps: float | None = Field(None, ge=0, le=60)
 
-
-class BatchActiveResponse(BaseModel):
-    """当前数据集上未结束的批量任务. 引用: ``GET /online-sources/batch/active``. """
-
-    ok: bool = True
-    job_id: str | None = None
-    status: JobSnapshot | None = None
-

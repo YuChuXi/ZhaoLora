@@ -86,11 +86,10 @@
   }
   .task-card.sortable:hover .task-drag-handle { opacity: 0.6; }
   .task-previews {
-    display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr;
-    gap: 2px; background: #060a12; aspect-ratio: 16 / 11;
+    display: grid; grid-template-columns: 1fr 1fr; gap: 2px; background: #060a12;
   }
   .task-previews img, .task-previews .empty-slot {
-    width: 100%; height: 100%; object-fit: cover; background: #0a101c; display: block;
+    aspect-ratio: 1 / 1; width: 100%; object-fit: cover; background: #0a101c; display: block;
   }
   .task-body {
     padding: 16px 18px 18px; display: flex; flex-direction: column; gap: 12px; flex: 1;
@@ -132,6 +131,16 @@
   details.completed-block > summary {
     cursor: pointer; color: var(--text-dim); font-size: 14px; margin-bottom: 14px;
   }
+  .task-card.archiving { pointer-events: none; opacity: 0.6; }
+  .task-card .job-bar {
+    position: absolute; left: 0; right: 0; bottom: 0; height: 3px;
+    background: rgba(233,69,96,0.15); overflow: hidden; z-index: 5;
+  }
+  .task-card .job-bar > div { height: 100%; background: #e94560; transition: width 0.3s; width: 0; }
+  .task-card .job-msg {
+    position: absolute; left: 0; right: 0; bottom: 10px; text-align: center;
+    font-size: 12px; color: var(--text-dim); z-index: 5;
+  }
 </style>
 </head>
 <body>
@@ -170,6 +179,10 @@
         <summary>已完成（<span id="completed-count">0</span>）</summary>
         <div class="task-grid" id="task-completed"></div>
       </details>
+      <details class="completed-block" id="archived-wrap" hidden>
+        <summary>已归档（<span id="archived-count">0</span>）</summary>
+        <div class="task-grid" id="task-archived"></div>
+      </details>
     </div>
     <div class="home-pane" id="pane-docs" hidden>
       <article class="docs-article" id="docs-article">
@@ -180,6 +193,7 @@
 </div>
 <div class="toast" id="toast"></div>
 <script src="/static/js/ui.js"></script>
+<script src="/static/js/api.js"></script>
 <script src="/static/js/nav.js"></script>
 <script src="/static/js/home.js"></script>
 </body>

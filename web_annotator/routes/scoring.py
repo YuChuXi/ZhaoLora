@@ -15,7 +15,6 @@ from services.analysis.scoring import (
 from services.models.pages import (
     ScoringDirsResponse,
     ScoringStartResponse,
-    ScoringActiveResponse,
 )
 from services.analysis.wd14 import list_image_subdirs, resolve_image_dirs
 
@@ -98,26 +97,6 @@ async def results(
         "total": len(results),
         "results": results,
     }
-
-
-@router.get("/active")
-def active(request: Request) -> ScoringActiveResponse:
-    """查询本数据集是否有未结束的评分任务. 
-
-    Callers:
-        - ``scoring.js``: 页面刷新时重连. 
-    """
-    rt = get_runtime(request)
-    for kind in ("aesthetic", "quality"):
-        job = jobs(request).find_active(dataset=rt.name, kind=kind)
-        if job is not None:
-            return ScoringActiveResponse(
-                ok=True,
-                job_id=job.id,
-                kind=kind,
-                status=job.latest,
-            )
-    return ScoringActiveResponse(ok=True, job_id=None, kind=None, status=None)
 
 
 @router.post("/start")

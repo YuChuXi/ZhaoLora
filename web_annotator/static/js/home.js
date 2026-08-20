@@ -173,6 +173,168 @@
   }
 
   /**
+   * 在卡片上叠加进度条, 返回 { bar, msg } 用于更新.
+   * @param {HTMLElement} card
+   * @returns {{ bar: HTMLElement, msg: HTMLElement }}
+   */
+  function attachProgress(card) {
+    card.classList.add('archiving');
+    var bar = document.createElement('div');
+    bar.className = 'job-bar';
+    bar.appendChild(document.createElement('div'));
+    card.appendChild(bar);
+    var msg = document.createElement('div');
+    msg.className = 'job-msg';
+    card.appendChild(msg);
+    return { bar: bar, msg: msg };
+  }
+
+  /**
+   * 移除卡片上的进度叠层.
+   * @param {HTMLElement} card
+   */
+  function removeProgress(card) {
+    card.classList.remove('archiving');
+    var bar = card.querySelector('.job-bar');
+    var msg = card.querySelector('.job-msg');
+    if (bar) bar.remove();
+    if (msg) msg.remove();
+  }
+
+  /**
+   * 归档已完成任务.
+   * @param {string} name
+   * @param {HTMLElement} card
+   */
+  function archiveTask(name, card) {
+    var prog = attachProgress(card);
+    prog.msg.textContent = '准备归档…';
+    fetch('/api/tasks/' + encodeURIComponent(name) + '/archive', { method: 'POST' })
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        API.watchJob(data.job_id, function (ev) {
+          if (ev.pct != null) {
+            prog.bar.firstChild.style.width = ev.pct + '%';
+          }
+          prog.msg.textContent = ev.message || ev.phase || '';
+          if (ev.status === 'done') {
+            toast('已归档: ' + name);
+            loadTasks();
+            loadArchived();
+          } else if (ev.status === 'error') {
+            toast('归档失败: ' + (ev.message || ''));
+            removeProgress(card);
+          }
+        });
+      })
+      .catch(function (err) {
+        toast(String(err.message || err));
+        removeProgress(card);
+      });
+  }
+
+  /**
+   * 解压归档恢复任务.
+   * @param {string} base
+   * @param {HTMLElement} card
+   */
+  function restoreArchive(base, card) {
+    var prog = attachProgress(card);
+    prog.msg.textContent = '准备恢复…';
+    fetch('/api/archived/' + encodeURIComponent(base) + '/restore', { method: 'POST' })
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        API.watchJob(data.job_id, function (ev) {
+          prog.msg.textContent = ev.message || ev.phase || '';
+          if (ev.status === 'done') {
+            toast('恢复完成');
+            loadTasks();
+            loadArchived();
+          } else if (ev.status === 'error') {
+            toast('恢复失败: ' + (ev.message || ''));
+            removeProgress(card);
+          }
+        });
+      })
+      .catch(function (err) {
+        toast(String(err.message || err));
+        removeProgress(card);
+      });
+  }
+
+  /**
+   * 构建已归档任务卡片.
+   * @param {object} a
+   * @returns {HTMLElement}
+   */
+  function buildArchivedCard(a) {
+    var card = document.createElement('div');
+    card.className = 'task-card';
+
+    var previews = document.createElement('div');
+    previews.className = 'task-previews';
+    var hashes = a.preview_hashes || [];
+    for (var i = 0; i < 4; i++) {
+      if (hashes[i]) {
+        var img = document.createElement('img');
+        img.src = '/api/archived/' + encodeURIComponent(a.base) + '/preview/' + hashes[i] + '.avif';
+        img.alt = '';
+        previews.appendChild(img);
+      } else {
+        var slot = document.createElement('div');
+        slot.className = 'empty-slot';
+        previews.appendChild(slot);
+      }
+    }
+
+    var body = document.createElement('div');
+    body.className = 'task-body';
+    var title = document.createElement('h3');
+    title.textContent = a.name;
+    var meta = document.createElement('div');
+    meta.className = 'meta';
+    var d = new Date(a.archived_at * 1000);
+    var ds = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+    meta.textContent = '图像 ' + a.image_count + ' · ' + ds + ' · ' + a.format.toUpperCase();
+
+    var actions = document.createElement('div');
+    actions.className = 'task-actions';
+    var restore = document.createElement('button');
+    restore.type = 'button';
+    restore.className = 'btn green';
+    restore.textContent = '恢复';
+    restore.addEventListener('click', function () {
+      restoreArchive(a.base, card);
+    });
+    actions.appendChild(restore);
+
+    body.appendChild(title);
+    body.appendChild(meta);
+    body.appendChild(actions);
+    card.appendChild(previews);
+    card.appendChild(body);
+    return card;
+  }
+
+  /**
+   * 加载已归档任务列表.
+   * @returns {Promise<void>}
+   */
+  async function loadArchived() {
+    var res = await fetch('/api/archived');
+    if (!res.ok) return;
+    var data = await res.json();
+    var archives = data.archives || [];
+    var host = document.getElementById('task-archived');
+    host.innerHTML = '';
+    document.getElementById('archived-wrap').hidden = archives.length === 0;
+    document.getElementById('archived-count').textContent = String(archives.length);
+    archives.forEach(function (a) {
+      host.appendChild(buildArchivedCard(a));
+    });
+  }
+
+  /**
    * @param {object} t
    * @param {boolean} completed
    * @param {boolean} sortable
@@ -246,6 +408,14 @@
     });
     actions.appendChild(copy);
     if (completed) {
+      var archive = document.createElement('button');
+      archive.type = 'button';
+      archive.className = 'btn';
+      archive.textContent = '归档';
+      archive.addEventListener('click', function () {
+        archiveTask(t.name, card);
+      });
+      actions.appendChild(archive);
       var reopen = document.createElement('button');
       reopen.type = 'button';
       reopen.className = 'btn';
@@ -444,7 +614,36 @@
     }
 
     setupDragDrop();
-    await Promise.all([loadDoc(currentSlug()), loadTasks(), loadCandidates()]);
+    await Promise.all([loadDoc(currentSlug()), loadTasks(), loadCandidates(), loadArchived()]);
+    reconnectArchive();
+  }
+
+  /**
+   * 页面加载时检查未结束的归档/恢复任务并重连 SSE。
+   */
+  async function reconnectArchive() {
+    var snap = await API.findActiveJob('archive');
+    if (!snap) return;
+    var card = document.querySelector('.task-card[data-task-name="' + snap.dataset + '"]');
+    if (!card) {
+      card = document.querySelector('#task-archived .task-card');
+    }
+    if (!card) return;
+    var prog = attachProgress(card);
+    prog.msg.textContent = snap.message || snap.phase || '恢复连接…';
+    if (snap.pct != null) prog.bar.firstChild.style.width = snap.pct + '%';
+    API.watchJob(snap.job_id, function (ev) {
+      if (ev.pct != null) prog.bar.firstChild.style.width = ev.pct + '%';
+      prog.msg.textContent = ev.message || ev.phase || '';
+      if (ev.status === 'done') {
+        toast('归档完成');
+        loadTasks();
+        loadArchived();
+      } else if (ev.status === 'error') {
+        toast('归档失败: ' + (ev.message || ''));
+        removeProgress(card);
+      }
+    });
   }
 
   function updateSortButtons() {

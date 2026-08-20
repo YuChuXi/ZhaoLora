@@ -32,7 +32,6 @@ from services.models.booru import (
     BooruUndownloadResult,
     BatchStartBody,
     BatchParamsBody,
-    BatchActiveResponse,
 )
 from services.models.dedupe import (
     DedupeMember,
@@ -99,10 +98,13 @@ from services.models.paint import (
     DefaultAlphaResponse,
     PaintImageItem,
 )
+from services.models.archive import (
+    ArchivedTask,
+    ArchivedListResponse,
+)
 from services.models.pages import (
     ScoringDirsResponse,
     ScoringStartResponse,
-    ScoringActiveResponse,
     TaggingDirsResponse,
     TaggingStartResponse,
 )
@@ -140,7 +142,6 @@ __all__ = [
     'BooruUndownloadResult',
     'BatchStartBody',
     'BatchParamsBody',
-    'BatchActiveResponse',
     'DedupeMember',
     'DedupeGroup',
     'DedupeScanResult',
@@ -190,9 +191,10 @@ __all__ = [
     'PaintSaveResponse',
     'DefaultAlphaResponse',
     'PaintImageItem',
+    'ArchivedTask',
+    'ArchivedListResponse',
     'ScoringDirsResponse',
     'ScoringStartResponse',
-    'ScoringActiveResponse',
     'TaggingDirsResponse',
     'TaggingStartResponse',
     'VideoInfo',

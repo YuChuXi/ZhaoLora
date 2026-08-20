@@ -1,12 +1,12 @@
-"""任务列表别名与长任务 SSE / 取消. """
+"""任务列表别名与长任务 SSE / 取消 / 活跃查询. """
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 
 from routes.deps import jobs
-from services.models import DatasetItem, DatasetsResponse, JobCancelResponse
+from services.models import DatasetItem, DatasetsResponse, JobCancelResponse, JobSnapshot
 
 datasets_router = APIRouter(tags=["datasets"])
 jobs_router = APIRouter(prefix="/api/jobs", tags=["jobs"])
@@ -22,6 +22,45 @@ def list_datasets(request: Request) -> DatasetsResponse:
     store = request.app.state.task_store
     items = [DatasetItem(name=name) for name in store.active_names()]
     return DatasetsResponse(datasets=items)
+
+
+@jobs_router.get("/active")
+def find_active_job(
+    request: Request,
+    kind: str = Query(..., description="任务类型: archive / aesthetic / quality / online_batch 等"),
+    dataset: str | None = Query(None, description="可选, 按数据集名过滤"),
+) -> JobSnapshot:
+    """查询指定类型的活跃长任务(未结束).
+
+    页面刷新时调用此端点获取 job_id, 再通过 SSE 重连恢复进度.
+
+    Args:
+        kind: 任务类型标识.
+        dataset: 数据集名, 省略则不限.
+
+    Returns:
+        JobSnapshot: 含 job_id; 无活跃任务时 status="idle".
+
+    Callers:
+        - ``api.js``: ``findActiveJob`` 通用重连.
+    """
+    mgr = jobs(request)
+    job = mgr.find_active(kind=kind, dataset=dataset)
+    if job is None:
+        return JobSnapshot(status="idle")
+    snap = job.latest
+    return JobSnapshot(
+        status=snap.status,
+        kind=job.kind,
+        dataset=job.dataset,
+        job_id=job.id,
+        message=snap.message,
+        done=snap.done,
+        total=snap.total,
+        pct=snap.pct,
+        phase=snap.phase,
+        current=snap.current,
+    )
 
 
 @jobs_router.get("/{job_id}/events")

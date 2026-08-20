@@ -370,6 +370,32 @@
   document.getElementById('btn-scan').addEventListener('click', function () {
     scan().catch(function (e) { toast(String(e.message || e)); });
   });
+  /**
+   * MSE 阈值上下箭头: 尾数步进 (1→9)e-N → (1→9)e-(N-1).
+   * 上箭头增大: 1e-6 → 2e-6 → … → 9e-6 → 1e-5 → …
+   * 下箭头减小: 1e-5 → 9e-6 → 8e-6 → … → 1e-6 → 9e-7 → …
+   */
+  document.getElementById('mse-threshold').addEventListener('keydown', function (e) {
+    if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
+    e.preventDefault();
+    var v = parseFloat(this.value);
+    if (!(v > 0)) v = 1e-4;
+    var exp = Math.floor(Math.log10(v));
+    var mant = Math.round(v / Math.pow(10, exp));
+    if (mant < 1) mant = 1;
+    if (mant > 9) mant = 9;
+    if (e.key === 'ArrowUp') {
+      mant++;
+      if (mant > 9) { mant = 1; exp++; }
+    } else {
+      mant--;
+      if (mant < 1) { mant = 9; exp--; }
+    }
+    if (exp > 0) exp = 0;
+    if (exp < -9) exp = -9;
+    this.value = mant + 'e' + exp;
+    this.dispatchEvent(new Event('input'));
+  });
   document.getElementById('dedupe-alg').addEventListener('change', function () {
     // 切换前保存当前算法的阈值, 再切换到新算法对应的阈值
     if (_lastAlg === 'fft' || _lastAlg === 'orb') {

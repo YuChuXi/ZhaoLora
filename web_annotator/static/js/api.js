@@ -170,27 +170,59 @@ var API = (function () {
   }
 
   /**
-   * 订阅长任务 Server-Sent Events。
+   * 订阅长任务 Server-Sent Events，断连自动重连。
    * @param {string} jobId
    * @param {(ev: object) => void} onEvent
    * @returns {{ close: function }}
-   * 引用：aesthetic.js、tagging.js、dedupe.js。
+   * 引用：home.js、scoring.js、booru_filter.js。
    */
   function watchJob(jobId, onEvent) {
-    var es = new EventSource('/api/jobs/' + encodeURIComponent(jobId) + '/events');
-    es.onmessage = function (msg) {
-      var data = JSON.parse(msg.data);
-      onEvent(data);
-      if (data.status === 'done' || data.status === 'error' || data.status === 'cancelled') {
+    var closed = false;
+    var retry = 0;
+    var es = null;
+
+    function connect() {
+      if (closed) return;
+      es = new EventSource('/api/jobs/' + encodeURIComponent(jobId) + '/events');
+      es.onmessage = function (msg) {
+        retry = 0;
+        var data = JSON.parse(msg.data);
+        onEvent(data);
+        if (data.status === 'done' || data.status === 'error' || data.status === 'cancelled') {
+          es.close();
+          closed = true;
+        }
+      };
+      es.onerror = function () {
         es.close();
-      }
-    };
-    es.onerror = function () {
-      es.close();
-    };
+        if (closed) return;
+        var delay = Math.min(1000 * Math.pow(2, retry), 10000);
+        retry++;
+        setTimeout(connect, delay);
+      };
+    }
+
+    connect();
     return {
-      close: function () { es.close(); },
+      close: function () { closed = true; if (es) es.close(); },
     };
+  }
+
+  /**
+   * 查询指定类型的活跃长任务（页面刷新后重连用）。
+   * @param {string} kind 任务类型: archive / aesthetic / quality / online_batch
+   * @param {string} [dataset] 数据集名, 省略则不限
+   * @returns {Promise<object|null>} JobSnapshot 或 null
+   * 引用：home.js、scoring.js、booru_filter.js。
+   */
+  async function findActiveJob(kind, dataset) {
+    var qs = 'kind=' + encodeURIComponent(kind);
+    if (dataset) qs += '&dataset=' + encodeURIComponent(dataset);
+    var res = await fetch('/api/jobs/active?' + qs);
+    if (!res.ok) return null;
+    var data = await res.json();
+    if (!data.job_id || data.status === 'idle') return null;
+    return data;
   }
 
   /**
@@ -224,6 +256,7 @@ var API = (function () {
     restore: restore,
     getState: getState,
     watchJob: watchJob,
+    findActiveJob: findActiveJob,
     cancelJob: cancelJob,
     request: request,
   };
