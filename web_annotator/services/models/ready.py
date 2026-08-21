@@ -43,10 +43,10 @@ class ReadyDirsResponse(BaseModel):
 
 
 class ReadySubset(BaseModel):
-    """就绪 TOML 中的一个 subset. 
+    """就绪 TOML 中的一个 subset.
 
     引用:
-        ``services/ready.py:build_ready_toml``. 
+        ``services/ready.py:build_ready_toml``.
     """
 
     name: str

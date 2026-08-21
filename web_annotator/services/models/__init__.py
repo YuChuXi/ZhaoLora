@@ -21,6 +21,7 @@ from services.models.tasks import (
     TaskCandidatesResponse,
     TaskOkResponse,
     SetNoteBody,
+    SetTriggerWordBody,
     DatasetItem,
     DatasetsResponse,
 )
@@ -133,6 +134,7 @@ __all__ = [
     'TaskCandidatesResponse',
     'TaskOkResponse',
     'SetNoteBody',
+    'SetTriggerWordBody',
     'DatasetItem',
     'DatasetsResponse',
     'BooruPost',

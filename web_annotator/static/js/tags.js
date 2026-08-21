@@ -201,6 +201,25 @@
   }
 
   /**
+   * 将多选标签设为当前任务触发词(逗号分隔, 写入任务清单).
+   * @returns {Promise<void>}
+   */
+  async function setTrigger() {
+    var sel = selectedTags();
+    if (!sel.length) {
+      toast('请先勾选标签');
+      return;
+    }
+    var word = sel.map(function (t) { return t.tag; }).join(', ');
+    await api('/api/tasks/' + encodeURIComponent(API.dataset()) + '/trigger-word', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ trigger_word: word }),
+    });
+    toast('已设为触发词: ' + word);
+  }
+
+  /**
    * 翻译当前表格中缺失中文的标签。
    */
   async function translateMissing() {
@@ -254,6 +273,9 @@
     });
     document.getElementById('btn-translate-missing').addEventListener('click', function () {
       translateMissing();
+    });
+    document.getElementById('btn-set-trigger').addEventListener('click', function () {
+      setTrigger().catch(function (e) { toast(String(e.message || e)); });
     });
     document.getElementById('chk-head').addEventListener('change', function () {
       var on = document.getElementById('chk-head').checked;

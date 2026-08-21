@@ -19,6 +19,7 @@ class TaskEntry(BaseModel):
     created: int = 0
     sort_order: int = 0
     note: str = ""
+    trigger_word: str = ""
 
 
 class TaskListFile(BaseModel):
@@ -42,6 +43,7 @@ class TaskInfo(BaseModel):
     completed: bool
     root: str | None = None
     note: str = ""
+    trigger_word: str = ""
     created: int = 0
     sort_order: int = 0
 
@@ -59,6 +61,7 @@ class TaskCard(BaseModel):
     preview_hashes: list[str] = Field(default_factory=list)
     report_ready: bool = False
     note: str = ""
+    trigger_word: str = ""
     created: int = 0
     sort_order: int = 0
 
@@ -94,12 +97,19 @@ class TaskOkResponse(BaseModel):
     name: str
     completed: bool
     note: str = ""
+    trigger_word: str = ""
 
 
 class SetNoteBody(BaseModel):
     """修改任务备注请求体. 引用: ``POST /api/tasks/{name}/note``. """
 
     note: str = Field(default="", max_length=200)
+
+
+class SetTriggerWordBody(BaseModel):
+    """修改任务触发词请求体. 引用: ``POST /api/tasks/{name}/trigger-word``. """
+
+    trigger_word: str = Field(default="", max_length=100)
 
 
 class DatasetItem(BaseModel):

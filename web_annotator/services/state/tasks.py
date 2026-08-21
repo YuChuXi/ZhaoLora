@@ -77,18 +77,19 @@ class TaskStore:
                 name=name,
                 completed=meta.completed,
                 note=meta.note,
+                trigger_word=meta.trigger_word,
                 created=meta.created,
                 sort_order=meta.sort_order,
             ))
         return out
 
     def contains(self, name: str) -> bool:
-        """检查任务是否在清单中. 
+        """检查任务是否在清单中.
 
         Returns:
-            bool: 存在则为 True. 
+            bool: 存在则为 True.
 
-        引用: 中间件、缩略图路由. 
+        引用: 中间件、缩略图路由.
         """
         return name in self._read().tasks
 
@@ -127,7 +128,7 @@ class TaskStore:
         max_order = max((e.sort_order for e in data.tasks.values()), default=-1)
         data.tasks[name] = TaskEntry(completed=False, created=int(time.time()), sort_order=max_order + 1)
         self._write(data)
-        return TaskInfo(name=name, completed=False, root=str(task_root), note="", sort_order=max_order + 1)
+        return TaskInfo(name=name, completed=False, root=str(task_root), note="", trigger_word="", sort_order=max_order + 1)
 
     def set_completed(self, name: str, completed: bool) -> TaskInfo:
         """标记任务完成或重新打开. 
@@ -146,7 +147,7 @@ class TaskStore:
         entry = data.tasks[name].model_copy(update={"completed": bool(completed)})
         data.tasks[name] = entry
         self._write(data)
-        return TaskInfo(name=name, completed=bool(completed), note=entry.note)
+        return TaskInfo(name=name, completed=bool(completed), note=entry.note, trigger_word=entry.trigger_word)
 
     def remove(self, name: str) -> None:
         """从清单中移除任务(不删除目录).
@@ -180,7 +181,27 @@ class TaskStore:
         entry = data.tasks[name].model_copy(update={"note": note.strip()})
         data.tasks[name] = entry
         self._write(data)
-        return TaskInfo(name=name, completed=entry.completed, note=entry.note)
+        return TaskInfo(name=name, completed=entry.completed, note=entry.note, trigger_word=entry.trigger_word)
+
+    def set_trigger_word(self, name: str, trigger_word: str) -> TaskInfo:
+        """修改任务触发词(用于就绪 TOML 的 subset class_tokens).
+
+        Returns:
+            TaskInfo: 更新后的任务信息.
+
+        Raises:
+            KeyError: 任务名不在清单中.
+
+        引用:
+            ``routes/tasks.py``.
+        """
+        data = self._read()
+        if name not in data.tasks:
+            raise KeyError(name)
+        entry = data.tasks[name].model_copy(update={"trigger_word": trigger_word.strip()})
+        data.tasks[name] = entry
+        self._write(data)
+        return TaskInfo(name=name, completed=entry.completed, note=entry.note, trigger_word=entry.trigger_word)
 
     def reorder(self, ordered_names: list[str]) -> None:
         """按给定名称列表重排所有任务的 sort_order. 

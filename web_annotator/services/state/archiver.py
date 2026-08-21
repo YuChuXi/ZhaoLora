@@ -17,6 +17,7 @@ from py7zr.callbacks import ExtractCallback
 
 from services.core.scanner import scan_images
 from services.core.thumbnailer import Thumbnailer
+from services.core.work_dir import total_image_count
 from services.models import JobSnapshot
 from services.models.archive import ArchivedTask
 
@@ -192,7 +193,7 @@ def archive_task(
         archived_at=int(time.time()),
         archive_file=archive_path.name,
         preview_hashes=preview_hashes,
-        image_count=len(images),
+        image_count=total_image_count(task_dir),
         format="7z",
     )
     meta_path = packed_dir / f"{base}.json"

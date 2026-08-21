@@ -390,6 +390,37 @@
       startEditNote(noteWrap, t.name);
     });
 
+    var triggerRow = document.createElement('div');
+    triggerRow.className = 'task-trigger';
+    var triggerLabel = document.createElement('span');
+    triggerLabel.className = 'task-trigger-label';
+    triggerLabel.textContent = '触发词';
+    var triggerInput = document.createElement('input');
+    triggerInput.type = 'text';
+    triggerInput.className = 'task-trigger-input';
+    triggerInput.value = t.trigger_word || '';
+    triggerInput.placeholder = '无';
+    triggerInput.maxLength = 100;
+    triggerInput.addEventListener('change', function () {
+      postJson('/api/tasks/' + encodeURIComponent(t.name) + '/trigger-word', { trigger_word: triggerInput.value.trim() })
+        .catch(function (err) { toast(String(err.message || err)); });
+    });
+    var triggerCopy = document.createElement('button');
+    triggerCopy.type = 'button';
+    triggerCopy.className = 'task-trigger-copy';
+    triggerCopy.textContent = '复制';
+    triggerCopy.addEventListener('click', function () {
+      var v = triggerInput.value.trim();
+      if (!v) {
+        toast('触发词为空');
+        return;
+      }
+      navigator.clipboard.writeText(v).then(function () { toast('已复制触发词'); });
+    });
+    triggerRow.appendChild(triggerLabel);
+    triggerRow.appendChild(triggerInput);
+    triggerRow.appendChild(triggerCopy);
+
     var actions = document.createElement('div');
     actions.className = 'task-actions';
     if (!completed) {
@@ -438,6 +469,7 @@
     body.appendChild(title);
     body.appendChild(meta);
     body.appendChild(noteWrap);
+    body.appendChild(triggerRow);
     body.appendChild(actions);
     card.appendChild(previews);
     card.appendChild(body);

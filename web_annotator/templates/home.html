@@ -109,6 +109,22 @@
     border-radius: 6px; font-size: 13px; font-family: inherit; line-height: 1.5;
     resize: vertical; min-height: 32px;
   }
+  .task-trigger { display: flex; align-items: center; gap: 8px; }
+  .task-trigger-label {
+    font-size: 12px; color: var(--text-dim); flex-shrink: 0; font-weight: 600;
+  }
+  .task-trigger-input {
+    flex: 1; min-width: 0; box-sizing: border-box; padding: 5px 10px;
+    background: var(--bg); color: var(--text); border: 1px solid var(--border);
+    border-radius: 6px; font-size: 13px; font-family: inherit;
+  }
+  .task-trigger-input:focus { outline: none; border-color: #4a6a9a; }
+  .task-trigger-copy {
+    flex-shrink: 0; padding: 4px 10px; font-size: 12px;
+    border: 1px solid var(--border); border-radius: 6px;
+    background: var(--bg); color: var(--text-dim); cursor: pointer;
+  }
+  .task-trigger-copy:hover { color: var(--text); border-color: #4a6a9a; }
   .sort-bar {
     display: flex; align-items: center; gap: 10px; margin-bottom: 24px;
   }

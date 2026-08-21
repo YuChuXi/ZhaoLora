@@ -157,3 +157,18 @@ def list_work_dirs(root: Path) -> list[WorkDirInfo]:
     """
     dirs = [d for d in list_image_subdirs(root) if d.name != "."]
     return pin_main(root, dirs)
+
+
+def total_image_count(root: Path) -> int:
+    """统计任务根下全部含图工作目录的图片总数.
+
+    Args:
+        root: 任务根目录.
+
+    Returns:
+        int: 所有工作目录图片数之和.
+
+    引用:
+        ``routes/tasks.py:list_tasks``；``services/state/archiver.py:archive_task``.
+    """
+    return sum(d.image_count for d in list_work_dirs(root))

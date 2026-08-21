@@ -46,7 +46,7 @@ def dirs(request: Request) -> ReadyDirsResponse:
 @router.post("/toml")
 def toml(request: Request, body: ReadyBody) -> ReadyTomlResult:
     """
-    生成 TOML 预览文本. 引用: ready.js. 
+    生成 TOML 预览文本. 引用: ready.js.
     """
     root = get_runtime(request).root
     result = build_ready_toml(

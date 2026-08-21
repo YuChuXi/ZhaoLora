@@ -21,8 +21,10 @@ from services.models import (
     TaskListResponse,
     TaskOkResponse,
     SetNoteBody,
+    SetTriggerWordBody,
 )
 from services.core.scanner import scan_images
+from services.core.work_dir import total_image_count
 from services.state.archiver import (
     PACKED_DIR,
     archive_task,
@@ -98,8 +100,8 @@ async def list_tasks(
         if (task_dir / "main").is_dir():
             rt = await reg.ensure(name)
             images = scan_images(rt.main_dir, path_prefix="main")
-            image_count = len(images)
             previews = await _preview_hashes(rt, images, 4)
+            image_count = total_image_count(rt.root)
             report_ready = (rt.root / "aesthetic_report.html").is_file()
         items.append(
             TaskCard(
@@ -109,6 +111,7 @@ async def list_tasks(
                 preview_hashes=previews,
                 report_ready=report_ready,
                 note=entry.note,
+                trigger_word=entry.trigger_word,
                 created=entry.created,
                 sort_order=entry.sort_order,
             )
@@ -173,6 +176,7 @@ async def add_task(request: Request, body: AddTaskBody) -> TaskOkResponse:
         name=info.name,
         completed=info.completed,
         note=info.note,
+        trigger_word=info.trigger_word,
     )
 
 
@@ -184,7 +188,7 @@ def complete_task(request: Request, name: str) -> TaskOkResponse:
         info = store.set_completed(name, True)
     except KeyError:
         raise HTTPException(404, f"未知任务: {name}") from None
-    return TaskOkResponse(ok=True, name=info.name, completed=info.completed, note=info.note)
+    return TaskOkResponse(ok=True, name=info.name, completed=info.completed, note=info.note, trigger_word=info.trigger_word)
 
 
 @router.post("/{name}/reopen")
@@ -195,7 +199,7 @@ def reopen_task(request: Request, name: str) -> TaskOkResponse:
         info = store.set_completed(name, False)
     except KeyError:
         raise HTTPException(404, f"未知任务: {name}") from None
-    return TaskOkResponse(ok=True, name=info.name, completed=info.completed, note=info.note)
+    return TaskOkResponse(ok=True, name=info.name, completed=info.completed, note=info.note, trigger_word=info.trigger_word)
 
 
 @router.post("/{name}/note")
@@ -206,7 +210,18 @@ def set_note(request: Request, name: str, body: SetNoteBody) -> TaskOkResponse:
         info = store.set_note(name, body.note)
     except KeyError:
         raise HTTPException(404, f"未知任务: {name}") from None
-    return TaskOkResponse(ok=True, name=info.name, completed=info.completed, note=info.note)
+    return TaskOkResponse(ok=True, name=info.name, completed=info.completed, note=info.note, trigger_word=info.trigger_word)
+
+
+@router.post("/{name}/trigger-word")
+def set_trigger_word(request: Request, name: str, body: SetTriggerWordBody) -> TaskOkResponse:
+    """修改任务触发词(写入就绪 TOML 的 subset class_tokens). 引用: home.js 卡片触发词输入框. """
+    store = _store(request)
+    try:
+        info = store.set_trigger_word(name, body.trigger_word)
+    except KeyError:
+        raise HTTPException(404, f"未知任务: {name}") from None
+    return TaskOkResponse(ok=True, name=info.name, completed=info.completed, note=info.note, trigger_word=info.trigger_word)
 
 
 class ReorderBody(BaseModel):

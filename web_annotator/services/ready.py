@@ -7,7 +7,7 @@ from pathlib import Path
 from services.state.mask import has_mask
 from services.models import MaskStats, ReadySubset, ReadyTomlResult
 from services.core.scanner import IMAGE_EXTS, scan_images
-from services.core.work_dir import list_work_dirs
+from services.core.work_dir import list_work_dirs, total_image_count
 
 
 def _has_images(d: Path) -> bool:
@@ -80,9 +80,9 @@ def build_ready_toml(
         ordered.append("main")
     ordered.extend(sorted(n for n in names if n != "main"))
 
-    # 先确定有图片的目录并统计总图片数
+    # 先确定有图片的目录并统计总图片数(复用统一的任务图数口径)
     valid_names = [n for n in ordered if _has_images((root / n).resolve())]
-    total = sum(available[n].image_count for n in valid_names)
+    total = total_image_count(root)
 
     # 过滤非法分辨率(须为正整数), 保留输入顺序
     res_list = [r for r in (resolutions or []) if isinstance(r, int) and r > 0]
