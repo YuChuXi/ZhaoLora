@@ -56,6 +56,8 @@ def build_ready_toml(
 ) -> ReadyTomlResult:
     """生成 TOML 文本与 subset 元数据.
 
+    ``dirs`` 指定参与导出的工作目录名列表; 为 None 时表示全部目录,
+    为空列表时表示一个目录都不导出(返回空 subsets).
     某子目录蒙版状态为「完整」时, 对应 subset 附带 conditioning_data_dir(指向 mask/子目录);
     按是否带 conditioning_data_dir 分组, 每组渲染为一个 [[datasets]] 块.
     传入 ``resolutions`` 时, 按每个分辨率 × 每组各渲染一个 [[datasets]] 块,
@@ -70,7 +72,7 @@ def build_ready_toml(
     """
     root = root.resolve()
     available = {d.name: d for d in list_work_dirs(root)}
-    if dirs:
+    if dirs is not None:
         names = [n for n in dirs if n in available]
     else:
         names = list(available.keys())

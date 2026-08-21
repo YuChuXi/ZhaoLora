@@ -28,6 +28,8 @@
   .dir-table .status.ok { background: #6bcf8e; }
   .dir-table .status.none { background: #e9c46a; }
   .dir-table .empty { padding: 10px 8px; color: var(--text-dim); text-align: center; }
+  .dir-table .col-enable { width: 30px; text-align: center; }
+  .dir-table .col-enable input { cursor: pointer; }
   .toml-box {
     flex: 1; margin: 12px 14px 14px; resize: none; min-height: 0;
     background: #0a1a30; color: #c8d4e0; border: 1px solid var(--border);
@@ -67,7 +69,7 @@
     <div class="dir-table-wrap">
       <table class="dir-table" id="dir-table">
         <thead>
-          <tr><th>目录</th><th>张数</th><th>蒙版</th></tr>
+          <tr><th class="col-enable"></th><th>目录</th><th>张数</th><th>蒙版</th></tr>
         </thead>
         <tbody id="dir-tbody"></tbody>
       </table>

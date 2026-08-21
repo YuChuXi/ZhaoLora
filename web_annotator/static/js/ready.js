@@ -20,8 +20,10 @@
     return res.json();
   }
 
+  var _enabled = {};
+
   /**
-   * 刷新侧栏工作目录表格：目录、张数、蒙版状态。引用：init、generate。
+   * 刷新侧栏工作目录表格：启用勾选、目录、张数、蒙版状态。引用：init、generate。
    * @param {object} data
    */
   function renderSide(data) {
@@ -29,14 +31,28 @@
     tbody.innerHTML = '';
     var dirs = data.dirs || [];
     if (!dirs.length) {
-      tbody.innerHTML = '<tr><td colspan="3" class="empty">无含图目录</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="4" class="empty">无含图目录</td></tr>';
       return;
     }
+    dirs.forEach(function (d) {
+      if (_enabled[d.name] === undefined) _enabled[d.name] = true;
+    });
     var statsByDir = {};
     (data.mask_stats || []).forEach(function (m) { statsByDir[m.name] = m; });
     dirs.forEach(function (d) {
       var m = statsByDir[d.name];
       var row = document.createElement('tr');
+
+      var enableCell = document.createElement('td');
+      enableCell.className = 'col-enable';
+      var cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.checked = !!_enabled[d.name];
+      cb.title = '是否导出该目录';
+      cb.addEventListener('change', function () {
+        _enabled[d.name] = cb.checked;
+      });
+      enableCell.appendChild(cb);
 
       var nameCell = document.createElement('td');
       nameCell.textContent = d.name;
@@ -58,6 +74,7 @@
         maskCell.textContent = '-';
       }
 
+      row.appendChild(enableCell);
       row.appendChild(nameCell);
       row.appendChild(countCell);
       row.appendChild(maskCell);
@@ -80,10 +97,11 @@
         return n;
       });
     }
+    var dirs = Object.keys(_enabled).filter(function (n) { return _enabled[n]; });
     var data = await api(API.apiPath('/ready/toml'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ dirs: null, target_images: target, resolutions: resolutions })
+      body: JSON.stringify({ dirs: dirs, target_images: target, resolutions: resolutions })
     });
     document.getElementById('toml-box').value = data.toml || '';
     var subsets = data.subsets || [];
