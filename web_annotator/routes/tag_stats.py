@@ -363,7 +363,7 @@ def _build_check_item(
         dir=dir_name,
         exists=exists,
         position_ok=position_ok,
-        caption_preview=raw.strip().replace("\n", " ")[:200],
+        caption_preview=raw.strip().replace("\n", " "),
     )
 
 
@@ -379,7 +379,6 @@ def check(request: Request, body: TagCheckBody) -> TagCheckResponse:
         raise HTTPException(400, f"position 非法: {body.position}")
 
     tag = body.tag.strip()
-    check_enabled = bool(tag)
     selected = resolve_selected_dirs(root, body.dirs)
     if not selected:
         raise HTTPException(400, "请选择目录")
@@ -392,28 +391,11 @@ def check(request: Request, body: TagCheckBody) -> TagCheckResponse:
         else:
             dir_name, prefix = work.name, work.name
         for img in scan_images(work, path_prefix=prefix):
-            if check_enabled:
-                items.append(
-                    _build_check_item(
-                        img.path, img.stem, work, dir_name, root, thumbnailer, tag, body.position
-                    )
+            items.append(
+                _build_check_item(
+                    img.path, img.stem, work, dir_name, root, thumbnailer, tag, body.position
                 )
-            else:
-                abs_img = root / img.path
-                w, h = image_size(abs_img) if abs_img.is_file() else (0, 0)
-                items.append(
-                    TagCheckItem(
-                        path=img.path,
-                        stem=img.stem,
-                        width=w,
-                        height=h,
-                        thumbnail_hash=thumbnailer.hash_for(img.path),
-                        dir=dir_name,
-                        exists=False,
-                        position_ok=False,
-                        caption_preview="",
-                    )
-                )
+            )
 
     ok_count = sum(1 for it in items if it.position_ok)
     return TagCheckResponse(
