@@ -51,6 +51,7 @@
       cb.title = '是否导出该目录';
       cb.addEventListener('change', function () {
         _enabled[d.name] = cb.checked;
+        generate(true);
       });
       enableCell.appendChild(cb);
 
@@ -82,27 +83,42 @@
     });
   }
 
-  async function generate() {
+  /**
+   * 生成 TOML 预览并更新侧栏; 输入变化自动调用时静默(silent=true), 仅按钮手动生成时 toast.
+   * @param {boolean} [silent]
+   */
+  async function generate(silent) {
     var target = parseInt(document.getElementById('target-images').value, 10);
     if (!(target >= 1)) {
-      toast('目标图片数无效');
+      if (!silent) toast('目标图片数无效');
       return;
     }
     var resText = document.getElementById('resolutions').value.trim();
     var resolutions = [];
     if (resText) {
-      resolutions = resText.split(/\s*,\s*/).map(function (v) {
-        var n = parseInt(v, 10);
-        if (!(n > 0)) throw new Error('无效分辨率: ' + v);
-        return n;
-      });
+      var parts = resText.split(/\s*,\s*/);
+      for (var i = 0; i < parts.length; i++) {
+        var n = parseInt(parts[i], 10);
+        if (!(n > 0)) {
+          if (!silent) toast('无效分辨率: ' + parts[i]);
+          return;
+        }
+        resolutions.push(n);
+      }
     }
     var dirs = Object.keys(_enabled).filter(function (n) { return _enabled[n]; });
-    var data = await api(API.apiPath('/ready/toml'), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ dirs: dirs, target_images: target, resolutions: resolutions })
-    });
+    var data;
+    try {
+      data = await api(API.apiPath('/ready/toml'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ dirs: dirs, target_images: target, resolutions: resolutions })
+      });
+    } catch (e) {
+      document.getElementById('stat-summary').textContent = String(e.message || e);
+      if (!silent) toast(String(e.message || e));
+      return;
+    }
     document.getElementById('toml-box').value = data.toml || '';
     var subsets = data.subsets || [];
     var totalImages = subsets.reduce(function (sum, s) {
@@ -115,7 +131,17 @@
     document.getElementById('stat-summary').textContent =
       subsets.length + ' 个 subset · ' + totalImages + ' 张 × ' + repStr + ' = ' + repeated + ' 张';
     renderSide(data);
-    toast('已生成');
+    if (!silent) toast('已生成');
+  }
+
+  var _autoTimer = null;
+
+  /**
+   * 输入变化触发自动生成(防抖 300ms, 静默).
+   */
+  function autoGenerate() {
+    clearTimeout(_autoTimer);
+    _autoTimer = setTimeout(function () { generate(true); }, 300);
   }
 
   async function copyText() {
@@ -137,8 +163,10 @@
   }
 
   document.getElementById('btn-gen').addEventListener('click', function () {
-    generate().catch(function (e) { toast(String(e.message || e)); });
+    generate(false);
   });
+  document.getElementById('target-images').addEventListener('input', autoGenerate);
+  document.getElementById('resolutions').addEventListener('input', autoGenerate);
   document.getElementById('btn-copy').addEventListener('click', function () {
     copyText().catch(function (e) { toast(String(e.message || e)); });
   });
