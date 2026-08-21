@@ -76,6 +76,17 @@
     width: 90px; background: var(--card-bg); color: var(--text);
     border: 1px solid var(--border); border-radius: 4px; padding: 3px 6px; font-size: 12px;
   }
+  /* MSE 阈值用自定义按钮步进科学计数法, 隐藏 number 原生 spinner(step=any 时步进为1与微值不兼容) */
+  #mse-threshold::-webkit-outer-spin-button,
+  #mse-threshold::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+  #mse-threshold { -moz-appearance: textfield; }
+  .mse-stepper { display: inline-flex; flex-direction: column; gap: 1px; }
+  .mse-btn {
+    background: var(--card-bg); color: var(--text-dim);
+    border: 1px solid var(--border); border-radius: 3px;
+    font-size: 8px; line-height: 1; padding: 2px 5px; cursor: pointer;
+  }
+  .mse-btn:hover { color: var(--text); }
 
   /* 悬停预览 */
   .dup-preview {
@@ -148,6 +159,10 @@
   <label style="font-size:12px;color:var(--text-dim);display:flex;align-items:center;gap:4px;" id="mse-wrap">
     MSE
     <input type="number" id="mse-threshold" value="1e-4" min="1e-9" max="1" step="any">
+    <span class="mse-stepper">
+      <button type="button" class="mse-btn" data-dir="1" tabindex="-1" aria-label="增大阈值">▲</button>
+      <button type="button" class="mse-btn" data-dir="-1" tabindex="-1" aria-label="减小阈值">▼</button>
+    </span>
   </label>
   <label style="font-size:12px;color:var(--text-dim);display:flex;align-items:center;gap:4px;display:none;" id="sim-wrap">
     相似度

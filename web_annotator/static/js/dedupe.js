@@ -381,20 +381,19 @@
     scan().catch(function (e) { toast(String(e.message || e)); });
   });
   /**
-   * MSE 阈值上下箭头: 尾数步进 (1→9)e-N → (1→9)e-(N-1).
-   * 上箭头增大: 1e-6 → 2e-6 → … → 9e-6 → 1e-5 → …
-   * 下箭头减小: 1e-5 → 9e-6 → 8e-6 → … → 1e-6 → 9e-7 → …
+   * MSE 阈值按科学计数法尾数步进: {1..9}e-9 .. {1..9}e0.
+   * @param {number} dir +1 上(尾数+1, 满9进1指数), -1 下(尾数-1, 低于1借9指数-1)
+   * 引用: ``mse-threshold`` 的 keydown 与 ``.mse-btn`` 的 click.
    */
-  document.getElementById('mse-threshold').addEventListener('keydown', function (e) {
-    if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
-    e.preventDefault();
-    var v = parseFloat(this.value);
+  function stepMse(dir) {
+    var el = document.getElementById('mse-threshold');
+    var v = parseFloat(el.value);
     if (!(v > 0)) v = 1e-4;
     var exp = Math.floor(Math.log10(v));
     var mant = Math.round(v / Math.pow(10, exp));
     if (mant < 1) mant = 1;
     if (mant > 9) mant = 9;
-    if (e.key === 'ArrowUp') {
+    if (dir > 0) {
       mant++;
       if (mant > 9) { mant = 1; exp++; }
     } else {
@@ -403,8 +402,21 @@
     }
     if (exp > 0) exp = 0;
     if (exp < -9) exp = -9;
-    this.value = mant + 'e' + exp;
-    this.dispatchEvent(new Event('input'));
+    el.value = mant + 'e' + exp;
+    el.dispatchEvent(new Event('input'));
+  }
+
+  document.getElementById('mse-threshold').addEventListener('keydown', function (e) {
+    if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
+    e.preventDefault();
+    stepMse(e.key === 'ArrowUp' ? 1 : -1);
+  });
+  Array.prototype.forEach.call(document.querySelectorAll('.mse-btn'), function (btn) {
+    btn.addEventListener('mousedown', function (e) { e.preventDefault(); }); // 不抢焦点, 保持 input 聚焦以便键盘箭头可用
+    btn.addEventListener('click', function (e) {
+      e.preventDefault();
+      stepMse(parseInt(this.dataset.dir, 10));
+    });
   });
   document.getElementById('dedupe-alg').addEventListener('change', function () {
     // 切换前保存当前算法的阈值, 再切换到新算法对应的阈值
