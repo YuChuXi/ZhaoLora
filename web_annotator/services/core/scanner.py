@@ -49,9 +49,9 @@ def _natural_key(s: str) -> tuple:
 
     Returns:
         tuple: 用于自然排序的键(数字段转为 int).
-    """
     Callers:
         - ``services/core/scanner.py:scan_images``
+    """
     parts = re.split(r"(\d+)", s)
     return tuple(int(p) if p.isdigit() else p.lower() for p in parts)
 

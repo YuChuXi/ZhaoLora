@@ -49,8 +49,6 @@ def _module_to_file(mod: str) -> Path | None:
     Returns:
         Path | None: 匹配文件; 无则 None.
     """
-    Callers:
-        - ``_gen_callers.py:_resolve_call``
     p = ROOT / (mod.replace(".", "/") + ".py")
     if p.exists() and p.is_file():
         return p
@@ -66,8 +64,6 @@ def _scan_imports(path: Path) -> None:
     Args:
         path (Path): 目标 .py 文件.
     """
-    Callers:
-        - ``_gen_callers.py:_analyze``
     try:
         tree = ast.parse(path.read_text(encoding="utf-8"))
     except Exception:
@@ -92,8 +88,6 @@ def _scan_symbols(path: Path) -> None:
     Args:
         path (Path): 目标 .py 文件.
     """
-    Callers:
-        - ``_gen_callers.py:_analyze``
     try:
         tree = ast.parse(path.read_text(encoding="utf-8"))
     except Exception:
@@ -124,31 +118,33 @@ def _caller_name(path: Path, func_name: str, cls: str | None) -> str:
     Returns:
         str: 调用者标识.
     """
-    Callers:
-        - ``_gen_callers.py:_analyze``
     base = path.relative_to(ROOT).as_posix()
     return f"{base}:{cls + '.' if cls else ''}{func_name}"
 
 
-def _iter_func_defs(tree: ast.AST, cls: str | None = None):
-    """递归遍历函数/方法定义, 产出 (定义名, 所属类).
+def _iter_func_defs(tree: ast.AST, cls: str | None = None, outer: str | None = None):
+    """递归遍历函数/方法定义, 产出 (定义名, 所属类, 外层函数名).
+
+    嵌套闭包(如任务 ``run``/``emit`` 回调)内部调用归属其最外层函数,
+    避免把闭包名误记为类方法调用者.
 
     Args:
         tree (ast.AST): 语法树节点.
         cls (str | None): 当前所属类名.
+        outer (str | None): 当前最外层函数名.
 
     Yields:
-        tuple: (函数名, 所属类名或 None).
+        tuple: (函数名, 所属类名或 None, 外层函数名或 None).
     """
-    Callers:
-        - ``_gen_callers.py:_analyze``
-        - ``_gen_callers.py:_iter_func_defs``
     for node in ast.iter_child_nodes(tree):
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            yield node.name, cls
-            yield from _iter_func_defs(node, cls)
+            yield node.name, cls, outer
+            yield from _iter_func_defs(node, cls, node.name)
         elif isinstance(node, ast.ClassDef):
-            yield from _iter_func_defs(node, node.name)
+            for sub in node.body:
+                if isinstance(sub, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    yield sub.name, node.name, None
+                    yield from _iter_func_defs(sub, node.name, sub.name)
 
 
 def _resolve_call(func: ast.expr, path: Path, cls: str | None) -> list[tuple[Path, str, str]]:
@@ -162,8 +158,6 @@ def _resolve_call(func: ast.expr, path: Path, cls: str | None) -> list[tuple[Pat
     Returns:
         list: 可能命中的目标列表.
     """
-    Callers:
-        - ``_gen_callers.py:_analyze``
     if isinstance(func, ast.Name):
         name = func.id
         bind = _IMPORT_BIND.get((path, name))
@@ -218,8 +212,6 @@ def _collect_funcs(tree: ast.AST) -> list[tuple[ast.AST, str]]:
     Returns:
         list: [(函数节点, 所属类名或 "")]
     """
-    Callers:
-        - ``_gen_callers.py:_insert_missing_callers``
     out: list[tuple[ast.AST, str]] = []
     for node in tree.body:
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -233,8 +225,6 @@ def _collect_funcs(tree: ast.AST) -> list[tuple[ast.AST, str]]:
 
 def _analyze() -> None:
     """解析全部文件, 建立调用关系 _CALLS."""
-    Callers:
-        - ``_gen_callers.py:main``
     for path in PY_FILES:
         _scan_imports(path)
     for path in PY_FILES:
@@ -244,7 +234,7 @@ def _analyze() -> None:
             tree = ast.parse(path.read_text(encoding="utf-8"))
         except Exception:
             continue
-        for fname, cls in _iter_func_defs(tree):
+        for fname, cls, outer in _iter_func_defs(tree):
             func_node = None
             for node in ast.walk(tree):
                 if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == fname:
@@ -259,7 +249,7 @@ def _analyze() -> None:
                     if tgt_file is None:
                         continue
                     key = (tgt_file, f"{tgt_cls + '.' if tgt_cls else ''}{tgt_sym}")
-                    _CALLS[key].add(_caller_name(path, fname, cls))
+                    _CALLS[key].add(_caller_name(path, outer or fname, cls))
 
 
 def _func_callers(path: Path, name: str, cls: str | None) -> list[str]:
@@ -273,8 +263,6 @@ def _func_callers(path: Path, name: str, cls: str | None) -> list[str]:
     Returns:
         list[str]: 调用者 ``file:func`` 列表.
     """
-    Callers:
-        - ``_gen_callers.py:_insert_missing_callers``
     key = (path, f"{cls + '.' if cls else ''}{name}")
     return sorted(_CALLS.get(key, ()))
 
@@ -282,14 +270,17 @@ def _func_callers(path: Path, name: str, cls: str | None) -> list[str]:
 def _insert_missing_callers() -> int:
     """为缺少 ``Callers:`` 块的 docstring 自动补全.
 
-    仅插入 AST 确认的实际 Python 调用者; 已有 ``Callers:`` 块或没有调用者
-    的函数不修改. 前端/回调等间接调用需人工补充.
+    仅插入 AST 确认的实际 Python 调用者; 已有 ``Callers:`` 块、没有调用者或
+    单行 docstring 的函数不修改. 前端/回调等间接调用需人工补充.
+    工具脚本自身(_*.py)不参与补全.
 
     Returns:
         int: 补全的 Callers 块数量.
     """
     count = 0
     for path in PY_FILES:
+        if path.name.startswith("_"):
+            continue
         src = path.read_text(encoding="utf-8")
         try:
             tree = ast.parse(src)
@@ -302,7 +293,7 @@ def _insert_missing_callers() -> int:
             doc = node.body[0].value
             if not isinstance(doc, ast.Constant) or not isinstance(doc.value, str):
                 continue
-            if "Callers:" in doc.value:
+            if "Callers:" in doc.value or doc.end_lineno == doc.lineno:
                 continue
             callers = _func_callers(path, node.name, cls)
             if not callers:
@@ -310,7 +301,8 @@ def _insert_missing_callers() -> int:
             indent = " " * doc.col_offset
             lines = [f"{indent}Callers:"]
             lines += [f"{indent}    - ``{c}``" for c in callers]
-            inserts.append((doc.end_lineno, lines))
+            # 插入在 docstring 闭合行之前, 使其成为 docstring 内容
+            inserts.append((doc.end_lineno - 1, lines))
         if not inserts:
             continue
         lines = src.splitlines()

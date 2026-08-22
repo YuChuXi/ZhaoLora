@@ -43,9 +43,9 @@ def _read_phpsessid() -> str | None:
 
     Returns:
         str | None: PHPSESSID 值; 文件未配置或不存在时返回 None.
-    """
     Callers:
         - ``services/online_sources/pixiv/client.py:request_headers``
+    """
     path = os.environ.get("PIXIV_COOKIES", "").strip()
     if not path:
         return None

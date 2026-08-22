@@ -18,9 +18,9 @@ def _has_images(d: Path) -> bool:
 
     Returns:
         bool: 目录内存在图片文件则为 True.
-    """
     Callers:
         - ``services/ready.py:build_ready_toml``
+    """
     if not d.is_dir():
         return False
     return any(p.is_file() and p.suffix.lower() in IMAGE_EXTS for p in d.iterdir())

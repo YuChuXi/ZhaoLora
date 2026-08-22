@@ -48,13 +48,13 @@ def _root(request: Request) -> Path:
 
     Returns:
         Path: 数据集根目录的绝对路径。
-    """
     Callers:
         - ``routes/annotations.py:apply_delete``
         - ``routes/annotations.py:get_state``
         - ``routes/annotations.py:restore``
         - ``routes/annotations.py:select_all``
         - ``routes/annotations.py:toggle``
+    """
     return get_runtime(request).root
 
 
@@ -66,7 +66,6 @@ def _state(request: Request) -> StateManager:
 
     Returns:
         StateManager: 标注状态管理器实例。
-    """
     Callers:
         - ``routes/annotations.py:apply_delete``
         - ``routes/annotations.py:deselect_all``
@@ -75,6 +74,7 @@ def _state(request: Request) -> StateManager:
         - ``routes/annotations.py:select_all``
         - ``routes/annotations.py:select_range``
         - ``routes/annotations.py:toggle``
+    """
     return get_runtime(request).state_manager
 
 

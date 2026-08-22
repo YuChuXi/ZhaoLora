@@ -172,20 +172,14 @@ class SourceClient(ABC):
 
     image_hosts: tuple[str, ...] = ()
     """允许代理的图床 host (精确或子域后缀), 空元组表示不限定. 
-    Callers:
-        - ``services/online_sources/framework/base.py:SourceClient.proxy_image``
     """
 
     image_referer: str = ""
     """防盗链 Referer, 空串表示无需防盗链. 
-    Callers:
-        - ``services/online_sources/framework/base.py:SourceClient.proxy_image``
     """
 
     image_timeout: float = 30.0
     """图片代理默认超时(秒). 
-    Callers:
-        - ``services/online_sources/framework/base.py:SourceClient.image_timeout_for``
     """
 
     def image_timeout_for(self, kind: str) -> float:

@@ -74,10 +74,10 @@ class VideoFrameStore:
 
         Returns:
             Path: 位流缓存目录.
-        """
         Callers:
             - ``services/core/video_frame.py:VideoFrameStore._bitstream_path``
             - ``services/core/video_frame.py:VideoFrameStore.save_bitstream``
+        """
         return self._cache_root / cover_hash(video_rel)
 
     def _bitstream_path(self, video_rel: str) -> Path:
@@ -88,10 +88,10 @@ class VideoFrameStore:
 
         Returns:
             Path: 位流缓存文件路径.
-        """
         Callers:
             - ``services/core/video_frame.py:VideoFrameStore.load_bitstream``
             - ``services/core/video_frame.py:VideoFrameStore.save_bitstream``
+        """
         return self._cache_dir(video_rel) / "bitstream.json"
 
     def load_bitstream(self, video_rel: str) -> BitstreamTypes:

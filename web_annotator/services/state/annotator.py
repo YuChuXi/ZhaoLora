@@ -53,9 +53,9 @@ class StateManager:
             ValidationError: JSON 结构不符合模型.
             json.JSONDecodeError: 文件不是合法 JSON.
             OSError: 读取失败.
-        """
         Callers:
             - ``services/state/annotator.py:StateManager.get``
+        """
         if not self.state_path.exists():
             return AnnotatorState()
         return AnnotatorState.model_validate_json(self.state_path.read_text(encoding="utf-8"))
@@ -68,13 +68,13 @@ class StateManager:
 
         Returns:
             None
-        """
         Callers:
             - ``services/state/annotator.py:StateManager.apply_delete``
             - ``services/state/annotator.py:StateManager.deselect_all``
             - ``services/state/annotator.py:StateManager.restore``
             - ``services/state/annotator.py:StateManager.select_all``
             - ``services/state/annotator.py:StateManager.toggle``
+        """
         self.state_path.write_text(
             state.model_dump_json(indent=2),
             encoding="utf-8",
@@ -243,10 +243,10 @@ class StateManager:
 
         Returns:
             None
-        """
         Callers:
             - ``services/state/annotator.py:StateManager.apply_delete``
             - ``services/state/annotator.py:StateManager.restore``
+        """
         if not parent.is_dir():
             return
         stem = Path(rel_path).stem

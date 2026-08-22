@@ -47,8 +47,6 @@ def _py_names(path: Path) -> set[str]:
     Returns:
         set[str]: 函数名、类名与 ``类.方法`` 名.
     """
-    Callers:
-        - ``_fix_callers.py:main``
     try:
         tree = ast.parse(path.read_text(encoding="utf-8"))
     except Exception:
@@ -74,9 +72,6 @@ def _rel(path: Path) -> str:
     Returns:
         str: 相对路径字符串.
     """
-    Callers:
-        - ``_fix_callers.py:_fix_ref``
-        - ``_fix_callers.py:main``
     return path.relative_to(ROOT).as_posix()
 
 
@@ -90,8 +85,6 @@ def _locate_class(cls: str, index: dict[Path, set[str]]) -> Path | None:
     Returns:
         Path | None: 唯一定义类名的文件; 无或歧义返回 None.
     """
-    Callers:
-        - ``_fix_callers.py:_fix_ref``
     hits = [p for p, names in index.items() if cls in names]
     return hits[0] if len(hits) == 1 else None
 
@@ -107,8 +100,6 @@ def _locate_func(func: str, src: Path, index: dict[Path, set[str]]) -> Path | No
     Returns:
         Path | None: 唯一匹配文件; 无或歧义返回 None.
     """
-    Callers:
-        - ``_fix_callers.py:_fix_ref``
     if func in index.get(src, set()):
         return src
     last = func.split(".")[-1]
@@ -127,8 +118,6 @@ def _locate_file(mod: str, index: dict[Path, set[str]], src: Path | None = None)
     Returns:
         Path | None: 匹配文件; 无或歧义返回 None.
     """
-    Callers:
-        - ``_fix_callers.py:_fix_ref``
     # 完整点号路径 → 模块文件
     p = ROOT / (mod.replace(".", "/") + ".py")
     if p.exists() and p.is_file():
@@ -177,8 +166,6 @@ def _fix_ref(ref: str, src: Path, index: dict[Path, set[str]]) -> str | None:
     Returns:
         str | None: 补全后的 file:function; 无法判定返回 None.
     """
-    Callers:
-        - ``_fix_callers.py:_fix_entry_line``
     if _FILEFUNC_RE.match(ref):
         # 已合规 file:function / file:, 但需检查短文件名歧义 → 补全完整相对路径
         fpath, _, func = ref.partition(":")
@@ -257,8 +244,6 @@ def _fix_entry_line(line: str, src: Path, index: dict[Path, set[str]]) -> tuple[
     Returns:
         tuple[list[str], list[str]]: (重建后的行列表, 行内引用清单).
     """
-    Callers:
-        - ``_fix_callers.py:main``
     indent = line[: len(line) - len(line.lstrip())]
     m = _ENTRY_DQ.match(line) or _ENTRY_SQ.match(line)
     if not m:

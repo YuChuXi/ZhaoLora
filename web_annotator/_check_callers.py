@@ -87,8 +87,6 @@ def _locate(target: str, files: list[Path]) -> tuple[Path | None, list[Path]]:
     Returns:
         tuple[Path | None, list[Path]]: (最短匹配文件, 全部候选); 无匹配时 (None, []).
     """
-    Callers:
-        - ``_check_callers.py:_verify``
     # 精确尾部匹配, 取最短(最精确)路径
     cands = [p for p in files if p.as_posix().endswith(target)]
     if not cands:
@@ -157,8 +155,6 @@ def _check_entry_line(line: str, path: Path, lineno: int, dangling: list) -> Non
         lineno: 行号.
         dangling: 悬空/格式违规引用收集列表.
     """
-    Callers:
-        - ``_check_callers.py:main``
     global total
     stripped = line.strip()
     if not stripped.startswith("-"):
@@ -183,9 +179,6 @@ def _verify(ref: str, src: Path, lineno: int, dangling: list) -> None:
         lineno: 引用行号.
         dangling: 悬空引用收集列表.
     """
-    Callers:
-        - ``_check_callers.py:_check_entry_line``
-        - ``_check_callers.py:main``
     if not _FILEFUNC_RE.match(ref):
         dangling.append((src.as_posix(), lineno, ref, "格式不规范: 应为 file:function (如 routes/tasks.py:list_tasks)"))
         return

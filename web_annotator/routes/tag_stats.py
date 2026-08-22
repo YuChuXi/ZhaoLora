@@ -65,11 +65,11 @@ def _root(request: Request) -> Path:
 
     Returns:
         Path: 数据集根目录的绝对路径。
-    """
     Callers:
         - ``routes/tag_stats.py:dirs``
         - ``routes/tag_stats.py:stats``
         - ``routes/tag_stats.py:translate_missing``
+    """
     return get_runtime(request).root
 
 

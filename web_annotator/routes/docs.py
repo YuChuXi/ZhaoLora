@@ -74,8 +74,6 @@ def resolve_doc(slug: str) -> Path:
 
 def render_markdown(text: str) -> str:
     """MD → HTML；模块间 .md 链接改为 ?doc=. 引用: get_doc. """
-    Callers:
-        - ``routes/docs.py:get_doc``
     text = _MD_LINK.sub(r"](?doc=\1\2)", text)
     return markdown.markdown(
         text,
