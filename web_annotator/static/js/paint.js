@@ -18,8 +18,237 @@
   var _lineMode = false, _lineStart = null, _lineEnd = null;
   var _preloadCache = {};
   var _renderScheduled = false;
-  var _rgbScaledCanvas = null;
-  var _compCanvas = null;
+
+  // ---- WebGL 渲染层: RGB 纹理 + alpha 纹理 shader 合成, 无 2D 中间画布 ----
+  var AlphaGL = (function () {
+    var gl = null, canvas = null;
+    var texRGB = null, texAlpha = null, fbo = null;
+    var W = 0, H = 0;
+    var progDraw = null, progShow = null, quadBuf = null;
+    var DLOC = {}, SLOC = {};
+
+    var VS = 'attribute vec2 a_pos;varying vec2 v_uv;' +
+      'void main(){v_uv=a_pos*0.5+0.5;gl_Position=vec4(a_pos,0.0,1.0);}';
+    var FS_DRAW = 'precision mediump float;' +
+      'uniform vec2 u_res;uniform vec2 u_center;uniform float u_radius;' +
+      'uniform float u_alpha;uniform int u_shape;uniform vec4 u_rect;' +
+      'varying vec2 v_uv;' +
+      'void main(){' +
+      'vec2 px=vec2(v_uv.x,1.0-v_uv.y)*u_res;' +
+      'bool inside=false;' +
+      'if(u_shape==0){inside=distance(px,u_center)<=u_radius;}' +
+      'else{inside=px.x>=u_rect.x&&px.x<=u_rect.z&&px.y>=u_rect.y&&px.y<=u_rect.w;}' +
+      'if(inside){gl_FragColor=vec4(1.0,1.0,1.0,u_alpha);}else{discard;}}';
+    var FS_SHOW = 'precision mediump float;' +
+      'uniform sampler2D u_rgb;uniform sampler2D u_alpha;' +
+      'varying vec2 v_uv;' +
+      'void main(){' +
+      'vec4 rgb=texture2D(u_rgb,v_uv);' +
+      'float a=texture2D(u_alpha,v_uv).a;' +
+      'gl_FragColor=vec4(rgb.rgb,a);}';
+
+    function _compile(type, src) {
+      var s = gl.createShader(type);
+      gl.shaderSource(s, src); gl.compileShader(s);
+      if (!gl.getShaderParameter(s, gl.COMPILE_STATUS))
+        throw new Error('Shader: ' + gl.getShaderInfoLog(s));
+      return s;
+    }
+    function _link(vs, fs) {
+      var p = gl.createProgram();
+      gl.attachShader(p, vs); gl.attachShader(p, fs); gl.linkProgram(p);
+      if (!gl.getProgramParameter(p, gl.LINK_STATUS))
+        throw new Error('Link: ' + gl.getProgramInfoLog(p));
+      return p;
+    }
+    function _bindQuad(prog) {
+      gl.useProgram(prog);
+      gl.bindBuffer(gl.ARRAY_BUFFER, quadBuf);
+      var loc = gl.getAttribLocation(prog, 'a_pos');
+      gl.enableVertexAttribArray(loc);
+      gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+    }
+
+    function _initTexParams(t) {
+      gl.bindTexture(gl.TEXTURE_2D, t);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    }
+
+    /**
+     * 初始化 WebGL context, 着色器, RGB/alpha 双纹理, framebuffer. 引用: paint.js 初始化.
+     * @param {HTMLCanvasElement} c
+     * @param {number} w
+     * @param {number} h
+     */
+    function init(c, w, h) {
+      canvas = c; canvas.width = w; canvas.height = h; W = w; H = h;
+      gl = canvas.getContext('webgl', { premultipliedAlpha: false, alpha: true });
+      if (!gl) throw new Error('WebGL 不可用');
+      var vs = _compile(gl.VERTEX_SHADER, VS);
+      progDraw = _link(vs, _compile(gl.FRAGMENT_SHADER, FS_DRAW));
+      progShow = _link(vs, _compile(gl.FRAGMENT_SHADER, FS_SHOW));
+      quadBuf = gl.createBuffer();
+      gl.bindBuffer(gl.ARRAY_BUFFER, quadBuf);
+      gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
+      texRGB = gl.createTexture(); _initTexParams(texRGB);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, W, H, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+      texAlpha = gl.createTexture(); _initTexParams(texAlpha);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, W, H, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+      fbo = gl.createFramebuffer();
+      gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, texAlpha, 0);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      DLOC.res = gl.getUniformLocation(progDraw, 'u_res');
+      DLOC.center = gl.getUniformLocation(progDraw, 'u_center');
+      DLOC.radius = gl.getUniformLocation(progDraw, 'u_radius');
+      DLOC.alpha = gl.getUniformLocation(progDraw, 'u_alpha');
+      DLOC.shape = gl.getUniformLocation(progDraw, 'u_shape');
+      DLOC.rect = gl.getUniformLocation(progDraw, 'u_rect');
+      SLOC.rgb = gl.getUniformLocation(progShow, 'u_rgb');
+      SLOC.alpha = gl.getUniformLocation(progShow, 'u_alpha');
+    }
+
+    /**
+     * 调整 alpha 纹理尺寸(图片尺寸变化时; RGB 纹理由 loadRGB 重新上传).
+     * 引用: fitCanvas.
+     * @param {number} w
+     * @param {number} h
+     */
+    function resize(w, h) {
+      if (W === w && H === h) return;
+      W = w; H = h; canvas.width = w; canvas.height = h;
+      gl.bindTexture(gl.TEXTURE_2D, texAlpha);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, W, H, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, texAlpha, 0);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    }
+
+    function _toTex() {
+      gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+      gl.viewport(0, 0, W, H);
+      gl.enable(gl.BLEND);
+      gl.blendFunc(gl.ONE, gl.ZERO);
+      _bindQuad(progDraw);
+      gl.uniform2f(DLOC.res, W, H);
+    }
+
+    function _scissor(cx, cy, r) {
+      var sx = Math.max(0, Math.floor(cx - r - 1));
+      var sy = Math.max(0, Math.floor(H - cy - r - 1));
+      var sw = Math.min(W - sx, Math.ceil(2 * r + 2));
+      var sh = Math.min(H - sy, Math.ceil(2 * r + 2));
+      gl.enable(gl.SCISSOR_TEST);
+      gl.scissor(sx, sy, sw, sh);
+    }
+
+    /** 画圆: 笔刷区域内 alpha 覆盖为 val. 引用: stampDisc. */
+    function stampDisc(cx, cy, r, val) {
+      _toTex();
+      _scissor(cx, cy, r);
+      gl.uniform2f(DLOC.center, cx, cy);
+      gl.uniform1f(DLOC.radius, r);
+      gl.uniform1f(DLOC.alpha, val / 255);
+      gl.uniform1i(DLOC.shape, 0);
+      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+      gl.disable(gl.SCISSOR_TEST);
+    }
+
+    /** 画矩形: 矩形区域内 alpha 覆盖为 val. 引用: fillRect. */
+    function fillRect(x0, y0, x1, y1, val) {
+      _toTex();
+      var xa = Math.max(0, Math.min(x0, x1)), xb = Math.min(W - 1, Math.max(x0, x1));
+      var ya = Math.max(0, Math.min(y0, y1)), yb = Math.min(H - 1, Math.max(y0, y1));
+      var sx = Math.max(0, Math.floor(xa));
+      var sy = Math.max(0, Math.floor(H - yb - 1));
+      var sw = Math.min(W - sx, Math.ceil(xb - xa + 2));
+      var sh = Math.min(H - sy, Math.ceil(yb - ya + 2));
+      gl.enable(gl.SCISSOR_TEST);
+      gl.scissor(sx, sy, sw, sh);
+      gl.uniform1f(DLOC.alpha, val / 255);
+      gl.uniform1i(DLOC.shape, 1);
+      gl.uniform4f(DLOC.rect, x0, y0, x1, y1);
+      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+      gl.disable(gl.SCISSOR_TEST);
+    }
+
+    /** 全清(alpha=0). 引用: btn-clear / _initAlphaCanvas. */
+    function clear() {
+      gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+      gl.viewport(0, 0, W, H);
+      gl.clearColor(0, 0, 0, 0);
+      gl.clear(gl.COLOR_BUFFER_BIT);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    }
+
+    /** 全填充 alpha=val. 引用: btn-fill / btn-default / _initAlphaCanvas. */
+    function fill(val) {
+      gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+      gl.viewport(0, 0, W, H);
+      gl.clearColor(1, 1, 1, val / 255);
+      gl.clear(gl.COLOR_BUFFER_BIT);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    }
+
+    /** 上传 RGB 图片到 RGB 纹理. 引用: _applyCurrent. */
+    function loadRGB(image) {
+      gl.bindTexture(gl.TEXTURE_2D, texRGB);
+      gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, image);
+      gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+    }
+
+    /** 上传蒙版 Image/Canvas 到 alpha 纹理. 引用: _initAlphaCanvas. */
+    function loadAlpha(image) {
+      gl.bindTexture(gl.TEXTURE_2D, texAlpha);
+      gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, image);
+      gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+    }
+
+    /**
+     * 读取 alpha 通道数据(y 翻转为 Canvas 坐标). 引用: doSave.
+     * @returns {Uint8Array} W*H 的 alpha 值数组.
+     */
+    function readAlpha() {
+      gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+      var pixels = new Uint8Array(W * H * 4);
+      gl.readPixels(0, 0, W, H, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      var alpha = new Uint8Array(W * H);
+      for (var y = 0; y < H; y++)
+        for (var x = 0; x < W; x++)
+          alpha[y * W + x] = pixels[(H - 1 - y) * W * 4 + x * 4 + 3];
+      return alpha;
+    }
+
+    /**
+     * 合成 RGB 纹理与 alpha 纹理到 canvas. 引用: _doRender.
+     */
+    function render() {
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      gl.viewport(0, 0, W, H);
+      gl.disable(gl.BLEND);
+      _bindQuad(progShow);
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, texRGB);
+      gl.uniform1i(SLOC.rgb, 0);
+      gl.activeTexture(gl.TEXTURE1);
+      gl.bindTexture(gl.TEXTURE_2D, texAlpha);
+      gl.uniform1i(SLOC.alpha, 1);
+      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+    }
+
+    return {
+      init: init, resize: resize, loadRGB: loadRGB, loadAlpha: loadAlpha,
+      stampDisc: stampDisc, fillRect: fillRect, clear: clear, fill: fill,
+      readAlpha: readAlpha, render: render,
+      get canvas() { return canvas; }, get w() { return W; }, get h() { return H; }
+    };
+  })();
   // 画布背景: checker 棋盘格 / white 纯白 / black 纯黑 / custom 自定义色(CSS 背景实现)
   var _bgStyle = 'checker', _bgColor = '#ffffff';
   var PRELOAD_RADIUS = 15;
@@ -33,7 +262,7 @@
   }
 
   var canvas = document.getElementById('paint-canvas');
-  var ctx = canvas.getContext('2d');
+  AlphaGL.init(canvas, 1, 1);
   var wrap = document.getElementById('canvas-wrap');
   var _brushPreview = document.getElementById('brush-preview');
   var _bgStyleEl = document.getElementById('bg-style');
@@ -102,19 +331,15 @@
    * Callers: loadIndex(缓存命中与加载完成).
    */
   function _initAlphaCanvas(cur) {
-    cur.alpha = document.createElement('canvas');
-    cur.alpha.width = cur.w; cur.alpha.height = cur.h;
-    var ctx = cur.alpha.getContext('2d');
+    if (AlphaGL.w !== cur.w || AlphaGL.h !== cur.h) AlphaGL.resize(cur.w, cur.h);
+    cur.alpha = AlphaGL.canvas;
     if (cur.item.has_mask) {
-      ctx.drawImage(cur.mask, 0, 0);
+      AlphaGL.loadAlpha(cur.mask);
     } else {
       var value = parseInt(document.getElementById('default-alpha').value);
       _defaultAlpha = Number.isNaN(value) ? 255 : value;
-      ctx.clearRect(0, 0, cur.w, cur.h);
-      ctx.globalAlpha = _defaultAlpha / 255;
-      ctx.fillStyle = '#fff';
-      ctx.fillRect(0, 0, cur.w, cur.h);
-      ctx.globalAlpha = 1;
+      AlphaGL.clear();
+      if (_defaultAlpha > 0) AlphaGL.fill(_defaultAlpha);
     }
   }
 
@@ -125,7 +350,7 @@
   function _applyCurrent(cur) {
     _cur = cur;
     _calcBrush(); _updateBrushUI();
-    invalidateScaledCache();
+    AlphaGL.loadRGB(cur.rgbImg);
     fitCanvas(); _scheduleRender(); updateNav();
   }
 
@@ -278,13 +503,7 @@
     _scale = Math.min(cw / _cur.w, ch / _cur.h);
     _viewW = Math.max(1, Math.floor(_cur.w * _scale));
     _viewH = Math.max(1, Math.floor(_cur.h * _scale));
-    // 缓冲保持原图像素；CSS 缩小显示，交给浏览器缩放（与 <img> 同路径，避免先缩后画发糊）
-    if (canvas.width !== _cur.w || canvas.height !== _cur.h) {
-      canvas.width = _cur.w;
-      canvas.height = _cur.h;
-      invalidateScaledCache();
-    }
-    // 居中由 .paint-canvas-wrap 的 flex 负责, JS 只算适配宽高
+    AlphaGL.resize(_cur.w, _cur.h);
     canvas.style.width = _viewW + 'px';
     canvas.style.height = _viewH + 'px';
     canvas.style.imageRendering = 'auto';
@@ -303,30 +522,45 @@
     }
   }
 
-  function invalidateScaledCache() {
-    _rgbScaledCanvas = null;
-    _compCanvas = null;
-  }
-
-  function _ensureRgbFull() {
+  function _doRender() {
     var cur = _cur;
-    if (!cur || !cur.rgbImg) return;
-    // 以来源引用做缓存键: 同尺寸的不同图片也不会串用旧缓冲
-    if (_rgbScaledCanvas && _rgbScaledCanvas._src === cur.rgbImg) return;
-    _rgbScaledCanvas = document.createElement('canvas');
-    _rgbScaledCanvas.width = cur.w;
-    _rgbScaledCanvas.height = cur.h;
-    _rgbScaledCanvas._src = cur.rgbImg;
-    var rctx = _rgbScaledCanvas.getContext('2d');
-    // 预览已压缩(小于原尺寸), 必须缩放铺满画布, 否则只画在左上角
-    rctx.drawImage(cur.rgbImg, 0, 0, cur.w, cur.h);
+    if (!cur || !cur.rgbImg || !cur.alpha) return;
+    AlphaGL.render();
+    _updateLinePreview();
   }
 
-  /**
-   * 以 CSS 背景实现画布背景(蒙版透明区透过): 棋盘格按默认 alpha 调暗, 屏幕固定 12px/格,
-   * 纯色/自定义按所选颜色. CSS 图案按屏幕像素渲染, 随显示缩放自动适配,
-   * 相比 JS 生成整幅原分辨率棋盘画布不占内存. Callers: 初始化、bg-style/bg-color/default-alpha 变化.
-   */
+  // SVG 红线预览(叠加在 canvas 上方, 不受 alpha/mask 影响). 引用: _doRender.
+  var _lineSvg = null;
+  function _updateLinePreview() {
+    if (!_lineSvg) {
+      _lineSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      _lineSvg.style.position = 'absolute';
+      _lineSvg.style.left = '0';
+      _lineSvg.style.top = '0';
+      _lineSvg.style.width = '100%';
+      _lineSvg.style.height = '100%';
+      _lineSvg.style.pointerEvents = 'none';
+      _lineSvg.style.zIndex = '10';
+      wrap.appendChild(_lineSvg);
+    }
+    if (!_lineMode || !_lineStart || !_cur || !_mouseScreen) {
+      _lineSvg.style.display = 'none';
+      return;
+    }
+    _lineSvg.style.display = '';
+    var wrapRect = wrap.getBoundingClientRect();
+    var canvasRect = canvas.getBoundingClientRect();
+    var scale = canvasRect.width / Math.max(1, _cur.w);
+    var x1 = canvasRect.left - wrapRect.left + (_lineStart[0] + 0.5) * scale;
+    var y1 = canvasRect.top - wrapRect.top + (_lineStart[1] + 0.5) * scale;
+    var x2 = _mouseScreen[0] - wrapRect.left;
+    var y2 = _mouseScreen[1] - wrapRect.top;
+    var lw = Math.max(1, _brushRadius * 2 * scale);
+    _lineSvg.setAttribute('viewBox', '0 0 ' + wrapRect.width + ' ' + wrapRect.height);
+    _lineSvg.innerHTML =
+      '<line x1="' + x1 + '" y1="' + y1 + '" x2="' + x2 + '" y2="' + y2 +
+      '" stroke="rgba(255,0,0,0.3)" stroke-width="' + lw + '" stroke-linecap="round"/>';
+  }
   function _applyBackdrop() {
     if (_bgStyle === 'checker') {
       var value = parseInt(document.getElementById('default-alpha').value);
@@ -340,39 +574,6 @@
     }
   }
 
-  function _doRender() {
-    var cur = _cur;
-    if (!cur || !cur.rgbImg || !cur.alpha) return;
-    _ensureRgbFull();
-
-    if (!_compCanvas || _compCanvas.width !== cur.w || _compCanvas.height !== cur.h) {
-      _compCanvas = document.createElement('canvas');
-      _compCanvas.width = cur.w;
-      _compCanvas.height = cur.h;
-    }
-    var cctx = _compCanvas.getContext('2d');
-    cctx.globalCompositeOperation = 'source-over';
-    cctx.clearRect(0, 0, cur.w, cur.h);
-    cctx.drawImage(_rgbScaledCanvas, 0, 0);
-    cctx.globalCompositeOperation = 'destination-in';
-    cctx.drawImage(cur.alpha, 0, 0);
-
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.clearRect(0, 0, cur.w, cur.h);
-    // 蒙版透明区透过 CSS 背景显示(棋盘格/纯色), 画布只负责图像+蒙版合成
-    ctx.drawImage(_compCanvas, 0, 0);
-    // shift 直线模式: 半透明红线预览落笔到抬笔的走向
-    if (_lineMode && _lineStart && _lineEnd) {
-      ctx.strokeStyle = 'rgba(255, 0, 0, 0.55)';
-      ctx.lineWidth = Math.max(1, _brushRadius * 2);
-      ctx.lineCap = 'round';
-      ctx.beginPath();
-      ctx.moveTo(_lineStart[0], _lineStart[1]);
-      ctx.lineTo(_lineEnd[0], _lineEnd[1]);
-      ctx.stroke();
-    }
-  }
-
   // ---- 笔刷预览 ----
   function _updateBrushPreview() {
     if (_tool !== 'brush' || !_mouseScreen || !_cur) {
@@ -380,7 +581,11 @@
     }
     var wrapRect = wrap.getBoundingClientRect();
     var canvasRect = canvas.getBoundingClientRect();
-    var mx = _mouseScreen[0] - wrapRect.left, my = _mouseScreen[1] - wrapRect.top;
+    // 经 screenToOrig 钳位到画布内再转回屏幕坐标, 与实际绘制位置一致
+    var orig = screenToOrig(_mouseScreen[0], _mouseScreen[1]);
+    var sx = canvasRect.left + (orig[0] + 0.5) / _cur.w * canvasRect.width;
+    var sy = canvasRect.top + (orig[1] + 0.5) / _cur.h * canvasRect.height;
+    var mx = sx - wrapRect.left, my = sy - wrapRect.top;
     var r = _brushRadius * (canvasRect.width / Math.max(1, _cur.w));
     if (r < 2) { _brushPreview.style.display = 'none'; return; }
     _brushPreview.style.display = 'block';
@@ -401,24 +606,8 @@
   }
 
   function stampDisc(cx, cy, r, val) {
-    var cur = _cur;
-    if (!cur || !cur.alpha) return;
-    var ctx2 = cur.alpha.getContext('2d');
-    if (val === 0) {
-      ctx2.globalCompositeOperation = 'destination-out';
-      ctx2.fillStyle = '#fff';
-      ctx2.beginPath();
-      ctx2.arc(cx, cy, r, 0, Math.PI * 2);
-      ctx2.fill();
-      ctx2.globalCompositeOperation = 'source-over';
-    } else {
-      ctx2.globalAlpha = val / 255;
-      ctx2.fillStyle = '#fff';
-      ctx2.beginPath();
-      ctx2.arc(cx, cy, r, 0, Math.PI * 2);
-      ctx2.fill();
-      ctx2.globalAlpha = 1;
-    }
+    if (!_cur || !_cur.alpha) return;
+    AlphaGL.stampDisc(cx, cy, r, val);
   }
 
   function strokeLine(x0, y0, x1, y1, r, val) {
@@ -430,19 +619,8 @@
   }
 
   function fillRect(x0, y0, x1, y1, val) {
-    var cur = _cur;
-    if (!cur || !cur.alpha) return;
-    var xa = Math.max(0, Math.min(x0, x1)), xb = Math.min(cur.w-1, Math.max(x0, x1));
-    var ya = Math.max(0, Math.min(y0, y1)), yb = Math.min(cur.h-1, Math.max(y0, y1));
-    var ctx2 = cur.alpha.getContext('2d');
-    if (val === 0) {
-      ctx2.clearRect(xa, ya, xb - xa + 1, yb - ya + 1);
-    } else {
-      ctx2.globalAlpha = val / 255;
-      ctx2.fillStyle = '#fff';
-      ctx2.fillRect(xa, ya, xb - xa + 1, yb - ya + 1);
-      ctx2.globalAlpha = 1;
-    }
+    if (!_cur || !_cur.alpha) return;
+    AlphaGL.fillRect(x0, y0, x1, y1, val);
   }
 
   /**
@@ -549,20 +727,20 @@
     var img = cur.item;
     // 全新图片即使没有动笔，也要写出当前默认 alpha mask。
     if (!force && !cur.modified && img.has_mask) return;
-    // 从蒙版画布读取 alpha(唯一权威), 供上传 RGB 纯色与缓存替换使用
-    var ctx = cur.alpha.getContext('2d');
-    var imgData = ctx.getImageData(0, 0, cur.w, cur.h);
-    var alphaArr = new Uint8Array(cur.w * cur.h);
-    for (var i = 0; i < alphaArr.length; i++) alphaArr[i] = imgData.data[i * 4 + 3];
-    // 上传时把 RGB 统一为纯色(黑), 蒙版只在 A 通道(后端仅取 A), 避免传输混合 RGB
+    // 从 WebGL 纹理读取 alpha(唯一权威), 构造 RGB=0 的 PNG 上传(后端仅取 A)
+    var alphaArr = AlphaGL.readAlpha();
+    var tmpCanvas = document.createElement('canvas');
+    tmpCanvas.width = cur.w; tmpCanvas.height = cur.h;
+    var tctx = tmpCanvas.getContext('2d');
+    var imgData = tctx.createImageData(cur.w, cur.h);
     for (var i = 0; i < alphaArr.length; i++) {
-      imgData.data[i * 4] = 0;
-      imgData.data[i * 4 + 1] = 0;
-      imgData.data[i * 4 + 2] = 0;
+      var j = i * 4;
+      imgData.data[j] = 0; imgData.data[j + 1] = 0; imgData.data[j + 2] = 0;
+      imgData.data[j + 3] = alphaArr[i];
     }
-    ctx.putImageData(imgData, 0, 0);
+    tctx.putImageData(imgData, 0, 0);
     return new Promise(function(resolve) {
-      cur.alpha.toBlob(function(blob) {
+      tmpCanvas.toBlob(function(blob) {
         if (!blob) { errshow('toBlob failed'); resolve(); return; }
         fetch(API.apiPath('/paint/upload-mask') + '?path=' + encodeURIComponent(img.path), {
           method: 'POST', headers: { 'Content-Type': 'image/png' }, body: blob
@@ -619,12 +797,12 @@
   });
   document.getElementById('bg-color').addEventListener('change', function() { _bgColor = this.value; _applyBackdrop(); });
   document.getElementById('btn-save').addEventListener('click', function() { doSave(true); });
-  document.getElementById('btn-clear').addEventListener('click', function() { if (_cur && _cur.alpha) { _cur.alpha.getContext('2d').clearRect(0, 0, _cur.w, _cur.h); _cur.modified = true; _scheduleRender(); } });
-  document.getElementById('btn-fill').addEventListener('click', function() { if (_cur && _cur.alpha) { var fc = _cur.alpha.getContext('2d'); fc.fillStyle = '#fff'; fc.fillRect(0, 0, _cur.w, _cur.h); _cur.modified = true; _scheduleRender(); } });
+  document.getElementById('btn-clear').addEventListener('click', function() { if (_cur && _cur.alpha) { AlphaGL.clear(); _cur.modified = true; _scheduleRender(); } });
+  document.getElementById('btn-fill').addEventListener('click', function() { if (_cur && _cur.alpha) { AlphaGL.fill(255); _cur.modified = true; _scheduleRender(); } });
   document.getElementById('btn-default').addEventListener('click', function() {
     var value = parseInt(document.getElementById('default-alpha').value);
     _defaultAlpha = Number.isNaN(value) ? 255 : value;
-    if (_cur && _cur.alpha) { var dc = _cur.alpha.getContext('2d'); dc.clearRect(0, 0, _cur.w, _cur.h); dc.globalAlpha = _defaultAlpha / 255; dc.fillStyle = '#fff'; dc.fillRect(0, 0, _cur.w, _cur.h); dc.globalAlpha = 1; _cur.modified = true; _scheduleRender(); }
+    if (_cur && _cur.alpha) { AlphaGL.clear(); if (_defaultAlpha > 0) AlphaGL.fill(_defaultAlpha); _cur.modified = true; _scheduleRender(); }
     saveConfig();
   });
   document.getElementById('default-alpha').addEventListener('change', function() { saveConfig(); _applyBackdrop(); });
