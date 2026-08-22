@@ -36,7 +36,7 @@ class VideoFrameError(RuntimeError):
     """视频无法解码或指定帧不存在.
 
     Callers:
-        - `routes/video.py`
+        - ``routes/video.py:``
     """
 
 
@@ -44,7 +44,7 @@ class VideoFrameStore:
     """视频帧读取 / 保存 / 删除与位流帧类型分析.
 
     Callers:
-        - `routes/video.py`
+        - ``routes/video.py:``
     """
 
     def __init__(self, data_dir: Path, out_dir: Path) -> None:
@@ -58,7 +58,7 @@ class VideoFrameStore:
             None
 
         Callers:
-            - `routes/video.py:video_detail`
+            - ``routes/video.py:video_detail``
         """
         self.data_dir = data_dir
         self.out_dir = out_dir
@@ -102,8 +102,8 @@ class VideoFrameStore:
             BitstreamTypes: 紧凑位流; 无缓存或损坏时为空位流.
 
         Callers:
-            - `VideoFrameStore.analyze_bitstream`
-            - `routes.video:video_detail`
+            - ``services/core/video_frame.py:VideoFrameStore.analyze_bitstream``
+            - ``routes/video.py:video_detail``
         """
         path = self._bitstream_path(video_rel)
         if not path.is_file():
@@ -130,7 +130,7 @@ class VideoFrameStore:
             BitstreamTypes: 紧凑位流, 包大小由字节量化到 KB.
 
         Callers:
-            - `VideoFrameStore.load_bitstream`
+            - ``services/core/video_frame.py:VideoFrameStore.load_bitstream``
         """
         t_chars: list[str] = []
         sizes: list[int] = []
@@ -153,8 +153,8 @@ class VideoFrameStore:
             None
 
         Callers:
-            - `VideoFrameStore.load_bitstream`
-            - `VideoFrameStore.analyze_bitstream`
+            - ``services/core/video_frame.py:VideoFrameStore.load_bitstream``
+            - ``services/core/video_frame.py:VideoFrameStore.analyze_bitstream``
         """
         d = self._cache_dir(video_rel)
         d.mkdir(parents=True, exist_ok=True)
@@ -191,7 +191,7 @@ class VideoFrameStore:
             VideoFrameError: 视频无法打开或窗口内无可用帧.
 
         Callers:
-            - `routes/video.py:video_segment`
+            - ``routes/video.py:video_segment``
         """
         path = self._video_path(video_rel)
         cap = cv2.VideoCapture(str(path))
@@ -247,8 +247,8 @@ class VideoFrameStore:
             VideoFrameError: 路径为空或越界.
 
         Callers:
-            - `VideoFrameStore.extract_frame`
-            - `VideoFrameStore.analyze_bitstream`
+            - ``services/core/video_frame.py:VideoFrameStore.extract_frame``
+            - ``services/core/video_frame.py:VideoFrameStore.analyze_bitstream``
         """
         try:
             return resolve_under(self.data_dir, video_rel)
@@ -269,8 +269,8 @@ class VideoFrameStore:
             VideoFrameError: 视频无法打开或该帧不存在.
 
         Callers:
-            - `VideoFrameStore.frame_bytes`
-            - `VideoFrameStore.save_frame`
+            - ``services/core/video_frame.py:VideoFrameStore.frame_bytes``
+            - ``services/core/video_frame.py:VideoFrameStore.save_frame``
         """
         path = self._video_path(video_rel)
         cap = cv2.VideoCapture(str(path))
@@ -312,7 +312,7 @@ class VideoFrameStore:
             VideoFrameError: 帧读取失败或编码失败.
 
         Callers:
-            - `routes/video.py:video_frame`
+            - ``routes/video.py:video_frame``
         """
         frame = self.extract_frame(video_rel, index)
         if max_size:
@@ -344,9 +344,9 @@ class VideoFrameStore:
             str: 形如 ``{stem}_frame_{index:06d}.png`` 的文件名.
 
         Callers:
-            - `services/core/video_frame.py:VideoFrameStore.save_frame`
-            - `services/core/video_frame.py:VideoFrameStore.remove_frame`
-            - `services/core/video_frame.py:VideoFrameStore.saved_indices`
+            - ``services/core/video_frame.py:VideoFrameStore.save_frame``
+            - ``services/core/video_frame.py:VideoFrameStore.remove_frame``
+            - ``services/core/video_frame.py:VideoFrameStore.saved_indices``
         """
         return FRAME_NAME_TPL.format(stem=stem, idx=index)
 
@@ -364,7 +364,7 @@ class VideoFrameStore:
             VideoFrameError: 帧读取失败.
 
         Callers:
-            - `routes/video.py:save_frame`
+            - ``routes/video.py:save_frame``
         """
         frame = self.extract_frame(video_rel, index)
         stem = Path(video_rel).stem
@@ -389,7 +389,7 @@ class VideoFrameStore:
             bool: 是否删除了文件.
 
         Callers:
-            - `routes/video.py:delete_frame`
+            - ``routes/video.py:delete_frame``
         """
         stem = Path(video_rel).stem
         dest = self.out_dir / self.frame_name(stem, index)
@@ -408,7 +408,7 @@ class VideoFrameStore:
             list[int]: 已保存的帧索引升序列表; 输出目录不存在时为空.
 
         Callers:
-            - `routes/video.py:video_detail`
+            - ``routes/video.py:video_detail``
         """
         stem = Path(video_rel).stem
         prefix = f"{stem}_frame_"
@@ -452,7 +452,7 @@ class VideoFrameStore:
             VideoFrameError: 视频无法打开或 ffprobe 失败.
 
         Callers:
-            - `routes/video.py:start_analysis`
+            - ``routes/video.py:start_analysis``
         """
         path = self._video_path(video_rel)
         cached = self.load_bitstream(video_rel)
@@ -484,7 +484,7 @@ class VideoFrameStore:
                 None
 
             Callers:
-                - `VideoFrameStore.analyze_bitstream`
+                - ``services/core/video_frame.py:VideoFrameStore.analyze_bitstream``
             """
             for raw in proc.stderr or ():
                 err_lines.append(raw.decode("utf-8", "replace").strip())
@@ -555,7 +555,7 @@ def _encode_h264_annexb(frames: list[np.ndarray], fps: float, hide_b: bool = Fal
         VideoFrameError: ffmpeg 编码失败.
 
     Callers:
-        - `VideoFrameStore.segment_bytes`
+        - ``services/core/video_frame.py:VideoFrameStore.segment_bytes``
     """
     h, w = frames[0].shape[:2]
     keyint = len(frames)

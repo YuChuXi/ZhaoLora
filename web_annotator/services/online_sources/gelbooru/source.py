@@ -1,7 +1,7 @@
 """Gelbooru 来源适配器: 实现 ``SourceClient`` 的搜索 / 下载 / 元数据.
 
 Callers:
-    - ``gelbooru/__init__.py`` (导出)
+    - ``services/online_sources/gelbooru/__init__.py:`` (导出)
 """
 
 from __future__ import annotations
@@ -35,7 +35,7 @@ class GelbooruSource(SourceClient):
         ``base.SourceClient``。
 
         Callers:
-            - `base.SourceClient:build_search_query`
+            - ``services/online_sources/framework/base.py:build_search_query``
         """
         tokens = [x for x in extra.split() if not x.lower().startswith("date:")]
         return " ".join(tokens)
@@ -46,7 +46,7 @@ class GelbooruSource(SourceClient):
         覆盖父类 ``base.SourceClient``.
 
         Callers:
-            - `routes/online_sources.py` 缩略图代理白名单检查
+            - ``routes/online_sources.py:`` 缩略图代理白名单检查
         """
         return "gelbooru.com" in url
 
@@ -57,7 +57,7 @@ class GelbooruSource(SourceClient):
         覆盖父类 ``base.SourceClient``.
 
         Callers:
-            - `GelbooruSource.search`
+            - ``services/online_sources/gelbooru/source.py:GelbooruSource.search``
         """
         if not post.file_url:
             return None
@@ -73,7 +73,7 @@ class GelbooruSource(SourceClient):
         实现 ``base.SourceClient.fetch_meta``.
 
         Callers:
-            - `routes/online_sources.py:_run_refresh`
+            - ``routes/online_sources.py:_run_refresh``
         """
         api = GelbooruClient()
         raw = await api.get_post(int(pid))
@@ -85,7 +85,7 @@ class GelbooruSource(SourceClient):
         实现 ``base.SourceClient.autocomplete``。
 
         Callers:
-            - `routes/online_sources.py:tag_suggest`
+            - ``routes/online_sources.py:tag_suggest``
         """
         api = GelbooruClient()
         return await api.autocomplete(query, limit)
@@ -97,7 +97,7 @@ class GelbooruSource(SourceClient):
         ``base.SourceClient.search``。
 
         Callers:
-            - `base.py:search_posts` / `routes/online_sources.py:search`
+            - ``services/online_sources/framework/base.py:search_posts`` / `routes/online_sources.py:search`
         """
         from services.models import BooruPost
 
@@ -141,7 +141,7 @@ class GelbooruSource(SourceClient):
             emit: 下载进度回调, 图片来源忽略 (透传签名统一).
 
         Callers:
-            - ``base.py:SourceClient.download`` (经 ``media.download_post`` 委托)
+            - ``services/online_sources/framework/base.py:SourceClient.download`` (经 ``media.download_post`` 委托)
         """
         api = GelbooruClient()
         pid = post.id
@@ -188,7 +188,7 @@ async def _categorize_gelbooru_tags(post: dict, api: GelbooruClient) -> dict:
         含 tag_string_* 字段的新 dict.
 
     Callers:
-        - ``GelbooruSource.download``
+        - ``services/online_sources/gelbooru/source.py:GelbooruSource.download``
     """
     all_names = str(post.get("tags") or "").split()
     if not all_names:

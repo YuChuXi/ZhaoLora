@@ -46,7 +46,7 @@ def dirs(request: Request) -> ScoringDirsResponse:
     """列出可评分目录与两类分数文件的就绪状态. 
 
     Callers:
-        - ``scoring.js``: 页面初始化时加载. 
+        - ``routes/scoring.py:`` : 页面初始化时加载. 
     """
     rt = get_runtime(request)
     root = rt.root
@@ -75,7 +75,7 @@ async def results(
         kind: 评分类型. 
 
     Callers:
-        - ``scoring.js``: 获取评分数据渲染画廊. 
+        - ``routes/scoring.py:`` : 获取评分数据渲染画廊. 
     """
     if kind not in ("aesthetic", "quality"):
         raise HTTPException(400, "kind 必须是 'aesthetic' 或 'quality'")
@@ -106,7 +106,7 @@ async def start(request: Request, body: StartBody) -> ScoringStartResponse:
     返回 job_id；进度通过 GET /api/jobs/{id}/events (SSE) 获取. 
 
     Callers:
-        - ``scoring.js``: 用户点击"开始"按钮. 
+        - ``routes/scoring.py:`` : 用户点击"开始"按钮. 
     """
     kind = body.kind
     if kind not in ("aesthetic", "quality"):
@@ -124,7 +124,7 @@ async def start(request: Request, body: StartBody) -> ScoringStartResponse:
         """工作线程入口. 
 
         Callers:
-            - ``JobManager.submit``
+            - ``services/core/jobs.py:JobManager.submit``
         """
         def on_update() -> None:
             emit(prog.snapshot())

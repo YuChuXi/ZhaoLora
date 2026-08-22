@@ -1,13 +1,17 @@
 """长任务编排: asyncio.Lock 串行, 整段 asyncio.to_thread, Server-Sent Events 推送进度.
 
 Callers:
-    - `routes/meta.py:find_active_job` / `job_events` / `job_cancel`
-    - `routes/scoring.py:start` (via ``submit``)
-    - `routes/tagging.py:start` (via ``submit``)
-    - `routes/dedupe.py:scan_duplicate` (via ``submit``)
-    - `routes/tag_stats.py:clean` / `batch_edit` (via ``submit``)
-    - `routes/online_sources.py:batch_start` / `refresh_metadata` (via ``submit``)
-    - `routes/birefnet.py:birefnet_mask` (via ``submit``)
+    - ``routes/meta.py:find_active_job``
+    - ``routes/meta.py:job_events``
+    - ``routes/meta.py:job_cancel``
+    - ``routes/scoring.py:start`` (via ``submit``)
+    - ``routes/tagging.py:start`` (via ``submit``)
+    - ``routes/dedupe.py:scan_duplicates`` (via ``submit``)
+    - ``routes/tag_stats.py:clean``
+    - ``routes/tag_stats.py:batch_edit`` (via ``submit``)
+    - ``routes/online_sources.py:batch_start``
+    - ``routes/online_sources.py:refresh_metadata`` (via ``submit``)
+    - ``routes/birefnet.py:mask_generate`` (via ``submit``)
 """
 
 from __future__ import annotations
@@ -30,8 +34,8 @@ class Job:
     """单个长任务状态.
 
     Callers:
-        - `services/core/jobs.py:JobManager`
-        - `services/core/jobs.py:JobManager.event_stream` (SSE 事件流)
+        - ``services/core/jobs.py:JobManager``
+        - ``services/core/jobs.py:JobManager.event_stream`` (SSE 事件流)
     """
 
     id: str
@@ -50,8 +54,8 @@ class JobManager:
     通过 ``group`` 参数实现互斥分组: 同一组内任务串行, 不同组之间可并行.
 
     Callers:
-        - `server.py:main` (挂到 ``app.state.jobs``)
-        - `routes/meta.py:find_active_job` / `job_events` / `job_cancel`
+        - ``server.py:main`` (挂到 ``app.state.jobs``)
+        - ``routes/meta.py:find_active_job`` / `job_events` / `job_cancel`
     """
 
     def __init__(self) -> None:
@@ -61,7 +65,7 @@ class JobManager:
             None
 
         Callers:
-            - `server.py:main`
+            - ``server.py:main``
         """
         self._locks: dict[str, asyncio.Lock] = {}
         self._jobs: dict[str, Job] = {}
@@ -76,7 +80,7 @@ class JobManager:
             Job | None: 任务对象; 不存在时为 None.
 
         Callers:
-            - `routes/meta.py:job_events`
+            - ``routes/meta.py:job_events``
         """
         return self._jobs.get(job_id)
 
@@ -96,8 +100,8 @@ class JobManager:
             Job | None: 最近一个未结束任务; 无则 None.
 
         Callers:
-            - `routes/meta.py:find_active_job`
-            - `routes/online_sources.py:_submit_video_download` / `batch_start` / `batch_params`
+            - ``routes/meta.py:find_active_job``
+            - ``routes/online_sources.py:_submit_video_download`` / `batch_start` / `batch_params`
         """
         found: Job | None = None
         for job in self._jobs.values():
@@ -137,13 +141,15 @@ class JobManager:
             str: 任务 ID.
 
         Callers:
-            - `dataset/runtime.py:DatasetRegistry.ensure`
-            - `routes/scoring.py:start`
-            - `routes/tagging.py:start`
-            - `routes/dedupe.py:scan_duplicate`
-            - `routes/tag_stats.py:clean` / `batch_edit`
-            - `routes/online_sources.py:batch_start` / `booru_refresh_metadata`
-            - `routes/birefnet.py:birefnet_mask`
+            - ``services/dataset/runtime.py:DatasetRegistry.ensure``
+            - ``routes/scoring.py:start``
+            - ``routes/tagging.py:start``
+            - ``routes/dedupe.py:scan_duplicates``
+            - ``routes/tag_stats.py:clean``
+            - ``routes/tag_stats.py:batch_edit``
+            - ``routes/online_sources.py:batch_start``
+            - ``routes/online_sources.py:refresh_metadata``
+            - ``routes/birefnet.py:mask_generate``
         """
         job_id = uuid.uuid4().hex
         job = Job(
@@ -178,7 +184,7 @@ class JobManager:
             KeyError: 任务不存在.
 
         Callers:
-            - `routes/meta.py:job_cancel`
+            - ``routes/meta.py:job_cancel``
         """
         job = self._jobs.get(job_id)
         if job is None:
@@ -256,7 +262,7 @@ class JobManager:
                 None
 
             Callers:
-                - `services/core/jobs.py:JobManager._execute` (作为 ``emit`` 回调传入 ``run``)
+                - ``services/core/jobs.py:JobManager._execute`` (作为 ``emit`` 回调传入 ``run``)
             """
             self._emit_from_thread(loop, job, snap)
 
@@ -282,7 +288,7 @@ class JobManager:
                     JobResult | None: ``run`` 的返回值.
 
                 Callers:
-                    - `services/core/jobs.py:JobManager._execute` (经 ``asyncio.to_thread`` 调度)
+                    - ``services/core/jobs.py:JobManager._execute`` (经 ``asyncio.to_thread`` 调度)
                 """
                 return run(emit)
 
@@ -322,7 +328,7 @@ class JobManager:
             AsyncIterator[str]: SSE 文本块迭代器.
 
         Callers:
-            - `routes/meta.py:job_events`
+            - ``routes/meta.py:job_events``
         """
         job = self._jobs.get(job_id)
         if job is None:

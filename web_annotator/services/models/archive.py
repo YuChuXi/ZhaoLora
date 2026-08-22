@@ -1,9 +1,9 @@
 """归档任务数据模型.
 
 Callers:
-    - ``services/models/__init__.py`` (包导出 ``ArchivedTask`` / ``ArchivedListResponse``)
-    - ``services/state/archiver.py`` (归档执行读写 ``ArchivedTask``)
-    - ``services/models/jobs.py`` (``JobResult`` 类型联合引用 ``ArchivedTask``)
+    - ``services/models/__init__.py:`` (包导出 ``ArchivedTask`` / ``ArchivedListResponse``)
+    - ``services/state/archiver.py:`` (归档执行读写 ``ArchivedTask``)
+    - ``services/models/jobs.py:`` (``JobResult`` 类型联合引用 ``ArchivedTask``)
     - ``routes/tasks.py:list_archived`` (返回 ``ArchivedListResponse``)
 """
 

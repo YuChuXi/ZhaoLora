@@ -4,7 +4,7 @@
 (``services/online_sources/bilibili/source.py``) 解析动态并将每张图映射为一张卡片.
 
 Callers:
-    - ``services.online_sources.bilibili.client``
+    - ``services/online_sources/bilibili/client.py:`` 模块
 """
 
 from __future__ import annotations

@@ -42,7 +42,7 @@ def find_active_job(
         JobSnapshot: 含 job_id; 无活跃任务时 status="idle".
 
     Callers:
-        - ``api.js``: ``findActiveJob`` 通用重连.
+        - ``api.js`` : ``findActiveJob`` 通用重连.
     """
     mgr = jobs(request)
     job = mgr.find_active(kind=kind, dataset=dataset)

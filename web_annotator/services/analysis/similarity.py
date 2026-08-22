@@ -1,8 +1,8 @@
 """色调指纹: 优先读缩略图, 磁盘缓存, 矩阵批量比对. 
 
 Callers:
-    - ``routes/images.py``: 相似图片查询
-    - ``services/dataset/runtime.py:DatasetRuntime``: 数据集颜色索引
+    - ``routes/images.py:`` : 相似图片查询
+    - ``services/dataset/runtime.py:DatasetRuntime`` : 数据集颜色索引
 """
 
 from __future__ import annotations
@@ -34,7 +34,7 @@ def fingerprint_image(im: Image.Image) -> np.ndarray:
         np.ndarray: 归一化指纹向量, 形状 ``(H_BINS + S_BINS + V_BINS + 6,)``. 
 
     Callers:
-        - ``fingerprint_file``
+        - ``services/analysis/similarity.py:fingerprint_file``
     """
     small = im.resize((_FP_SIZE, _FP_SIZE), Image.Resampling.BILINEAR)
     arr = np.asarray(small, dtype=np.float32) * (1.0 / 255.0)
@@ -93,8 +93,8 @@ def fingerprint_file(path: Path) -> np.ndarray | None:
         np.ndarray | None: 归一化指纹向量, 或解码失败时为 None. 
 
     Callers:
-        - ``ColorIndex.fingerprint_for``
-        - ``ColorIndex.ensure_many``
+        - ``services/analysis/similarity.py:ColorIndex.fingerprint_for``
+        - ``services/analysis/similarity.py:ColorIndex.ensure_many``
         - ``routes/images.py:similar_images``
     """
     if not path.is_file():
@@ -114,7 +114,7 @@ def distance(a: np.ndarray, b: np.ndarray) -> float:
         float: 欧氏距离. 
 
     Callers:
-        - ``ColorIndex.similar_matrix``
+        - ``services/analysis/similarity.py:ColorIndex.similar_matrix``
     """
     return float(np.linalg.norm(a - b))
 
@@ -137,7 +137,7 @@ class ColorIndex:
             cache_dir: npz 缓存目录；为 None 则仅内存模式. 
 
         Callers:
-            - ``DatasetRuntime.__init__``
+            - ``routes/images.py:_color_index``
         """
         self._lock = threading.RLock()
         self._fps: dict[str, tuple[float, np.ndarray]] = {}
@@ -182,8 +182,8 @@ class ColorIndex:
             fp: 指纹向量. 
 
         Callers:
-            - ``ColorIndex.fingerprint_for``
-            - ``ColorIndex.ensure_many``
+            - ``services/analysis/similarity.py:ColorIndex.fingerprint_for``
+            - ``services/analysis/similarity.py:ColorIndex.ensure_many``
             - ``routes/images.py:similar_images``
         """
         with self._lock:
@@ -194,8 +194,8 @@ class ColorIndex:
         """从 npz 文件加载缓存到内存. 
 
         Callers:
-            - ``__init__``
-            - ``set_cache_dir``
+            - ``services/analysis/similarity.py:__init__``
+            - ``services/analysis/similarity.py:set_cache_dir``
         """
         if not self._cache_path or not self._cache_path.is_file():
             return
@@ -210,7 +210,7 @@ class ColorIndex:
         """将内存中的指纹原子写入 npz 文件(仅在 dirty 时生效). 
 
         Callers:
-            - ``ensure_many``
+            - ``services/analysis/similarity.py:ensure_many``
         """
         with self._lock:
             if not self._dirty or not self._cache_path:
@@ -245,7 +245,7 @@ class ColorIndex:
             np.ndarray | None: 指纹向量, 或文件缺失/解码失败时为 None. 
 
         Callers:
-            - ``ensure_many``
+            - ``services/analysis/similarity.py:ensure_many``
         """
         path = data_dir / rel
         if not path.is_file():
@@ -308,7 +308,7 @@ class ColorIndex:
                 文件缺失或解码失败时为 ``None``.
 
             Callers:
-                - ``similarity:ColorIndex.ensure_many``
+                - ``services/analysis/similarity.py:ColorIndex.ensure_many``
             """
             path = data_dir / rel
             if not path.is_file():

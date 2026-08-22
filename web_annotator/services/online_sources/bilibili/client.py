@@ -11,7 +11,7 @@
 兼容浏览器防盗链代理。
 
 Callers:
-    - ``services/online_sources/bilibili/source.py``
+    - ``services/online_sources/bilibili/source.py:``
     - ``routes/online_sources.py:proxy_image`` (图片代理)
 """
 
@@ -80,7 +80,7 @@ async def _desktop_detail(
         RuntimeError: 重试耗尽或接口返回其他非 0 code。
 
     Callers:
-        - ``bilibili/client.py:resolve_image``
+        - ``services/online_sources/bilibili/client.py:resolve_image``
     """
     last_exc: Exception | None = None
     for attempt in range(1, retries + 1):
@@ -181,7 +181,7 @@ def _find_module(item: dict[str, Any], key: str) -> dict[str, Any] | None:
         dict[str, Any] | None: 命中的模块; 不存在时返回 None.
 
     Callers:
-        - ``bilibili/client.py:_parse_item``
+        - ``services/online_sources/bilibili/client.py:_parse_item``
     """
     modules = item.get("modules")
     if isinstance(modules, dict):
@@ -206,7 +206,7 @@ def _extract_author(module_author: dict[str, Any] | None) -> Author | None:
         Author | None: 作者信息; mid 与 name 均缺失时返回 None.
 
     Callers:
-        - ``bilibili/client.py:_parse_item``
+        - ``services/online_sources/bilibili/client.py:_parse_item``
     """
     if not isinstance(module_author, dict):
         return None
@@ -232,7 +232,7 @@ def _extract_text(module_dynamic: dict[str, Any] | None) -> str:
         str: 正文文本 (空白折叠为单空格); 无文本时返回空串.
 
     Callers:
-        - ``bilibili/client.py:_parse_item``
+        - ``services/online_sources/bilibili/client.py:_parse_item``
     """
     text = ""
     if not isinstance(module_dynamic, dict):
@@ -258,7 +258,7 @@ def _extract_images(module_dynamic: dict[str, Any] | None) -> list[ImageInfo]:
         list[ImageInfo]: 图片信息列表; 无图时返回空列表.
 
     Callers:
-        - ``bilibili/client.py:_parse_item``
+        - ``services/online_sources/bilibili/client.py:_parse_item``
     """
     if not isinstance(module_dynamic, dict):
         return []
@@ -295,7 +295,7 @@ def _extract_video(module_dynamic: dict[str, Any] | None) -> VideoInfo | None:
         VideoInfo | None: 视频稿件信息; 非视频动态时返回 None.
 
     Callers:
-        - ``bilibili/client.py:_parse_item``
+        - ``services/online_sources/bilibili/client.py:_parse_item``
     """
     if not isinstance(module_dynamic, dict):
         return None
@@ -323,7 +323,7 @@ def _extract_topic(module_dynamic: dict[str, Any] | None) -> TopicInfo | None:
         TopicInfo | None: 话题信息; 无有效话题时返回 None.
 
     Callers:
-        - ``bilibili/client.py:_parse_item``
+        - ``services/online_sources/bilibili/client.py:_parse_item``
     """
     if not isinstance(module_dynamic, dict):
         return None
@@ -347,7 +347,7 @@ def _extract_stat(module_stat: dict[str, Any] | None) -> StatInfo | None:
         StatInfo | None: 统计信息; 三项计数均缺失时返回 None.
 
     Callers:
-        - ``bilibili/client.py:_parse_item``
+        - ``services/online_sources/bilibili/client.py:_parse_item``
     """
     if not isinstance(module_stat, dict):
         return None
@@ -374,7 +374,7 @@ def _forwarded_item(item: dict[str, Any]) -> dict[str, Any] | None:
         dict[str, Any] | None: 被转发的原始条目; 非转发动态时返回 None.
 
     Callers:
-        - ``bilibili/client.py:_parse_item``
+        - ``services/online_sources/bilibili/client.py:_parse_item``
     """
     orig = item.get("orig")
     if isinstance(orig, dict):
@@ -457,7 +457,7 @@ async def fetch_dynamics(
         游标为空串表示本页无后续游标。
 
     Callers:
-        - ``bilibili/source.py:search_session``
+        - ``services/online_sources/bilibili/source.py:search_session``
     """
     u = user.User(uid=uid)
     data = await _retry_coro(
@@ -495,7 +495,7 @@ async def resolve_image(dynamic_id: str, index: int) -> tuple[str, str]:
         ValueError: 动态无详情、无可用图片或序号越界。
 
     Callers:
-        - ``bilibili/source.py:fetch_meta``
+        - ``services/online_sources/bilibili/source.py:fetch_meta``
     """
     record = _dynamic_cache.get(dynamic_id)
     if record is None:
@@ -541,7 +541,7 @@ async def fetch_bili_bytes(
         NetworkError: 网络或 HTTP 状态错误 (重试后仍失败)。
 
     Callers:
-        - ``bilibili/source.py:download``
+        - ``services/online_sources/bilibili/source.py:download``
     """
     last_exc: NetworkError | None = None
     for attempt in range(1, retries + 1):

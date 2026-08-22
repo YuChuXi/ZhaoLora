@@ -75,7 +75,7 @@ def similarity_histogram(values, algorithm: str) -> str | None:
         str | None: ``data:image/png;base64,...`` 形式的 data URL; 无可绘制数据或 matplotlib 缺失时返回 None.
 
     Callers:
-        - ``routes.dedupe.scan_duplicates`` (内部 ``run`` 闭包, 用于扫描结果直方图)
+        - ``routes/dedupe.py:scan_duplicates`` (内部 ``run`` 闭包, 用于扫描结果直方图)
     """
     try:
         import matplotlib
@@ -202,7 +202,7 @@ async def scan_duplicates(request: Request, body: ScanBody) -> JobSubmitResponse
             DedupeScanResult: 重复组列表与统计, 同时通过 ``emit`` 发送 done 快照.
 
         Callers:
-            - ``routes.dedupe.scan_duplicates`` (作为 ``run`` 参数传入 ``services.core.jobs.JobManager.submit``)
+            - ``routes/dedupe.py:scan_duplicates`` (作为 ``run`` 参数传入 ``services.core.jobs.JobManager.submit``)
         """
         emit(
             JobSnapshot(
@@ -237,8 +237,8 @@ async def scan_duplicates(request: Request, body: ScanBody) -> JobSubmitResponse
                     total (int): 总图片数.
 
                 Callers:
-                    - ``services.analysis.dedupe.extract_fft_features`` (作为 ``on_step`` 回调)
-                    - ``services.analysis.dedupe.extract_orb_features`` (作为 ``on_step`` 回调)
+                    - ``services/analysis/dedupe.py:extract_fft_features`` (作为 ``on_step`` 回调)
+                    - ``services/analysis/dedupe.py:extract_orb_features`` (作为 ``on_step`` 回调)
                 """
                 feat_p.done = done
                 if done % 10 == 0 or done == total:

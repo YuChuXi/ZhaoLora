@@ -47,7 +47,7 @@ def _services(request: Request) -> tuple[Path, bool]:
         ``(root, is_ready)``; 数据集无 video 目录时 ``is_ready`` 为 False.
 
     Callers:
-        - `routes/video.py:list_videos`
+        - ``routes/video.py:list_videos``
     """
     rt = get_runtime(request)
     root = rt.root
@@ -64,12 +64,12 @@ def _stores(request: Request):
         ``(VideoFrameStore, cover_dir)``.
 
     Callers:
-        - `routes/video.py:video_detail`
-        - `routes/video.py:video_frame`
-        - `routes/video.py:video_segment`
-        - `routes/video.py:save_frame`
-        - `routes/video.py:delete_frame`
-        - `routes/video.py:start_analysis`
+        - ``routes/video.py:video_detail``
+        - ``routes/video.py:video_frame``
+        - ``routes/video.py:video_segment``
+        - ``routes/video.py:save_frame``
+        - ``routes/video.py:delete_frame``
+        - ``routes/video.py:start_analysis``
     """
     rt = get_runtime(request)
     root = rt.root
@@ -88,8 +88,8 @@ async def list_videos(
     封面不在此处批量生成; 前端经 ``/video/cover`` 按需请求。
 
     Callers:
-        - `static/js/booru_filter.js` 视频来源
-        - `static/js/video_extract.js` A/D 视频切换
+        - ``static/js/booru_filter.js:`` 视频来源
+        - ``static/js/video_extract.js:`` A/D 视频切换
     """
     root, ready = _services(request)
     if not ready:
@@ -110,7 +110,7 @@ async def video_cover(
     """返回视频封面图(missing 时即时生成).
 
     Callers:
-        - `static/js/booru_filter.js` 视频卡片封面
+        - ``static/js/booru_filter.js:`` 视频卡片封面
     """
     root = get_runtime(request).root
     video_path = resolve_path(root, path)
@@ -134,7 +134,7 @@ async def video_detail(
     """返回视频抽帧页详情(宽高/总帧数/已保存帧/位流类型).
 
     Callers:
-        - `static/js/video_extract.js` 加载视频详情
+        - ``static/js/video_extract.js:`` 加载视频详情
     """
     root = get_runtime(request).root
     resolve_path(root, path)  # 校验路径合法
@@ -162,7 +162,7 @@ async def video_frame(
     """按帧索引返回一帧 JPEG, 可指定 ``size`` 等比缩略最长边.
 
     Callers:
-        - `static/js/video_extract.js` 缩略图条
+        - ``static/js/video_extract.js:`` 缩略图条
     """
     rt = get_runtime(request)
     resolve_path(rt.root, path)
@@ -195,7 +195,7 @@ async def video_segment(
     ``X-Frame-Count`` 响应头告知前端(视频末尾可能少于请求数).
 
     Callers:
-        - `static/js/video_extract.js` 主预览 WebCodecs 解码
+        - ``static/js/video_extract.js:`` 主预览 WebCodecs 解码
     """
     rt = get_runtime(request)
     resolve_path(rt.root, path)
@@ -218,7 +218,7 @@ async def save_frame(request: Request, body: FrameSaveBody) -> FrameSaveResponse
     """保存指定帧为 PNG 到 ``main`` 目录.
 
     Callers:
-        - `static/js/video_extract.js` 左键/存帧按钮
+        - ``static/js/video_extract.js:`` 左键/存帧按钮
     """
     rt = get_runtime(request)
     resolve_path(rt.root, body.path)
@@ -236,7 +236,7 @@ async def delete_frame(request: Request, body: FrameSaveBody) -> FrameSaveRespon
     """删除已保存的指定帧 PNG.
 
     Callers:
-        - `static/js/video_extract.js` 右键/删帧按钮
+        - ``static/js/video_extract.js:`` 右键/删帧按钮
     """
     rt = get_runtime(request)
     resolve_path(rt.root, body.path)
@@ -253,7 +253,7 @@ async def start_analysis(request: Request, path: str = Query(...)) -> JobSubmitR
     进度见 GET /api/jobs/{id}/events。
 
     Callers:
-        - `static/js/video_extract.js` 帧类型分析按钮
+        - ``static/js/video_extract.js:`` 帧类型分析按钮
     """
     rt = get_runtime(request)
     resolve_path(rt.root, path)
@@ -268,7 +268,7 @@ async def start_analysis(request: Request, path: str = Query(...)) -> JobSubmitR
         """分析工作线程入口.
 
         Callers:
-            - `services/core/jobs.py:JobManager.submit`
+            - ``services/core/jobs.py:JobManager.submit``
         """
         emit(
             JobSnapshot(
@@ -281,7 +281,7 @@ async def start_analysis(request: Request, path: str = Query(...)) -> JobSubmitR
             """进度回调.
 
             Callers:
-                - `services/core/video_frame.py:VideoFrameStore.analyze_bitstream`
+                - ``services/core/video_frame.py:VideoFrameStore.analyze_bitstream``
             """
             pct = round(100.0 * done / total_n, 1) if total_n else 100.0
             emit(

@@ -63,7 +63,7 @@ class ExpressionError(ValueError):
     """表达式语法或语义错误.
 
     Callers:
-        - ``mask_expression:parse``
+        - ``services/analysis/mask_expression.py:parse``
     """
 
 
@@ -78,7 +78,7 @@ def _add(a: np.ndarray, b: np.ndarray) -> np.ndarray:
         np.ndarray: 钳位加结果 (H, W), 值域 [0, 1].
 
     Callers:
-        - ``mask_expression:evaluate``
+        - ``services/analysis/mask_expression.py:evaluate``
     """
     return np.clip(a + b, 0, 1)
 
@@ -94,7 +94,7 @@ def _sub(a: np.ndarray, b: np.ndarray) -> np.ndarray:
         np.ndarray: 钳位减结果 (H, W), 值域 [0, 1].
 
     Callers:
-        - ``mask_expression:evaluate``
+        - ``services/analysis/mask_expression.py:evaluate``
     """
     return np.clip(a - b, 0, 1)
 
@@ -110,7 +110,7 @@ def _mul(a: np.ndarray, b: np.ndarray) -> np.ndarray:
         np.ndarray: 乘法结果 (H, W), 值域 [0, 1].
 
     Callers:
-        - ``mask_expression:evaluate``
+        - ``services/analysis/mask_expression.py:evaluate``
     """
     return np.clip(a * b, 0, 1)
 
@@ -126,7 +126,7 @@ def _min(a: np.ndarray, b: np.ndarray) -> np.ndarray:
         np.ndarray: 逐像素较小值 (H, W).
 
     Callers:
-        - ``mask_expression:evaluate``
+        - ``services/analysis/mask_expression.py:evaluate``
     """
     return np.minimum(a, b)
 
@@ -142,7 +142,7 @@ def _max(a: np.ndarray, b: np.ndarray) -> np.ndarray:
         np.ndarray: 逐像素较大值 (H, W).
 
     Callers:
-        - ``mask_expression:evaluate``
+        - ``services/analysis/mask_expression.py:evaluate``
     """
     return np.maximum(a, b)
 
@@ -161,7 +161,7 @@ def _blur(mask: np.ndarray, sigma: float) -> np.ndarray:
         np.ndarray: 模糊后的 0-1 域掩码 (H, W)。
 
     Callers:
-        - ``mask_expression:evaluate``
+        - ``services/analysis/mask_expression.py:evaluate``
     """
     if sigma <= 0:
         return mask
@@ -184,7 +184,7 @@ def _gt(a: np.ndarray, b: np.ndarray) -> np.ndarray:
         np.ndarray: 比较结果 (H, W), 值域 {0, 1}.
 
     Callers:
-        - ``mask_expression:evaluate``
+        - ``services/analysis/mask_expression.py:evaluate``
     """
     return (a > b).astype(np.float64)
 
@@ -200,7 +200,7 @@ def _lt(a: np.ndarray, b: np.ndarray) -> np.ndarray:
         np.ndarray: 比较结果 (H, W), 值域 {0, 1}.
 
     Callers:
-        - ``mask_expression:evaluate``
+        - ``services/analysis/mask_expression.py:evaluate``
     """
     return (a < b).astype(np.float64)
 
@@ -216,7 +216,7 @@ def _ge(a: np.ndarray, b: np.ndarray) -> np.ndarray:
         np.ndarray: 比较结果 (H, W), 值域 {0, 1}.
 
     Callers:
-        - ``mask_expression:evaluate``
+        - ``services/analysis/mask_expression.py:evaluate``
     """
     return (a >= b).astype(np.float64)
 
@@ -232,7 +232,7 @@ def _le(a: np.ndarray, b: np.ndarray) -> np.ndarray:
         np.ndarray: 比较结果 (H, W), 值域 {0, 1}.
 
     Callers:
-        - ``mask_expression:evaluate``
+        - ``services/analysis/mask_expression.py:evaluate``
     """
     return (a <= b).astype(np.float64)
 
@@ -248,7 +248,7 @@ def _eq(a: np.ndarray, b: np.ndarray) -> np.ndarray:
         np.ndarray: 比较结果 (H, W), 值域 {0, 1}.
 
     Callers:
-        - ``mask_expression:evaluate``
+        - ``services/analysis/mask_expression.py:evaluate``
     """
     return (a == b).astype(np.float64)
 
@@ -264,7 +264,7 @@ def _ne(a: np.ndarray, b: np.ndarray) -> np.ndarray:
         np.ndarray: 比较结果 (H, W), 值域 {0, 1}.
 
     Callers:
-        - ``mask_expression:evaluate``
+        - ``services/analysis/mask_expression.py:evaluate``
     """
     return (a != b).astype(np.float64)
 
@@ -299,7 +299,7 @@ def _normalize(expression: str) -> str:
         str: 规范化后的表达式.
 
     Callers:
-        - ``mask_expression:parse``
+        - ``services/analysis/mask_expression.py:parse``
     """
     return expression.replace("\u201c", '"').replace("\u201d", '"')
 
@@ -382,7 +382,7 @@ def _apply(op, left: np.ndarray, right: np.ndarray) -> np.ndarray:
         ExpressionError: 掩码尺寸不一致.
 
     Callers:
-        - ``mask_expression:evaluate``
+        - ``services/analysis/mask_expression.py:evaluate``
     """
     if left.shape != right.shape:
         raise ExpressionError("掩码尺寸不一致")
@@ -403,7 +403,7 @@ def _concept_mask(
         np.ndarray: 0-1 域掩码 (H, W); 概念缺失时为全零.
 
     Callers:
-        - ``mask_expression:evaluate``
+        - ``services/analysis/mask_expression.py:evaluate``
     """
     mask = concepts.get(text)
     if mask is None:

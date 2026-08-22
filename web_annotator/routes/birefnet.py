@@ -56,7 +56,7 @@ async def mask_generate(request: Request, body: MaskGenerateBody) -> MaskGenerat
     单图模式 ``path`` 仅处理该图; 批量模式处理 ``dir`` 目录下全部图片.
 
     Callers:
-        - `static/js/paint.js`
+        - ``static/js/paint.js:``
     """
     rt = get_runtime(request)
     if body.mode not in MASK_MODES:
@@ -87,7 +87,7 @@ async def mask_generate(request: Request, body: MaskGenerateBody) -> MaskGenerat
         """工作线程入口.
 
         Callers:
-            - `JobManager.submit`
+            - ``services/core/jobs.py:JobManager.submit``
         """
         def on_progress() -> None:
             emit(prog.snapshot())

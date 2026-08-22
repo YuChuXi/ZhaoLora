@@ -5,8 +5,8 @@
 读取 (Netscape 格式, 由 ``server.py`` 解析为绝对路径后写入).
 
 Callers:
-    - ``pixiv/source.py`` (搜索 / 下载 / 元数据)
-    - ``routes/online_sources.py`` (图片代理, ``fetch_pixiv_bytes``)
+    - ``services/online_sources/pixiv/source.py:`` (搜索 / 下载 / 元数据)
+    - ``routes/online_sources.py:`` (图片代理, ``fetch_pixiv_bytes``)
 """
 
 from __future__ import annotations
@@ -65,7 +65,7 @@ def request_headers() -> dict[str, str]:
         dict[str, str]: 请求头字典。
 
     Callers:
-        - `PixivSource._request`
+        - ``services/online_sources/pixiv/source.py:PixivSource._request``
     """
     phpsessid = _read_phpsessid()
     headers = dict(_WEB_HEADERS)
@@ -91,8 +91,8 @@ async def fetch_bytes(url: str) -> tuple[bytes, str]:
         NetworkError: 网络或 HTTP 状态错误 (重试后仍失败)。
 
     Callers:
-        - ``pixiv/source.py:PixivSource.download``
-        - ``routes/online_sources.py`` (图片代理)
+        - ``services/online_sources/pixiv/source.py:PixivSource.download``
+        - ``routes/online_sources.py:`` (图片代理)
     """
     last_exc: NetworkError | None = None
     for attempt in range(1, 4):

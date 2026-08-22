@@ -1,9 +1,12 @@
 """视频筛选与抽帧模型.
 
 Callers:
-    - ``services/models/__init__.py`` (包导出全部模型)
-    - ``services/core/video_frame.py`` (引用 ``BitstreamTypes``)
-    - ``routes/video.py:list_videos`` / ``video_detail`` / ``save_frame`` / ``delete_frame`` (HTTP 端点)
+    - ``services/models/__init__.py:`` (包导出全部模型)
+    - ``services/core/video_frame.py:`` (引用 ``BitstreamTypes``)
+    - ``routes/video.py:list_videos``
+    - ``routes/video.py:video_detail``
+    - ``save_frame``
+    - ``routes/video.py:delete_frame`` (HTTP 端点)
 """
 
 from __future__ import annotations

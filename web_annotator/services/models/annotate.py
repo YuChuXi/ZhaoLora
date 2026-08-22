@@ -1,8 +1,8 @@
 """标注操作回执模型.
 
 Callers:
-    - ``services.models``: 包导出.
-    - ``routes.annotations``: 标注路由.
+    - ``services/models/__init__.py:`` : 包导出.
+    - ``routes/annotations.py:`` : 标注路由.
 """
 
 from __future__ import annotations

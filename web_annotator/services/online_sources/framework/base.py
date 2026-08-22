@@ -1,12 +1,12 @@
 """Booru 来源客户端基类与注册表. 
 
 Callers:
-    - `danbooru`
-    - `gelbooru`
-    - `x`
-    - `pixiv`
-    - `bilibili`
-    - `routes.online_sources`
+    - ``services/online_sources/danbooru/__init__.py:``
+    - ``services/online_sources/gelbooru/__init__.py:``
+    - ``services/online_sources/x/__init__.py:``
+    - ``services/online_sources/pixiv/__init__.py:``
+    - ``services/online_sources/bilibili/__init__.py:``
+    - ``routes/__init__.py:``
 """
 
 from __future__ import annotations
@@ -52,10 +52,10 @@ class SourceClient(ABC):
         """拉取帖子元数据并写入磁盘. 
 
         Callers:
-            - `base.py:SourceClient.fetch_meta`
+            - ``services/online_sources/framework/base.py:SourceClient.fetch_meta``
 
         Callers:
-            - `routes/online_sources.py:_run_refresh`
+            - ``routes/online_sources.py:_run_refresh``
         """
     @abstractmethod
     async def search(self, tags: str, page: int, order: str, extra: str,
@@ -67,11 +67,11 @@ class SourceClient(ABC):
         实现类应将 API 原始帖转为 ``BooruPost`` 后返回. 
 
         Callers:
-            - `base.py:SourceClient.search`
+            - ``services/online_sources/framework/base.py:SourceClient.search``
 
         Callers:
-            - `routes/online_sources.py:search`
-            - `base.py:search_posts`
+            - ``routes/online_sources.py:search``
+            - ``services/online_sources/framework/base.py:search_posts``
         """
     async def search_session(
         self,
@@ -91,7 +91,7 @@ class SourceClient(ABC):
             NotImplementedError: 非会话式来源调用时.
 
         Callers:
-            - `routes/online_sources.py:search`
+            - ``routes/online_sources.py:search``
         """
         raise NotImplementedError("非会话式来源不支持 search_session")
     @abstractmethod
@@ -120,8 +120,8 @@ class SourceClient(ABC):
             dict: 含 ``path``/``stem``/``id`` 等写入结果的字典.
 
         Callers:
-            - `online_sources/batch.py:download_one`
-            - `media.py:download_post`
+            - ``services/online_sources/batch.py:download_one``
+            - ``services/online_sources/framework/media.py:download_post``
         """
 
     async def autocomplete(self, query: str, limit: int = 10) -> list[dict]:
@@ -135,7 +135,7 @@ class SourceClient(ABC):
             规范化的建议列表: 每项为 ``{"name", "category", "count"}``.
 
         Callers:
-            - `routes/online_sources.py:tag_suggest`
+            - ``routes/online_sources.py:tag_suggest``
         """
         return []
 
@@ -146,7 +146,7 @@ class SourceClient(ABC):
         把 ``tags`` 作 UID、``extra`` 作筛选串) 覆盖此方法自行解析。
 
         Callers:
-            - `base.py:SourceClient.search`
+            - ``services/online_sources/framework/base.py:SourceClient.search``
         """
         return {"tags": tags, "extra": extra}
 
@@ -154,10 +154,10 @@ class SourceClient(ABC):
         """从已规范化的帖模型提取缩略图 URL. 
 
         Callers:
-            - `base.py:SourceClient.preview_url`
+            - ``services/online_sources/framework/base.py:SourceClient.preview_url``
 
         Callers:
-            - `base.py:SourceClient.sample_url`
+            - ``services/online_sources/framework/base.py:SourceClient.sample_url``
         """
         return post.preview_url or post.file_url
 
@@ -165,10 +165,10 @@ class SourceClient(ABC):
         """从已规范化的帖模型提取大图 URL. 
 
         Callers:
-            - `base.py:SourceClient.sample_url`
+            - ``services/online_sources/framework/base.py:SourceClient.sample_url``
 
         Callers:
-            - `routes/online_sources.py:booru_sample` 预览框
+            - ``routes/online_sources.py:booru_sample`` 预览框
         """
         return post.sample_url or self.preview_url(post)
 
@@ -176,10 +176,10 @@ class SourceClient(ABC):
         """判断 URL 是否为本来源图床. 
 
         Callers:
-            - `base.py:SourceClient.is_media_url`
+            - ``services/online_sources/framework/base.py:SourceClient.is_media_url``
 
         Callers:
-            - `routes/online_sources.py:booru_thumb` 缩略图代理白名单
+            - ``routes/online_sources.py:booru_thumb`` 缩略图代理白名单
         """
         return True
 
@@ -188,26 +188,26 @@ class SourceClient(ABC):
     image_hosts: tuple[str, ...] = ()
     """允许代理的图床 host (精确或子域后缀), 空元组表示不限定. 
     Callers:
-        - `base.py:SourceClient.proxy_image`
+        - ``services/online_sources/framework/base.py:SourceClient.proxy_image``
     """
 
     image_referer: str = ""
     """防盗链 Referer, 空串表示无需防盗链. 
     Callers:
-        - `base.py:SourceClient.proxy_image`
+        - ``services/online_sources/framework/base.py:SourceClient.proxy_image``
     """
 
     image_timeout: float = 30.0
     """图片代理默认超时(秒). 
     Callers:
-        - `base.py:SourceClient.image_timeout_for`
+        - ``services/online_sources/framework/base.py:SourceClient.image_timeout_for``
     """
 
     def image_timeout_for(self, kind: str) -> float:
         """按 kind 返回代理超时, 默认沿用 ``image_timeout``. 
 
         Callers:
-            - `base.py:SourceClient.proxy_image`
+            - ``services/online_sources/framework/base.py:SourceClient.proxy_image``
         """
         return self.image_timeout
 
@@ -223,7 +223,7 @@ class SourceClient(ABC):
             NetworkError: 网络或上游错误.
 
         Callers:
-            - `routes/online_sources.py:proxy_image`
+            - ``routes/online_sources.py:proxy_image``
         """
         u = urlparse(url)
         if u.scheme not in ("http", "https") or not u.hostname:
@@ -244,10 +244,10 @@ class SourceClient(ABC):
         """元数据子目录名, 如 .gelbooru_meta. 
 
         Callers:
-            - `base.py:SourceClient.meta_subdir`
+            - ``services/online_sources/framework/base.py:SourceClient.meta_subdir``
 
         Callers:
-            - `base.py:SourceClient._write_meta`
+            - ``services/online_sources/framework/base.py:SourceClient._write_meta``
         """
         return f".{self.name}_meta"
 
@@ -255,11 +255,11 @@ class SourceClient(ABC):
         """文件名 stem, 如 g12345. 
 
         Callers:
-            - `base.py:SourceClient.file_stem`
+            - ``services/online_sources/framework/base.py:SourceClient.file_stem``
 
         Callers:
-            - `media.py:download_post`
-            - `utils.py:find_downloaded`
+            - ``services/online_sources/framework/media.py:download_post``
+            - ``services/online_sources/framework/utils.py:find_downloaded``
         """
         return f"{self.prefix}{pid}"
 
@@ -267,11 +267,11 @@ class SourceClient(ABC):
         """拼接标签、额外元标签与排序. 
 
         Callers:
-            - `base.py:SourceClient.build_search_query`
+            - ``services/online_sources/framework/base.py:SourceClient.build_search_query``
 
         Callers:
-            - `routes/online_sources.py:search`
-            - `gelbooru/source.py:GelbooruSource.search`
+            - ``routes/online_sources.py:search``
+            - ``services/online_sources/gelbooru/source.py:GelbooruSource.search``
         """
         parts = [tags.strip()] if tags.strip() else []
         filtered = self.filter_extra(extra)
@@ -286,7 +286,7 @@ class SourceClient(ABC):
         """过滤额外元标签；子类可覆盖. 
 
         Callers:
-            - `base.py:SourceClient.build_search_query`
+            - ``services/online_sources/framework/base.py:SourceClient.build_search_query``
         """
         return extra.strip()
 
@@ -310,11 +310,11 @@ class SourceClient(ABC):
             ValueError: 文件类型不支持 (html/zip/video/webm)。
 
         Callers:
-            - `danbooru/source.py:DanbooruSource.download`
-            - `gelbooru/source.py:GelbooruSource.download`
-            - `pixiv/source.py:PixivSource.download`
-            - `bilibili/source.py:BilibiliSource.download`
-            - `gallerydl.py:download`
+            - ``services/online_sources/danbooru/source.py:DanbooruSource.download``
+            - ``services/online_sources/gelbooru/source.py:GelbooruSource.download``
+            - ``services/online_sources/pixiv/source.py:PixivSource.download``
+            - ``services/online_sources/bilibili/source.py:BilibiliSource.download``
+            - ``services/online_sources/framework/gallerydl.py:download``
         """
         await asyncio.to_thread(self._save_png_sync, data, dest)
 
@@ -328,7 +328,7 @@ class SourceClient(ABC):
             dest: 目标 PNG 路径。
 
         Callers:
-            - `SourceClient._save_png`
+            - ``services/online_sources/framework/base.py:SourceClient._save_png``
         """
         save_png_bytes(data, dest)
 
@@ -394,7 +394,7 @@ def build_caption_from_meta(post: BooruPost, *, anima_format: bool = False,
     与 ``SourceClient._build_caption`` 逻辑一致但无需实例. 
 
     Callers:
-        - `media.py:regenerate_captions`
+        - ``services/online_sources/framework/media.py:regenerate_captions``
     """
     def _norm(t: str) -> str:
         return t if keep_underscores else t.replace("_", " ")
@@ -436,7 +436,7 @@ def register_source(client: SourceClient) -> None:
     """注册来源客户端. 
 
     Callers:
-        - `services/online_sources/__init__.py` 模块初始化
+        - ``services/online_sources/__init__.py:`` 模块初始化
     """
     _SOURCES[client.name] = client
 
@@ -447,10 +447,10 @@ def get_source(name: str) -> SourceClient:
         ValueError: 未知来源名. 
 
     Callers:
-        - `routes/online_sources.py` 各端点
-        - `media.py:download_post`
-        - `media.py:remove_download`
-        - `services/online_sources/batch.py`
+        - ``routes/online_sources.py:`` 各端点
+        - ``services/online_sources/framework/media.py:download_post``
+        - ``services/online_sources/framework/media.py:remove_download``
+        - ``services/online_sources/batch.py:``
     """
     src = _SOURCES.get(name)
     if src is None:
@@ -461,7 +461,7 @@ def list_source_names() -> list[str]:
     """列出已注册来源名. 
 
     Callers:
-        - `routes/online_sources.py:list_sources`
+        - ``routes/online_sources.py:list_sources``
     """
     return sorted(_SOURCES.keys())
 
@@ -472,7 +472,7 @@ def detect_source(stem: str) -> tuple[str, str] | None:
         ``(source, post_id)`` 或 None. 
 
     Callers:
-        - `routes/online_sources.py:_run_refresh`
+        - ``routes/online_sources.py:_run_refresh``
     """
     for src in _SOURCES.values():
         if stem.startswith(src.prefix) and stem[len(src.prefix):].isdigit():
@@ -483,8 +483,8 @@ def file_stem(source: str, post_id: str) -> str:
     """规范文件名, 委托给 SourceClient. 
 
     Callers:
-        - `media.py:download_post`
-        - `media.py:regenerate_captions`
+        - ``services/online_sources/framework/media.py:download_post``
+        - ``services/online_sources/framework/media.py:regenerate_captions``
     """
     return get_source(source).file_stem(post_id)
 
@@ -492,7 +492,7 @@ def build_search_query(source: str, tags: str, *, order: str = "", extra: str = 
     """拼接搜索查询, 委托给 SourceClient. 
 
     Callers:
-        - `routes/online_sources.py:search`
+        - ``routes/online_sources.py:search``
     """
     return get_source(source).build_search_query(tags, order=order, extra=extra)
 
@@ -503,7 +503,7 @@ async def search_posts(
     """搜索帖子, 委托给 SourceClient；返回值中每帖为 ``BooruPost`` 模型. 
 
     Callers:
-        - `online_sources/batch.py:_run_async`
+        - ``services/online_sources/batch.py:_run_async``
     """
     src = get_source(source)
     posts, has_more = await src.search(
@@ -529,8 +529,8 @@ async def search_session_posts(
         ``(posts, has_more, session_token)``.
 
     Callers:
-        - `routes/online_sources.py:search`
-        - `online_sources/batch.py:_run_async`
+        - ``routes/online_sources.py:search``
+        - ``services/online_sources/batch.py:_run_async``
     """
     src = get_source(source)
     posts, has_more, token = await src.search_session(

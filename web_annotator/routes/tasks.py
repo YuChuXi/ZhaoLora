@@ -71,7 +71,7 @@ async def _preview_hashes(
         list[str]: 缩略图 hash 列表。
 
     Callers:
-        - ``routes/tasks:list_tasks``
+        - ``routes/tasks.py:list_tasks``
     """
     if not images:
         return []
@@ -191,7 +191,7 @@ async def add_task(request: Request, body: AddTaskBody) -> TaskOkResponse:
         TaskOkResponse: 含任务名、完成状态、备注、触发词。
 
     Callers:
-        - ``static/js/index.js:taskAddFormSubmit``
+        - ``static/js/index.js:`` 的 ``#task-add-form`` 表单提交事件
     """
     store = _store(request)
     try:
@@ -368,7 +368,7 @@ async def archive_task_route(request: Request, name: str) -> JobSubmitResponse:
             object: 归档元数据。
 
         Callers:
-            - ``services.core.jobs:JobManager._execute``
+            - ``services/core/jobs.py:JobManager._execute``
         """
         meta = archive_task(task_dir, name, store.root, rt.thumbnailer, emit)
         store.remove(name)
@@ -434,7 +434,7 @@ async def restore_task_route(request: Request, base: str) -> JobSubmitResponse:
             None: 无返回值, 仅推送进度并恢复任务。
 
         Callers:
-            - ``services.core.jobs:JobManager._execute``
+            - ``services/core/jobs.py:JobManager._execute``
         """
         restore_task(archive_path, store.root, emit)
         info = store.add(meta.name)

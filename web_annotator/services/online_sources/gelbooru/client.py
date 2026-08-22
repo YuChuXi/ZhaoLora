@@ -4,7 +4,7 @@
 环境变量自动读取 (``httpx`` 原生支持)。
 
 Callers:
-    - ``gelbooru/source.py`` (搜索 / 下载 / 元数据)
+    - ``services/online_sources/gelbooru/source.py:`` (搜索 / 下载 / 元数据)
 """
 
 from __future__ import annotations
@@ -23,7 +23,7 @@ class GelbooruClient:
     """Gelbooru JSON API 客户端.
 
     Callers:
-        - ``gelbooru/source.py:GelbooruSource``
+        - ``services/online_sources/gelbooru/source.py:GelbooruSource``
     """
 
     async def _api(self, params: dict[str, str | int]) -> dict:
@@ -39,7 +39,10 @@ class GelbooruClient:
             NetworkError: 网络错误.
 
         Callers:
-            - ``GelbooruClient.get_post`` / ``search`` / ``get_tag_types`` / ``autocomplete``
+            - ``services/online_sources/gelbooru/client.py:GelbooruClient.get_post``
+            - ``services/online_sources/gelbooru/client.py:search``
+            - ``services/online_sources/gelbooru/client.py:get_tag_types``
+            - ``services/online_sources/gelbooru/client.py:autocomplete``
         """
         params.update(self._auth_params())
         async with HttpClient() as client:
@@ -60,7 +63,7 @@ class GelbooruClient:
             NetworkError: 网络错误.
 
         Callers:
-            - ``gelbooru/source.py:GelbooruSource.fetch_meta``
+            - ``services/online_sources/gelbooru/source.py:GelbooruSource.fetch_meta``
         """
         data = await self._api({
             "page": "dapi", "s": "post", "q": "index", "json": "1",
@@ -85,7 +88,7 @@ class GelbooruClient:
             NetworkError: 网络错误.
 
         Callers:
-            - ``GelbooruSource.search``
+            - ``services/online_sources/gelbooru/source.py:GelbooruSource.search``
         """
         return await self._api({
             "page": "dapi", "s": "post", "q": "index", "json": "1",
@@ -109,7 +112,7 @@ class GelbooruClient:
             NetworkError: 网络错误.
 
         Callers:
-            - ``gelbooru/source.py:GelbooruSource.download``
+            - ``services/online_sources/gelbooru/source.py:GelbooruSource.download``
         """
         async with HttpClient() as client:
             data, _ = await client.get_bytes(file_url, referer=referer)
@@ -126,7 +129,7 @@ class GelbooruClient:
             dict[str, str]: 认证查询参数; 未配置时为空字典.
 
         Callers:
-            - ``GelbooruClient._api``
+            - ``services/online_sources/gelbooru/client.py:GelbooruClient._api``
         """
         out: dict[str, str] = {}
         key = os.environ.get("GELBOORU_API_KEY", "").strip()
@@ -149,7 +152,7 @@ class GelbooruClient:
             NetworkError: 网络错误.
 
         Callers:
-            - ``GelbooruSource.download``
+            - ``services/online_sources/gelbooru/source.py:GelbooruSource.download``
         """
         params: dict[str, str | int] = {
             "page": "dapi", "s": "tag", "q": "index", "json": "1",
@@ -179,7 +182,7 @@ class GelbooruClient:
             NetworkError: 网络错误.
 
         Callers:
-            - ``GelbooruSource.autocomplete``
+            - ``services/online_sources/gelbooru/source.py:GelbooruSource.autocomplete``
         """
         params: dict[str, str | int] = {
             "page": "dapi", "s": "tag", "q": "index", "json": "1",

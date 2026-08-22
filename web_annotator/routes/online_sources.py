@@ -238,7 +238,7 @@ async def _cancel_on_disconnect(request: Request, task: asyncio.Task) -> None:
         None: 无返回值, 仅在断连时取消任务。
 
     Callers:
-        - ``routes/online_sources:download``
+        - ``routes/online_sources.py:download``
     """
     while not task.done():
         if await request.is_disconnected():
@@ -341,7 +341,7 @@ async def _submit_video_download(
         HTTPException: 已有进行中的视频下载任务时返回 409。
 
     Callers:
-        - ``routes/online_sources:download``
+        - ``routes/online_sources.py:download``
     """
     rt = get_runtime(request)
     mgr = jobs(request)
@@ -359,7 +359,7 @@ async def _submit_video_download(
             None: 无返回值, 仅推送进度并完成下载。
 
         Callers:
-            - ``services.core.jobs:JobManager.submit``
+            - ``services/core/jobs.py:JobManager.submit``
         """
         def on_progress(pct: int, total: int) -> None:
             """把来源的 ``(pct, total)`` 进度转为 JobSnapshot 推送。
@@ -502,7 +502,7 @@ async def batch_start(
             None: 无返回值, 由 ``run_batch`` 内部推送进度。
 
         Callers:
-            - ``services.core.jobs:JobManager.submit``
+            - ``services/core/jobs.py:JobManager.submit``
         """
         run_batch(
             job_id=job_box["id"],

@@ -98,7 +98,7 @@ def serve_original_image(request: Request, path: str = Query(...)) -> Response:
 
     Callers:
         - ``static/js/paint.js:_loadEntry`` (经 ``_fetchBlob('/paint/image', ...)``)
-        - ``routes.alpha_paint.serve_mask_preview`` (无蒙板时退回此接口)
+        - ``routes/alpha_paint.py:serve_mask_preview`` (无蒙板时退回此接口)
     """
     root, _ = _services(request)
     src = resolve_path(root, path)
@@ -164,7 +164,7 @@ def compose_mask_preview(base: Path, alpha: np.ndarray, max_size: int = _PAINT_P
         bytes: AVIF 编码的透明抠图字节.
 
     Callers:
-        - ``routes.alpha_paint.serve_mask_preview``
+        - ``routes/alpha_paint.py:serve_mask_preview``
     """
     rgba = Image.open(base).convert("RGBA")
     if alpha.shape[::-1] != rgba.size:

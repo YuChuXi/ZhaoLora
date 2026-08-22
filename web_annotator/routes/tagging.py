@@ -89,7 +89,7 @@ async def start(request: Request, body: StartBody) -> TaggingStartResponse:
             emit (EmitFn): 任务进度发射回调, 由 ``JobManager`` 注入.
 
         Callers:
-            - ``routes.tagging.start`` (作为 ``run`` 参数传入 ``services.core.jobs.JobManager.submit``)
+            - ``routes/tagging.py:start`` (作为 ``run`` 参数传入 ``services.core.jobs.JobManager.submit``)
         """
         def on_update() -> None:
             """推送打标进度快照到 SSE 通道."""

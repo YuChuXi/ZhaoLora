@@ -36,9 +36,9 @@ def image_size(path: Path) -> tuple[int, int]:
         OSError: 无法 ``stat`` 或打开文件.
 
     Callers:
-        - ``routes.images.list_images``
-        - ``routes.images.similar_images``
-        - ``routes.tag_stats.check``
+        - ``routes/images.py:list_images``
+        - ``routes/images.py:similar_images``
+        - ``routes/tag_stats.py:check``
     """
     key = str(path)
     mtime = path.stat().st_mtime
@@ -58,7 +58,7 @@ def default_workers() -> int:
         int: 建议的线程数. 
 
     Callers:
-        - ``Thumbnailer.generate_many``
+        - ``services/core/thumbnailer.py:Thumbnailer.generate_many``
     """
     return max(1, min(16, (os.cpu_count() or 4)))
 
@@ -67,7 +67,7 @@ class Thumbnailer:
     """AVIF 缩略图管理器. 
 
     Callers:
-        - `dataset_runtime.py:DatasetRegistry.ensure`
+        - ``services/dataset/runtime.py:DatasetRegistry.ensure``
     """
 
     def __init__(
@@ -99,9 +99,9 @@ class Thumbnailer:
         """返回数据集根下所有一级子目录(排除隐藏目录).
 
         Callers:
-            - ``fill_missing``
-            - ``find_rel_path``
-            - ``count_images``
+            - ``services/core/thumbnailer.py:fill_missing``
+            - ``services/core/thumbnailer.py:find_rel_path``
+            - ``services/core/thumbnailer.py:count_images``
         """
         return [
             d for d in self.data_dir.iterdir()
@@ -154,7 +154,7 @@ class Thumbnailer:
             str: 12 位十六进制 hash 字符串. 
 
         Callers:
-            - ``Thumbnailer.get_path``
+            - ``services/core/thumbnailer.py:Thumbnailer.get_path``
             - ``server.py:dataset_thumb``
         """
         key = f"{image_rel_path}\0s{self.size}".encode()
@@ -192,8 +192,8 @@ class Thumbnailer:
             Path: 缩略图文件路径(``.thumbnails/<hash>.avif``). 
 
         Callers:
-            - ``Thumbnailer.exists``
-            - ``Thumbnailer.generate``
+            - ``services/core/thumbnailer.py:Thumbnailer.exists``
+            - ``services/core/thumbnailer.py:Thumbnailer.generate``
         """
         return self.thumb_dir / f"{self.hash_for(image_rel_path)}.avif"
 
@@ -207,7 +207,7 @@ class Thumbnailer:
             bool: 缓存文件存在则为 True. 
 
         Callers:
-            - ``Thumbnailer.ensure``
+            - ``services/core/thumbnailer.py:Thumbnailer.ensure``
         """
         return self.get_path(image_rel_path).exists()
 
@@ -222,7 +222,7 @@ class Thumbnailer:
             bool: 是否已存在或生成成功. 
 
         Callers:
-            - `Thumbnailer.ensure_async`
+            - ``services/core/thumbnailer.py:Thumbnailer.ensure_async``
         """
         if self.exists(image_rel_path):
             return True
@@ -242,12 +242,12 @@ class Thumbnailer:
             bool: 是否已存在或生成成功. 
 
         Callers:
-            - `online_sources/batch.py`: 下载后确保缩略图存在
-            - `routes/online_sources.py:download`
-            - `routes/tasks.py:random_tasks`
-            - `routes/scoring.py:results`
-            - `routes/images.py:similar_images`
-            - `server.py:dataset_thumb`
+            - ``services/online_sources/batch.py:`` : 下载后确保缩略图存在
+            - ``routes/online_sources.py:download``
+            - ``routes/tasks.py:list_tasks``
+            - ``routes/scoring.py:results``
+            - ``routes/images.py:similar_images``
+            - ``server.py:dataset_thumb``
         """
         return await asyncio.to_thread(self.ensure, image_rel_path, src=src)
 
@@ -262,10 +262,10 @@ class Thumbnailer:
             bool: 是否成功. 源文件缺失或解码失败时返回 False. 
 
         Callers:
-            - `thumbnailer.py:Thumbnailer.ensure`
-            - `thumbnailer.py:Thumbnailer.fill_missing`
-            - `thumbnailer.py:Thumbnailer.generate_many`
-            - `server.py:dataset_thumb`
+            - ``services/core/thumbnailer.py:Thumbnailer.ensure``
+            - ``services/core/thumbnailer.py:Thumbnailer.fill_missing``
+            - ``services/core/thumbnailer.py:Thumbnailer.generate_many``
+            - ``server.py:dataset_thumb``
         """
         thumb_path = self.get_path(image_rel_path)
         if thumb_path.exists():
@@ -306,7 +306,7 @@ class Thumbnailer:
             ``(成功数, 总数)``. 
 
         Callers:
-            - `thumbnailer.py:Thumbnailer.fill_missing`
+            - ``services/core/thumbnailer.py:Thumbnailer.fill_missing``
         """
         paths = list(image_rel_paths)
         total = len(paths)
@@ -321,7 +321,7 @@ class Thumbnailer:
             """生成单张缩略图. 
 
             Callers:
-                - `generate_many`
+                - ``services/core/thumbnailer.py:generate_many``
             """
             return self.generate(rel)
 

@@ -6,7 +6,7 @@
 ``search`` / ``download`` / ``fetch_meta`` 能力。
 
 Callers:
-    - ``services.online_sources.x.source``
+    - ``services/online_sources/x/source.py:`` 模块
 """
 
 from __future__ import annotations
@@ -83,7 +83,7 @@ class GalleryDLSource(SourceClient):
             Any | None: 可哈希缓存键; 无有效查询时返回 None.
 
         Callers:
-            - `GalleryDLSource.search`
+            - ``services/online_sources/framework/gallerydl.py:GalleryDLSource.search``
         """
         raise NotImplementedError
 
@@ -97,7 +97,7 @@ class GalleryDLSource(SourceClient):
             str: 搜索页 URL.
 
         Callers:
-            - `GalleryDLSource._ensure_cached`
+            - ``services/online_sources/framework/gallerydl.py:GalleryDLSource._ensure_cached``
         """
         raise NotImplementedError
 
@@ -111,8 +111,8 @@ class GalleryDLSource(SourceClient):
             str: 单条媒体页 URL.
 
         Callers:
-            - `GalleryDLSource._fetch_detail`
-            - `GalleryDLSource.download`
+            - ``services/online_sources/framework/gallerydl.py:GalleryDLSource._fetch_detail``
+            - ``services/online_sources/framework/gallerydl.py:GalleryDLSource.download``
         """
         raise NotImplementedError
 
@@ -129,8 +129,8 @@ class GalleryDLSource(SourceClient):
             ValueError: pid 格式非法.
 
         Callers:
-            - `GalleryDLSource.download`
-            - `GalleryDLSource.fetch_meta`
+            - ``services/online_sources/framework/gallerydl.py:GalleryDLSource.download``
+            - ``services/online_sources/framework/gallerydl.py:GalleryDLSource.fetch_meta``
         """
         raise NotImplementedError
 
@@ -146,8 +146,8 @@ class GalleryDLSource(SourceClient):
             BooruPost | None: 非目标媒体或无有效 URL 时返回 None.
 
         Callers:
-            - `GalleryDLSource._ensure_cached`
-            - `GalleryDLSource.fetch_meta`
+            - ``services/online_sources/framework/gallerydl.py:GalleryDLSource._ensure_cached``
+            - ``services/online_sources/framework/gallerydl.py:GalleryDLSource.fetch_meta``
         """
         raise NotImplementedError
 
@@ -161,7 +161,7 @@ class GalleryDLSource(SourceClient):
             str: 旁路标签文本.
 
         Callers:
-            - `GalleryDLSource.download`
+            - ``services/online_sources/framework/gallerydl.py:GalleryDLSource.download``
         """
         raise NotImplementedError
 
@@ -172,7 +172,7 @@ class GalleryDLSource(SourceClient):
             list[tuple]: gallery-dl 配置项列表; 未配置认证时为空列表.
 
         Callers:
-            - `GalleryDLSource._gallery_meta_incremental`
+            - ``services/online_sources/framework/gallerydl.py:GalleryDLSource._gallery_meta_incremental``
         """
         return []
 
@@ -188,7 +188,7 @@ class GalleryDLSource(SourceClient):
             list[tuple]: 形如 ``[((), "proxy", 地址)]`` 的配置项列表.
 
         Callers:
-            - `GalleryDLSource._gallery_meta_incremental`
+            - ``services/online_sources/framework/gallerydl.py:GalleryDLSource._gallery_meta_incremental``
         """
         p = os.environ.get("HTTP_PROXY", "") or os.environ.get("HTTPS_PROXY", "")
         p = p.strip()
@@ -220,8 +220,8 @@ class GalleryDLSource(SourceClient):
             RuntimeError: 无可用 extractor 时抛出.
 
         Callers:
-            - `GalleryDLSource._gallery_meta`
-            - `GalleryDLSource._ensure_cached`
+            - ``services/online_sources/framework/gallerydl.py:GalleryDLSource._gallery_meta``
+            - ``services/online_sources/framework/gallerydl.py:GalleryDLSource._ensure_cached``
         """
         overrides = self._auth_overrides() + self._proxy_overrides()
         if cursor:
@@ -239,7 +239,7 @@ class GalleryDLSource(SourceClient):
                 extractor, 用 ``Message.Queue`` 递归跟随之.
 
                 Callers:
-                    - `GalleryDLSource._gallery_meta_incremental`
+                    - ``services/online_sources/framework/gallerydl.py:GalleryDLSource._gallery_meta_incremental``
                 """
                 extr.initialize()
                 pairs: list[tuple[str, dict[str, Any]]] = []
@@ -277,7 +277,7 @@ class GalleryDLSource(SourceClient):
             RuntimeError: 无可用 extractor 或拉取失败时抛出.
 
         Callers:
-            - `GalleryDLSource._fetch_detail`
+            - ``services/online_sources/framework/gallerydl.py:GalleryDLSource._fetch_detail``
         """
         pairs, _ = self._gallery_meta_incremental(url, cursor=None, cap=None)
         return pairs
@@ -295,8 +295,8 @@ class GalleryDLSource(SourceClient):
             RuntimeError: gallery-dl 拉取失败时抛出.
 
         Callers:
-            - `GalleryDLSource.download`
-            - `GalleryDLSource.fetch_meta`
+            - ``services/online_sources/framework/gallerydl.py:GalleryDLSource.download``
+            - ``services/online_sources/framework/gallerydl.py:GalleryDLSource.fetch_meta``
         """
         url = self._detail_url(parts)
         return [dict(kwdict, url=raw_url) for raw_url, kwdict in self._gallery_meta(url)]
@@ -318,7 +318,7 @@ class GalleryDLSource(SourceClient):
             RuntimeError: gallery-dl 拉取失败时抛出.
 
         Callers:
-            - `GalleryDLSource.search`
+            - ``services/online_sources/framework/gallerydl.py:GalleryDLSource.search``
         """
         pairs, next_cursor = self._gallery_meta_incremental(
             self._search_url(key),
@@ -343,7 +343,7 @@ class GalleryDLSource(SourceClient):
         """游标式来源不支持页码式搜索; 使用 ``search_session``. 实现 ``base.SourceClient.search``.
 
         Callers:
-            - `base.py:search_posts` (仅页码式来源触发)
+            - ``services/online_sources/framework/base.py:search_posts`` (仅页码式来源触发)
         """
         raise NotImplementedError("gallerydl 为会话式来源, 请使用 search_session")
 
@@ -362,7 +362,7 @@ class GalleryDLSource(SourceClient):
         变化) 或会话超过一天无翻页时由 ``SessionStore`` 重建会话。
 
         Callers:
-            - `routes/online_sources.py:search`
+            - ``routes/online_sources.py:search``
         """
         key = self._search_key(tags, extra)
         if key is None:
@@ -416,7 +416,7 @@ class GalleryDLSource(SourceClient):
             emit: 下载进度回调, 图片来源忽略 (透传签名统一).
 
         Callers:
-            - `base.py:SourceClient.download` (经 ``media.download_post`` 委托)
+            - ``services/online_sources/framework/base.py:SourceClient.download`` (经 ``media.download_post`` 委托)
         """
         pid = post.id
         stem = Path(post.filename).stem
@@ -461,7 +461,7 @@ class GalleryDLSource(SourceClient):
         """按 pid 拉取媒体元数据并写入磁盘.
 
         Callers:
-            - `routes/online_sources.py:_run_refresh`
+            - ``routes/online_sources.py:_run_refresh``
         """
         parts = self._split_pid(pid)
         num = parts[-1]

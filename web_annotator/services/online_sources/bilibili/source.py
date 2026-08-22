@@ -6,7 +6,7 @@
 分页返回; 下载时按 ``{动态ID}_{图片序号}`` 的 pid 解析原图 URL 并写入磁盘。
 
 Callers:
-    - ``services.online_sources.__init__`` (注册)
+    - ``services/online_sources/__init__.py:`` (注册)
 """
 
 from __future__ import annotations
@@ -41,7 +41,7 @@ class BilibiliSource(SourceClient):
     实现 ``base.SourceClient`` 的 ``search`` / ``download``。
 
     Callers:
-        - ``__init__.py:register_source``
+        - ``services/online_sources/framework/base.py:register_source``
     """
 
     name = "bilibili"
@@ -65,7 +65,7 @@ class BilibiliSource(SourceClient):
         (字符串, 可直接用作分页缓存键)。
 
         Callers:
-            - `BilibiliSource.search`
+            - ``services/online_sources/bilibili/source.py:BilibiliSource.search``
         """
         out = {
             "uid": str(tags).strip(),
@@ -92,7 +92,7 @@ class BilibiliSource(SourceClient):
         """判断动态是否满足类型 / 关键词 / 时间筛选.
 
         Callers:
-            - `BilibiliSource.search`
+            - ``services/online_sources/bilibili/source.py:BilibiliSource.search``
         """
         ttype = _TYPE_MAP.get(record.type or "", "other")
         if f["type"] and ttype not in f["type"].split(","):
@@ -120,7 +120,7 @@ class BilibiliSource(SourceClient):
         不另做探测请求。
 
         Callers:
-            - `BilibiliSource.search`
+            - ``services/online_sources/bilibili/source.py:BilibiliSource.search``
         """
         source = record.forwarded if record.forwarded is not None else record
         text = source.text or record.text
@@ -160,7 +160,7 @@ class BilibiliSource(SourceClient):
         """游标式来源不支持页码式搜索; 使用 ``search_session``. 实现 ``base.SourceClient.search``.
 
         Callers:
-            - `base.py:search_posts` (仅页码式来源触发)
+            - ``services/online_sources/framework/base.py:search_posts`` (仅页码式来源触发)
         """
         raise NotImplementedError("bilibili 为会话式来源, 请使用 search_session")
 
@@ -184,7 +184,7 @@ class BilibiliSource(SourceClient):
         瞬时风控导致批量提前停止。
 
         Callers:
-            - `routes/online_sources.py:search`
+            - ``routes/online_sources.py:search``
         """
         f = self.parse_query(tags, extra)
         uid = int(f["uid"])
@@ -217,8 +217,8 @@ class BilibiliSource(SourceClient):
         """将 ``{动态ID}_{图片序号}`` 拆为 (动态ID, 序号).
 
         Callers:
-            - `BilibiliSource.download`
-            - `BilibiliSource.fetch_meta`
+            - ``services/online_sources/bilibili/source.py:BilibiliSource.download``
+            - ``services/online_sources/bilibili/source.py:BilibiliSource.fetch_meta``
         """
         idx = pid.rfind("_")
         if idx <= 0:
@@ -232,7 +232,7 @@ class BilibiliSource(SourceClient):
         匹配 bilibili 文件名 (pid 含 `_`), 故仅在手动调用时生效。
 
         Callers:
-            - `routes/online_sources.py:_run_refresh`
+            - ``routes/online_sources.py:_run_refresh``
         """
         dynamic_id, index = self._split_pid(pid)
         url, text = await resolve_image(dynamic_id, index)
@@ -261,8 +261,8 @@ class BilibiliSource(SourceClient):
         ``base.SourceClient.download``。
 
         Callers:
-            - `base.py:SourceClient.download` (经 ``media.download_post`` 委托)
-            - `online_sources/batch.py:download_one`
+            - ``services/online_sources/framework/base.py:SourceClient.download`` (经 ``media.download_post`` 委托)
+            - ``services/online_sources/batch.py:download_one``
         """
         if post.is_video:
             return await self._download_video(post, out_dir, emit=emit)
@@ -330,7 +330,7 @@ class BilibiliSource(SourceClient):
             ValueError: 缺少 bvid / 未找到 BBDown 工具 / 未产出文件.
 
         Callers:
-            - `bilibili/source.py:BilibiliSource.download`
+            - ``services/online_sources/bilibili/source.py:BilibiliSource.download``
         """
         bvid = (post.id or "").strip()
         if not bvid:

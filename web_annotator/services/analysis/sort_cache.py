@@ -10,8 +10,8 @@
 由 ``SemanticSortCache.__init__`` 自动加载恢复，保证跨会话保留。
 
 Callers:
-    - ``services/dataset/runtime.py``: DatasetRegistry 按数据集构建实例
-    - ``routes/tag_stats.py``: embedding_query / embedding_history
+    - ``services/dataset/runtime.py:`` : DatasetRegistry 按数据集构建实例
+    - ``routes/tag_stats.py:`` : embedding_query / embedding_history
 """
 
 from __future__ import annotations
@@ -61,7 +61,7 @@ class SemanticSortCache:
         仅「文件不存在」与「版本不匹配」两种情况返回空缓存，待下次写入重建。
 
         Callers:
-            - ``SemanticSortCache.__init__``
+            - ``services/analysis/sort_cache.py:SemanticSortCache.__init__``
         """
         if not self._path.is_file():
             return
@@ -82,7 +82,7 @@ class SemanticSortCache:
         """原子写盘: 先写临时文件再替换, 避免进程中断导致半写损坏.
 
         Callers:
-            - ``SemanticSortCache.put``
+            - ``services/analysis/sort_cache.py:SemanticSortCache.put``
         """
         payload = {
             "version": _VERSION,
@@ -107,7 +107,7 @@ class SemanticSortCache:
             _Entry | None: 规整后的条目；结构不符时返回 None。
 
         Callers:
-            - ``SemanticSortCache._load``
+            - ``services/analysis/sort_cache.py:SemanticSortCache._load``
         """
         if not isinstance(entry, dict):
             return None
@@ -144,7 +144,7 @@ class SemanticSortCache:
                 ``[(相对路径, 相似度), ...]``，按相似度降序；未命中返回 None。
 
         Callers:
-            - ``routes/tag_stats:embedding_query``
+            - ``routes/tag_stats.py:embedding_query``
         """
         entry = self._entries.get(query)
         if entry is None:
@@ -168,7 +168,7 @@ class SemanticSortCache:
             hits (list[tuple[str, float]]): 排序结果 ``[(相对路径, 相似度), ...]``。
 
         Callers:
-            - ``routes/tag_stats:embedding_query``
+            - ``routes/tag_stats.py:embedding_query``
         """
         self._entries[query] = (time.time(), dirs, hits)
         if query in self._recent:
@@ -187,6 +187,6 @@ class SemanticSortCache:
                 至多 ``MAX_ENTRIES`` 条。
 
         Callers:
-            - ``routes/tag_stats:embedding_history``
+            - ``routes/tag_stats.py:embedding_history``
         """
         return [(q, self._entries[q][0]) for q in self._recent]

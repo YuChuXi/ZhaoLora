@@ -1,8 +1,8 @@
 """蒙版绘制模型.
 
 Callers:
-    - ``services.models``: 包导出.
-    - ``routes.alpha_paint``: 蒙版绘制路由.
+    - ``services/models/__init__.py:`` : 包导出.
+    - ``routes/alpha_paint.py:`` : 蒙版绘制路由.
 """
 
 from __future__ import annotations

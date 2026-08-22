@@ -1,8 +1,8 @@
 """文档页模型.
 
 Callers:
-    - ``services.models``: 包导出.
-    - ``routes.docs``: 文档路由.
+    - ``services/models/__init__.py:`` : 包导出.
+    - ``routes/docs.py:`` : 文档路由.
 """
 
 from __future__ import annotations

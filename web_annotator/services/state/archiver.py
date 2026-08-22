@@ -31,7 +31,7 @@ class _ExtractReporter(ExtractCallback):
     """解压进度回调: 逐文件计数并发布 JobSnapshot.
 
     Callers:
-        - ``restore_task``
+        - ``services/state/archiver.py:restore_task``
     """
 
     def __init__(self, total: int, dataset: str, emit: Callable[[JobSnapshot], None]) -> None:
@@ -69,7 +69,7 @@ def _archive_base(name: str) -> str:
     """生成归档基本名: ``name-YYYYMMDD_HHMMSS``.
 
     Callers:
-        - ``archive_task``
+        - ``services/state/archiver.py:archive_task``
     """
     return f"{name}-{time.strftime('%Y%m%d_%H%M%S')}"
 
@@ -78,7 +78,7 @@ def _list_files(root: Path) -> list[Path]:
     """递归列出目录下所有文件(不含目录).
 
     Callers:
-        - ``archive_task``
+        - ``services/state/archiver.py:archive_task``
     """
     return sorted(p for p in root.rglob("*") if p.is_file())
 
@@ -94,7 +94,7 @@ def _should_exclude(p: Path, task_dir: Path) -> bool:
         bool: True 表示排除.
 
     Callers:
-        - ``archive_task``
+        - ``services/state/archiver.py:archive_task``
     """
     parts = p.relative_to(task_dir).parts
     if ".thumbnails" in parts:
@@ -125,7 +125,7 @@ def archive_task(
         RuntimeError: testzip 返回坏文件.
 
     Callers:
-        - ``routes.tasks.archive_task_route``
+        - ``routes/tasks.py:archive_task_route``
     """
     packed_dir = task_root / PACKED_DIR
     packed_dir.mkdir(parents=True, exist_ok=True)
@@ -219,7 +219,7 @@ def restore_task(
         emit: JobManager 进度回调.
 
     Callers:
-        - ``routes.tasks.restore_task_route``
+        - ``routes/tasks.py:restore_task_route``
     """
     emit(JobSnapshot(
         status="running", kind="archive", dataset="",
@@ -248,7 +248,7 @@ def list_archives(task_root: Path) -> list[ArchivedTask]:
         按归档时间降序排列的归档元数据列表.
 
     Callers:
-        - ``routes.tasks.list_archived``
+        - ``routes/tasks.py:list_archived``
     """
     packed_dir = task_root / PACKED_DIR
     if not packed_dir.is_dir():
@@ -271,8 +271,8 @@ def find_archive(task_root: Path, base: str) -> ArchivedTask | None:
         ArchivedTask | None: 找到则返回, 否则 None.
 
     Callers:
-        - ``routes.tasks.restore_task_route``
-        - ``routes.tasks.serve_archive_preview``
+        - ``routes/tasks.py:restore_task_route``
+        - ``routes/tasks.py:serve_archive_preview``
     """
     meta_path = task_root / PACKED_DIR / f"{base}.json"
     if not meta_path.is_file():

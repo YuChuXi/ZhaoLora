@@ -5,7 +5,7 @@ Cloudflare); 代理从 ``HTTP_PROXY`` / ``HTTPS_PROXY`` 环境变量读取,
 认证 (login / api_key) 由调用方经参数传入.
 
 Callers:
-    - ``danbooru/source.py`` (搜索 / 下载 / 元数据)
+    - ``services/online_sources/danbooru/source.py:`` (搜索 / 下载 / 元数据)
 """
 
 from __future__ import annotations
@@ -28,7 +28,7 @@ def _client() -> AsyncSession:
     代理从 ``HTTP_PROXY`` / ``HTTPS_PROXY`` 环境变量读取。
 
     Callers:
-        - ``danbooru/client.py:get``
+        - ``services/online_sources/danbooru/client.py:get``
     """
     http_p = os.environ.get("HTTP_PROXY", "").strip()
     https_p = os.environ.get("HTTPS_PROXY", "").strip()
@@ -52,7 +52,7 @@ def _headers(*, accept: str) -> dict[str, str]:
     """Danbooru API 请求头.
 
     Callers:
-        - ``danbooru/client.py:get``
+        - ``services/online_sources/danbooru/client.py:get``
     """
     return {
         "accept": accept, "accept-language": "en-US,en;q=0.9",
@@ -81,7 +81,7 @@ async def get(
         curl_cffi 响应对象。
 
     Callers:
-        - ``danbooru/source.py`` (搜索 / 元数据 / 下载)
+        - ``services/online_sources/danbooru/source.py:`` (搜索 / 元数据 / 下载)
     """
     p = dict(params) if params else {}
     if login and api_key:
@@ -110,7 +110,7 @@ async def autocomplete(query: str, limit: int = 10) -> list[dict]:
         httpx/curl_cffi 网络异常由调用方处理.
 
     Callers:
-        - ``danbooru/source.py:DanbooruSource.autocomplete``
+        - ``services/online_sources/danbooru/source.py:DanbooruSource.autocomplete``
     """
     resp = await get(
         "https://danbooru.donmai.us/autocomplete",

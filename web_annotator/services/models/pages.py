@@ -1,9 +1,9 @@
 """评分 / 打标页目录与启动回执.
 
 Callers:
-    - ``services.models``: 包导出.
-    - ``routes.scoring``: 评分路由.
-    - ``routes.tagging``: 打标路由.
+    - ``services/models/__init__.py:`` : 包导出.
+    - ``routes/scoring.py:`` : 评分路由.
+    - ``routes/tagging.py:`` : 打标路由.
 """
 
 from __future__ import annotations

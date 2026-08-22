@@ -1,8 +1,8 @@
 """单个任务数据集在运行时的服务句柄. 
 
 Callers:
-    - `server.py` 按需构建
-    - `routes/deps.py` 按请求路径解析
+    - ``server.py:`` 按需构建
+    - ``routes/deps.py:`` 按请求路径解析
 """
 
 from __future__ import annotations
@@ -60,9 +60,9 @@ class DatasetRegistry:
     """按需缓存任务运行时. 
 
     Callers:
-        - `server.py`
-        - 中间件
-        - `routes/tasks.py` 预览
+        - ``server.py:main`` (初始化挂载到 ``app.state.datasets``)
+        - ``server.py:dataset_thumb`` 等路由经 ``ensure`` 按需加载
+        - ``routes/tasks.py:`` 预览等经 ``ensure`` 访问
     """
 
     task_root: Path
@@ -74,7 +74,7 @@ class DatasetRegistry:
         """按名取已加载运行时. 
 
         Callers:
-            - `DatasetRegistry`
+            - ``services/dataset/runtime.py:DatasetRegistry``
         """
         return self.by_name.get(name)
 
@@ -93,12 +93,12 @@ class DatasetRegistry:
         后台任务, 后者要求事件循环上下文.
 
         Callers:
-            - `server.py:bind_dataset_middleware`
-            - `server.py:dataset_thumb`
-            - `routes/scoring.py:results`
-            - `routes/images.py:similar_images`
-            - `routes/tasks.py:list_tasks` / `add_task`
-            - `routes/online_sources.py:download`
+            - ``server.py:bind_dataset_middleware``
+            - ``server.py:dataset_thumb``
+            - ``routes/scoring.py:results``
+            - ``routes/images.py:similar_images``
+            - ``routes/tasks.py:list_tasks`` / `add_task`
+            - ``routes/online_sources.py:download``
         """
         existing = self.by_name.get(name)
         if existing is not None:
@@ -128,7 +128,7 @@ async def _submit_thumb_fill(jobs: JobManager, dataset: str, thumb: Thumbnailer)
     """通过 JobManager 提交后台缩略图填充任务.
 
     Callers:
-        - `DatasetRegistry.ensure`
+        - ``services/dataset/runtime.py:DatasetRegistry.ensure``
     """
     from services.models.jobs import JobSnapshot as Snap
 

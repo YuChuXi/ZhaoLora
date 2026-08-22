@@ -1,9 +1,9 @@
 """任务清单模型.
 
 Callers:
-    - ``services.models``: 包导出.
-    - ``routes.tasks``: 任务路由.
-    - ``services.state.tasks``: 任务存储.
+    - ``services/models/__init__.py:`` : 包导出.
+    - ``routes/tasks.py:`` : 任务路由.
+    - ``services/state/tasks.py:`` : 任务存储.
 """
 
 from __future__ import annotations

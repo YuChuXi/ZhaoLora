@@ -1,10 +1,10 @@
 """去重模型.
 
 Callers:
-    - ``services.models``: 包导出.
-    - ``routes.dedupe``: 去重路由.
-    - ``services.analysis.dedupe``: 重复图像检测.
-    - ``services.models.jobs``: 引用扫描结果类型.
+    - ``services/models/__init__.py:`` : 包导出.
+    - ``routes/dedupe.py:`` : 去重路由.
+    - ``services/analysis/dedupe.py:`` : 重复图像检测.
+    - ``services/models/jobs.py:`` : 引用扫描结果类型.
 """
 
 from __future__ import annotations

@@ -5,7 +5,7 @@ Callers:
     - ``server.py:main``
     - ``server.py:bind_dataset_middleware``
     - ``server.py:dataset_thumb``
-    - ``routes/tasks.py`` 各接口
+    - ``routes/tasks.py:`` 各接口
     - ``routes/meta.py:list_datasets``
 """
 
@@ -51,7 +51,7 @@ class TaskStore:
 
     Callers:
         - ``server.py:main``
-        - ``routes/tasks.py`` 各接口
+        - ``routes/tasks.py:`` 各接口
         - ``routes/meta.py:list_datasets``
     """
 

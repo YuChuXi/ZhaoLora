@@ -1,9 +1,9 @@
 """Booru 图片/文件/标签工具. 
 
 Callers:
-    - ``common.SourceClient``
-    - ``sources``
-    - ``media``
+    - ``services/online_sources/framework/base.py:SourceClient``
+    - ``services/online_sources/__init__.py:`` 模块
+    - ``services/online_sources/framework/media.py:`` 模块
 """
 
 from __future__ import annotations
@@ -58,8 +58,8 @@ def save_png_bytes(data: bytes, dest: Path) -> None:
         UnidentifiedImageError / OSError: 数据无法被 PIL 解码.
 
     Callers:
-        - ``base.py:SourceClient._save_png_sync``
-        - ``gelbooru/client.py:GelbooruClient.get_image``
+        - ``services/online_sources/framework/base.py:SourceClient._save_png_sync``
+        - ``services/online_sources/gelbooru/client.py:GelbooruClient.get_image``
     """
     kind = sniff_image_kind(data)
     if kind in ("html", "zip", "video", "webm"):
@@ -82,9 +82,9 @@ def stem_candidates(post_id: str, *, file_stem_fn) -> list[str]:
         file_stem_fn: 接受单个 id 返回 stem 的函数(绑定方法), 如 ``SourceClient.file_stem``. 
 
     Callers:
-        - `base.py:SourceClient._clean_old_files`
-        - `media.py:remove_download`
-        - `media.py:download_post`
+        - ``services/online_sources/framework/base.py:SourceClient._clean_old_files``
+        - ``services/online_sources/framework/media.py:remove_download``
+        - ``services/online_sources/framework/media.py:download_post``
     """
     pid = str(post_id).strip()
     primary = file_stem_fn(pid)
@@ -98,11 +98,11 @@ def find_downloaded(out_dir: Path, filename: str) -> Path | None:
         filename: 完整文件名，如 ``d12345.png``（来源在 search 阶段提供真实扩展名）.
 
     Callers:
-        - `danbooru/source.py:DanbooruSource.download`
-        - `gelbooru/source.py:GelbooruSource.download`
-        - `pixiv/source.py:PixivSource.download`
-        - `bilibili/source.py:BilibiliSource.download`
-        - `gallerydl.py:download`
+        - ``services/online_sources/danbooru/source.py:DanbooruSource.download``
+        - ``services/online_sources/gelbooru/source.py:GelbooruSource.download``
+        - ``services/online_sources/pixiv/source.py:PixivSource.download``
+        - ``services/online_sources/bilibili/source.py:BilibiliSource.download``
+        - ``services/online_sources/framework/gallerydl.py:download``
     """
     p = out_dir / filename
     return p if p.is_file() else None
@@ -115,8 +115,8 @@ def is_downloaded(out_dir: Path, filename: str) -> bool:
         filename: 完整文件名，如 ``d12345.png``.
 
     Callers:
-        - `routes/online_sources.py:search`
-        - `services/online_sources/batch.py`
+        - ``routes/online_sources.py:search``
+        - ``services/online_sources/batch.py:``
     """
     return find_downloaded(out_dir, filename) is not None
 

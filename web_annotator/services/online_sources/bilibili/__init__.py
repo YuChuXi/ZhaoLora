@@ -4,8 +4,8 @@
 ``models``(动态数据模型)、``source``(实现 ``SourceClient`` 的适配器)。
 
 Callers:
-    - ``services.online_sources.__init__`` (注册)
-    - ``routes.online_sources`` (图片代理)
+    - ``services/online_sources/__init__.py:`` (注册)
+    - ``routes/online_sources.py:`` (图片代理)
 """
 
 from services.online_sources.bilibili.client import (

@@ -1,13 +1,13 @@
 """长任务进度模型.
 
 Callers:
-    - ``services.models``: 包导出.
-    - ``routes.meta``: 任务取消路由.
-    - ``services.core.jobs``: 任务管理器.
-    - ``services.dataset.runtime``: 运行时快照.
-    - ``services.online_sources.batch``: 批量下载.
-    - ``services.state.archiver``: 归档.
-    - ``services.analysis.{sam3,wd14,scoring,birefnet}``: 各分析任务.
+    - ``services/models/__init__.py:`` : 包导出.
+    - ``routes/meta.py:`` : 任务取消路由.
+    - ``services/core/jobs.py:`` : 任务管理器.
+    - ``services/dataset/runtime.py:`` : 运行时快照.
+    - ``services/online_sources/batch.py:`` : 批量下载.
+    - ``services/state/archiver.py:`` : 归档.
+    - ``services.analysis.{sam3,wd14,scoring,birefnet}`` : 各分析任务.
 """
 
 from __future__ import annotations

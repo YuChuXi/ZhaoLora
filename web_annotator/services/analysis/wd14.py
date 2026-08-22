@@ -32,7 +32,7 @@ class Tags:
     """WD14 标签工具集, 提供拆分、拼接、等价键比较与置信度合并. 
 
     Callers:
-        - ``process_one``: 调用 ``split_caption``、``merge_for_disk_by_confidence``
+        - ``process_one`` : 调用 ``split_caption``、``merge_for_disk_by_confidence``
     """
 
     @staticmethod
@@ -46,8 +46,8 @@ class Tags:
             list[str]: 去除空白后的非空标签列表.
 
         Callers:
-            - ``Tags.merge_for_disk_by_confidence``
-            - ``wd14:process_one``
+            - ``services/analysis/wd14.py:Tags.merge_for_disk_by_confidence``
+            - ``services/analysis/wd14.py:_process_one``
         """
         return [x.strip() for x in caption.replace("\n", ",").split(",") if x.strip()]
 
@@ -62,7 +62,7 @@ class Tags:
             str: 以 ``", "`` 拼接的非空标签字符串.
 
         Callers:
-            - ``Tags.merge_for_disk_by_confidence``
+            - ``services/analysis/wd14.py:Tags.merge_for_disk_by_confidence``
         """
         return ", ".join([t.strip() for t in tags if t.strip()])
 
@@ -77,7 +77,7 @@ class Tags:
             str: 小写、下划线转空格、折叠空白后的等价键.
 
         Callers:
-            - ``Tags.merge_for_disk_by_confidence``
+            - ``services/analysis/wd14.py:Tags.merge_for_disk_by_confidence``
         """
         return " ".join(tag.strip().lower().replace("_", " ").split())
 
@@ -92,7 +92,7 @@ class Tags:
             str: 下划线转空格、折叠空白后的规范标签, 保留原大小写.
 
         Callers:
-            - ``Tags.merge_for_disk_by_confidence``
+            - ``services/analysis/wd14.py:Tags.merge_for_disk_by_confidence``
         """
         return " ".join(tag.strip().replace("_", " ").split())
 
@@ -118,7 +118,7 @@ class Tags:
             Anima 格式的标签文本.
 
         Callers:
-            - ``process_one``
+            - ``services/analysis/wd14.py:_process_one``
         """
         score_by_key: dict[str, float] = {}
         canonical_by_key: dict[str, str] = {}
@@ -182,7 +182,7 @@ def list_image_subdirs(root: Path) -> list[WorkDirInfo]:
         - ``routes/tagging.py:dirs``
         - ``routes/scoring.py:dirs``
         - ``services/core/work_dir.py:list_work_dirs``
-        - ``wd14:resolve_image_dirs``
+        - ``services/analysis/wd14.py:resolve_image_dirs``
     """
     root = root.resolve()
     out: list[WorkDirInfo] = []
@@ -199,7 +199,7 @@ def list_image_subdirs(root: Path) -> list[WorkDirInfo]:
             int: 目录内图片文件数.
 
         Callers:
-            - ``wd14:list_image_subdirs``
+            - ``services/analysis/wd14.py:list_image_subdirs``
         """
         return sum(1 for p in d.iterdir() if p.is_file() and p.suffix.lower() in IMAGE_EXTS)
 
@@ -269,7 +269,7 @@ def _load_model() -> _WD14_HANDLE:
         与模型输出索引对齐.
 
     Callers:
-        - ``device.register_model`` 注册的 load 回调
+        - ``services/core/device.py:register_model`` 注册的 load 回调
     """
     ok, msg = model_ready()
     if not ok:
@@ -297,7 +297,7 @@ def _unload_model(handle: object) -> None:
         handle: ``_load_model`` 返回的 ``(session, labels)`` 元组.
 
     Callers:
-        - ``device.register_model`` 注册的 unload 回调
+        - ``services/core/device.py:register_model`` 注册的 unload 回调
     """
     session, _labels = cast("_WD14_HANDLE", handle)
     del session, _labels
@@ -322,7 +322,7 @@ def _infer_wd14(
         ``[(tag, score, is_character), ...]``, 已按置信度过滤阈值以上.
 
     Callers:
-        - ``_process_one``
+        - ``services/analysis/wd14.py:_process_one``
     """
     session, labels = handle
     if img.mode == "RGBA":
@@ -357,7 +357,7 @@ def _load_text(path: Path) -> str:
     """读取旁路 txt；不存在则空串. 
 
     Callers:
-        - ``process_one``
+        - ``services/analysis/wd14.py:_process_one``
     """
     if not path.is_file():
         return ""
@@ -414,7 +414,7 @@ class TaggingProgress:
             line: 日志行文本.
 
         Callers:
-            - ``wd14:run_batch``
+            - ``services/analysis/wd14.py:run_batch``
         """
         self.logs.append(line)
         if len(self.logs) > 400:
@@ -444,7 +444,7 @@ def _process_one(
         ``"skip"`` 或 ``"ok"``. 
 
     Callers:
-        - ``run_batch``
+        - ``services/analysis/wd14.py:run_batch``
     """
     out_txt_path = src.with_suffix(".txt")
     if not force and out_txt_path.exists():

@@ -1,9 +1,9 @@
 """裁剪页模型.
 
 Callers:
-    - ``services.models``: 包导出.
-    - ``routes.crop``: 裁剪路由.
-    - ``services.dataset.crop``: 裁剪匹配.
+    - ``services/models/__init__.py:`` : 包导出.
+    - ``routes/crop.py:`` : 裁剪路由.
+    - ``services/dataset/crop.py:`` : 裁剪匹配.
 """
 
 from __future__ import annotations

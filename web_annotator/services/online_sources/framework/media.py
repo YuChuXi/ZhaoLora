@@ -1,7 +1,7 @@
 """Booru 下载、取消下载与标签重生成.
 
 Callers:
-    - ``routes/online_sources.py``
+    - ``routes/online_sources.py:``
 """
 
 from __future__ import annotations
@@ -93,8 +93,8 @@ def post_is_video(post: BooruPost) -> bool:
         bool: 是否为视频帖.
 
     Callers:
-        - `danbooru/source.py:DanbooruSource.normalize`
-        - `gelbooru/source.py:GelbooruSource.normalize`
+        - ``services/online_sources/danbooru/source.py:DanbooruSource.normalize``
+        - ``services/online_sources/gelbooru/source.py:GelbooruSource.normalize``
     """
     if post.file_ext and ("." + post.file_ext.lower()) in VIDEO_EXTS:
         return True
@@ -121,8 +121,8 @@ async def download_raw_file(post: BooruPost, out_dir: Path) -> dict:
         ValueError: 无可用 file_url, 或下载返回非 200 / 空内容.
 
     Callers:
-        - `danbooru/source.py:DanbooruSource.download`
-        - `gelbooru/source.py:GelbooruSource.download`
+        - ``services/online_sources/danbooru/source.py:DanbooruSource.download``
+        - ``services/online_sources/gelbooru/source.py:GelbooruSource.download``
     """
     urls = [u for u in (post.file_url, post.large_file_url) if u]
     urls = list(dict.fromkeys(urls))
@@ -180,8 +180,8 @@ async def download_post(
         BooruDownloadResult: 下载结果。
 
     Callers:
-        - ``routes.online_sources.download``
-        - ``online_sources/batch.py:download_one``
+        - ``routes/online_sources.py:download``
+        - ``services/online_sources/batch.py:download_one``
     """
     source = source.strip().lower()
     if source not in SOURCES:
@@ -211,7 +211,7 @@ def local_rel_path(root: Path, abs_path: str | Path) -> str:
 
     Callers:
         - ``routes/online_sources.py:download``
-        - ``batch.py:download_one``
+        - ``services/online_sources/batch.py:download_one``
     """
     p = Path(abs_path).resolve()
     return str(p.relative_to(root.resolve())).replace("\\", "/")

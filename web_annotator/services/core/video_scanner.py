@@ -35,8 +35,8 @@ class VideoScanError(RuntimeError):
     """视频探测或封面生成失败.
 
     Callers:
-        - `video_scanner.scan_videos`
-        - `routes/video.py`
+        - ``services/core/video_scanner.py:scan_videos``
+        - ``routes/video.py:``
     """
 
 
@@ -53,7 +53,7 @@ def _ffmpeg_supports_rawvideo(path: str) -> bool:
         bool: 是否支持 rawvideo demuxer.
 
     Callers:
-        - `video_scanner.resolve_ffmpeg`
+        - ``services/core/video_scanner.py:resolve_ffmpeg``
     """
     try:
         out = subprocess.run(
@@ -119,7 +119,7 @@ def _probe(path: Path) -> tuple[int, int, float, int]:
         ``(width, height, duration, total_frames)``; 无法读取时全为 0.
 
     Callers:
-        - `video_scanner.probe_video`
+        - ``services/core/video_scanner.py:probe_video``
     """
     cmd = [
         FFPROBE, "-v", "error",
@@ -174,8 +174,8 @@ def probe_video(path: Path) -> tuple[int, int, float, int]:
         ``(width, height, duration, total_frames)``.
 
     Callers:
-        - `routes/video.py:video_detail`
-        - `routes/video.py:start_analysis`
+        - ``routes/video.py:video_detail``
+        - ``routes/video.py:start_analysis``
     """
     return _probe(path)
 
@@ -194,7 +194,7 @@ def scan_videos(video_dir: Path, *, path_prefix: str = "", probe: bool = False) 
         按文件名排序的 ``VideoInfo`` 列表.
 
     Callers:
-        - `routes/video.py:list_videos`
+        - ``routes/video.py:list_videos``
     """
     prefix = (path_prefix or "").replace("\\", "/").strip("/")
     if not video_dir.is_dir():
@@ -242,7 +242,7 @@ def cover_hash(video_rel_path: str, *, max_side: int = COVER_MAX_SIDE) -> str:
         str: 12 位十六进制 hash 字符串.
 
     Callers:
-        - `video_scanner.cover_path`
+        - ``services/core/video_scanner.py:cover_path``
     """
     key = f"{video_rel_path}\0s{max_side}".encode()
     return hashlib.md5(key).hexdigest()[:12]
@@ -259,9 +259,9 @@ def cover_path(cover_dir: Path, video_rel_path: str) -> Path:
         Path: 封面文件路径(``.video_covers/<hash>.jpg``).
 
     Callers:
-        - `video_scanner.ensure_cover`
-        - `routes/video.py:list_videos`
-        - `routes/video.py:video_cover`
+        - ``services/core/video_scanner.py:ensure_cover``
+        - ``routes/video.py:list_videos``
+        - ``routes/video.py:video_cover``
     """
     return cover_dir / f"{cover_hash(video_rel_path)}.jpg"
 
@@ -284,8 +284,8 @@ def ensure_cover(video_path: Path, cover_dir: Path, video_rel_path: str) -> Path
         VideoScanError: ffmpeg 抽取失败.
 
     Callers:
-        - `routes/video.py:list_videos`
-        - `routes/video.py:video_cover`
+        - ``routes/video.py:list_videos``
+        - ``routes/video.py:video_cover``
     """
     out = cover_path(cover_dir, video_rel_path)
     if out.is_file():

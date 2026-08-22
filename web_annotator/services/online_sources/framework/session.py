@@ -5,8 +5,8 @@
 时被销毁重建, 避免缓存无限常驻。
 
 Callers:
-    - `bilibili/source.py:BilibiliSource`
-    - `framework/gallerydl.py:GalleryDLSource`
+    - ``services/online_sources/bilibili/source.py:BilibiliSource``
+    - ``services/online_sources/framework/gallerydl.py:GalleryDLSource``
 """
 
 from __future__ import annotations
@@ -69,8 +69,8 @@ class SessionStore:
             时, 返回新建会话并丢弃旧会话.
 
         Callers:
-            - `bilibili/source.py:BilibiliSource.search_session`
-            - `framework/gallerydl.py:GalleryDLSource.search_session`
+            - ``services/online_sources/bilibili/source.py:BilibiliSource.search_session``
+            - ``services/online_sources/framework/gallerydl.py:GalleryDLSource.search_session``
         """
         async with self._guard:
             now = time.time()

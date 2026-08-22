@@ -75,9 +75,9 @@ def _rel_under(root: Path, rel: str) -> str:
         str: 相对 root 的 posix 相对路径。
 
     Callers:
-        - ``routes/annotations:toggle``
-        - ``routes/annotations:apply_delete``
-        - ``routes/annotations:restore``
+        - ``routes/annotations.py:toggle``
+        - ``routes/annotations.py:apply_delete``
+        - ``routes/annotations.py:restore``
     """
     path = resolve_path(root, rel)
     return path.relative_to(root.resolve()).as_posix()

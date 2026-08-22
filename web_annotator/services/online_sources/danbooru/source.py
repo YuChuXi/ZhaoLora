@@ -3,7 +3,7 @@
 API 认证 (login / api_key) 直接从 ``os.environ`` 读取, 不跨层传参。
 
 Callers:
-    - ``danbooru/__init__.py`` (导出)
+    - ``services/online_sources/danbooru/__init__.py:`` (导出)
 """
 
 from __future__ import annotations
@@ -27,7 +27,8 @@ def preview_url(post) -> str:
     """Danbooru 帖的预览 URL, 优先 720x720 webp, 回退 file_url.
 
     Callers:
-        - ``DanbooruSource.preview_url`` / ``normalize``
+        - ``services/online_sources/danbooru/source.py:DanbooruSource.preview_url``
+        - ``services/online_sources/danbooru/source.py:normalize``
     """
     if post.media_asset:
         variants = post.media_asset.get("variants") or []
@@ -49,7 +50,7 @@ async def _fetch_image_bytes(post) -> bytes:
     """优先原图；失败或不支持时回退 large_file_url。
 
     Callers:
-        - ``DanbooruSource.download``
+        - ``services/online_sources/danbooru/source.py:DanbooruSource.download``
     """
     urls: list[str] = [u for u in (post.file_url, post.large_file_url) if u and u not in (None, "")]
     urls = list(dict.fromkeys(urls))
@@ -94,7 +95,7 @@ class DanbooruSource(SourceClient):
         覆盖父类 ``base.SourceClient``。
 
         Callers:
-            - `routes/online_sources.py` 搜索结果列表
+            - ``routes/online_sources.py:`` 搜索结果列表
         """
         return preview_url(post)
 
@@ -105,7 +106,7 @@ class DanbooruSource(SourceClient):
         覆盖父类 ``base.SourceClient``。
 
         Callers:
-            - `DanbooruSource.search`
+            - ``services/online_sources/danbooru/source.py:DanbooruSource.search``
         """
         if post.is_banned or post.is_deleted or not post.file_url:
             return None
@@ -121,7 +122,7 @@ class DanbooruSource(SourceClient):
         实现 ``base.SourceClient.fetch_meta``。
 
         Callers:
-            - `routes/online_sources.py:_run_refresh`
+            - ``routes/online_sources.py:_run_refresh``
         """
         from services.models import BooruPost
 
@@ -139,7 +140,7 @@ class DanbooruSource(SourceClient):
         实现 ``base.SourceClient.autocomplete``。
 
         Callers:
-            - `routes/online_sources.py:tag_suggest`
+            - ``routes/online_sources.py:tag_suggest``
         """
         return await _client.autocomplete(query, limit)
 
@@ -149,7 +150,8 @@ class DanbooruSource(SourceClient):
         ``base.SourceClient.search``。
 
         Callers:
-            - ``base.py:search_posts`` / ``routes/online_sources.py:search``
+            - ``services/online_sources/framework/base.py:search_posts``
+            - ``routes/online_sources.py:search``
         """
         from services.models import BooruPost
 
@@ -190,7 +192,7 @@ class DanbooruSource(SourceClient):
             emit: 下载进度回调, 图片来源忽略 (透传签名统一).
 
         Callers:
-            - ``base.py:SourceClient.download``
+            - ``services/online_sources/framework/base.py:SourceClient.download``
         """
         pid = post.id
         stem = Path(post.filename).stem

@@ -34,10 +34,10 @@ def resolve_under(root: Path, rel: str) -> Path:
         ValueError: 空路径, 或解析结果不在 ``root`` 之下.
 
     Callers:
-        - `routes/deps.py:resolve_path`
-        - `services/state/mask.py:mask_out_path`
-        - `services/state/annotator.py:apply_delete` / `restore` / `_move_sidecar_files`
-        - `services/core/video_frame.py:VideoFrameStore._video_path`
+        - ``routes/deps.py:resolve_path``
+        - ``services/state/mask.py:mask_out_path``
+        - ``services/state/annotator.py:apply_delete`` / `restore` / `_move_sidecar_files`
+        - ``services/core/video_frame.py:VideoFrameStore._video_path``
     """
     root = root.resolve()
     raw = (rel or "").replace("\\", "/")
@@ -69,10 +69,10 @@ def resolve_subdir(root: Path, name: str | None) -> tuple[str, Path]:
         ValueError: 名称非法或目录不存在.
 
     Callers:
-        - `services/core/work_dir.py:resolve_subdirs`
-        - `routes/online_sources.py:search` / `download` / `undownload` / `batch_start` / `regenerate_captions` / `refresh_metadata`
-        - `routes/images.py:similar_images`
-        - `routes/video.py:_services`
+        - ``services/core/work_dir.py:resolve_subdirs``
+        - ``routes/online_sources.py:search`` / `download` / `undownload` / `batch_start` / `regenerate_captions` / `refresh_metadata`
+        - ``routes/images.py:similar_images``
+        - ``routes/video.py:_services``
     """
     raw = (name or "main").strip().replace("\\", "/").strip("/")
     if not raw or raw == ".":
@@ -99,9 +99,9 @@ def resolve_subdirs(root: Path, names: list[str] | None) -> list[tuple[str, Path
         ValueError: 任一名称非法或目录不存在.
 
     Callers:
-        - `routes/annotations.py:select_all` / `get_state`
-        - `routes/images.py:list_images`
-        - `routes/dedupe.py:scan_duplicates` / `apply_delete`
+        - ``routes/annotations.py:select_all`` / `get_state`
+        - ``routes/images.py:list_images``
+        - ``routes/dedupe.py:scan_duplicates`` / `apply_delete`
     """
     raw = [n for n in (names or []) if (n or "").strip()]
     if not raw:
@@ -128,8 +128,8 @@ def parse_dir_names(dirs: str | None = None, dir: str | None = None) -> list[str
         list[str]: 目录名字符串列表; 均未提供时返回 ``["main"]``.
 
     Callers:
-        - `routes/annotations.py:select_all` / `get_state`
-        - `routes/images.py:list_images`
+        - ``routes/annotations.py:select_all`` / `get_state`
+        - ``routes/images.py:list_images``
     """
     if dirs and dirs.strip():
         return [x.strip() for x in dirs.split(",") if x.strip()]
@@ -163,7 +163,7 @@ def pin_main(root: Path, dirs: list[WorkDirInfo]) -> list[WorkDirInfo]:
         list[WorkDirInfo]: ``main`` 在首位的目录列表.
 
     Callers:
-        - `services/core/work_dir.py:list_work_dirs`
+        - ``services/core/work_dir.py:list_work_dirs``
     """
     by_name = {d.name: d for d in dirs if d.name and d.name != "."}
     out: list[WorkDirInfo] = []
@@ -187,12 +187,12 @@ def list_work_dirs(root: Path) -> list[WorkDirInfo]:
         list[WorkDirInfo]: ``WorkDirInfo`` 列表.
 
     Callers:
-        - `routes/images.py:list_dirs`
-        - `routes/ready.py:dirs`
-        - `routes/dedupe.py:dirs`
-        - `routes/tag_stats.py:dirs`
-        - `services/ready.py:build_ready_toml`
-        - `services/tagging/stats.py:resolve_selected_dirs`
+        - ``routes/images.py:list_dirs``
+        - ``routes/ready.py:dirs``
+        - ``routes/dedupe.py:dirs``
+        - ``routes/tag_stats.py:dirs``
+        - ``services/ready.py:build_ready_toml``
+        - ``services/tagging/stats.py:resolve_selected_dirs``
     """
     dirs = [d for d in list_image_subdirs(root) if d.name != "."]
     return pin_main(root, dirs)
@@ -208,8 +208,8 @@ def total_image_count(root: Path) -> int:
         int: 所有工作目录图片数之和.
 
     Callers:
-        - `routes/tasks.py:list_tasks`
-        - `services/state/archiver.py:archive_task`
-        - `services/ready.py:build_ready_toml`
+        - ``routes/tasks.py:list_tasks``
+        - ``services/state/archiver.py:archive_task``
+        - ``services/ready.py:build_ready_toml``
     """
     return sum(d.image_count for d in list_work_dirs(root))

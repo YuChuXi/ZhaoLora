@@ -5,7 +5,7 @@
 向量索引，故每次查询须对全部候选图片实时评分，不依赖任何缓存。
 
 Callers:
-    - ``routes/tag_stats``: 查询排序、批量标记 API
+    - ``routes/tag_stats.py:`` : 查询排序、批量标记 API
 """
 
 from __future__ import annotations
@@ -38,7 +38,7 @@ def _load_model() -> CrossEncoder:
         CrossEncoder 实例.
 
     Callers:
-        - ``device.register_model`` 注册的 load 回调
+        - ``services/core/device.py:register_model`` 注册的 load 回调
     """
     from sentence_transformers import CrossEncoder
 
@@ -55,7 +55,7 @@ def _unload_model(model: object) -> None:
         model: 待卸载的 CrossEncoder 实例 (device 以 object 形式传入).
 
     Callers:
-        - ``device.register_model`` 注册的 unload 回调
+        - ``services/core/device.py:register_model`` 注册的 unload 回调
     """
     del model
 
@@ -70,8 +70,8 @@ def model_ready() -> tuple[bool, str]:
         ``(ok, message)``. ok 为 True 时表示依赖就绪、可加载.
 
     Callers:
-        - ``routes/tag_stats:embedding_status``
-        - ``routes/tag_stats:embedding_query``
+        - ``routes/tag_stats.py:embedding_status``
+        - ``routes/tag_stats.py:embedding_query``
     """
     try:
         from sentence_transformers import CrossEncoder  # noqa: F401
@@ -109,7 +109,7 @@ def rerank(
         映射到 [0, 1]，与前端阈值语义一致。
 
     Callers:
-        - ``routes/tag_stats:embedding_query``
+        - ``routes/tag_stats.py:embedding_query``
     """
     assert handle is not None
     model = handle

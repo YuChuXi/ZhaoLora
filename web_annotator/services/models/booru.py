@@ -1,10 +1,10 @@
 """Booru 搜索与下载模型.
 
 Callers:
-    - ``services.models``: 包导出.
-    - ``routes.online_sources``: 在线图站路由.
-    - ``services.online_sources.framework.{base,media,gallerydl}``: 下载框架.
-    - ``services.online_sources.{gelbooru,danbooru,pixiv,bilibili,x}.source``: 各图站适配.
+    - ``services/models/__init__.py:`` : 包导出.
+    - ``routes/online_sources.py:`` : 在线图站路由.
+    - ``services.online_sources.framework.{base,media,gallerydl}`` : 下载框架.
+    - ``services.online_sources.{gelbooru,danbooru,pixiv,bilibili,x}.source`` : 各图站适配.
 """
 
 from __future__ import annotations

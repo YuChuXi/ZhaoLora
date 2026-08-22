@@ -73,7 +73,7 @@ class ScoreProgress:
             JobSnapshot: 包含完成百分比与最近 80 条日志的快照. 
 
         Callers:
-            - ``routes/scoring.py``: SSE 推送评分进度. 
+            - ``routes/scoring.py:`` : SSE 推送评分进度. 
         """
         total, done = self.total, self.done
         pct = round(100.0 * done / total, 1) if total > 0 else 0.0
@@ -119,9 +119,9 @@ def load_score_json(root: Path, filename: str) -> dict[str, float]:
         TypeError: JSON 根节点不是对象时抛出. 
 
     Callers:
-        - ``routes/images.py``: 加载美学/质量分数填充图片列表. 
-        - ``routes/tag_stats.py``: 加载分数用于标签注入. 
-        - ``run_scoring``: 读取已有分数跳过重复计算. 
+        - ``routes/images.py:`` : 加载美学/质量分数填充图片列表. 
+        - ``routes/tag_stats.py:`` : 加载分数用于标签注入. 
+        - ``services/analysis/scoring.py:run_scoring`` : 读取已有分数跳过重复计算. 
     """
     path = root.resolve() / filename
     if not path.is_file():
@@ -143,7 +143,7 @@ def save_score_json(root: Path, filename: str, scores: dict[str, float]) -> None
         scores: 相对路径到分数的映射. 
 
     Callers:
-        - ``run_scoring``: 评分过程中定期持久化. 
+        - ``services/analysis/scoring.py:run_scoring`` : 评分过程中定期持久化. 
     """
     path = root.resolve() / filename
     clean = {str(k).replace("\\", "/").lstrip("/"): round(float(v), 6) for k, v in scores.items()}
@@ -167,7 +167,7 @@ def _raw_to_bin(raw: float) -> int:
         int: 0~9 的整数档位. 
 
     Callers:
-        - ``build_score_results``
+        - ``services/analysis/scoring.py:build_score_results``
     """
     return int(max(0.0, min(0.99, raw)) * 10)
 
@@ -179,7 +179,7 @@ def _load_aes_models() -> tuple:
         tuple: ``(clip_model, preprocess_fn, aes_head)``.
 
     Callers:
-        - ``device.register_model`` 注册的 load 回调
+        - ``services/core/device.py:register_model`` 注册的 load 回调
     """
     import clip
     clip_model, preprocess = clip.load("ViT-L/14", device="cpu")
@@ -204,7 +204,7 @@ def _unload_aes_models(handle: object) -> None:
         handle: ``_load_aes_models`` 返回的 ``(clip, preprocess, aes_head)`` 元组.
 
     Callers:
-        - ``device.register_model`` 注册的 unload 回调
+        - ``services/core/device.py:register_model`` 注册的 unload 回调
     """
     clip_model, _pre, aes_head = cast("tuple", handle)
     del clip_model, aes_head
@@ -227,7 +227,7 @@ def _aes_score_one(image: Image.Image, clip_model, preprocess, aes_head) -> floa
         float: 原始美学分数(约 0~1).
 
     Callers:
-        - ``_run_scoring``
+        - ``services/analysis/scoring.py:_run_scoring``
     """
     device = next(clip_model.parameters()).device
     t = preprocess(image.convert("RGB")).unsqueeze(0).to(device)
@@ -252,7 +252,7 @@ def _load_q_models() -> tuple:
         RuntimeError: transformers 版本不足时抛出.
 
     Callers:
-        - ``device.register_model`` 注册的 load 回调
+        - ``services/core/device.py:register_model`` 注册的 load 回调
     """
     try:
         from transformers import AutoModelForImageTextToText, AutoProcessor
@@ -273,7 +273,7 @@ def _unload_q_models(handle: object) -> None:
         handle: ``_load_q_models`` 返回的 ``(model, processor)`` 元组.
 
     Callers:
-        - ``device.register_model`` 注册的 unload 回调
+        - ``services/core/device.py:register_model`` 注册的 unload 回调
     """
     model, _processor = cast("tuple", handle)
     del model
@@ -294,7 +294,7 @@ def _q_score_one(src: Path, models: tuple) -> float:
         float: 加权质量分(0~1).
 
     Callers:
-        - ``_run_scoring``
+        - ``services/analysis/scoring.py:_run_scoring``
     """
     model, processor = models
     device = next(model.parameters()).device
@@ -332,8 +332,8 @@ def quality_to_tag(score: float) -> str:
         str: 对应的质量标签. 
 
     Callers:
-        - ``build_score_results``
-        - ``services/tagging/clean.py:clean_caption``: 标签清理时注入质量标签. 
+        - ``services/analysis/scoring.py:build_score_results``
+        - ``services/tagging/clean.py:clean_caption`` : 标签清理时注入质量标签. 
     """
     i = min(int(score * len(QUALITY_TAGS)), len(QUALITY_TAGS) - 1)
     return QUALITY_TAGS[max(0, i)]
@@ -349,8 +349,8 @@ def load_quality_scores(root: Path) -> dict[str, float]:
         dict[str, float]: 相对路径到质量分的映射, 文件不存在时返回空字典. 
 
     Callers:
-        - ``routes/images.py``: 填充图片列表的质量字段. 
-        - ``routes/tag_stats.py``: 标签操作时加载质量分. 
+        - ``routes/images.py:`` : 填充图片列表的质量字段. 
+        - ``routes/tag_stats.py:`` : 标签操作时加载质量分. 
     """
     return load_score_json(root, QUALITY_SCORES)
 
@@ -387,7 +387,7 @@ def _run_scoring(
         on_update: 每次状态变更后的回调(仅关键字参数). 
 
     Callers:
-        - ``run_scoring``
+        - ``services/analysis/scoring.py:run_scoring``
     """
     root = root.resolve()
     items = collect_images(list(dict.fromkeys(dirs)))

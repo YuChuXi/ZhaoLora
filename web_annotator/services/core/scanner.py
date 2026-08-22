@@ -66,15 +66,15 @@ def scan_images(data_dir: Path, *, path_prefix: str = "") -> list[ScannedImage]:
         按自然序排列的 ``ScannedImage`` 列表.
 
     Callers:
-        - `routes/images.py:list_images` / `similar_images`
-        - `routes/annotations.py:select_all` / `get_state`
-        - `routes/crop.py:list_crop_images`
-        - `routes/alpha_paint.py:list_paint_images`
-        - `routes/dedupe.py:apply_delete`
-        - `routes/tasks.py:list_tasks`
-        - `routes/tag_stats.py:check` / `embedding_query` / `concept_query`
-        - `services/ready.py:subdir_mask_stats`
-        - `services/state/archiver.py:archive_task`
+        - ``routes/images.py:list_images`` / `similar_images`
+        - ``routes/annotations.py:select_all`` / `get_state`
+        - ``routes/crop.py:list_crop_images``
+        - ``routes/alpha_paint.py:list_paint_images``
+        - ``routes/dedupe.py:apply_delete``
+        - ``routes/tasks.py:list_tasks``
+        - ``routes/tag_stats.py:check`` / `embedding_query` / `concept_query`
+        - ``services/ready.py:subdir_mask_stats``
+        - ``services/state/archiver.py:archive_task``
     """
     prefix = (path_prefix or "").replace("\\", "/").strip("/")
     stem_map: dict[str, list[Path]] = {}

@@ -229,7 +229,7 @@ async def clean(request: Request, body: CleanBody) -> JobSubmitResponse:
             TagCleanResult: 清洗结果。
 
         Callers:
-            - ``services.core.jobs:JobManager.submit``
+            - ``services/core/jobs.py:JobManager.submit``
         """
         emit(
             JobSnapshot(
@@ -338,7 +338,7 @@ async def batch_edit(request: Request, body: BatchEditBody) -> JobSubmitResponse
             TagCleanResult: 编辑结果。
 
         Callers:
-            - ``services.core.jobs:JobManager.submit``
+            - ``services/core/jobs.py:JobManager.submit``
         """
         emit(
             JobSnapshot(
@@ -416,8 +416,8 @@ def _build_check_item(
         TagCheckItem: 检查结果项。
 
     Callers:
-        - ``routes/tag_stats:check``
-        - ``routes/tag_stats:edit_one``
+        - ``routes/tag_stats.py:check``
+        - ``routes/tag_stats.py:edit_one``
     """
     txt_path = work_dir / (stem + ".txt")
     raw = ""
@@ -665,7 +665,7 @@ async def embedding_query(request: Request, body: EmbeddingQueryBody) -> JobSubm
                 EmbeddingQueryResult: 排序结果。
 
             Callers:
-                - ``services.core.jobs:JobManager.submit``
+                - ``services/core/jobs.py:JobManager.submit``
             """
             if missing:
                 emit(JobSnapshot(
@@ -724,7 +724,7 @@ async def embedding_query(request: Request, body: EmbeddingQueryBody) -> JobSubm
             EmbeddingQueryResult: 排序结果。
 
         Callers:
-            - ``services.core.jobs:JobManager.submit``
+            - ``services/core/jobs.py:JobManager.submit``
         """
         emit(JobSnapshot(
             status="running", phase="querying",
@@ -843,7 +843,7 @@ def delete_tag_from_caption_fuzzy(raw: str, tag: str) -> str:
         str: 删除后的 caption 字符串。
 
     Callers:
-        - ``routes/tag_stats:embedding_batch_tag``
+        - ``routes/tag_stats.py:embedding_batch_tag``
     """
     header, body, has_sep = split_header_body(raw)
     tag_lower = tag.lower()
@@ -907,7 +907,7 @@ async def concept_query(request: Request, body: ConceptQueryBody) -> JobSubmitRe
             ConceptQueryResult: 概念分割结果。
 
         Callers:
-            - ``services.core.jobs:JobManager.submit``
+            - ``services/core/jobs.py:JobManager.submit``
         """
         emit(JobSnapshot(
             status="running", phase="concept",

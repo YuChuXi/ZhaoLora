@@ -9,7 +9,7 @@
 张从 pximg 图床拉取并转为 PNG 写入磁盘。
 
 Callers:
-    - ``pixiv/__init__.py`` (导出)
+    - ``services/online_sources/pixiv/__init__.py:`` (导出)
 """
 
 from __future__ import annotations
@@ -35,7 +35,7 @@ class PixivSource(SourceClient):
     """从 pixiv 画师或标签拉取图片的来源客户端.
 
     Callers:
-        - ``__init__.py:register_source``
+        - ``services/online_sources/framework/base.py:register_source``
     """
 
     name = "pixiv"
@@ -92,11 +92,11 @@ class PixivSource(SourceClient):
             RuntimeError: API 返回 ``error: true``。
 
         Callers:
-            - `PixivSource._fetch_user_ids`
-            - `PixivSource._fetch_work`
-            - `PixivSource._fetch_tag_page`
-            - `PixivSource._fetch_pages`
-            - `PixivSource._fetch_detail`
+            - ``services/online_sources/pixiv/source.py:PixivSource._fetch_user_ids``
+            - ``services/online_sources/pixiv/source.py:PixivSource._fetch_work``
+            - ``services/online_sources/pixiv/source.py:PixivSource._fetch_tag_page``
+            - ``services/online_sources/pixiv/source.py:PixivSource._fetch_pages``
+            - ``services/online_sources/pixiv/source.py:PixivSource._fetch_detail``
         """
         async with HttpClient() as client:
             resp = await client.get(url, headers=request_headers(), follow_redirects=True)
@@ -117,8 +117,8 @@ class PixivSource(SourceClient):
             str: 标签文本。
 
         Callers:
-            - `PixivSource._fetch_work`
-            - `PixivSource._fetch_tag_page`
+            - ``services/online_sources/pixiv/source.py:PixivSource._fetch_work``
+            - ``services/online_sources/pixiv/source.py:PixivSource._fetch_tag_page``
         """
         tags = item.get("tags", [])
         if isinstance(tags, dict):
@@ -142,8 +142,8 @@ class PixivSource(SourceClient):
             list[BooruPost]: 卡片列表.
 
         Callers:
-            - `PixivSource._fetch_work`
-            - `PixivSource._fetch_tag_page`
+            - ``services/online_sources/pixiv/source.py:PixivSource._fetch_work``
+            - ``services/online_sources/pixiv/source.py:PixivSource._fetch_tag_page``
         """
         page_count = item.get("pageCount", 1)
         sample_url = urls.get("regular", "")
@@ -174,7 +174,7 @@ class PixivSource(SourceClient):
             list[int]: 按 ID 降序排列的作品 ID 列表。
 
         Callers:
-            - `PixivSource._serve_user_page`
+            - ``services/online_sources/pixiv/source.py:PixivSource._serve_user_page``
         """
         data = await self._request(
             f"https://www.pixiv.net/ajax/user/{user_id}/profile/all",
@@ -194,7 +194,7 @@ class PixivSource(SourceClient):
             list[BooruPost]: 该作品各分页的卡片, 非目标类型时为空。
 
         Callers:
-            - `PixivSource._serve_user_page`
+            - ``services/online_sources/pixiv/source.py:PixivSource._serve_user_page``
         """
         detail = await self._request(
             f"https://www.pixiv.net/ajax/illust/{illust_id}",
@@ -220,7 +220,7 @@ class PixivSource(SourceClient):
             tuple[list[BooruPost], bool]: (卡片列表, 是否还有下一页)。
 
         Callers:
-            - `PixivSource.search`
+            - ``services/online_sources/pixiv/source.py:PixivSource.search``
         """
         ids = self._user_ids.get(user_id)
         if ids is None:
@@ -255,7 +255,7 @@ class PixivSource(SourceClient):
             tuple[list[BooruPost], int]: (卡片列表, 本页作品数).
 
         Callers:
-            - `PixivSource._serve_tag_page`
+            - ``services/online_sources/pixiv/source.py:PixivSource._serve_tag_page``
         """
         data = await self._request(
             f"https://www.pixiv.net/ajax/search/artworks/{tag}"
@@ -291,7 +291,7 @@ class PixivSource(SourceClient):
             tuple[list[BooruPost], bool]: (卡片列表, 是否还有下一页).
 
         Callers:
-            - `PixivSource.search`
+            - ``services/online_sources/pixiv/source.py:PixivSource.search``
         """
         posts, count = await self._fetch_tag_page(tag, page)
         return posts, count > 0
@@ -340,7 +340,7 @@ class PixivSource(SourceClient):
             list[dict]: 分页列表, 每项含 ``urls.original``。
 
         Callers:
-            - `PixivSource.download`
+            - ``services/online_sources/pixiv/source.py:PixivSource.download``
         """
         data = await self._request(
             f"https://www.pixiv.net/ajax/illust/{illust_id}/pages",
@@ -357,8 +357,8 @@ class PixivSource(SourceClient):
             dict: 作品详情。
 
         Callers:
-            - `PixivSource.download`
-            - `PixivSource.fetch_meta`
+            - ``services/online_sources/pixiv/source.py:PixivSource.download``
+            - ``services/online_sources/pixiv/source.py:PixivSource.fetch_meta``
         """
         data = await self._request(
             f"https://www.pixiv.net/ajax/illust/{illust_id}",
@@ -386,7 +386,7 @@ class PixivSource(SourceClient):
             emit: 下载进度回调, 图片来源忽略 (透传签名统一).
 
         Callers:
-            - ``base.py:SourceClient.download``
+            - ``services/online_sources/framework/base.py:SourceClient.download``
         """
         pid = post.id
         illust_id, num = self._split_pid(pid)
@@ -465,8 +465,8 @@ class PixivSource(SourceClient):
             ValueError: pid 格式非法。
 
         Callers:
-            - `PixivSource.download`
-            - `PixivSource.fetch_meta`
+            - ``services/online_sources/pixiv/source.py:PixivSource.download``
+            - ``services/online_sources/pixiv/source.py:PixivSource.fetch_meta``
         """
         idx = pid.rfind("_")
         if idx <= 0 or not pid[idx + 1:].isdigit():

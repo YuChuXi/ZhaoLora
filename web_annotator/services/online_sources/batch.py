@@ -39,7 +39,7 @@ def _empty_backoff(streak: int) -> float:
         float: 退避秒数。
 
     Callers:
-        - ``batch.py:fill_buffer``
+        - ``services/online_sources/batch.py:fill_buffer``
     """
     return min(_EMPTY_BACKOFF_BASE * (2 ** (streak - 1)), _EMPTY_BACKOFF_CAP)
 
@@ -49,7 +49,7 @@ class BatchProgress:
     """可变进度与运行参数.
 
     Callers:
-        - ``batch.py:run_batch``
+        - ``services/online_sources/batch.py:run_batch``
         - ``routes/online_sources.py:batch_params``
     """
 
@@ -73,7 +73,7 @@ class BatchProgress:
             JobSnapshot: 当前进度的快照, 含百分比、计数与状态消息.
 
         Callers:
-            - ``batch.py:_run_async``
+            - ``services/online_sources/batch.py:_run_async``
         """
         total = max(0, int(self.limit))
         done = max(0, int(self.done))
@@ -116,7 +116,7 @@ def register_progress(job_id: str, prog: BatchProgress) -> None:
 
     Callers:
         - ``routes/online_sources.py:batch_start``
-        - ``batch.py:run_batch``
+        - ``services/online_sources/batch.py:run_batch``
     """
     _ACTIVE[job_id] = prog
 
@@ -131,7 +131,7 @@ def unregister_progress(job_id: str) -> None:
         None: 无返回值.
 
     Callers:
-        - ``batch.py:run_batch``
+        - ``services/online_sources/batch.py:run_batch``
     """
     _ACTIVE.pop(job_id, None)
 
@@ -252,7 +252,7 @@ async def _run_async(
         None: 无返回值, 进度经 ``emit`` 推送.
 
     Callers:
-        - ``batch.py:run_batch``
+        - ``services/online_sources/batch.py:run_batch``
     """
 
     def push(msg: str | None = None) -> None:
@@ -265,7 +265,7 @@ async def _run_async(
             None: 无返回值.
 
         Callers:
-            - ``batch.py:_run_async``
+            - ``services/online_sources/batch.py:_run_async``
         """
         if msg is not None:
             progress.message = msg
@@ -294,7 +294,7 @@ async def _run_async(
             None: 无返回值; 阻塞至令牌可用或任务被取消.
 
         Callers:
-            - ``batch.py:download_one``
+            - ``services/online_sources/batch.py:download_one``
         """
         nonlocal rate_budget, rate_last
         rps = float(progress.rate_rps)
@@ -323,7 +323,7 @@ async def _run_async(
             None: 无返回值; 候选写入闭包 ``buffer`` 并更新 ``has_more_pages``.
 
         Callers:
-            - ``batch.py:next_post``
+            - ``services/online_sources/batch.py:next_post``
         """
         nonlocal page, session_token, empty_streak, has_more_pages
         if not has_more_pages:
@@ -369,7 +369,7 @@ async def _run_async(
             Any | None: 下一个待下载帖; 达到上限、翻完或被取消时返回 None.
 
         Callers:
-            - ``batch.py:worker``
+            - ``services/online_sources/batch.py:worker``
         """
         nonlocal buf_i, inflight
         async with gate:
@@ -402,7 +402,7 @@ async def _run_async(
             None: 无返回值; 结果累计进 ``progress``.
 
         Callers:
-            - ``batch.py:worker``
+            - ``services/online_sources/batch.py:worker``
         """
         nonlocal inflight
         attempt = 0
@@ -459,7 +459,7 @@ async def _run_async(
             None: 无返回值; 达到上限或翻完时退出.
 
         Callers:
-            - ``batch.py:_run_async``
+            - ``services/online_sources/batch.py:_run_async``
         """
         while not progress.cancel_requested:
             if slot >= progress.conn:

@@ -28,7 +28,7 @@ def _load_model() -> tuple:
     """加载 BiRefNet 模型与预处理变换 (CPU).
 
     Callers:
-        - ``device.register_model`` 注册的 load 回调
+        - ``services/core/device.py:register_model`` 注册的 load 回调
     """
     try:
         from transformers import AutoModelForImageSegmentation, AutoConfig
@@ -75,7 +75,7 @@ def _unload_model(handle: object) -> None:
         handle: ``_load_model`` 返回的 ``(model, transform)`` 元组.
 
     Callers:
-        - ``device.register_model`` 注册的 unload 回调
+        - ``services/core/device.py:register_model`` 注册的 unload 回调
     """
     model, _transform = cast("tuple", handle)
     del model, _transform
@@ -96,7 +96,7 @@ def _predict_mask(model, image: Image.Image, transform) -> np.ndarray:
         ``uint8`` 蒙版 (H, W), 值域 [0, 255].
 
     Callers:
-        - ``run_birefnet_mask``
+        - ``services/analysis/birefnet.py:run_birefnet_mask``
     """
     device = next(model.parameters()).device
     orig_size = image.size
@@ -116,7 +116,7 @@ def _expand_mask(mask: np.ndarray, expand_px: int) -> np.ndarray:
     """将 mask 主体向外扩展指定像素数. 
 
     Callers:
-        - ``run_birefnet_mask``
+        - ``services/analysis/birefnet.py:run_birefnet_mask``
     """
     if expand_px <= 0:
         return mask
@@ -128,7 +128,7 @@ def _shrink_mask(mask: np.ndarray, shrink_px: int) -> np.ndarray:
     """将 mask 主体向内收缩指定像素数. 
 
     Callers:
-        - ``run_birefnet_mask``
+        - ``services/analysis/birefnet.py:run_birefnet_mask``
     """
     if shrink_px <= 0:
         return mask
@@ -140,7 +140,7 @@ def _remap_mask(mask: np.ndarray, lo: int, hi: int) -> np.ndarray:
     """将 mask 值从 [0, 255] 线性映射到 [lo, hi]. 
 
     Callers:
-        - ``run_birefnet_mask``
+        - ``services/analysis/birefnet.py:run_birefnet_mask``
     """
     if lo == 0 and hi == 255:
         return mask

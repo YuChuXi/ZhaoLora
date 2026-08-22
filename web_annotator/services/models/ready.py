@@ -1,9 +1,9 @@
 """就绪 TOML / 蒙版统计模型.
 
 Callers:
-    - ``services.models``: 包导出.
-    - ``routes.ready``: 就绪页路由.
-    - ``services.ready``: 就绪 TOML 构建.
+    - ``services/models/__init__.py:`` : 包导出.
+    - ``routes/ready.py:`` : 就绪页路由.
+    - ``services/ready.py:`` : 就绪 TOML 构建.
 """
 
 from __future__ import annotations

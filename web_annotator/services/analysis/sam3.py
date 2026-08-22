@@ -8,7 +8,7 @@ Anything Model 3 (facebook/sam3)，以文本提示对图片进行概念分割，
 ``~/.cache/modelscope/hub/facebook/sam3``，加载时不再联网。
 
 Callers:
-    - ``routes/tag_stats``: 概念分割排序 API
+    - ``routes/tag_stats.py:`` : 概念分割排序 API
 """
 
 from __future__ import annotations
@@ -58,7 +58,7 @@ def _load_model() -> tuple[Sam3Model, Sam3Processor, str]:
         ``(model, processor, device)`` 三元组作为句柄; device 恒为 ``"cpu"``.
 
     Callers:
-        - ``device.register_model`` 注册的 load 回调
+        - ``services/core/device.py:register_model`` 注册的 load 回调
     """
     from transformers import Sam3Model, Sam3Processor
 
@@ -75,7 +75,7 @@ def _unload_model(handle: object) -> None:
         handle: ``_load_model`` 返回的 ``(model, processor, device)`` 三元组.
 
     Callers:
-        - ``device.register_model`` 注册的 unload 回调
+        - ``services/core/device.py:register_model`` 注册的 unload 回调
     """
     model, processor, _dev = cast("tuple", handle)
     del model, processor
@@ -91,7 +91,7 @@ def model_ready() -> tuple[bool, str]:
         ``(ok, message)``. ok 为 True 时表示权重就绪、可加载.
 
     Callers:
-        - ``routes/tag_stats:concept_query``
+        - ``routes/tag_stats.py:concept_query``
     """
     if not os.path.isdir(_MODEL_PATH):
         return False, f"未找到 ModelScope 下载的模型: {_MODEL_PATH}"
@@ -118,8 +118,8 @@ def _merge_masks(masks) -> np.ndarray | None:
         ``uint8`` 二值掩码 (H, W), 值域 {0, 255}; 无实例时 ``None``.
 
     Callers:
-        - ``segment_concept_mask``
-        - ``segment_concept_masks_batch``
+        - ``services/analysis/sam3.py:segment_concept_mask``
+        - ``services/analysis/sam3.py:segment_concept_masks_batch``
     """
     if masks is None or masks.numel() == 0:
         return None
@@ -146,7 +146,7 @@ def segment_concept_mask(handle: Sam3Handle, image: Image.Image, text: str) -> n
         RuntimeError: 模型未就绪.
 
     Callers:
-        - ``services/analysis/sam3:run_concept_query``
+        - ``services/analysis/sam3.py:run_concept_query``
     """
     model, processor, device = handle
     import torch
@@ -185,7 +185,7 @@ def segment_concept_masks_batch(handle: Sam3Handle, images: list[Image.Image], t
         RuntimeError: 模型未就绪.
 
     Callers:
-        - ``services/analysis/sam3:run_concept_query``
+        - ``services/analysis/sam3.py:run_concept_query``
     """
     model, processor, device = handle
     import torch
@@ -215,7 +215,7 @@ def mask_ratio(mask: np.ndarray) -> float:
         ``[0, 1]`` 区间的占比.
 
     Callers:
-        - ``routes/tag_stats:concept_query``
+        - ``routes/tag_stats.py:concept_query``
     """
     h, w = mask.shape
     total = h * w
@@ -236,7 +236,7 @@ def overlay_png_base64(mask: np.ndarray) -> str:
         ``data:image/png;base64,...`` 字符串.
 
     Callers:
-        - ``routes/tag_stats:concept_query``
+        - ``routes/tag_stats.py:concept_query``
     """
     h, w = mask.shape
     scale = min(1.0, _OVERLAY_MAX_SIDE / max(w, h))
@@ -283,7 +283,7 @@ def run_concept_query(
         ``ratio`` 为 0 且 ``mask_data`` 为空字符串.
 
     Callers:
-        - ``routes/tag_stats:concept_query``
+        - ``routes/tag_stats.py:concept_query``
     """
     assert handle is not None
     n = len(candidates)

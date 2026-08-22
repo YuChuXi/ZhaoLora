@@ -1,11 +1,11 @@
 """标签统计与清洗模型.
 
 Callers:
-    - ``services.models``: 包导出.
-    - ``routes.tag_stats``: 标签统计与检查路由.
-    - ``services.tagging.stats``: 标签频率统计.
-    - ``services.tagging.clean``: 标签清洗.
-    - ``services.models.jobs``: 引用查询结果类型.
+    - ``services/models/__init__.py:`` : 包导出.
+    - ``routes/tag_stats.py:`` : 标签统计与检查路由.
+    - ``services/tagging/stats.py:`` : 标签频率统计.
+    - ``services/tagging/clean.py:`` : 标签清洗.
+    - ``services/models/jobs.py:`` : 引用查询结果类型.
 """
 
 from __future__ import annotations

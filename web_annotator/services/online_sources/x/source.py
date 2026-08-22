@@ -12,7 +12,7 @@
 格式, 由 ``server.py`` 解析为绝对路径后写入).
 
 Callers:
-    - ``x/__init__.py`` (导出)
+    - ``services/online_sources/x/__init__.py:`` (导出)
 """
 
 from __future__ import annotations
@@ -45,7 +45,7 @@ def _sized_url(url: str, size: str) -> str:
         str: 替换尺寸后的 URL.
 
     Callers:
-        - `XSource._post_from_item`
+        - ``services/online_sources/x/source.py:XSource._post_from_item``
     """
     for sep in ("&name=", "?name="):
         if sep in url:
@@ -59,7 +59,7 @@ class XSource(GalleryDLSource):
     """从 X 用户 timeline 拉取图片的来源客户端.
 
     Callers:
-        - ``__init__.py:register_source``
+        - ``services/online_sources/framework/base.py:register_source``
     """
 
     name = "x"
@@ -76,7 +76,7 @@ class XSource(GalleryDLSource):
             未配置 cookies 时为空列表.
 
         Callers:
-            - `GalleryDLSource._gallery_meta_incremental`
+            - ``services/online_sources/framework/gallerydl.py:GalleryDLSource._gallery_meta_incremental``
         """
         cookies = os.environ.get("X_COOKIES", "").strip()
         return [] if not cookies else [((), "cookies", cookies)]
@@ -92,7 +92,7 @@ class XSource(GalleryDLSource):
             str | None: 用户名; 为空时返回 None.
 
         Callers:
-            - `GalleryDLSource.search`
+            - ``services/online_sources/framework/gallerydl.py:GalleryDLSource.search``
         """
         u = (tags or "").strip()
         return u if u else None
@@ -107,7 +107,7 @@ class XSource(GalleryDLSource):
             str: 用户媒体页 URL.
 
         Callers:
-            - `GalleryDLSource._ensure_cached`
+            - ``services/online_sources/framework/gallerydl.py:GalleryDLSource._ensure_cached``
         """
         return f"https://x.com/{key}/media"
 
@@ -124,8 +124,8 @@ class XSource(GalleryDLSource):
             ValueError: pid 格式非法.
 
         Callers:
-            - `GalleryDLSource.download`
-            - `GalleryDLSource.fetch_meta`
+            - ``services/online_sources/framework/gallerydl.py:GalleryDLSource.download``
+            - ``services/online_sources/framework/gallerydl.py:GalleryDLSource.fetch_meta``
         """
         parts = pid.rsplit("_", 2)
         if len(parts) != 3 or not parts[1].isdigit() or not parts[2].isdigit():
@@ -144,8 +144,8 @@ class XSource(GalleryDLSource):
             str: 推文页 URL.
 
         Callers:
-            - `GalleryDLSource._fetch_detail`
-            - `GalleryDLSource.download`
+            - ``services/online_sources/framework/gallerydl.py:GalleryDLSource._fetch_detail``
+            - ``services/online_sources/framework/gallerydl.py:GalleryDLSource.download``
         """
         return f"https://x.com/{parts[0]}/status/{parts[1]}"
 
@@ -164,8 +164,8 @@ class XSource(GalleryDLSource):
             BooruPost | None: 非图片或无有效 URL 时返回 None.
 
         Callers:
-            - `GalleryDLSource._ensure_cached`
-            - `GalleryDLSource.fetch_meta`
+            - ``services/online_sources/framework/gallerydl.py:GalleryDLSource._ensure_cached``
+            - ``services/online_sources/framework/gallerydl.py:GalleryDLSource.fetch_meta``
         """
         if kwdict.get("type") not in _IMAGE_TYPES:
             return None
@@ -195,6 +195,6 @@ class XSource(GalleryDLSource):
             str: 推文正文文本.
 
         Callers:
-            - `GalleryDLSource.download`
+            - ``services/online_sources/framework/gallerydl.py:GalleryDLSource.download``
         """
         return re.sub(r"\s+", " ", (kwdict.get("content") or "")).strip()

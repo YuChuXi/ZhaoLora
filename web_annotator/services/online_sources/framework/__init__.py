@@ -10,12 +10,12 @@
 - ``gallerydl``: 基于 gallery-dl 的来源客户端基类.
 
 Callers:
-    - ``services.online_sources.danbooru.source``
-    - ``services.online_sources.gelbooru.source``
-    - ``services.online_sources.bilibili``
-    - ``services.online_sources.x.source``
-    - ``services.online_sources.pixiv.source``
-    - ``routes.online_sources``
+    - ``services/online_sources/danbooru/source.py:`` 模块
+    - ``services/online_sources/gelbooru/source.py:`` 模块
+    - ``routes/online_sources.py:`` 模块
+    - ``services/online_sources/x/source.py:`` 模块
+    - ``services/online_sources/pixiv/source.py:`` 模块
+    - ``routes/__init__.py:`` 模块
 """
 
 from services.online_sources.framework.base import (

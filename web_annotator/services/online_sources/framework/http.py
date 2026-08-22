@@ -8,10 +8,10 @@
 ``httpx`` 原生自动读取, 无需显式传参。
 
 Callers:
-    - ``online_sources.gelbooru.source``
-    - ``online_sources.pixiv.source``
-    - ``online_sources.bilibili``
-    - ``routes.online_sources``
+    - ``services/online_sources/gelbooru/source.py:`` 模块
+    - ``services/online_sources/pixiv/source.py:`` 模块
+    - ``routes/online_sources.py:`` 模块
+    - ``routes/__init__.py:`` 模块
 """
 
 from __future__ import annotations
@@ -43,8 +43,10 @@ class HttpClient(httpx.AsyncClient):
             resp = await client.get(url)
 
     Callers:
-        - ``online_sources.gelbooru.source`` / ``online_sources.pixiv.source`` / ``online_sources.bilibili``
-        - ``online_sources.batch`` (批量下载任务自持实例复用连接)
+        - ``online_sources.gelbooru.source``
+        - ``online_sources.pixiv.source``
+        - ``routes/online_sources.py:``
+        - ``services/online_sources/batch.py:`` (批量下载任务自持实例复用连接)
     """
 
     def __init__(self, *, referer: str | None = None, **kwargs: Any) -> None:
@@ -67,7 +69,8 @@ class HttpClient(httpx.AsyncClient):
         """解析请求头: 显式 ``headers`` 完全替换默认值; ``referer`` 仅追加/覆盖.
 
         Callers:
-            - ``HttpClient.get_bytes`` / ``HttpClient.stream_response``
+            - ``services/online_sources/framework/http.py:HttpClient.get_bytes``
+            - ``services/online_sources/framework/http.py:HttpClient.stream_response``
         """
         if headers is not None:
             return headers
@@ -104,7 +107,8 @@ class HttpClient(httpx.AsyncClient):
             NetworkError: 网络或 HTTP 状态错误.
 
         Callers:
-            - ``online_sources.pixiv.source`` / ``online_sources.bilibili``
+            - ``online_sources.pixiv.source``
+            - ``routes/online_sources.py:``
         """
         h = self._headers_for(headers, referer)
         resp = await self.get(url, headers=h, timeout=timeout, follow_redirects=True)
@@ -136,7 +140,7 @@ class HttpClient(httpx.AsyncClient):
             NetworkError: 网络或 HTTP 状态错误.
 
         Callers:
-            - ``routes.online_sources`` (各图片代理端点)
+            - ``routes/online_sources.py:`` (各图片代理端点)
         """
         h = self._headers_for(headers, referer)
         client = HttpClient(timeout=httpx.Timeout(timeout, connect=10.0))
@@ -166,7 +170,7 @@ def ext_from_url(url: str, fallback: str = ".jpg") -> str:
     """从 URL 提取图片扩展名, 未知则回退.
 
     Callers:
-        - ``online_sources.gelbooru.source``
+        - ``services/online_sources/gelbooru/source.py:`` 模块
     """
     path = url.split("?", 1)[0]
     suf = Path(path).suffix.lower()

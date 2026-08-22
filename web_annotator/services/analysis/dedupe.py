@@ -54,7 +54,7 @@ class UnionFind:
             None.
 
         Callers:
-            - `dedupe.py:find_duplicate_groups`
+            - ``services/analysis/dedupe.py:find_duplicate_groups``
         """
         self.p = list(range(n))
 
@@ -68,8 +68,8 @@ class UnionFind:
             int: x 所属集合的代表元素.
 
         Callers:
-            - `dedupe.py:UnionFind.union`
-            - `dedupe.py:find_duplicate_groups`
+            - ``services/analysis/dedupe.py:UnionFind.union``
+            - ``services/analysis/dedupe.py:find_duplicate_groups``
         """
         while self.p[x] != x:
             self.p[x] = self.p[self.p[x]]
@@ -87,7 +87,7 @@ class UnionFind:
             None.
 
         Callers:
-            - `dedupe.py:find_duplicate_groups`
+            - ``services/analysis/dedupe.py:find_duplicate_groups``
         """
         ra, rb = self.find(a), self.find(b)
         if ra != rb:
@@ -104,7 +104,7 @@ def _blockiness(gray: np.ndarray) -> float:
         float: 块效应强度, 用于组内清晰度比较.
 
     Callers:
-        - `dedupe.py:_load_one`
+        - ``services/analysis/dedupe.py:_load_one``
     """
     if gray is None or gray.ndim != 2 or gray.shape[0] < 16 or gray.shape[1] < 16:
         return 0.0
@@ -134,7 +134,7 @@ def _load_one(path: Path) -> ImageRecord | None:
         ImageRecord | None: 记录; 解码失败时为 None.
 
     Callers:
-        - `dedupe.py:load_records`
+        - ``services/analysis/dedupe.py:load_records``
     """
     gray = cv2.imread(str(path), cv2.IMREAD_GRAYSCALE)
     blockiness = _blockiness(gray)
@@ -167,7 +167,7 @@ def _fft_feature_one(img: Image.Image, device=None) -> np.ndarray:
         np.ndarray: 归一化后的低频特征向量 (float32).
 
     Callers:
-        - `dedupe.py:extract_fft_features`
+        - ``services/analysis/dedupe.py:extract_fft_features``
     """
     if device is not None:
         import torch
@@ -219,7 +219,7 @@ def extract_fft_features(
         list[ImageRecord]: 填充了 ``fft_feature`` 的记录列表.
 
     Callers:
-        - `routes/dedupe.py:scan_duplicates`
+        - ``routes/dedupe.py:scan_duplicates``
     """
     device = cuda_device()
     total = len(records)
@@ -253,7 +253,7 @@ def _orb_feature_one(path: Path) -> np.ndarray | None:
         np.ndarray | None: (k, 32) uint8 描述子; 解码失败为 None.
 
     Callers:
-        - `dedupe.py:extract_orb_features`
+        - ``services/analysis/dedupe.py:extract_orb_features``
     """
     try:
         with Image.open(path) as im:
@@ -287,7 +287,7 @@ def extract_orb_features(
         list[ImageRecord]: 填充了 ``orb_des`` 的记录列表.
 
     Callers:
-        - `routes/dedupe.py:scan_duplicates`
+        - ``routes/dedupe.py:scan_duplicates``
     """
     total = len(records)
     if not total:
@@ -306,7 +306,7 @@ def extract_orb_features(
             None.
 
         Callers:
-            - `dedupe.py:extract_orb_features`
+            - ``services/analysis/dedupe.py:extract_orb_features``
         """
         des = _orb_feature_one(records[idx].path)
         with lock:
@@ -334,7 +334,7 @@ def collect_paths(data_dir: Path) -> list[Path]:
         list[Path]: 按名称排序的图像路径列表.
 
     Callers:
-        - `dedupe.py:load_records`
+        - ``services/analysis/dedupe.py:load_records``
     """
     data_dir = data_dir.resolve()
     out = []
@@ -355,7 +355,7 @@ def load_records(data_dir: Path, workers: int | None = None) -> list[ImageRecord
         list[ImageRecord]: 已排序的记录列表.
 
     Callers:
-        - `routes/dedupe.py:scan_duplicates`
+        - ``routes/dedupe.py:scan_duplicates``
     """
     paths = collect_paths(data_dir)
     if not paths:
@@ -392,7 +392,7 @@ def _pairwise_dots_upper(
         (rows, cols, dots): 上三角点积的压缩索引与值, 均为 float32/int64 数组.
 
     Callers:
-        - `dedupe.py:_pairwise_values`
+        - ``services/analysis/dedupe.py:_pairwise_values``
     """
     n = mat.shape[0]
     rows: list[np.ndarray] = []
@@ -450,8 +450,8 @@ def _match_ratio(des1: np.ndarray, des2: np.ndarray) -> float:
         float: 匹配比例相似度 (可靠匹配数 / 两图较小描述子数).
 
     Callers:
-        - `dedupe.py:_orb_similarity`
-        - `dedupe.py:_orb_upper`
+        - ``services/analysis/dedupe.py:_orb_similarity``
+        - ``services/analysis/dedupe.py:_orb_upper``
     """
     matches = _MATCHER.knnMatch(des1, des2, k=2)
     good = 0
@@ -477,7 +477,7 @@ def _orb_similarity(des1: np.ndarray, des2: np.ndarray) -> float:
         float: 匹配比例相似度.
 
     Callers:
-        - `dedupe.py:_member_similarity`
+        - ``services/analysis/dedupe.py:_member_similarity``
     """
     if des1 is None or des2 is None or len(des1) < 2 or len(des2) < 2:
         return 0.0
@@ -502,7 +502,7 @@ def _orb_upper(
         (rows, cols, vals): 上三角配对索引与匹配比例.
 
     Callers:
-        - `dedupe.py:_pairwise_values`
+        - ``services/analysis/dedupe.py:_pairwise_values``
     """
     n = len(des_list)
     pairs = [(i, j) for i in range(n) for j in range(i + 1, n)]
@@ -524,7 +524,7 @@ def _orb_upper(
             list[float]: 各配对的匹配比例.
 
         Callers:
-            - `dedupe.py:_orb_upper`
+            - ``services/analysis/dedupe.py:_orb_upper``
         """
         return [_match_ratio(des_list[i], des_list[j]) for i, j in chunk]
 
@@ -563,7 +563,7 @@ def _pairwise_values(
         mse 为 MSE 值, fft 为余弦, orb 为匹配比例.
 
     Callers:
-        - `dedupe.py:find_duplicate_groups`
+        - ``services/analysis/dedupe.py:find_duplicate_groups``
     """
     if algorithm == "mse":
         n = len(records)
@@ -623,7 +623,7 @@ def _member_similarity(
         float | None: 相似度; 缺少特征时返回 None.
 
     Callers:
-        - `dedupe.py:find_duplicate_groups`
+        - ``services/analysis/dedupe.py:find_duplicate_groups``
     """
     if k == keep:
         return 1.0 if algorithm in ("fft", "orb") else 0.0
@@ -656,7 +656,7 @@ def suggest_keep_index(records: list[ImageRecord], idxs: list[int], similar_res_
         int: 建议保留的记录索引.
 
     Callers:
-        - `dedupe.py:find_duplicate_groups`
+        - ``services/analysis/dedupe.py:find_duplicate_groups``
     """
     areas = [records[k].width * records[k].height for k in idxs]
     amax = max(areas)
@@ -716,7 +716,7 @@ def find_duplicate_groups(
         ValueError: ``algorithm`` 非法, 或对应模式缺少特征时抛出.
 
     Callers:
-        - `routes/dedupe.py:scan_duplicates`
+        - ``routes/dedupe.py:scan_duplicates``
     """
     if len(records) < 2:
         return [], np.empty(0, np.float32)

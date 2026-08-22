@@ -212,8 +212,8 @@ async def dataset_thumb(request: Request, dataset: str, filename: str) -> FileRe
     """返回数据集的 AVIF 缩略图文件, 缺失时即时生成.
 
     Callers:
-        - `static/js/index.js:211`
-        - `static/js/api.js:120`
+        - ``static/js/index.js:archiveTask``
+        - ``static/js/api.js:thumbnailUrl``
     """
     store: TaskStore = request.app.state.task_store
     if not store.contains(dataset):

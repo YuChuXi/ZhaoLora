@@ -27,7 +27,7 @@ def split_tags_line(s: str) -> list[str]:
         list[str]: 拆分并去空白后的非空标签列表.
 
     Callers:
-        - ``stats.py:count_tags``
+        - ``services/tagging/stats.py:count_tags``
         - ``services/tagging/clean.py:split_header_body``
         - ``services/tagging/clean.py:clean_caption``
     """
@@ -46,7 +46,7 @@ def normalize_tag(tag: str, *, lower: bool, underscores: bool) -> str:
         str: 规范化后的标签.
 
     Callers:
-        - ``stats.py:count_tags``
+        - ``services/tagging/stats.py:count_tags``
     """
     t = tag.strip()
     if underscores:
@@ -129,7 +129,7 @@ def lookup_zh(tag: str, zh_map: dict[str, str]) -> str:
         str: 中文译名; 无匹配时返回空字符串.
 
     Callers:
-        - ``stats.py:count_tags``
+        - ``services/tagging/stats.py:count_tags``
     """
     if tag in zh_map:
         return zh_map[tag]

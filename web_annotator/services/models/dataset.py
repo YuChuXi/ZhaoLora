@@ -1,12 +1,12 @@
 """本地数据集 / 筛选页模型.
 
 Callers:
-    - ``services.models``: 包导出.
-    - ``services.models.{tags,crop,paint,ready,pages}``: 内部模型继承 ``ImageThumbItem`` / ``WorkDirInfo``.
-    - ``routes.images``: 图片列表与相似图路由.
-    - ``services.core.scanner``: 目录扫描.
-    - ``services.core.work_dir``: 工作目录枚举.
-    - ``services.state.annotator``: 标注状态管理.
+    - ``services/models/__init__.py:`` : 包导出.
+    - ``services.models.{tags,crop,paint,ready,pages}`` : 内部模型继承 ``ImageThumbItem`` / ``WorkDirInfo``.
+    - ``routes/images.py:`` : 图片列表与相似图路由.
+    - ``services/core/scanner.py:`` : 目录扫描.
+    - ``services/core/work_dir.py:`` : 工作目录枚举.
+    - ``services/state/annotator.py:`` : 标注状态管理.
 """
 
 from __future__ import annotations

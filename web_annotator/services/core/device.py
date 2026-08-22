@@ -48,8 +48,8 @@ def cuda_device() -> torch.device | None:
         torch.device | None: CUDA 设备对象, 不可用时为 ``None``.
 
     Callers:
-        - `analysis/dedupe.py:extract_fft_features`
-        - `analysis/dedupe.py:find_duplicate_groups`
+        - ``services/analysis/dedupe.py:extract_fft_features``
+        - ``services/analysis/dedupe.py:find_duplicate_groups``
     """
     global _TORCH_DEVICE, _DEVICE_CHECKED
     if not _DEVICE_CHECKED:
@@ -69,7 +69,7 @@ def release_cuda() -> None:
     无 CUDA 或未安装 torch 时静默跳过.
 
     Callers:
-        - ``device:Model._evict``
+        - ``services/core/device.py:Model._schedule_eviction`` (内部 ``evict`` 定时器回调)
     """
     if not _DEVICE_CHECKED:
         cuda_device()
@@ -86,9 +86,9 @@ class Model:
     """单个 GPU 模型的句柄, 自持加载 / 引用计数 / 驻留复用 / 超时释放.
 
     Callers:
-        - ``device:register_model``
-        - ``services/analysis/reranker``
-        - ``services/analysis/sam3``
+        - ``services/core/device.py:register_model``
+        - ``services/analysis/reranker.py:``
+        - ``services/analysis/sam3.py:``
     """
 
     def __init__(
@@ -123,11 +123,11 @@ class Model:
             包装后的函数.
 
         Callers:
-            - ``services/analysis/reranker:rerank`` (@_MODEL.auto_release)
-            - ``services/analysis/sam3:run_concept_query`` (@_MODEL.auto_release)
-            - ``services/analysis/sam3:run_sam3_expression_mask`` (@_MODEL.auto_release)
-            - ``services/analysis/birefnet:run_birefnet_mask`` (@_MODEL.auto_release)
-            - ``services/analysis/wd14:run_batch`` (@_MODEL.auto_release)
+            - ``services/analysis/reranker.py:rerank`` (@_MODEL.auto_release)
+            - ``services/analysis/sam3.py:run_concept_query`` (@_MODEL.auto_release)
+            - ``services/analysis/sam3.py:run_sam3_expression_mask`` (@_MODEL.auto_release)
+            - ``services/analysis/birefnet.py:run_birefnet_mask`` (@_MODEL.auto_release)
+            - ``services/analysis/wd14.py:run_batch`` (@_MODEL.auto_release)
         """
 
         @functools.wraps(func)
@@ -147,7 +147,7 @@ class Model:
             真实模型句柄, 供 ``with model as handle`` 绑定使用.
 
         Callers:
-            - ``services/analysis/scoring:run_scoring``
+            - ``services/analysis/scoring.py:run_scoring``
         """
         return self.acquire()
 
@@ -161,7 +161,7 @@ class Model:
             *exc: 未使用, 仅为满足上下文管理器协议签名.
 
         Callers:
-            - ``services/analysis/scoring:run_scoring``
+            - ``services/analysis/scoring.py:run_scoring``
         """
         self.release()
 
@@ -175,7 +175,7 @@ class Model:
             真实模型句柄, 供推理使用.
 
         Callers:
-            - ``device:auto_release``
+            - ``services/core/device.py:auto_release``
         """
         with self._lock:
             if self._handle is None:
@@ -190,7 +190,7 @@ class Model:
         使短时间内再次使用可直接复用内存中的权重; 仅当空闲超时仍无引用才真正卸载.
 
         Callers:
-            - ``device:auto_release``
+            - ``services/core/device.py:auto_release``
         """
         with self._lock:
             self._refs -= 1
@@ -206,7 +206,7 @@ class Model:
         否则调用 ``_unload`` 销毁并清空句柄.
 
         Callers:
-            - ``device:Model.release``
+            - ``services/core/device.py:Model.release``
         """
 
         def evict() -> None:
@@ -234,7 +234,7 @@ def register_model(load: Callable[[], object], unload: Callable[[object], None])
         与模型对应的 ``Model`` 对象, 模块应持有该对象供 ``auto_release`` 使用.
 
     Callers:
-        - ``services/analysis/reranker``
-        - ``services/analysis/sam3``
+        - ``services/analysis/reranker.py:``
+        - ``services/analysis/sam3.py:``
     """
     return Model(load, unload)

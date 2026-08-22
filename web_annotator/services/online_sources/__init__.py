@@ -5,7 +5,7 @@
 通用框架 (基类、网络、媒体操作) 位于 ``framework`` 子包。
 
 Callers:
-    - ``routes/online_sources.py``
+    - ``routes/online_sources.py:``
 """
 
 from services.online_sources.framework.base import (
