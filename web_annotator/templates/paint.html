@@ -49,8 +49,15 @@
     <input type="range" id="brush-slider" min="0.5" max="20" value="3" step="0.1" style="width:80px;">
     <span id="brush-label">3.0%</span>
   </label>
-  <label style="font-size:12px;color:var(--text-dim);display:flex;align-items:center;gap:4px;">
-    <input type="checkbox" id="chk-swap-buttons"> 交换左右键
+  <label style="font-size:12px;color:var(--text-dim);display:flex;align-items:center;gap:4px;"
+    title="左键/右键绘制 Alpha 值，⇄ 快捷交换">
+    Alpha
+    <input type="number" id="left-alpha" value="0" min="0" max="255" step="1" title="左键 Alpha"
+      style="width:44px;background:var(--card-bg);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:2px 4px;font-size:12px;">
+    <button class="btn" id="btn-swap-alpha" title="交换左右键 Alpha"
+      style="padding:1px 6px;font-size:12px;line-height:1.5;">⇄</button>
+    <input type="number" id="right-alpha" value="255" min="0" max="255" step="1" title="右键 Alpha"
+      style="width:44px;background:var(--card-bg);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:2px 4px;font-size:12px;">
   </label>
   <label style="font-size:12px;color:var(--text-dim);display:flex;align-items:center;gap:4px;">
     默认 Alpha

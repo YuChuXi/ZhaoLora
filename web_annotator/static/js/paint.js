@@ -445,14 +445,25 @@
     }
   }
 
+  /**
+   * 读取指定鼠标按键对应的 Alpha 值; 左键 0 默认 0, 右键默认 255, 越界钳位到 0-255.
+   * @param {number} button 鼠标按键(0=左, 其它=右)
+   * @returns {number}
+   */
+  function _alphaFor(button) {
+    var id = button === 0 ? 'left-alpha' : 'right-alpha';
+    var fallback = button === 0 ? 0 : 255;
+    var v = parseInt(document.getElementById(id).value, 10);
+    return Number.isNaN(v) ? fallback : Math.max(0, Math.min(255, v));
+  }
+
   // ---- 触屏 ----
   canvas.addEventListener('touchstart', function(e) {
     e.preventDefault(); if (!_cur || !_cur.alpha || e.touches.length !== 1) return;
     _isDrawing = true; _isTouch = true;
     var t = e.touches[0];
     var pos = screenToOrig(t.clientX, t.clientY);
-    var swapped = document.getElementById('chk-swap-buttons').checked;
-    _paintValue = swapped ? 255 : 0;
+    _paintValue = _alphaFor(0);
     if (_tool === 'brush') stampDisc(pos[0], pos[1], _brushRadius, _paintValue);
     _mouseScreen = [t.clientX, t.clientY];
     _rectStart = pos; _scheduleRender();
@@ -477,8 +488,7 @@
   canvas.addEventListener('mousedown', function(e) { if (_isTouch) return; e.preventDefault(); if (!_cur || !_cur.alpha) return;
     _isDrawing = true;
     var pos = screenToOrig(e.clientX, e.clientY);
-    var swapped = document.getElementById('chk-swap-buttons').checked;
-    _paintValue = (e.button === 0) ? (swapped ? 255 : 0) : (swapped ? 0 : 255);
+    _paintValue = _alphaFor(e.button);
     if (_tool === 'brush' && e.shiftKey) {
       // shift 直线: 只记录起点, 橡皮筋预览, 抬笔时画落笔到抬笔的直线
       _lineMode = true; _lineStart = pos; _lineEnd = pos;
@@ -618,6 +628,14 @@
     saveConfig();
   });
   document.getElementById('default-alpha').addEventListener('change', function() { saveConfig(); _applyBackdrop(); });
+  // 快捷交换左右键 Alpha
+  document.getElementById('btn-swap-alpha').addEventListener('click', function() {
+    var left = document.getElementById('left-alpha');
+    var right = document.getElementById('right-alpha');
+    var tmp = left.value;
+    left.value = right.value;
+    right.value = tmp;
+  });
 
   document.addEventListener('keydown', function(e) {
     if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
