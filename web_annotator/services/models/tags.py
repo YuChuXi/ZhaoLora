@@ -1,6 +1,11 @@
-"""标签统计与清洗模型. 
+"""标签统计与清洗模型.
 
-引用: ``services.models`` 包导出；各 routes / services. 
+Callers:
+    - ``services.models``: 包导出.
+    - ``routes.tag_stats``: 标签统计与检查路由.
+    - ``services.tagging.stats``: 标签频率统计.
+    - ``services.tagging.clean``: 标签清洗.
+    - ``services.models.jobs``: 引用查询结果类型.
 """
 
 from __future__ import annotations
@@ -11,11 +16,7 @@ from services.models.dataset import ImageThumbItem
 
 
 class TagStatRow(BaseModel):
-    """标签频率一行. 
-
-    引用:
-        ``tag_stats.count_tags``. 
-    """
+    """标签频率一行."""
 
     tag: str
     count: int
@@ -24,11 +25,7 @@ class TagStatRow(BaseModel):
 
 
 class TagStatsResult(BaseModel):
-    """标签频率统计结果. 
-
-    引用:
-        ``tag_stats.count_tags``；``routes.tag_stats``. 
-    """
+    """标签频率统计结果."""
 
     sample_count: int
     failed: int = 0
@@ -43,11 +40,7 @@ class TagStatsResult(BaseModel):
 
 
 class TagCleanSample(BaseModel):
-    """标签清洗样本对比.
-
-    引用:
-        ``services.tagging.clean.clean_txt_dirs``.
-    """
+    """标签清洗样本对比."""
 
     path: str
     name: str = ""
@@ -87,11 +80,7 @@ TAG_INSERT_POSITIONS = frozenset({"top", "bottom", "before-sep", "after-sep", "r
 
 
 class TagCheckItem(ImageThumbItem):
-    """单张图片的标签检查结果.
-
-    引用:
-        ``routes.tag_stats.check`` / ``edit_one``.
-    """
+    """单张图片的标签检查结果."""
 
     dir: str
     exists: bool
@@ -100,11 +89,7 @@ class TagCheckItem(ImageThumbItem):
 
 
 class TagCheckResponse(BaseModel):
-    """标签检查批量响应.
-
-    引用:
-        ``routes.tag_stats.check``.
-    """
+    """标签检查批量响应."""
 
     tag: str
     position: str
@@ -115,7 +100,7 @@ class TagCheckResponse(BaseModel):
 
 
 class TagCheckBody(BaseModel):
-    """标签检查请求. 引用: ``POST /tags/check``."""
+    """标签检查请求."""
 
     dirs: list[str] | None = Field(default=None, description="子目录名, 空/省略=全选")
     tag: str = Field(default="", description="标签, 为空时返回全部图片(不检查)")
@@ -123,7 +108,7 @@ class TagCheckBody(BaseModel):
 
 
 class TagEditOneBody(BaseModel):
-    """单文件标签编辑请求. 引用: ``POST /tags/edit-one``."""
+    """单文件标签编辑请求."""
 
     path: str = Field(..., description="图片相对数据集根的路径")
     tag: str
@@ -131,14 +116,14 @@ class TagEditOneBody(BaseModel):
 
 
 class EmbeddingStatusResponse(BaseModel):
-    """向量嵌入模型状态响应. 引用: ``POST /tags/embedding/status``."""
+    """向量嵌入模型状态响应."""
 
     ok: bool
     message: str = ""
 
 
 class EmbeddingQueryBody(BaseModel):
-    """向量查询请求. 引用: ``POST /tags/embedding/query``."""
+    """向量查询请求."""
 
     query: str = Field(..., description="查询文本")
     dirs: list[str] | None = Field(default=None, description="子目录名, 空/省略=全选")
@@ -146,7 +131,7 @@ class EmbeddingQueryBody(BaseModel):
 
 
 class EmbeddingQueryItem(BaseModel):
-    """向量查询结果项. 引用: ``POST /tags/embedding/query``."""
+    """向量查询结果项."""
 
     path: str
     stem: str
@@ -154,26 +139,26 @@ class EmbeddingQueryItem(BaseModel):
 
 
 class EmbeddingQueryResult(BaseModel):
-    """向量查询长任务结束结果. 引用: ``POST /tags/embedding/query`` 的 job 终态 result."""
+    """向量查询长任务结束结果."""
 
     items: list[EmbeddingQueryItem] = Field(default_factory=list)
 
 
 class EmbeddingHistoryItem(BaseModel):
-    """一次历史语义排序查询记录. 引用: ``GET /tags/embedding/history``."""
+    """一次历史语义排序查询记录."""
 
     query: str = Field(..., description="查询文本")
     time: float = Field(0.0, description="执行时间戳（epoch 秒）")
 
 
 class EmbeddingHistoryResponse(BaseModel):
-    """语义排序查询历史. 引用: ``GET /tags/embedding/history``."""
+    """语义排序查询历史."""
 
     queries: list[EmbeddingHistoryItem] = Field(default_factory=list)
 
 
 class EmbeddingBatchTagBody(BaseModel):
-    """批量标记请求. 引用: ``POST /tags/embedding/batch-tag``."""
+    """批量标记请求."""
 
     paths: list[str] = Field(..., description="按相似度阈值筛选出的图片相对路径列表")
     tag: str = Field(..., description="要添加或删除的标签")
@@ -183,7 +168,7 @@ class EmbeddingBatchTagBody(BaseModel):
 
 
 class EmbeddingBatchTagResponse(BaseModel):
-    """批量标记响应. 引用: ``POST /tags/embedding/batch-tag``."""
+    """批量标记响应."""
 
     ok: bool
     matched_count: int = 0
@@ -191,14 +176,14 @@ class EmbeddingBatchTagResponse(BaseModel):
 
 
 class ConceptQueryBody(BaseModel):
-    """概念分割查询请求. 引用: ``POST /tags/concept/query``."""
+    """概念分割查询请求."""
 
     query: str = Field(..., description="概念提示词")
     dirs: list[str] | None = Field(default=None, description="子目录名, 空/省略=全选")
 
 
 class ConceptQueryItem(BaseModel):
-    """概念分割查询结果项. 引用: ``POST /tags/concept/query``."""
+    """概念分割查询结果项."""
 
     path: str
     ratio: float = Field(0.0, description="掩码占比 [0,1]")
@@ -206,7 +191,7 @@ class ConceptQueryItem(BaseModel):
 
 
 class ConceptQueryResult(BaseModel):
-    """概念分割查询长任务结束结果. 引用: ``POST /tags/concept/query`` 的 job 终态 result."""
+    """概念分割查询长任务结束结果."""
 
     items: list[ConceptQueryItem] = Field(default_factory=list)
 

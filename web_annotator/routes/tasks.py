@@ -40,31 +40,38 @@ SortOrder = Literal["asc", "desc"]
 
 
 class AddTaskBody(BaseModel):
-    """添加任务请求体. 引用: ``POST /api/tasks``. """
+    """添加任务请求体."""
 
     name: str = Field(..., min_length=1, max_length=64)
 
 
 def _store(request: Request) -> TaskStore:
-    """引用: 本模块各接口. """
+    """返回应用级任务存储实例。
+
+    Args:
+        request (Request): FastAPI 请求对象, 由路由参数注入。
+
+    Returns:
+        TaskStore: 任务存储实例。
+    """
     return request.app.state.task_store
 
 
 async def _preview_hashes(
     rt: DatasetRuntime, images: list[ScannedImage], limit: int = 4
 ) -> list[str]:
-    """从 images 随机取最多 limit 张缩略图 hash, 缺失缩略图并发生成.
+    """从 images 随机取最多 limit 张缩略图 hash, 缺失缩略图并发生成。
 
     Args:
-        rt: 数据集运行时(用于 thumbnailer).
-        images: 已扫描的图片列表(由调用方传入, 避免重复扫描).
-        limit: 最多选取的图片数.
+        rt (DatasetRuntime): 数据集运行时(用于 thumbnailer)。
+        images (list[ScannedImage]): 已扫描的图片列表(由调用方传入, 避免重复扫描)。
+        limit (int): 最多选取的图片数。
 
     Returns:
-        缩略图 hash 列表.
+        list[str]: 缩略图 hash 列表。
 
     Callers:
-        - ``routes.tasks.list_tasks``
+        - ``routes/tasks:list_tasks``
     """
     if not images:
         return []
@@ -83,10 +90,18 @@ async def list_tasks(
     sort_by: SortField = Query("sort_order", description="排序字段"),
     sort_order: SortOrder = Query("asc", description="排序方向"),
 ) -> TaskListResponse:
-    """
-    列出清单内全部任务及概况. 
+    """列出清单内全部任务及概况。
 
-    引用: index.js. 
+    Args:
+        request (Request): FastAPI 请求对象, 由路由参数注入。
+        sort_by (SortField): 排序字段, ``sort_order`` / ``name`` / ``image_count`` / ``created``。
+        sort_order (SortOrder): 排序方向, ``asc`` 或 ``desc``。
+
+    Returns:
+        TaskListResponse: 含任务卡片列表, 含缩略图预览、统计、备注等。
+
+    Callers:
+        - ``static/js/index.js:loadTasks``
     """
     store = _store(request)
     reg = registry(request)
@@ -132,10 +147,16 @@ async def list_tasks(
 
 @router.get("/candidates")
 def list_candidates(request: Request) -> TaskCandidatesResponse:
-    """
-    任务根下尚未登记、名称合法的一级子目录, 供添加任务补全. 
+    """任务根下尚未登记、名称合法的一级子目录, 供添加任务补全。
 
-    引用: index.js. 
+    Args:
+        request (Request): FastAPI 请求对象, 由路由参数注入。
+
+    Returns:
+        TaskCandidatesResponse: 含候选目录名列表。
+
+    Callers:
+        - ``static/js/index.js:loadCandidates``
     """
     store = _store(request)
     registered = {e.name for e in store.list_entries()}
@@ -157,13 +178,20 @@ def list_candidates(request: Request) -> TaskCandidatesResponse:
 
 @router.post("")
 async def add_task(request: Request, body: AddTaskBody) -> TaskOkResponse:
-    """
-    登记任务；必要时创建目录. 
+    """登记任务；必要时创建目录。
 
     须为协程: ``ensure`` 会经 JobManager.submit 提交后台缩略图任务, 而后者
-    依赖运行中的事件循环, 同步路由在线程池中执行会触发 no running event loop.
+    依赖运行中的事件循环, 同步路由在线程池中执行会触发 no running event loop。
 
-    引用: index.js. 
+    Args:
+        request (Request): FastAPI 请求对象, 由路由参数注入。
+        body (AddTaskBody): 含任务名。
+
+    Returns:
+        TaskOkResponse: 含任务名、完成状态、备注、触发词。
+
+    Callers:
+        - ``static/js/index.js:taskAddFormSubmit``
     """
     store = _store(request)
     try:
@@ -182,7 +210,18 @@ async def add_task(request: Request, body: AddTaskBody) -> TaskOkResponse:
 
 @router.post("/{name}/complete")
 def complete_task(request: Request, name: str) -> TaskOkResponse:
-    """引用: index.js. """
+    """标记任务为已完成。
+
+    Args:
+        request (Request): FastAPI 请求对象, 由路由参数注入。
+        name (str): 任务名。
+
+    Returns:
+        TaskOkResponse: 含任务名与最新完成状态。
+
+    Callers:
+        - ``static/js/index.js:buildCard``
+    """
     store = _store(request)
     try:
         info = store.set_completed(name, True)
@@ -193,7 +232,18 @@ def complete_task(request: Request, name: str) -> TaskOkResponse:
 
 @router.post("/{name}/reopen")
 def reopen_task(request: Request, name: str) -> TaskOkResponse:
-    """引用: index.js. """
+    """重新打开已完成任务。
+
+    Args:
+        request (Request): FastAPI 请求对象, 由路由参数注入。
+        name (str): 任务名。
+
+    Returns:
+        TaskOkResponse: 含任务名与最新完成状态。
+
+    Callers:
+        - ``static/js/index.js:buildCard``
+    """
     store = _store(request)
     try:
         info = store.set_completed(name, False)
@@ -204,7 +254,19 @@ def reopen_task(request: Request, name: str) -> TaskOkResponse:
 
 @router.post("/{name}/note")
 def set_note(request: Request, name: str, body: SetNoteBody) -> TaskOkResponse:
-    """修改任务备注. 引用: index.js 双击卡片标题. """
+    """修改任务备注。
+
+    Args:
+        request (Request): FastAPI 请求对象, 由路由参数注入。
+        name (str): 任务名。
+        body (SetNoteBody): 含新备注文本。
+
+    Returns:
+        TaskOkResponse: 含任务名与最新备注。
+
+    Callers:
+        - ``static/js/index.js:startEditNote``
+    """
     store = _store(request)
     try:
         info = store.set_note(name, body.note)
@@ -215,7 +277,20 @@ def set_note(request: Request, name: str, body: SetNoteBody) -> TaskOkResponse:
 
 @router.post("/{name}/trigger-word")
 def set_trigger_word(request: Request, name: str, body: SetTriggerWordBody) -> TaskOkResponse:
-    """修改任务触发词(写入就绪 TOML 的 subset class_tokens). 引用: index.js 卡片触发词输入框. """
+    """修改任务触发词(写入就绪 TOML 的 subset class_tokens)。
+
+    Args:
+        request (Request): FastAPI 请求对象, 由路由参数注入。
+        name (str): 任务名。
+        body (SetTriggerWordBody): 含触发词文本。
+
+    Returns:
+        TaskOkResponse: 含任务名与最新触发词。
+
+    Callers:
+        - ``static/js/index.js:buildCard``
+        - ``static/js/tags.js:setTrigger``
+    """
     store = _store(request)
     try:
         info = store.set_trigger_word(name, body.trigger_word)
@@ -225,17 +300,24 @@ def set_trigger_word(request: Request, name: str, body: SetTriggerWordBody) -> T
 
 
 class ReorderBody(BaseModel):
-    """重排请求体. 引用: ``POST /api/tasks/reorder``. """
+    """重排请求体."""
 
     order: list[str] = Field(..., min_length=1)
 
 
 @router.post("/reorder")
 def reorder_tasks(request: Request, body: ReorderBody) -> dict:
-    """
-    按指定名称顺序重设所有任务的 sort_order. 
+    """按指定名称顺序重设所有任务的 sort_order。
 
-    引用: index.js 拖拽回调. 
+    Args:
+        request (Request): FastAPI 请求对象, 由路由参数注入。
+        body (ReorderBody): 含按目标顺序排列的任务名列表。
+
+    Returns:
+        dict: ``{"ok": True}``, 表示重排成功。
+
+    Callers:
+        - ``static/js/index.js:setupDragDrop``
     """
     store = _store(request)
     try:
@@ -250,12 +332,19 @@ def reorder_tasks(request: Request, body: ReorderBody) -> dict:
 
 @router.post("/{name}/archive")
 async def archive_task_route(request: Request, name: str) -> JobSubmitResponse:
-    """归档已完成任务: 7z 极限压缩 → 校验 → 删除目录.
+    """归档已完成任务: 7z 极限压缩 → 校验 → 删除目录。
 
-    须为协程: 内部提交 JobManager 任务, 后者依赖事件循环.
+    须为协程: 内部提交 JobManager 任务, 后者依赖事件循环。
+
+    Args:
+        request (Request): FastAPI 请求对象, 由路由参数注入。
+        name (str): 任务名。
+
+    Returns:
+        JobSubmitResponse: 含 job_id, 前端据以订阅 SSE 进度。
 
     Callers:
-        - ``index.js``
+        - ``static/js/index.js:archiveTask``
     """
     store = _store(request)
     entries = {e.name: e for e in store.list_entries()}
@@ -270,7 +359,17 @@ async def archive_task_route(request: Request, name: str) -> JobSubmitResponse:
     rt = await reg.ensure(name)
 
     def run(emit):
-        """归档执行体(工作线程). 引用: JobManager._execute. """
+        """归档执行体(工作线程)。
+
+        Args:
+            emit (EmitFn): 任务事件推送回调。
+
+        Returns:
+            object: 归档元数据。
+
+        Callers:
+            - ``services.core.jobs:JobManager._execute``
+        """
         meta = archive_task(task_dir, name, store.root, rt.thumbnailer, emit)
         store.remove(name)
         return meta
@@ -286,10 +385,16 @@ archive_router = APIRouter(prefix="/api/archived", tags=["archive"])
 
 @archive_router.get("")
 def list_archived(request: Request) -> ArchivedListResponse:
-    """列出所有已归档任务.
+    """列出所有已归档任务。
+
+    Args:
+        request (Request): FastAPI 请求对象, 由路由参数注入。
+
+    Returns:
+        ArchivedListResponse: 含归档元数据列表。
 
     Callers:
-        - ``index.js``
+        - ``static/js/index.js:loadArchived``
     """
     store = _store(request)
     return ArchivedListResponse(archives=list_archives(store.root))
@@ -297,12 +402,19 @@ def list_archived(request: Request) -> ArchivedListResponse:
 
 @archive_router.post("/{base}/restore")
 async def restore_task_route(request: Request, base: str) -> JobSubmitResponse:
-    """解压归档恢复任务目录.
+    """解压归档恢复任务目录。
 
-    须为协程: 内部提交 JobManager 任务, 后者依赖事件循环.
+    须为协程: 内部提交 JobManager 任务, 后者依赖事件循环。
+
+    Args:
+        request (Request): FastAPI 请求对象, 由路由参数注入。
+        base (str): 归档基本名(name-timestamp)。
+
+    Returns:
+        JobSubmitResponse: 含 job_id, 前端据以订阅 SSE 进度。
 
     Callers:
-        - ``index.js``
+        - ``static/js/index.js:restoreArchive``
     """
     store = _store(request)
     meta = find_archive(store.root, base)
@@ -313,7 +425,17 @@ async def restore_task_route(request: Request, base: str) -> JobSubmitResponse:
         raise HTTPException(404, "归档文件缺失")
 
     def run(emit):
-        """解压执行体(工作线程). 引用: JobManager._execute. """
+        """解压执行体(工作线程)。
+
+        Args:
+            emit (EmitFn): 任务事件推送回调。
+
+        Returns:
+            None: 无返回值, 仅推送进度并恢复任务。
+
+        Callers:
+            - ``services.core.jobs:JobManager._execute``
+        """
         restore_task(archive_path, store.root, emit)
         info = store.add(meta.name)
         store.set_completed(info.name, True)
@@ -326,14 +448,18 @@ async def restore_task_route(request: Request, base: str) -> JobSubmitResponse:
 
 @archive_router.get("/{base}/preview/{filename}")
 def serve_archive_preview(request: Request, base: str, filename: str) -> FileResponse:
-    """提供归档预览缩略图.
+    """提供归档预览缩略图。
 
     Args:
-        base: 归档基本名(name-timestamp).
-        filename: 缩略图文件名({hash}.avif).
+        request (Request): FastAPI 请求对象, 由路由参数注入。
+        base (str): 归档基本名(name-timestamp)。
+        filename (str): 缩略图文件名({hash}.avif)。
+
+    Returns:
+        FileResponse: AVIF 缩略图文件响应。
 
     Callers:
-        - ``index.js``
+        - ``static/js/index.js:buildArchivedCard``
     """
     store = _store(request)
     f = store.root / PACKED_DIR / f"{base}.previews" / filename

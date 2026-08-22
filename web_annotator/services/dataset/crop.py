@@ -1,5 +1,5 @@
 """
-裁剪网格配置 —— 仅供前端拉取同步；吸附匹配逻辑在 crop.js. 
+裁剪网格配置 —— 仅供前端拉取同步；吸附匹配逻辑在 crop.js.
 """
 
 from __future__ import annotations
@@ -14,10 +14,13 @@ MAX_OUTPUT_PIXELS = 1536 * 1536
 
 
 def match_config() -> CropMatchConfig:
-    """返回边长网格与 zoom 列表. 
+    """返回边长网格与 zoom 列表.
 
-    引用:
-        ``routes.crop.get_candidates``；``crop.js``. 
+    Returns:
+        CropMatchConfig: 含 side_min / side_max / side_step / zooms / max_output_pixels 的配置.
+
+    Callers:
+        - ``routes/crop.py:get_candidates``
     """
     return CropMatchConfig(
         side_min=SIDE_MIN,
@@ -29,10 +32,19 @@ def match_config() -> CropMatchConfig:
 
 
 def clamp_target_size(tw: int, th: int) -> tuple[int, int]:
-    """保存时限制输出尺寸, 不重做吸附. 
+    """保存时限制输出尺寸, 不重做吸附.
 
-    引用:
-        ``routes.crop.save_crops``. 
+    超出 ``MAX_OUTPUT_PIXELS`` 时按比例缩放, 并夹到 ``SIDE_MAX`` 以内.
+
+    Args:
+        tw (int): 期望输出宽度.
+        th (int): 期望输出高度.
+
+    Returns:
+        tuple[int, int]: 实际写入的 ``(width, height)``.
+
+    Callers:
+        - ``routes/crop.py:save_crops``
     """
     tw = max(1, min(int(tw), SIDE_MAX))
     th = max(1, min(int(th), SIDE_MAX))

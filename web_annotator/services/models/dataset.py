@@ -1,6 +1,12 @@
-"""本地数据集 / 筛选页模型. 
+"""本地数据集 / 筛选页模型.
 
-引用: ``services.models`` 包导出；各 routes / services. 
+Callers:
+    - ``services.models``: 包导出.
+    - ``services.models.{tags,crop,paint,ready,pages}``: 内部模型继承 ``ImageThumbItem`` / ``WorkDirInfo``.
+    - ``routes.images``: 图片列表与相似图路由.
+    - ``services.core.scanner``: 目录扫描.
+    - ``services.core.work_dir``: 工作目录枚举.
+    - ``services.state.annotator``: 标注状态管理.
 """
 
 from __future__ import annotations
@@ -9,11 +15,7 @@ from pydantic import BaseModel, Field
 
 
 class ScannedImage(BaseModel):
-    """扁平目录扫描得到的一张图片及其旁路文件. 
-
-    引用:
-        ``services.scanner.scan_images``. 
-    """
+    """扁平目录扫描得到的一张图片及其旁路文件."""
 
     path: str
     stem: str
@@ -23,11 +25,7 @@ class ScannedImage(BaseModel):
 
 
 class WorkDirInfo(BaseModel):
-    """可选工作子目录摘要(含图像数量). 
-
-    引用:
-        ``work_dir.list_work_dirs``；``wd14_batch.list_image_subdirs``. 
-    """
+    """可选工作子目录摘要(含图像数量)."""
 
     name: str
     label: str
@@ -35,22 +33,14 @@ class WorkDirInfo(BaseModel):
 
 
 class AnnotatorState(BaseModel):
-    """标注选中与回收站状态. 
-
-    引用:
-        ``state_manager.StateManager``. 
-    """
+    """标注选中与回收站状态."""
 
     selected: dict[str, int] = Field(default_factory=dict)
     trashed: dict[str, int] = Field(default_factory=dict)
 
 
 class ImageThumbItem(BaseModel):
-    """图片缩略图列表项基类(含路径 / stem / 原始尺寸 / 缩略图 hash).
-
-    引用:
-        ``FilterImageItem`` / ``PaintImageItem`` / ``CropImageItem`` / ``TagCheckItem`` 继承.
-    """
+    """图片缩略图列表项基类(含路径 / stem / 原始尺寸 / 缩略图 hash)."""
 
     path: str
     stem: str
@@ -60,11 +50,7 @@ class ImageThumbItem(BaseModel):
 
 
 class FilterImageItem(ImageThumbItem):
-    """筛选页图片列表项.
-
-    引用:
-        ``routes.images.list_images``.
-    """
+    """筛选页图片列表项."""
 
     suffix: str
     size: int = Field(ge=0)
@@ -77,11 +63,7 @@ class FilterImageItem(ImageThumbItem):
 
 
 class SimilarItem(BaseModel):
-    """色调相似结果项. 
-
-    引用:
-        ``routes.images.similar_images``. 
-    """
+    """色调相似结果项."""
 
     path: str
     stem: str
@@ -94,22 +76,14 @@ class SimilarItem(BaseModel):
 
 
 class SimilarResponse(BaseModel):
-    """色调相似接口响应. 
-
-    引用:
-        ``routes.images.similar_images``. 
-    """
+    """色调相似接口响应."""
 
     path: str
     similar: list[SimilarItem] = Field(default_factory=list)
 
 
 class DirsResponse(BaseModel):
-    """工作目录列表响应. 
-
-    引用:
-        ``routes.images`` / ``dedupe`` / ``ready`` / ``aesthetic`` / ``tagging``. 
-    """
+    """工作目录列表响应."""
 
     dirs: list[WorkDirInfo]
     default: str = "main"

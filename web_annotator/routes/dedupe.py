@@ -27,7 +27,7 @@ router = APIRouter(prefix="/dedupe", tags=["dedupe"])
 
 
 class ScanBody(BaseModel):
-    """去重扫描请求. 引用: ``POST /dedupe/scan``. """
+    """去重扫描请求体. """
 
     dirs: list[str] = Field(default_factory=lambda: ["main"])
     dir: str | None = None
@@ -38,7 +38,7 @@ class ScanBody(BaseModel):
 
 
 class ApplyBody(BaseModel):
-    """去重删除请求. 引用: ``POST /dedupe/apply``. """
+    """去重删除请求体. """
 
     paths: list[str]
     dirs: list[str] = Field(default_factory=lambda: ["main"])
@@ -46,7 +46,15 @@ class ApplyBody(BaseModel):
 
 
 def _names(dirs: list[str] | None, legacy: str | None) -> list[str]:
-    """解析目录名列表. 引用: ``scan_duplicates`` / ``apply_delete``. """
+    """解析目录名列表, 优先采用多目录字段 ``dirs``, 为空时回退到单目录字段 ``legacy``.
+
+    Args:
+        dirs (list[str] | None): 多目录字段; 非空时直接采用.
+        legacy (str | None): 单目录字段; ``dirs`` 为空时回退到此值.
+
+    Returns:
+        list[str]: 非空目录名列表, 全部为空时返回 ``["main"]``.
+    """
     if dirs:
         return list(dirs)
     if legacy:
@@ -60,14 +68,14 @@ def similarity_histogram(values, algorithm: str) -> str | None:
     依赖 matplotlib (Agg 后端). matplotlib 缺失或无可绘制数据时返回 None.
 
     Args:
-        values: 两两相似度值数组.
-        algorithm: 相似度算法, ``"mse"`` / ``"fft"`` / ``"orb"``.
+        values (list[float] | np.ndarray): 两两相似度值数组.
+        algorithm (str): 相似度算法, ``"mse"`` / ``"fft"`` / ``"orb"``.
 
     Returns:
-        str | None: ``data:image/png;base64,...``, 失败时 None.
+        str | None: ``data:image/png;base64,...`` 形式的 data URL; 无可绘制数据或 matplotlib 缺失时返回 None.
 
     Callers:
-        - `routes/dedupe.py:scan_duplicates`
+        - ``routes.dedupe.scan_duplicates`` (内部 ``run`` 闭包, 用于扫描结果直方图)
     """
     try:
         import matplotlib
@@ -135,18 +143,40 @@ def similarity_histogram(values, algorithm: str) -> str | None:
 
 @router.get("/dirs")
 def dirs(request: Request) -> DirsResponse:
-    """列出可扫描工作目录. 引用: ``dedupe.js``. """
+    """列出可扫描工作目录, 默认 ``main``.
+
+    Args:
+        request (Request): FastAPI 请求对象, 由路由参数注入.
+
+    Returns:
+        DirsResponse: 含工作目录列表与默认目录名.
+
+    Callers:
+        - ``static/js/nav.js:dirsApi``
+    """
     rt = get_runtime(request)
     return DirsResponse(dirs=list_work_dirs(rt.root), default="main")
 
 
 @router.post("/scan")
 async def scan_duplicates(request: Request, body: ScanBody) -> JobSubmitResponse:
-    """
-    提交去重扫描长任务. 
+    """提交去重扫描长任务, 返回 job_id.
 
-    返回 job_id；结束事件的 result 字段含分组结果. 
-    引用: dedupe.js. 
+    扫描任务结束事件的 ``result`` 字段含分组结果(DedupeScanResult).
+    支持三种算法: ``mse``(默认)、``fft``、``orb``; 后两者需先提取特征再比较相似度.
+
+    Args:
+        request (Request): FastAPI 请求对象, 由路由参数注入.
+        body (ScanBody): 扫描参数, 含目录/算法/阈值/分辨率比.
+
+    Returns:
+        JobSubmitResponse: 含 ``job_id``, 前端经 SSE 监听任务进度与最终结果.
+
+    Raises:
+        HTTPException: 目录名非法或不存在时返回 400.
+
+    Callers:
+        - ``static/js/dedupe.js:scan``
     """
     rt = get_runtime(request)
     root = rt.root
@@ -163,7 +193,17 @@ async def scan_duplicates(request: Request, body: ScanBody) -> JobSubmitResponse
     sim = body.sim_threshold
 
     def run(emit: EmitFn) -> DedupeScanResult:
-        """工作线程: 扫描重复组. 引用: ``JobManager.submit``. """
+        """工作线程: 扫描重复组, 逐阶段上报进度.
+
+        Args:
+            emit (EmitFn): 任务进度发射回调, 由 ``JobManager`` 注入.
+
+        Returns:
+            DedupeScanResult: 重复组列表与统计, 同时通过 ``emit`` 发送 done 快照.
+
+        Callers:
+            - ``routes.dedupe.scan_duplicates`` (作为 ``run`` 参数传入 ``services.core.jobs.JobManager.submit``)
+        """
         emit(
             JobSnapshot(
                 status="running",
@@ -190,7 +230,16 @@ async def scan_duplicates(request: Request, body: ScanBody) -> JobSubmitResponse
             )
 
             def on_step(done: int, total: int) -> None:
-                """特征提取逐张进度上报. 引用: ``extract_*_features``. """
+                """特征提取逐张进度上报回调.
+
+                Args:
+                    done (int): 已完成特征提取的图片数.
+                    total (int): 总图片数.
+
+                Callers:
+                    - ``services.analysis.dedupe.extract_fft_features`` (作为 ``on_step`` 回调)
+                    - ``services.analysis.dedupe.extract_orb_features`` (作为 ``on_step`` 回调)
+                """
                 feat_p.done = done
                 if done % 10 == 0 or done == total:
                     emit(feat_p.snapshot())
@@ -254,7 +303,24 @@ async def scan_duplicates(request: Request, body: ScanBody) -> JobSubmitResponse
 
 @router.post("/apply")
 def apply_delete(request: Request, body: ApplyBody) -> DedupeMoveResponse:
-    """将手选路径移入回收站(与筛选页同一套 trash). """
+    """将手选路径移入回收站(与筛选页同一套 trash 机制).
+
+    仅删除当前 ``body.dirs`` 中实际存在的图片; 忽略非法路径与未在存活集合中的路径.
+    删除成功后清空色彩索引缓存, 等待下次访问重建.
+
+    Args:
+        request (Request): FastAPI 请求对象, 由路由参数注入.
+        body (ApplyBody): 含待删除路径列表与目录字段.
+
+    Returns:
+        DedupeMoveResponse: 实际删除的图片数、路径列表与目录列表.
+
+    Raises:
+        HTTPException: 路径列表为空或全部非法时返回 400; 目录名非法也返回 400.
+
+    Callers:
+        - ``static/js/dedupe.js:applyDelete``
+    """
     rt = get_runtime(request)
     root = rt.root
     state_mgr = rt.state_manager

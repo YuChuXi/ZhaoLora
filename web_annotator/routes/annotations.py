@@ -22,39 +22,62 @@ router = APIRouter(tags=["annotations"])
 
 
 class ToggleBody(BaseModel):
-    """单图选中切换. 引用: ``store.js`` / ``POST /toggle``. """
+    """单图选中切换."""
 
     path: str = Field(..., min_length=1)
 
 
 class SelectAllBody(BaseModel):
-    """全选指定工作子目录. 引用: ``store.js`` / ``POST /select-all``. """
+    """全选指定工作子目录."""
 
     dirs: list[str] | None = None
     dir: str | None = None
 
 
 class RestoreBody(BaseModel):
-    """从回收站恢复. 引用: ``store.js`` / ``POST /restore``. """
+    """从回收站恢复."""
 
     paths: list[str] = Field(default_factory=list)
 
 
 def _root(request: Request) -> Path:
-    """引用: 本模块各接口. """
+    """返回当前请求绑定的数据集根目录。
+
+    Args:
+        request (Request): FastAPI 请求对象, 由路由参数注入。
+
+    Returns:
+        Path: 数据集根目录的绝对路径。
+    """
     return get_runtime(request).root
 
 
 def _state(request: Request) -> StateManager:
-    """引用: 本模块各接口. """
+    """返回当前请求绑定的标注状态管理器。
+
+    Args:
+        request (Request): FastAPI 请求对象, 由路由参数注入。
+
+    Returns:
+        StateManager: 标注状态管理器实例。
+    """
     return get_runtime(request).state_manager
 
 
 def _rel_under(root: Path, rel: str) -> str:
-    """校验相对路径并返回 posix 相对路径. 
+    """校验相对路径并返回 posix 相对路径。
 
-    引用:
-        ``toggle`` / ``apply_delete`` / ``restore``. 
+    Args:
+        root (Path): 允许访问的根目录。
+        rel (str): 待校验的相对路径。
+
+    Returns:
+        str: 相对 root 的 posix 相对路径。
+
+    Callers:
+        - ``routes/annotations:toggle``
+        - ``routes/annotations:apply_delete``
+        - ``routes/annotations:restore``
     """
     path = resolve_path(root, rel)
     return path.relative_to(root.resolve()).as_posix()
@@ -62,7 +85,18 @@ def _rel_under(root: Path, rel: str) -> str:
 
 @router.post("/toggle")
 def toggle(request: Request, body: ToggleBody) -> ToggleResponse:
-    """切换单张图片的选中状态. 引用: ``store.js``. """
+    """切换单张图片的选中状态。
+
+    Args:
+        request (Request): FastAPI 请求对象, 由路由参数注入。
+        body (ToggleBody): 含图片相对路径。
+
+    Returns:
+        ToggleResponse: 含路径与最新选中状态。
+
+    Callers:
+        - ``static/js/store.js:toggle``
+    """
     path = _rel_under(_root(request), body.path)
     selected = _state(request).toggle(path)
     return ToggleResponse(path=path, selected=selected)
@@ -70,7 +104,18 @@ def toggle(request: Request, body: ToggleBody) -> ToggleResponse:
 
 @router.post("/select-all")
 def select_all(request: Request, body: SelectAllBody) -> SelectAllResponse:
-    """全选当前子目录中未被删除的图片. 引用: ``store.js``. """
+    """全选当前子目录中未被删除的图片。
+
+    Args:
+        request (Request): FastAPI 请求对象, 由路由参数注入。
+        body (SelectAllBody): 含目录列表或单个目录名。
+
+    Returns:
+        SelectAllResponse: 含选中数量与目录列表。
+
+    Callers:
+        - ``static/js/store.js:selectAll``
+    """
     root = _root(request)
     state_mgr = _state(request)
     names = body.dirs or parse_dir_names(None, body.dir)
@@ -92,27 +137,58 @@ def select_all(request: Request, body: SelectAllBody) -> SelectAllResponse:
 
 @router.post("/deselect-all")
 def deselect_all(request: Request) -> CountResponse:
-    """取消全选. 引用: ``store.js``. """
+    """取消全选。
+
+    Args:
+        request (Request): FastAPI 请求对象, 由路由参数注入。
+
+    Returns:
+        CountResponse: 含已选数量(恒为 0)。
+
+    Callers:
+        - ``static/js/store.js:deselectAll``
+    """
     _state(request).deselect_all()
     return CountResponse(selected=0)
 
 
 class SelectRangeBody(BaseModel):
-    """范围选中请求. 引用: ``POST /select-range``. """
+    """范围选中请求."""
 
     paths: list[str] = Field(..., description="要选中的路径列表")
 
 
 @router.post("/select-range")
 def select_range(request: Request, body: SelectRangeBody) -> CountResponse:
-    """将给定路径全部标为选中. 引用: ``store.js`` Shift+点击范围选择. """
+    """将给定路径全部标为选中。
+
+    Args:
+        request (Request): FastAPI 请求对象, 由路由参数注入。
+        body (SelectRangeBody): 含要选中的路径列表。
+
+    Returns:
+        CountResponse: 含已选数量。
+
+    Callers:
+        - ``static/js/store.js:selectRange``
+    """
     count = _state(request).select_all(body.paths)
     return CountResponse(selected=count)
 
 
 @router.post("/apply")
 def apply_delete(request: Request) -> CountResponse:
-    """将选中的图片移入回收站. 引用: ``store.js``. """
+    """将选中的图片移入回收站。
+
+    Args:
+        request (Request): FastAPI 请求对象, 由路由参数注入。
+
+    Returns:
+        CountResponse: 含已移动数量。
+
+    Callers:
+        - ``static/js/store.js:applyDelete``
+    """
     root = _root(request)
     state_mgr = _state(request)
     state = state_mgr.get()
@@ -139,7 +215,18 @@ def apply_delete(request: Request) -> CountResponse:
 
 @router.post("/restore")
 def restore(request: Request, body: RestoreBody) -> CountResponse:
-    """从回收站恢复图片. 引用: ``store.js``. """
+    """从回收站恢复图片。
+
+    Args:
+        request (Request): FastAPI 请求对象, 由路由参数注入。
+        body (RestoreBody): 含要恢复的路径列表(空表示全部恢复)。
+
+    Returns:
+        CountResponse: 含已恢复数量。
+
+    Callers:
+        - ``static/js/store.js:restore``
+    """
     root = _root(request)
     state_mgr = _state(request)
     trashed = state_mgr.get().trashed
@@ -158,7 +245,19 @@ def restore(request: Request, body: RestoreBody) -> CountResponse:
 
 @router.get("/state")
 def get_state(request: Request, dirs: str = "", dir: str = "main") -> AnnotatorStateResponse:
-    """获取当前状态快照(含统计). 引用: ``store.js``. """
+    """获取当前状态快照(含统计)。
+
+    Args:
+        request (Request): FastAPI 请求对象, 由路由参数注入。
+        dirs (str): 逗号分隔的子目录名, 默认空。
+        dir (str): 单个子目录名, 默认 ``main``。
+
+    Returns:
+        AnnotatorStateResponse: 含目录、总数、选中数、回收站数等统计。
+
+    Callers:
+        - ``static/js/api.js:getState``
+    """
     root = _root(request)
     state_mgr = _state(request)
     names = parse_dir_names(dirs, dir)

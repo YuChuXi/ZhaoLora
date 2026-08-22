@@ -1,6 +1,8 @@
-"""文档页模型. 
+"""文档页模型.
 
-引用: ``services.models`` 包导出；各 routes / services. 
+Callers:
+    - ``services.models``: 包导出.
+    - ``routes.docs``: 文档路由.
 """
 
 from __future__ import annotations
@@ -9,32 +11,20 @@ from pydantic import BaseModel, Field
 
 
 class DocNavItem(BaseModel):
-    """文档导航项. 
-
-    引用:
-        ``routes.docs.docs_nav``. 
-    """
+    """文档导航项."""
 
     slug: str
     label: str
 
 
 class DocsListResponse(BaseModel):
-    """文档导航列表. 
-
-    引用:
-        ``routes.docs.list_docs``. 
-    """
+    """文档导航列表."""
 
     nav: list[DocNavItem]
 
 
 class DocContentResponse(BaseModel):
-    """单篇文档内容. 
-
-    引用:
-        ``routes.docs.get_doc``. 
-    """
+    """单篇文档内容."""
 
     slug: str
     file: str

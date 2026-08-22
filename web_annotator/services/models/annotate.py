@@ -1,6 +1,8 @@
-"""标注操作回执模型. 
+"""标注操作回执模型.
 
-引用: ``services.models`` 包导出；各 routes / services. 
+Callers:
+    - ``services.models``: 包导出.
+    - ``routes.annotations``: 标注路由.
 """
 
 from __future__ import annotations
@@ -9,33 +11,21 @@ from pydantic import BaseModel, Field
 
 
 class ToggleResponse(BaseModel):
-    """切换选中回执. 
-
-    引用:
-        ``routes.annotations.toggle``. 
-    """
+    """切换选中回执."""
 
     path: str
     selected: bool
 
 
 class SelectAllResponse(BaseModel):
-    """全选回执. 
-
-    引用:
-        ``routes.annotations.select_all``. 
-    """
+    """全选回执."""
 
     selected: int
     dirs: list[str]
 
 
 class CountResponse(BaseModel):
-    """计数类回执(取消全选 / 移入回收站 / 恢复). 
-
-    引用:
-        ``routes.annotations``. 
-    """
+    """计数类回执(取消全选 / 移入回收站 / 恢复)."""
 
     selected: int | None = None
     moved: int | None = None
@@ -43,11 +33,7 @@ class CountResponse(BaseModel):
 
 
 class AnnotatorStateResponse(BaseModel):
-    """标注状态统计. 
-
-    引用:
-        ``routes.annotations.get_state``. 
-    """
+    """标注状态统计."""
 
     dirs: list[str]
     dir: str

@@ -1,6 +1,6 @@
-"""标注状态与回收站文件移动. 
+"""标注状态与回收站文件移动.
 
-状态文件与 ``.trash`` 位于数据集根(``meta_dir``). 
+状态文件与 ``.trash`` 位于数据集根(``meta_dir``).
 """
 
 from __future__ import annotations
@@ -18,17 +18,24 @@ TRASH_DIRNAME = ".trash"
 
 
 class StateManager:
-    """管理选中状态, 并将文件在数据目录与回收站之间移动. """
+    """管理选中状态, 并将文件在数据目录与回收站之间移动.
+
+    Callers:
+        - ``services/dataset/runtime.py:DatasetRegistry.ensure``
+    """
 
     def __init__(self, data_dir: Path, *, meta_dir: Path | None = None) -> None:
-        """绑定数据集根目录. 
+        """绑定数据集根目录.
 
         Args:
-            data_dir: 数据集根(相对路径相对此目录). 
-            meta_dir: 状态文件与回收站所在目录；默认与 ``data_dir`` 相同. 
+            data_dir (Path): 数据集根(相对路径相对此目录).
+            meta_dir (Path | None): 状态文件与回收站所在目录; 默认与 ``data_dir`` 相同.
 
-        引用:
-            ``services/dataset/runtime.py:DatasetRegistry.ensure``. 
+        Returns:
+            None
+
+        Callers:
+            - ``services/dataset/runtime.py:DatasetRegistry.ensure``
         """
         self.data_dir = data_dir
         meta = meta_dir or data_dir
@@ -37,28 +44,28 @@ class StateManager:
         self.trash_dir = meta / TRASH_DIRNAME
 
     def _read(self) -> AnnotatorState:
-        """读取状态文件. 
+        """读取状态文件.
 
         Returns:
-            ``AnnotatorState``；文件不存在时为空状态. 
+            AnnotatorState: 当前状态; 文件不存在时为空状态.
 
         Raises:
-            ValidationError: JSON 结构不符合模型. 
-            json.JSONDecodeError: 文件不是合法 JSON. 
-            OSError: 读取失败. 
-
-        引用:
-            ``get``. 
+            ValidationError: JSON 结构不符合模型.
+            json.JSONDecodeError: 文件不是合法 JSON.
+            OSError: 读取失败.
         """
         if not self.state_path.exists():
             return AnnotatorState()
         return AnnotatorState.model_validate_json(self.state_path.read_text(encoding="utf-8"))
 
     def _write(self, state: AnnotatorState) -> None:
-        """将状态写入 JSON 文件. 
+        """将状态写入 JSON 文件.
 
-        引用:
-            ``toggle`` / ``select_all`` / ``deselect_all`` / ``apply_delete`` / ``restore``. 
+        Args:
+            state (AnnotatorState): 待写入的状态对象.
+
+        Returns:
+            None
         """
         self.state_path.write_text(
             state.model_dump_json(indent=2),
@@ -66,27 +73,35 @@ class StateManager:
         )
 
     def get(self) -> AnnotatorState:
-        """返回当前标注状态. 
+        """返回当前标注状态.
 
         Returns:
-            AnnotatorState: 包含 selected 和 trashed 映射的状态对象. 
+            AnnotatorState: 包含 selected 和 trashed 映射的状态对象.
 
-        引用:
-            ``routes/annotations.py``；本类各写操作. 
+        Callers:
+            - ``routes/annotations.py:get_state``
+            - ``routes/annotations.py:select_all``
+            - ``routes/annotations.py:apply_delete``
+            - ``routes/annotations.py:restore``
+            - ``services/state/annotator.py:StateManager.toggle``
+            - ``services/state/annotator.py:StateManager.select_all``
+            - ``services/state/annotator.py:StateManager.deselect_all``
+            - ``services/state/annotator.py:StateManager.apply_delete``
+            - ``services/state/annotator.py:StateManager.restore``
         """
         return self._read()
 
     def toggle(self, path: str) -> bool:
-        """切换单张图片选中状态. 
+        """切换单张图片选中状态.
 
         Args:
-            path: 相对数据集根的路径. 
+            path (str): 相对数据集根的路径.
 
         Returns:
-            切换后是否选中. 
+            bool: 切换后是否选中.
 
-        引用:
-            ``routes.annotations.toggle``. 
+        Callers:
+            - ``routes/annotations.py:toggle``
         """
         state = self.get()
         if path in state.selected:
@@ -99,16 +114,17 @@ class StateManager:
         return result
 
     def select_all(self, paths: list[str]) -> int:
-        """将给定路径全部标为选中. 
+        """将给定路径全部标为选中.
 
         Args:
-            paths: 相对路径列表. 
+            paths (list[str]): 相对路径列表.
 
         Returns:
-            选中表当前条目数. 
+            int: 选中表当前条目数.
 
-        引用:
-            ``routes.annotations.select_all``. 
+        Callers:
+            - ``routes/annotations.py:select_all``
+            - ``routes/annotations.py:select_range``
         """
         state = self.get()
         now = int(time.time())
@@ -118,31 +134,35 @@ class StateManager:
         return len(state.selected)
 
     def deselect_all(self) -> None:
-        """清空选中表. 
+        """清空选中表.
 
-        引用:
-            ``routes.annotations.deselect_all``. 
+        Returns:
+            None
+
+        Callers:
+            - ``routes/annotations.py:deselect_all``
         """
         state = self.get()
         state.selected = {}
         self._write(state)
 
     def apply_delete(self, paths: list[str]) -> int:
-        """将指定图片及其同 stem 旁路文件移入 ``.trash/``. 
+        """将指定图片及其同 stem 旁路文件移入 ``.trash/``.
 
         Args:
-            paths: 相对数据集根、且文件当前存在的路径. 
+            paths (list[str]): 相对数据集根、且文件当前存在的路径.
 
         Returns:
-            成功移动的图片数量. 
+            int: 成功移动的图片数量.
 
         Raises:
-            ValueError: 路径越界. 
-            FileNotFoundError: 源文件不存在. 
-            OSError: 移动失败. 
+            ValueError: 路径越界.
+            FileNotFoundError: 源文件不存在.
+            OSError: 移动失败.
 
-        引用:
-            ``routes.annotations.apply_delete``；``routes.dedupe``. 
+        Callers:
+            - ``routes/annotations.py:apply_delete``
+            - ``routes/dedupe.py:apply_delete``
         """
         state = self.get()
         self.trash_dir.mkdir(parents=True, exist_ok=True)
@@ -167,20 +187,20 @@ class StateManager:
         return moved
 
     def restore(self, paths: list[str]) -> int:
-        """从 ``.trash/`` 恢复指定图片及其同 stem 旁路文件. 
+        """从 ``.trash/`` 恢复指定图片及其同 stem 旁路文件.
 
         Args:
-            paths: 回收站状态中的相对路径. 
+            paths (list[str]): 回收站状态中的相对路径.
 
         Returns:
-            成功恢复的图片数量. 
+            int: 成功恢复的图片数量.
 
         Raises:
-            ValueError: 路径越界. 
-            OSError: 移动失败. 
+            ValueError: 路径越界.
+            OSError: 移动失败.
 
-        引用:
-            ``routes.annotations.restore``. 
+        Callers:
+            - ``routes/annotations.py:restore``
         """
         state = self.get()
         data_root = self.data_dir.resolve()
@@ -206,15 +226,15 @@ class StateManager:
         return restored
 
     def _move_sidecar_files(self, parent: Path, rel_path: str, dest_root: Path) -> None:
-        """移动与图片同 stem、非图像后缀的旁路文件. 
+        """移动与图片同 stem、非图像后缀的旁路文件.
 
         Args:
-            parent: 源文件所在目录. 
-            rel_path: 图片相对路径(用于拼旁路相对路径). 
-            dest_root: 目标根目录(数据集根或回收站根). 
+            parent (Path): 源文件所在目录.
+            rel_path (str): 图片相对路径(用于拼旁路相对路径).
+            dest_root (Path): 目标根目录(数据集根或回收站根).
 
-        引用:
-            ``apply_delete`` / ``restore``. 
+        Returns:
+            None
         """
         if not parent.is_dir():
             return

@@ -21,7 +21,7 @@ router = APIRouter(prefix="/tagging", tags=["tagging"])
 
 
 class StartBody(BaseModel):
-    """打标启动请求. 引用: ``POST /tagging/start``. """
+    """打标启动请求体. """
 
     dirs: list[str] = Field(default_factory=list, description="子目录名")
     threshold: float = Field(default=DEFAULT_THRESHOLD, ge=0.0, le=1.0)
@@ -32,7 +32,14 @@ class StartBody(BaseModel):
 
 @router.get("/dirs")
 def dirs(request: Request) -> TaggingDirsResponse:
-    """列出可打标目录与模型状态. 引用: ``tagging.js``. """
+    """列出可打标目录与 WD14 模型就绪状态.
+
+    Args:
+        request (Request): FastAPI 请求对象, 由路由参数注入.
+
+    Returns:
+        TaggingDirsResponse: 含子目录列表/模型就绪状态/模型路径/默认阈值.
+    """
     rt = get_runtime(request)
     root = rt.root
     ok, model_path = model_ready()
@@ -46,11 +53,22 @@ def dirs(request: Request) -> TaggingDirsResponse:
 
 @router.post("/start")
 async def start(request: Request, body: StartBody) -> TaggingStartResponse:
-    """
-    提交打标长任务. 
+    """提交 WD14 批量打标长任务, 返回 job_id.
 
-    返回 job_id；进度见 GET /api/jobs/{id}/events. 
-    引用: tagging.js. 
+    进度经 SSE 推送, 见 ``GET /api/jobs/{job_id}/events``.
+
+    Args:
+        request (Request): FastAPI 请求对象, 由路由参数注入.
+        body (StartBody): 启动参数, 含目录/阈值/是否禁用原 tag/是否强制重打/画师标签.
+
+    Returns:
+        TaggingStartResponse: 含 ``job_id`` 与本次启动的目录/阈值/选项回显.
+
+    Raises:
+        HTTPException: 模型未就绪或未选择目录时返回 400.
+
+    Callers:
+        - ``static/js/tagging.js:startJob``
     """
     rt = get_runtime(request)
     root = rt.root
@@ -65,9 +83,16 @@ async def start(request: Request, body: StartBody) -> TaggingStartResponse:
     prog = TaggingProgress()
 
     def run(emit: EmitFn) -> None:
-        """工作线程入口. 引用: ``JobManager.submit``. """
+        """工作线程入口: 调用 ``run_batch`` 执行批量打标.
+
+        Args:
+            emit (EmitFn): 任务进度发射回调, 由 ``JobManager`` 注入.
+
+        Callers:
+            - ``routes.tagging.start`` (作为 ``run`` 参数传入 ``services.core.jobs.JobManager.submit``)
+        """
         def on_update() -> None:
-            """推送打标进度. 引用: ``run_batch``. """
+            """推送打标进度快照到 SSE 通道."""
             emit(prog.snapshot())
 
         run_batch(

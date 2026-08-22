@@ -52,18 +52,25 @@ router = APIRouter(prefix="/tags", tags=["tags"])
 
 
 class TagDirsResponse(BaseModel):
-    """工作子目录列表. 引用: ``GET /tags/dirs``. """
+    """工作子目录列表."""
 
     dirs: list[WorkDirInfo]
 
 
 def _root(request: Request) -> Path:
-    """引用: 本模块各接口. """
+    """返回当前请求绑定的数据集根目录。
+
+    Args:
+        request (Request): FastAPI 请求对象, 由路由参数注入。
+
+    Returns:
+        Path: 数据集根目录的绝对路径。
+    """
     return get_runtime(request).root
 
 
 class StatsBody(BaseModel):
-    """标签频率统计请求. 引用: ``POST /tags/stats``. """
+    """标签频率统计请求."""
 
     dirs: list[str] | None = Field(default=None, description="子目录名, 空/省略=全选")
     lower: bool = True
@@ -78,7 +85,7 @@ class StatsBody(BaseModel):
 
 
 class CleanBody(BaseModel):
-    """标签清洗请求. 引用: ``POST /tags/clean``. """
+    """标签清洗请求."""
 
     dirs: list[str] | None = Field(default=None, description="子目录名")
     drop: list[str] = Field(default_factory=list, description="整词精确删除")
@@ -98,14 +105,36 @@ class CleanBody(BaseModel):
 
 @router.get("/dirs")
 def dirs(request: Request) -> TagDirsResponse:
-    """列出工作子目录(含图片的一级子目录). 引用: 标签/标签检查页. """
+    """列出工作子目录(含图片的一级子目录)。
+
+    Args:
+        request (Request): FastAPI 请求对象, 由路由参数注入。
+
+    Returns:
+        TagDirsResponse: 工作子目录列表。
+
+    Callers:
+        - ``static/js/nav.js:dirsApi``
+    """
     root = _root(request)
     return TagDirsResponse(dirs=list_work_dirs(root))
 
 
 @router.post("/stats")
 def stats(request: Request, body: StatsBody) -> TagStatsResult:
-    """统计标签频率. 引用: 标签页. """
+    """统计标签频率。
+
+    Args:
+        request (Request): FastAPI 请求对象, 由路由参数注入。
+        body (StatsBody): 统计参数, 含目录、采样、过滤等选项。
+
+    Returns:
+        TagStatsResult: 标签频率统计结果。
+
+    Callers:
+        - ``static/js/tags.js:refresh``
+        - ``static/js/tag_check.js:loadTags``
+    """
     root = _root(request)
     selected = resolve_selected_dirs(root, body.dirs)
     if not selected:
@@ -140,17 +169,24 @@ def stats(request: Request, body: StatsBody) -> TagStatsResult:
 
 
 class TranslateMissingBody(BaseModel):
-    """批量翻译缺失标签请求. 引用: ``POST /tags/translate-missing``. """
+    """批量翻译缺失标签请求."""
 
     tags: list[str] = Field(..., min_length=1)
 
 
 @router.post("/translate-missing")
 async def translate_missing(request: Request, body: TranslateMissingBody) -> dict:
-    """
-    异步批量翻译标签, 保存到共享缓存. 
+    """异步批量翻译标签, 保存到共享缓存。
 
-    引用: tags.js. 
+    Args:
+        request (Request): FastAPI 请求对象, 由路由参数注入。
+        body (TranslateMissingBody): 待翻译标签列表。
+
+    Returns:
+        dict: ``{"translated": int, "map": dict}``, 含已翻译数量与映射表。
+
+    Callers:
+        - ``static/js/tags.js:translateMissing``
     """
     root = _root(request)
     result = await translate_missing_tags(body.tags, root)
@@ -159,11 +195,19 @@ async def translate_missing(request: Request, body: TranslateMissingBody) -> dic
 
 @router.post("/clean")
 async def clean(request: Request, body: CleanBody) -> JobSubmitResponse:
-    """
-    提交标签清洗长任务.
+    """提交标签清洗长任务。
 
-    返回 job_id；结束事件的 result 为清洗结果.
-    引用: ``POST /tags/clean`` API.
+    返回 job_id；结束事件的 result 为清洗结果。
+
+    Args:
+        request (Request): FastAPI 请求对象, 由路由参数注入。
+        body (CleanBody): 清洗参数, 含删除/前置/注入等选项。
+
+    Returns:
+        JobSubmitResponse: 含 job_id, 前端据以订阅 SSE 进度。
+
+    Callers:
+        - 无前端调用(前端使用 ``/tags/batch-edit`` 替代)
     """
     rt = get_runtime(request)
     root = rt.root
@@ -176,7 +220,17 @@ async def clean(request: Request, body: CleanBody) -> JobSubmitResponse:
     payload = body
 
     def run(emit: EmitFn) -> TagCleanResult:
-        """工作线程: 清洗旁路 txt. 引用: ``JobManager.submit``. """
+        """工作线程: 清洗旁路 txt。
+
+        Args:
+            emit (EmitFn): 任务事件推送回调。
+
+        Returns:
+            TagCleanResult: 清洗结果。
+
+        Callers:
+            - ``services.core.jobs:JobManager.submit``
+        """
         emit(
             JobSnapshot(
                 status="running",
@@ -221,7 +275,7 @@ async def clean(request: Request, body: CleanBody) -> JobSubmitResponse:
 
 
 class BatchEditBody(BaseModel):
-    """批量编辑标签请求. 引用: ``POST /tags/batch-edit``. """
+    """批量编辑标签请求."""
 
     dirs: list[str] | None = Field(default=None, description="子目录名")
     delete_tags: list[str] = Field(default_factory=list, description="要删除的标签")
@@ -241,11 +295,19 @@ class BatchEditBody(BaseModel):
 
 @router.post("/batch-edit")
 async def batch_edit(request: Request, body: BatchEditBody) -> JobSubmitResponse:
-    """
-    批量删除/添加标签.
+    """批量删除/添加标签。
 
-    返回 job_id；结束事件的 result 为清洗结果.
-    引用: ``tags.js``.
+    返回 job_id；结束事件的 result 为清洗结果。
+
+    Args:
+        request (Request): FastAPI 请求对象, 由路由参数注入。
+        body (BatchEditBody): 批量编辑参数, 含增删/替换/位置/分隔等选项。
+
+    Returns:
+        JobSubmitResponse: 含 job_id, 前端据以订阅 SSE 进度。
+
+    Callers:
+        - ``static/js/tags.js:runBatchEdit``
     """
     rt = get_runtime(request)
     root = rt.root
@@ -267,7 +329,17 @@ async def batch_edit(request: Request, body: BatchEditBody) -> JobSubmitResponse
     payload = body
 
     def run(emit: EmitFn) -> TagCleanResult:
-        """工作线程: 批量编辑旁路 txt. 引用: ``JobManager.submit``. """
+        """工作线程: 批量编辑旁路 txt。
+
+        Args:
+            emit (EmitFn): 任务事件推送回调。
+
+        Returns:
+            TagCleanResult: 编辑结果。
+
+        Callers:
+            - ``services.core.jobs:JobManager.submit``
+        """
         emit(
             JobSnapshot(
                 status="running",
@@ -325,23 +397,23 @@ def _build_check_item(
     tag: str,
     position: str,
 ) -> TagCheckItem:
-    """为单张图片构建标签检查结果.
+    """为单张图片构建标签检查结果。
 
     读取与图片同 stem 的旁路 ``.txt``, 调用 ``check_tag_in_caption`` 判断
-    标签存在性与位置, 并计算缩略图 hash 与图片宽高.
+    标签存在性与位置, 并计算缩略图 hash 与图片宽高。
 
     Args:
-        img_path_rel: 图片相对数据集根的路径(如 ``main/foo.png``).
-        stem: 图片 stem.
-        work_dir: 图片所在的绝对路径目录.
-        dir_name: 目录名(用于前端展示).
-        root: 数据集根目录.
-        thumbnailer: 缩略图管理器.
-        tag: 待检查的标签.
-        position: 位置选项.
+        img_path_rel (str): 图片相对数据集根的路径(如 ``main/foo.png``)。
+        stem (str): 图片 stem。
+        work_dir (Path): 图片所在的绝对路径目录。
+        dir_name (str): 目录名(用于前端展示)。
+        root (Path): 数据集根目录。
+        thumbnailer (Thumbnailer): 缩略图管理器。
+        tag (str): 待检查的标签。
+        position (str): 位置选项。
 
     Returns:
-        TagCheckItem: 检查结果项.
+        TagCheckItem: 检查结果项。
 
     Callers:
         - ``routes/tag_stats:check``
@@ -369,9 +441,17 @@ def _build_check_item(
 
 @router.post("/check")
 def check(request: Request, body: TagCheckBody) -> TagCheckResponse:
-    """批量检查目录内图片旁路 ``.txt`` 中标签的存在与位置.
+    """批量检查目录内图片旁路 ``.txt`` 中标签的存在与位置。
 
-    引用: ``tag_check.js``.
+    Args:
+        request (Request): FastAPI 请求对象, 由路由参数注入。
+        body (TagCheckBody): 检查参数, 含标签、目录、位置等。
+
+    Returns:
+        TagCheckResponse: 检查结果, 含每张图片的存在/位置状态。
+
+    Callers:
+        - ``static/js/tag_check.js:runCheck``
     """
     rt = get_runtime(request)
     root = rt.root
@@ -410,9 +490,18 @@ def check(request: Request, body: TagCheckBody) -> TagCheckResponse:
 
 @router.post("/edit-one")
 def edit_one(request: Request, body: TagEditOneBody) -> TagCheckItem:
-    """编辑单张图片的旁路 ``.txt``, 在指定位置添加标签后返回最新检查结果.
+    """编辑单张图片的旁路 ``.txt``, 在指定位置添加标签后返回最新检查结果。
 
-    引用: ``tag_check.js``.
+    Args:
+        request (Request): FastAPI 请求对象, 由路由参数注入。
+        body (TagEditOneBody): 编辑参数, 含路径、标签、位置。
+
+    Returns:
+        TagCheckItem: 编辑后的最新检查结果。
+
+    Callers:
+        - ``static/js/tag_check.js:onCardClick``
+        - ``static/js/tag_check.js:singleTagOp``
     """
     rt = get_runtime(request)
     root = rt.root
@@ -444,7 +533,7 @@ def edit_one(request: Request, body: TagEditOneBody) -> TagCheckItem:
 
 
 class TagDeleteOneBody(BaseModel):
-    """单文件标签删除请求. 引用: ``POST /tags/delete-one``."""
+    """单文件标签删除请求."""
 
     path: str = Field(..., description="图片相对数据集根的路径")
     tag: str
@@ -452,9 +541,18 @@ class TagDeleteOneBody(BaseModel):
 
 @router.post("/delete-one")
 def delete_one(request: Request, body: TagDeleteOneBody) -> TagCheckItem:
-    """从单张图片旁路 ``.txt`` 中删除指定标签后返回最新检查结果.
+    """从单张图片旁路 ``.txt`` 中删除指定标签后返回最新检查结果。
 
-    引用: ``tag_check.js``.
+    Args:
+        request (Request): FastAPI 请求对象, 由路由参数注入。
+        body (TagDeleteOneBody): 删除参数, 含路径、标签。
+
+    Returns:
+        TagCheckItem: 删除后的最新检查结果。
+
+    Callers:
+        - ``static/js/tag_check.js:onCardClick``
+        - ``static/js/tag_check.js:singleTagOp``
     """
     rt = get_runtime(request)
     root = rt.root
@@ -490,7 +588,14 @@ def delete_one(request: Request, body: TagDeleteOneBody) -> TagCheckItem:
 def embedding_status(request: Request) -> EmbeddingStatusResponse:
     """检查向量重排序模型是否可用。
 
-    引用: tag_check.js。
+    Args:
+        request (Request): FastAPI 请求对象, 由路由参数注入。
+
+    Returns:
+        EmbeddingStatusResponse: 含 ok 与 message 字段。
+
+    Callers:
+        - ``static/js/tag_check.js:embSort``
     """
     ok, msg = reranker_model_ready()
     return EmbeddingStatusResponse(ok=ok, message=msg)
@@ -498,19 +603,28 @@ def embedding_status(request: Request) -> EmbeddingStatusResponse:
 
 @router.post("/embedding/query")
 async def embedding_query(request: Request, body: EmbeddingQueryBody) -> JobSubmitResponse:
-    """按查询文本对候选图片实时重排序（异步长任务，带进度条）。
+    """按查询文本对候选图片实时重排序(异步长任务, 带进度条)。
 
-    Reranker 为 cross-encoder，无法预计算向量，须对目录内全部图片逐张
-    (query, image) 评分，耗时较长，故提交 JobManager，由前端以 SSE 订阅进度，
+    Reranker 为 cross-encoder, 无法预计算向量, 须对目录内全部图片逐张
+    (query, image) 评分, 耗时较长, 故提交 JobManager, 由前端以 SSE 订阅进度,
     任务完成时在 result 中携带排序结果。
 
     同一数据集最近 ``MAX_ENTRIES`` 次查询结果缓存于 ``DatasetRuntime.sort_cache``：
-    命中（查询文本与目录集合一致）时任务立即返回缓存排序，无需重复调用模型；
-    命中即提升该查询在最近列表中的位置，避免被后续查询挤出。
-    缓存排序之后新增的图片会重新调用模型评分，按相似度并入结果并回写缓存，
+    命中(查询文本与目录集合一致)时任务立即返回缓存排序, 无需重复调用模型；
+    命中即提升该查询在最近列表中的位置, 避免被后续查询挤出。
+    缓存排序之后新增的图片会重新调用模型评分, 按相似度并入结果并回写缓存,
     保证返回结果覆盖当前全部候选。
 
-    引用: tag_check.js / app.js。
+    Args:
+        request (Request): FastAPI 请求对象, 由路由参数注入。
+        body (EmbeddingQueryBody): 查询参数, 含查询文本与目录列表。
+
+    Returns:
+        JobSubmitResponse: 含 job_id, 前端据以订阅 SSE 进度。
+
+    Callers:
+        - ``static/js/tag_check.js:embSort``
+        - ``static/js/app.js:searchSort``
     """
     rt = get_runtime(request)
     root = rt.root
@@ -526,7 +640,7 @@ async def embedding_query(request: Request, body: EmbeddingQueryBody) -> JobSubm
     cache = rt.sort_cache
     cached = cache.get(query_text, dirs_key)
 
-    # 收集所有候选图片的相对路径与绝对路径（命中缓存时用于补全，未命中时用于评分）
+    # 收集所有候选图片的相对路径与绝对路径(命中缓存时用于补全, 未命中时用于评分)
     candidates: list[tuple[str, Path]] = []
     for work in selected:
         if work == root:
@@ -537,12 +651,22 @@ async def embedding_query(request: Request, body: EmbeddingQueryBody) -> JobSubm
             candidates.append((img.path, root / img.path))
 
     if cached is not None:
-        # 找出缓存排序之后新增的图片，命中时重新调用模型评分后并入结果
+        # 找出缓存排序之后新增的图片, 命中时重新调用模型评分后并入结果
         ordered_paths = {p for p, _ in cached}
         missing = [c for c in candidates if c[0] not in ordered_paths]
 
         def run(emit: EmitFn) -> EmbeddingQueryResult:
-            """工作线程: 命中缓存, 新图重新评分后按相似度并入并更新缓存。引用: ``JobManager.submit``。"""
+            """工作线程: 命中缓存, 新图重新评分后按相似度并入并更新缓存。
+
+            Args:
+                emit (EmitFn): 任务事件推送回调。
+
+            Returns:
+                EmbeddingQueryResult: 排序结果。
+
+            Callers:
+                - ``services.core.jobs:JobManager.submit``
+            """
             if missing:
                 emit(JobSnapshot(
                     status="running", phase="querying",
@@ -570,7 +694,7 @@ async def embedding_query(request: Request, body: EmbeddingQueryBody) -> JobSubm
             result = EmbeddingQueryResult(items=items)
             emit(JobSnapshot(
                 status="done", phase="done",
-                message=f"命中缓存，共 {len(items)} 张", pct=100, result=result,
+                message=f"命中缓存, 共 {len(items)} 张", pct=100, result=result,
             ))
             return result
 
@@ -591,7 +715,17 @@ async def embedding_query(request: Request, body: EmbeddingQueryBody) -> JobSubm
     total = len(candidates)
 
     def run(emit: EmitFn) -> EmbeddingQueryResult:
-        """工作线程: 逐张相似度评分、写入缓存并回报进度。引用: ``JobManager.submit``。"""
+        """工作线程: 逐张相似度评分、写入缓存并回报进度。
+
+        Args:
+            emit (EmitFn): 任务事件推送回调。
+
+        Returns:
+            EmbeddingQueryResult: 排序结果。
+
+        Callers:
+            - ``services.core.jobs:JobManager.submit``
+        """
         emit(JobSnapshot(
             status="running", phase="querying",
             message="正在相似度评分…", pct=0, total=total,
@@ -614,7 +748,7 @@ async def embedding_query(request: Request, body: EmbeddingQueryBody) -> JobSubm
         result = EmbeddingQueryResult(items=items)
         emit(JobSnapshot(
             status="done", phase="done",
-            message=f"完成，共 {len(items)} 张", pct=100, result=result,
+            message=f"完成, 共 {len(items)} 张", pct=100, result=result,
         ))
         return result
 
@@ -624,9 +758,16 @@ async def embedding_query(request: Request, body: EmbeddingQueryBody) -> JobSubm
 
 @router.get("/embedding/history", response_model=EmbeddingHistoryResponse)
 def embedding_history(request: Request) -> EmbeddingHistoryResponse:
-    """返回当前数据集最近若干次语义排序查询历史（新的在前，至多 10 条）。
+    """返回当前数据集最近若干次语义排序查询历史(新的在前, 至多 10 条)。
 
-    引用: app.js（筛选页语义搜索对话框下拉展示）。
+    Args:
+        request (Request): FastAPI 请求对象, 由路由参数注入。
+
+    Returns:
+        EmbeddingHistoryResponse: 含 query 与 time 的历史列表。
+
+    Callers:
+        - ``static/js/app.js:searchLoadHistory``
     """
     rt = get_runtime(request)
     return EmbeddingHistoryResponse(
@@ -639,16 +780,24 @@ def embedding_history(request: Request) -> EmbeddingHistoryResponse:
 
 @router.post("/embedding/batch-tag", response_model=EmbeddingBatchTagResponse)
 def embedding_batch_tag(request: Request, body: EmbeddingBatchTagBody) -> EmbeddingBatchTagResponse:
-    """按已计算相似度的路径批量添加或删除标签（同步）。
+    """按已计算相似度的路径批量添加或删除标签(同步)。
 
-    相似度由 ``embedding/query`` 实时评分得出并缓存于前端，本接口直接
-    接收前端按阈值筛选出的匹配路径，仅做批量写标签，开销极小，故不采用长任务调度。
+    相似度由 ``embedding/query`` 实时评分得出并缓存于前端, 本接口直接
+    接收前端按阈值筛选出的匹配路径, 仅做批量写标签, 开销极小, 故不采用长任务调度。
 
-    引用: tag_check.js。
+    Args:
+        request (Request): FastAPI 请求对象, 由路由参数注入。
+        body (EmbeddingBatchTagBody): 批量操作参数, 含路径列表、标签、动作、位置。
+
+    Returns:
+        EmbeddingBatchTagResponse: 含 ok 与匹配数量。
+
+    Callers:
+        - ``static/js/tag_check.js:embBatchTag``
     """
     root = get_runtime(request).root
     if not body.paths:
-        raise HTTPException(400, "无匹配图片，请先按相似度排序")
+        raise HTTPException(400, "无匹配图片, 请先按相似度排序")
     if not body.tag.strip():
         raise HTTPException(400, "标签不能为空")
     if body.action not in ("add", "delete"):
@@ -687,11 +836,11 @@ def delete_tag_from_caption_fuzzy(raw: str, tag: str) -> str:
     """从 caption 中按子串模糊匹配移除标签。
 
     Args:
-        raw: 原始 caption 文本。
-        tag: 待删除的标签子串（不区分大小写）。
+        raw (str): 原始 caption 文本。
+        tag (str): 待删除的标签子串(不区分大小写)。
 
     Returns:
-        删除后的 caption 字符串。
+        str: 删除后的 caption 字符串。
 
     Callers:
         - ``routes/tag_stats:embedding_batch_tag``
@@ -707,13 +856,21 @@ def delete_tag_from_caption_fuzzy(raw: str, tag: str) -> str:
 
 @router.post("/concept/query")
 async def concept_query(request: Request, body: ConceptQueryBody) -> JobSubmitResponse:
-    """按概念提示词对候选图片执行文本提示概念分割（异步长任务，带进度条）。
+    """按概念提示词对候选图片执行文本提示概念分割(异步长任务, 带进度条)。
 
-    SAM3 对每张图片逐张分割并计算掩码占比，耗时较长，故提交 JobManager，
+    SAM3 对每张图片逐张分割并计算掩码占比, 耗时较长, 故提交 JobManager,
     由前端以 SSE 订阅进度；任务完成时在 result 中携带按掩码占比降序的结果
-    及每张图的半透明叠加 PNG（base64）。
+    及每张图的半透明叠加 PNG(base64)。
 
-    引用: tag_check.js。
+    Args:
+        request (Request): FastAPI 请求对象, 由路由参数注入。
+        body (ConceptQueryBody): 概念查询参数, 含查询文本与目录列表。
+
+    Returns:
+        JobSubmitResponse: 含 job_id, 前端据以订阅 SSE 进度。
+
+    Callers:
+        - ``static/js/tag_check.js:embSort``
     """
     rt = get_runtime(request)
     root = rt.root
@@ -741,7 +898,17 @@ async def concept_query(request: Request, body: ConceptQueryBody) -> JobSubmitRe
     total = len(candidates)
 
     def run(emit: EmitFn) -> ConceptQueryResult:
-        """工作线程: 逐张概念分割并回报进度。引用: ``JobManager.submit``。"""
+        """工作线程: 逐张概念分割并回报进度。
+
+        Args:
+            emit (EmitFn): 任务事件推送回调。
+
+        Returns:
+            ConceptQueryResult: 概念分割结果。
+
+        Callers:
+            - ``services.core.jobs:JobManager.submit``
+        """
         emit(JobSnapshot(
             status="running", phase="concept",
             message="正在概念分割…", pct=0, total=total,
@@ -767,7 +934,7 @@ async def concept_query(request: Request, body: ConceptQueryBody) -> JobSubmitRe
         result = ConceptQueryResult(items=items)
         emit(JobSnapshot(
             status="done", phase="done",
-            message=f"完成，共 {len(items)} 张", pct=100, result=result,
+            message=f"完成, 共 {len(items)} 张", pct=100, result=result,
         ))
         return result
 

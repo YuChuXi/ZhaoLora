@@ -24,26 +24,40 @@ _PAINT_PREVIEW_MAX = 2048
 
 
 class PaintConfigBody(BaseModel):
-    """蒙版页内存配置. 引用: ``POST /paint/config``. """
+    """蒙版页默认 alpha 配置请求体. """
 
     default_alpha: int = Field(255, ge=0, le=255)
 
 
 def _services(request: Request) -> tuple[Path, Path]:
-    """返回 ``(root, mask_dir)``. 引用: 本模块各接口. """
+    """获取当前数据集的根目录与蒙版目录路径.
+
+    Args:
+        request (Request): FastAPI 请求对象, 由路由参数注入.
+
+    Returns:
+        tuple[Path, Path]: ``(root, mask_dir)``, 数据集根与 mask 目录绝对路径.
+    """
     rt = get_runtime(request)
     return rt.root, rt.mask_dir
 
 
 @router.get("/images")
 def list_paint_images(request: Request, dir: str = "main") -> list[PaintImageItem]:
-    """列出指定子目录下图片及 mask 是否存在. 
+    """列出指定子目录下图片及 mask 是否存在.
+
+    按 has_mask 升序排序(未绘制在前), 便于切帧.
 
     Args:
-        dir: 子目录名, 默认 ``main``. 
+        request (Request): FastAPI 请求对象, 由路由参数注入.
+        dir (str): 子目录名, 默认 ``main``.
 
-    引用:
-        ``paint.js``. 
+    Returns:
+        list[PaintImageItem]: 图片清单, 含路径/stem/尺寸/缩略图哈希/是否有蒙板.
+
+    Callers:
+        - ``static/js/paint.js:loadImages``
+        - ``static/js/paint.js:refreshAfterMaskDone``
     """
     root, mask_dir = _services(request)
     thumbnailer = get_runtime(request).thumbnailer
@@ -68,15 +82,23 @@ def list_paint_images(request: Request, dir: str = "main") -> list[PaintImageIte
 
 @router.get("/image")
 def serve_original_image(request: Request, path: str = Query(...)) -> Response:
-    """提供原图 AVIF 预览(透明区域衬白底, 长边压缩到 _PAINT_PREVIEW_MAX). 
+    """提供原图 AVIF 预览(透明区域衬白底, 长边压缩到 _PAINT_PREVIEW_MAX).
 
-    原图尺寸由 ``/paint/images`` 列表携带, 前端据此按原分辨率绘制蒙版. 
+    原图尺寸由 ``/paint/images`` 列表携带, 前端据此按原分辨率绘制蒙版.
 
     Args:
-        path: 相对数据集根的路径(含子目录名). 
+        request (Request): FastAPI 请求对象, 由路由参数注入.
+        path (str): 相对数据集根的图片路径(含子目录名).
 
-    引用:
-        ``paint.js``. 
+    Returns:
+        Response: ``image/avif`` 响应体, 长边不超过 _PAINT_PREVIEW_MAX.
+
+    Raises:
+        HTTPException: 图片不存在时返回 404.
+
+    Callers:
+        - ``static/js/paint.js:_loadEntry`` (经 ``_fetchBlob('/paint/image', ...)``)
+        - ``routes.alpha_paint.serve_mask_preview`` (无蒙板时退回此接口)
     """
     root, _ = _services(request)
     src = resolve_path(root, path)
@@ -95,13 +117,21 @@ def serve_original_image(request: Request, path: str = Query(...)) -> Response:
 
 @router.get("/mask")
 def get_existing_mask(request: Request, path: str = Query(...)) -> Response:
-    """返回原始蒙版(蒙版置入 A 通道的无损 PNG, RGB 恒白)；不存在或尺寸不符则 404. 
+    """返回原始蒙版(蒙版置入 A 通道的无损 PNG, RGB 恒白); 不存在或尺寸不符则 404.
 
     Args:
-        path: 相对数据集根的图片路径(含子目录名). 
+        request (Request): FastAPI 请求对象, 由路由参数注入.
+        path (str): 相对数据集根的图片路径(含子目录名).
 
-    引用:
-        ``paint.js``. 
+    Returns:
+        Response: ``image/png`` 响应体, RGBA(A=蒙版, RGB=255).
+
+    Raises:
+        HTTPException: 原图不存在或蒙版未保存/尺寸不符时返回 404.
+
+    Callers:
+        - ``static/js/paint.js:_loadEntry`` (经 ``_fetchBlob('/paint/mask', ...)``)
+        - ``static/js/paint.js:reloadCurrentMask`` (经 ``_fetchBlob('/paint/mask', ...)``)
     """
     root, mask_dir = _services(request)
     src = resolve_path(root, path)
@@ -126,9 +156,9 @@ def compose_mask_preview(base: Path, alpha: np.ndarray, max_size: int = _PAINT_P
     因此不在此烘焙棋盘格, 棋盘格随屏幕固定大小显示、不随图片缩放。
 
     Args:
-        base: 底图绝对路径(优先缩略图, 无缩略图时用原图).
-        alpha: 蒙板灰度数组 ``(h, w)``, 0-255; 尺寸与底图不一致时缩放到底图尺寸.
-        max_size: 输出长边上限.
+        base (Path): 底图绝对路径(优先缩略图, 无缩略图时用原图).
+        alpha (np.ndarray): 蒙板灰度数组 ``(h, w)``, 0-255; 尺寸与底图不一致时缩放到底图尺寸.
+        max_size (int): 输出长边上限.
 
     Returns:
         bytes: AVIF 编码的透明抠图字节.
@@ -160,10 +190,17 @@ def serve_mask_preview(request: Request, path: str = Query(...)) -> Response:
     自动失效重生成。无缩略图时退回原图; 无蒙板时退回原图预览(白底)。
 
     Args:
-        path: 相对数据集根的图片路径(含子目录名).
+        request (Request): FastAPI 请求对象, 由路由参数注入.
+        path (str): 相对数据集根的图片路径(含子目录名).
+
+    Returns:
+        Response: ``image/avif`` 响应体, 合成后的透明抠图。
+
+    Raises:
+        HTTPException: 原图不存在时返回 404。
 
     Callers:
-        - ``tag_check.js`` (标签检查页瀑布图"蒙板"开关)
+        - ``static/js/tag_check.js:imageSrc``
     """
     root, mask_dir = _services(request)
     thumbnailer = get_runtime(request).thumbnailer
@@ -192,13 +229,23 @@ def serve_mask_preview(request: Request, path: str = Query(...)) -> Response:
 
 @router.post("/upload-mask")
 async def upload_mask(request: Request, path: str = Query(...)) -> PaintSaveResponse:
-    """接收蒙版 RGBA PNG 并写入 mask 目录(取 A 通道). 
+    """接收蒙版 RGBA PNG 并写入 mask 目录(取 A 通道).
+
+    前端 canvas 导出 RGBA, 蒙版在 alpha 通道(笔刷绘制时 RGB 恒黑),
+    直接取 A 通道, 而非 convert("L") 的 RGB 亮度(否则绘制后保存必为纯色).
 
     Args:
-        path: 相对数据集根的图片路径(含子目录名). 
+        request (Request): FastAPI 请求对象, 由路由参数注入, body 为 RGBA PNG 字节.
+        path (str): 相对数据集根的图片路径(含子目录名).
 
-    引用:
-        ``paint.js``. 
+    Returns:
+        PaintSaveResponse: 含相对数据集根的 mask 路径与原图尺寸.
+
+    Raises:
+        HTTPException: 原图不存在时返回 404.
+
+    Callers:
+        - ``static/js/paint.js:doSave``
     """
     root, mask_dir = _services(request)
     src = resolve_path(root, path)
@@ -206,23 +253,41 @@ async def upload_mask(request: Request, path: str = Query(...)) -> PaintSaveResp
         raise HTTPException(404, f"Image not found: {path}")
     body = await request.body()
     mask_img = Image.open(io.BytesIO(body))
-    # 前端 canvas 导出 RGBA, 蒙版在 alpha 通道(笔刷绘制时 RGB 恒黑),
-    # 直接取 A 通道, 而非 convert("L") 的 RGB 亮度(否则绘制后保存必为纯色).
     alpha = np.array(mask_img.getchannel("A"), dtype=np.uint8)
     save_mask(mask_dir, path, alpha)
-    # saved 返回相对数据集根的 mask 路径(镜像原图路径), 不暴露绝对路径
     return PaintSaveResponse(saved=str(Path(path).with_suffix(".png")), size=list(Image.open(src).size))
 
 
 @router.get("/config")
 def get_config(request: Request) -> DefaultAlphaResponse:
-    """读取蒙版页配置. 引用: ``paint.js``. """
+    """读取蒙版页默认 alpha 配置.
+
+    Args:
+        request (Request): FastAPI 请求对象, 由路由参数注入.
+
+    Returns:
+        DefaultAlphaResponse: 当前默认 alpha 值(0-255, 未设置时为 255).
+
+    Callers:
+        - ``static/js/paint.js:loadConfig``
+    """
     da = getattr(request.app.state, "paint_default_alpha", 255)
     return DefaultAlphaResponse(default_alpha=da)
 
 
 @router.post("/config")
 def set_config(request: Request, body: PaintConfigBody) -> DefaultAlphaResponse:
-    """写入蒙版页配置. 引用: ``paint.js``. """
+    """写入蒙版页默认 alpha 配置(仅存于内存的 app.state).
+
+    Args:
+        request (Request): FastAPI 请求对象, 由路由参数注入.
+        body (PaintConfigBody): 含待写入的 default_alpha(0-255).
+
+    Returns:
+        DefaultAlphaResponse: 写入后的最新默认 alpha 值.
+
+    Callers:
+        - ``static/js/paint.js:saveConfig``
+    """
     request.app.state.paint_default_alpha = body.default_alpha
     return DefaultAlphaResponse(default_alpha=body.default_alpha)

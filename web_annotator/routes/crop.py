@@ -30,7 +30,7 @@ _SAFE_NAME = re.compile(r"^[\w\-]{1,64}$", re.UNICODE)
 
 
 class CropRect(BaseModel):
-    """单个裁剪框. 引用: ``SaveCropsBody``. """
+    """单个裁剪框. """
 
     x1: int
     y1: int
@@ -43,7 +43,7 @@ class CropRect(BaseModel):
 
 
 class SaveCropsBody(BaseModel):
-    """裁剪保存请求体. 引用: ``POST /crop/save``、``crop.js``. """
+    """裁剪保存请求体. """
 
     path: str = Field(..., min_length=1)
     no_crop_resize: bool = False
@@ -52,23 +52,40 @@ class SaveCropsBody(BaseModel):
 
 
 def _layout(request: Request) -> DatasetLayout:
-    """引用: 本模块各接口. """
+    """获取当前数据集布局对象.
+
+    Args:
+        request (Request): FastAPI 请求对象, 由路由参数注入.
+
+    Returns:
+        DatasetLayout: 当前数据集布局, 用于定位 main/crops/部位目录.
+    """
     return get_runtime(request).layout
 
 
 def _main_dir(request: Request) -> Path:
-    """引用: ``serve_original_image`` / ``save_crops``. """
+    """获取当前数据集主目录(main)路径.
+
+    Args:
+        request (Request): FastAPI 请求对象, 由路由参数注入.
+
+    Returns:
+        Path: main 目录绝对路径.
+    """
     return get_runtime(request).main_dir
 
 
 def _require_part_name(name: str) -> str:
-    """校验部位目录名. 
+    """校验部位目录名, 非法或为保留名时抛出 HTTPException.
+
+    Args:
+        name (str): 候选部位名, 允许空白会被规整处理.
+
+    Returns:
+        str: 规整后的合法部位名.
 
     Raises:
-        HTTPException: 名称非法或为保留名. 
-
-    引用:
-        ``save_crops``. 
+        HTTPException: 名称为空、不匹配命名规则或占用保留名时抛出.
     """
     name = (name or "").strip()
     if not name or not _SAFE_NAME.match(name):
@@ -79,13 +96,23 @@ def _require_part_name(name: str) -> str:
 
 
 def _resolve_out_path(layout: DatasetLayout, stem: str, part_name: str, index: int, total: int) -> Path:
-    """计算裁剪输出路径. 
+    """计算单张裁剪的输出路径.
 
-    有合法 ``part_name`` 时写入 ``root/{part}/{stem}.png``；
-    否则写入 ``root/crops/``. 
+    有合法 ``part_name`` 时写入 ``root/{part}/{stem}.png``;
+    否则写入 ``root/crops/``, 多张时附加序号 ``_{index+1:03d}``.
 
-    引用:
-        ``save_crops``. 
+    Args:
+        layout (DatasetLayout): 当前数据集布局, 用于定位部位目录与 crops 目录.
+        stem (str): 源图文件名 stem, 用作输出文件名前缀.
+        part_name (str): 候选部位名, 非空且合法时归入对应部位目录.
+        index (int): 当前选区在保存序列中的索引(用于多张时编号).
+        total (int): 本轮保存的选区总数(决定是否需要附加序号).
+
+    Returns:
+        Path: 输出 PNG 文件绝对路径.
+
+    Raises:
+        HTTPException: 部位名占用保留名时抛出.
     """
     if part_name and _SAFE_NAME.match(part_name):
         if part_name.lower() in RESERVED_DIR_NAMES:
@@ -102,10 +129,18 @@ def _resolve_out_path(layout: DatasetLayout, stem: str, part_name: str, index: i
 
 @router.get("/images")
 def list_crop_images(request: Request) -> list[CropImageItem]:
-    """列出 main 下图片及是否已有部位或裁剪输出. 
+    """列出 main 下图片及是否已有部位或裁剪输出.
 
-    引用:
-        ``crop.js``. 
+    按 (是否已完成, 路径名) 升序排序, 未完成项排在前面便于切帧.
+
+    Args:
+        request (Request): FastAPI 请求对象, 由路由参数注入.
+
+    Returns:
+        list[CropImageItem]: main 下图片清单, 含路径/stem/尺寸/缩略图哈希/完成标记.
+
+    Callers:
+        - ``static/js/crop.js:loadImages``
     """
     layout = _layout(request)
     thumbnailer = get_runtime(request).thumbnailer
@@ -130,10 +165,20 @@ def list_crop_images(request: Request) -> list[CropImageItem]:
 
 @router.get("/image")
 def serve_original_image(request: Request, path: str = Query(...)) -> Response:
-    """提供原图像素尺寸的 AVIF 预览(仅供框选；保存时仍读磁盘原图). 
+    """提供原图像素尺寸的 AVIF 预览(仅供框选; 保存时仍读磁盘原图).
 
-    引用:
-        ``crop.js``. 
+    Args:
+        request (Request): FastAPI 请求对象, 由路由参数注入.
+        path (str): main 目录内图片相对路径.
+
+    Returns:
+        Response: ``image/avif`` 响应体, 像素与磁盘原图一致.
+
+    Raises:
+        HTTPException: 图片不存在时返回 404.
+
+    Callers:
+        - ``static/js/crop.js:loadIndex``
     """
     src = resolve_path(_main_dir(request), path)
     if not src.is_file():
@@ -148,20 +193,29 @@ def serve_original_image(request: Request, path: str = Query(...)) -> Response:
 
 @router.get("/candidates")
 def get_candidates() -> CropMatchConfig:
-    """返回边长网格配置. 
+    """返回边长网格配置, 供前端按网格规格吸附选区.
 
-    引用:
-        ``crop.js``. 
+    Returns:
+        CropMatchConfig: 候选边长网格配置.
+
+    Callers:
+        - ``static/js/crop.js:init``
     """
     return match_config()
 
 
 @router.get("/config")
 def get_config(request: Request) -> CropPageConfig:
-    """
-    裁剪页配置. 默认裁切由前端 localStorage 管理, 不再下发服务端默认. 
+    """裁剪页配置, 含已存在的部位目录列表(默认裁切由前端 localStorage 管理).
 
-    引用: crop.js. 
+    Args:
+        request (Request): FastAPI 请求对象, 由路由参数注入.
+
+    Returns:
+        CropPageConfig: 含已存在的部位目录名列表.
+
+    Callers:
+        - ``static/js/crop.js:init``
     """
     layout = _layout(request)
     return CropPageConfig(
@@ -171,10 +225,24 @@ def get_config(request: Request) -> CropPageConfig:
 
 @router.post("/save")
 def save_crops(request: Request, body: SaveCropsBody) -> CropSaveResponse:
-    """按框裁切并写入部位目录或 ``crops/``. 
+    """按框裁切并写入部位目录或 ``crops/``.
 
-    引用:
-        ``crop.js``. 
+    当 ``body.no_crop_resize`` 为真时整图直接保存到部位目录;
+    否则逐个选区裁切, 缩放到目标尺寸, 写入部位目录或 ``crops/``,
+    同名输出文件自动追加序号避免覆盖.
+
+    Args:
+        request (Request): FastAPI 请求对象, 由路由参数注入.
+        body (SaveCropsBody): 保存参数, 含源图路径/是否整图输出/部位名/选区列表.
+
+    Returns:
+        CropSaveResponse: 保存结果, 含每个输出文件的相对路径/裁剪框/尺寸/部位名.
+
+    Raises:
+        HTTPException: 图片不存在(404); 无裁剪区域或部位名非法(400).
+
+    Callers:
+        - ``static/js/crop.js:saveAndNext``
     """
     layout = _layout(request)
     main_dir = layout.main_dir

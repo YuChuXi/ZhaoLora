@@ -1,6 +1,9 @@
-"""评分 / 打标页目录与启动回执. 
+"""评分 / 打标页目录与启动回执.
 
-引用: ``services.models`` 包导出；各 routes / services. 
+Callers:
+    - ``services.models``: 包导出.
+    - ``routes.scoring``: 评分路由.
+    - ``routes.tagging``: 打标路由.
 """
 
 from __future__ import annotations
@@ -12,11 +15,7 @@ from services.models.jobs import JobSnapshot
 
 
 class ScoringDirsResponse(BaseModel):
-    """统一评分页目录与两类分数文件状态. 
-
-    引用:
-        ``routes.scoring.dirs``. 
-    """
+    """统一评分页目录与两类分数文件状态."""
 
     dirs: list[WorkDirInfo]
     aesthetic_ready: bool
@@ -26,11 +25,7 @@ class ScoringDirsResponse(BaseModel):
 
 
 class ScoringStartResponse(BaseModel):
-    """统一评分任务提交回执. 
-
-    引用:
-        ``routes.scoring.start``. 
-    """
+    """统一评分任务提交回执."""
 
     ok: bool = True
     job_id: str
@@ -39,11 +34,7 @@ class ScoringStartResponse(BaseModel):
 
 
 class TaggingDirsResponse(BaseModel):
-    """打标页目录与模型状态. 
-
-    引用:
-        ``routes.tagging.dirs``. 
-    """
+    """打标页目录与模型状态."""
 
     dirs: list[WorkDirInfo]
     model_ready: bool
@@ -52,11 +43,7 @@ class TaggingDirsResponse(BaseModel):
 
 
 class TaggingStartResponse(BaseModel):
-    """打标任务提交回执. 
-
-    引用:
-        ``routes.tagging.start``. 
-    """
+    """打标任务提交回执."""
 
     ok: bool = True
     job_id: str

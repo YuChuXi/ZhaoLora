@@ -11,18 +11,34 @@ from services.core.work_dir import list_work_dirs, total_image_count
 
 
 def _has_images(d: Path) -> bool:
-    """目录内是否至少有一张图. 引用: ``build_ready_toml``. """
+    """目录内是否至少有一张图.
+
+    Args:
+        d (Path): 待检查的目录.
+
+    Returns:
+        bool: 目录内存在图片文件则为 True.
+    """
     if not d.is_dir():
         return False
     return any(p.is_file() and p.suffix.lower() in IMAGE_EXTS for p in d.iterdir())
 
 
 def subdir_mask_stats(root: Path, subdir: str = "main") -> MaskStats:
-    """
-    统计指定子目录的蒙版状态: 每张图仅「无」或「完整」. 
+    """统计指定子目录的蒙版状态: 每张图仅「无」或「完整」.
 
-    整体 status: 全部有蒙版 →「完整」；否则 →「无」. 
-    引用: ``dirs``、``build_ready_toml``；``routes/ready.py`` 侧栏. 
+    整体 status: 全部有蒙版 →「完整」；否则 →「无」.
+
+    Args:
+        root (Path): 数据集根目录.
+        subdir (str): 子目录名, 默认 ``main``.
+
+    Returns:
+        MaskStats: 含 mask_status / mask_complete / mask_none / main_count 的统计.
+
+    Callers:
+        - ``routes/ready.py:dirs``
+        - ``services/ready.py:build_ready_toml``
     """
     root = root.resolve()
     subdir = (subdir or "main").strip().strip("/")
@@ -68,7 +84,17 @@ def build_ready_toml(
     优先分配给最靠近 1024 的分辨率(同距则高分辨率优先), 使跨所有块的总重复图片数 >= target_images;
     不传分辨率时块数为 1, num_repeats = total_repeats. 总图片数为 0 时 total_repeats 取 1.
 
-    引用: ``routes/ready.py``.
+    Args:
+        root (Path): 数据集根目录.
+        dirs (list[str] | None): 参与导出的工作目录名列表; None 表示全部, 空列表表示不导出.
+        target_images (int): 目标图片数, 据此计算 num_repeats.
+        resolutions (list[int] | None): 多分辨率列表; 为空或 None 时生成单块且不带 resolution 行.
+
+    Returns:
+        ReadyTomlResult: 含 toml 文本、subsets、mask_stats、repeats、resolutions 等.
+
+    Callers:
+        - ``routes/ready.py:toml``
     """
     root = root.resolve()
     available = {d.name: d for d in list_work_dirs(root)}
@@ -100,7 +126,14 @@ def build_ready_toml(
     remainder = total_repeats % block_count
 
     def _res_priority(i: int) -> tuple[int, int]:
-        """分辨率块 i 的 +1 优先级: (距 1024 的绝对差, 负分辨率), 越小越优先."""
+        """分辨率块 i 的 +1 优先级: (距 1024 的绝对差, 负分辨率), 越小越优先.
+
+        Args:
+            i (int): 分辨率块索引.
+
+        Returns:
+            tuple[int, int]: ``(距 1024 的绝对差, 负分辨率)``; 无分辨率时为 ``(0, 0)``.
+        """
         r = res_list[i]
         return (abs(r - 1024), -r) if r is not None else (0, 0)
 

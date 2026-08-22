@@ -1,5 +1,5 @@
 """
-数据集目录约定. 
+数据集目录约定.
 
 --data-dir datasets/xxx 对应:
 
@@ -10,7 +10,7 @@
     foot/
     ...       # 其它部位目录按选区名称自动创建
 
-保留目录名不会被当成部位输出目录. 
+保留目录名不会被当成部位输出目录.
 """
 
 from __future__ import annotations
@@ -42,11 +42,30 @@ class DatasetLayout:
     crops_dir: Path     # datasets/xxx/crops(未命名选区)
 
     def part_dir(self, name: str) -> Path:
-        """部位输出目录: root/{name}/"""
+        """部位输出目录: root/{name}/.
+
+        Args:
+            name (str): 部位目录名.
+
+        Returns:
+            Path: 部位目录绝对路径.
+
+        Callers:
+            - ``routes/crop.py:_resolve_out_path``
+            - ``routes/crop.py:save_crops``
+        """
         return self.root / name
 
     def list_part_dirs(self) -> list[Path]:
-        """列出部位输出目录. 引用: routes.crop. """
+        """列出部位输出目录.
+
+        Returns:
+            list[Path]: 部位目录绝对路径列表(按名称排序).
+
+        Callers:
+            - ``routes/crop.py:get_config``
+            - ``services/dataset/layout.py:DatasetLayout.stem_has_part_output``
+        """
         if not self.root.is_dir():
             return []
         out = []
@@ -56,7 +75,17 @@ class DatasetLayout:
         return out
 
     def stem_has_part_output(self, stem: str) -> bool:
-        """任一部位目录或 crops 中已有同 stem 输出. """
+        """任一部位目录或 crops 中已有同 stem 输出.
+
+        Args:
+            stem (str): 图片 stem.
+
+        Returns:
+            bool: 已有同 stem 输出则为 True.
+
+        Callers:
+            - ``routes/crop.py:list_crop_images``
+        """
         candidates = [*self.list_part_dirs(), self.crops_dir]
         for d in candidates:
             if not d.is_dir():
@@ -72,13 +101,19 @@ class DatasetLayout:
 
 
 def resolve_dataset_layout(data_dir: Path) -> DatasetLayout:
-    """
-    解析数据集根目录, 自动确保 ``main/`` 与 ``mask/`` 存在. 
+    """解析数据集根目录, 自动确保 ``main/`` 与 ``mask/`` 存在.
 
     Args:
-        data_dir: 数据集根目录(``datasets/xxx``). 
+        data_dir (Path): 数据集根目录(``datasets/xxx``).
 
-    引用: ``services/dataset/runtime.py:DatasetRegistry.ensure``. 
+    Returns:
+        DatasetLayout: 解析后的布局, 含 root / main_dir / mask_dir / crops_dir.
+
+    Raises:
+        FileNotFoundError: 目录不存在.
+
+    Callers:
+        - ``services/dataset/runtime.py:DatasetRegistry.ensure``
     """
     data_dir = data_dir.resolve()
     if not data_dir.is_dir():

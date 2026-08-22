@@ -23,11 +23,17 @@ PRIORITY_TAG_KEYS: frozenset[str] = SCORE_TAG_KEYS | QUALITY_TAG_KEYS
 
 
 def split_tags_line(s: str) -> list[str]:
-    """按逗号 / ||| / 换行拆分 caption. 
+    """按逗号 / ||| / 换行拆分 caption.
+
+    Args:
+        s (str): 原始 caption 文本.
+
+    Returns:
+        list[str]: 拆分并去空白后的非空标签列表.
 
     Callers:
-        - ``clean_caption``
-        - ``batch_edit_tags``
+        - ``services/tagging/clean.py:split_header_body``
+        - ``services/tagging/clean.py:clean_caption``
     """
     return [x.strip() for x in s.replace("\n", ",").replace("|||", ",").split(",") if x.strip()]
 
@@ -35,11 +41,18 @@ def split_tags_line(s: str) -> list[str]:
 def join_tags_line(tags: list[str]) -> str:
     """用逗号空格拼接 tag 列表.
 
+    Args:
+        tags (list[str]): 标签列表.
+
+    Returns:
+        str: 形如 ``tag1, tag2`` 的拼接结果.
+
     Callers:
-        - ``clean_caption``
-        - ``batch_edit_tags``
-        - ``check_tag_in_caption``
-        - ``add_tag_to_caption``
+        - ``services/tagging/clean.py:clean_caption``
+        - ``services/tagging/clean.py:add_tag_to_caption``
+        - ``services/tagging/clean.py:delete_tag_from_caption``
+        - ``services/tagging/clean.py:_compose_caption``
+        - ``routes/tag_stats.py:delete_tag_from_caption_fuzzy``
     """
     return ", ".join(tags)
 
@@ -48,15 +61,18 @@ def split_header_body(raw: str) -> tuple[list[str], list[str], bool]:
     """将 caption 按 ``|||`` 拆分为头部与正文标签列表.
 
     Args:
-        raw: 原始 caption 文本.
+        raw (str): 原始 caption 文本.
 
     Returns:
-        ``(header, body, has_separator)``. 无 ``|||`` 时 body 为空列表、
-        has_separator 为 False.
+        tuple[list[str], list[str], bool]: ``(header, body, has_separator)``.
+        无 ``|||`` 时 body 为空列表、has_separator 为 False.
 
     Callers:
-        - ``check_tag_in_caption``
-        - ``add_tag_to_caption``
+        - ``services/tagging/clean.py:check_tag_in_caption``
+        - ``services/tagging/clean.py:add_tag_to_caption``
+        - ``services/tagging/clean.py:delete_tag_from_caption``
+        - ``services/tagging/clean.py:batch_edit_tags``
+        - ``routes/tag_stats.py:delete_tag_from_caption_fuzzy``
     """
     text = raw.strip()
     if "|||" in text:
@@ -72,11 +88,10 @@ def _first_content_index(tags: list[str]) -> int:
     若全部为优先标签则返回列表长度.
 
     Args:
-        tags: 标签原文列表.
+        tags (list[str]): 标签原文列表.
 
-    Callers:
-        - ``check_tag_in_caption`` (top 位置判定)
-        - ``add_tag_to_caption`` (top 位置插入)
+    Returns:
+        int: 首个非优先标签的索引; 全为优先标签时返回列表长度.
     """
     for i, t in enumerate(tags):
         if tag_key(t) not in PRIORITY_TAG_KEYS:
@@ -88,17 +103,16 @@ def check_tag_in_caption(raw: str, tag: str, position: str) -> tuple[bool, bool]
     """检查标签在 caption 中是否存在及位置是否匹配.
 
     Args:
-        raw: 原始 caption 文本.
-        tag: 待检查的标签(按 ``tag_key`` 归一化比较).
-        position: 位置选项 — ``any`` / ``top`` / ``bottom`` /
+        raw (str): 原始 caption 文本.
+        tag (str): 待检查的标签(按 ``tag_key`` 归一化比较).
+        position (str): 位置选项 — ``any`` / ``top`` / ``bottom`` /
             ``before-sep`` / ``after-sep`` / ``bottom-before``.
 
     Returns:
-        ``(exists, position_ok)``. 标签不存在时两者均为 False.
+        tuple[bool, bool]: ``(exists, position_ok)``. 标签不存在时两者均为 False.
 
     Callers:
-        - ``routes/tag_stats.check``
-        - ``routes/tag_stats.edit_one``
+        - ``routes/tag_stats.py:_build_check_item``
     """
     header, body, _ = split_header_body(raw)
     key = tag_key(tag)
@@ -129,9 +143,9 @@ def add_tag_to_caption(raw: str, tag: str, position: str) -> str:
     """在 caption 指定位置添加标签(先按 ``tag_key`` 去重再插入).
 
     Args:
-        raw: 原始 caption 文本.
-        tag: 待添加的标签原文.
-        position: 目标位置 — ``top`` / ``bottom`` / ``before-sep`` /
+        raw (str): 原始 caption 文本.
+        tag (str): 待添加的标签原文.
+        position (str): 目标位置 — ``top`` / ``bottom`` / ``before-sep`` /
             ``after-sep`` / ``random`` / ``random-before`` /
             ``random-after``.
             各位置插入策略:
@@ -144,10 +158,11 @@ def add_tag_to_caption(raw: str, tag: str, position: str) -> str:
             - ``random-after``: 正文随机位置
 
     Returns:
-        编辑后的 caption 字符串.
+        str: 编辑后的 caption 字符串.
 
     Callers:
-        - ``routes/tag_stats.edit_one``
+        - ``routes/tag_stats.py:edit_one``
+        - ``routes/tag_stats.py:embedding_batch_tag``
     """
     header, body, has_sep = split_header_body(raw)
     key = tag_key(tag)
@@ -191,14 +206,15 @@ def delete_tag_from_caption(raw: str, tag: str) -> str:
     """从 caption 中按 ``tag_key`` 移除指定标签的所有出现.
 
     Args:
-        raw: 原始 caption 文本.
-        tag: 待删除的标签.
+        raw (str): 原始 caption 文本.
+        tag (str): 待删除的标签.
 
     Returns:
-        删除后的 caption 字符串. 若标签不存在则返回原文.
+        str: 删除后的 caption 字符串. 若标签不存在则返回原文.
 
     Callers:
-        - ``routes/tag_stats.delete_one``
+        - ``routes/tag_stats.py:delete_one``
+        - ``routes/tag_stats.py:embedding_batch_tag``
     """
     header, body, has_sep = split_header_body(raw)
     key = tag_key(tag)
@@ -210,30 +226,47 @@ def delete_tag_from_caption(raw: str, tag: str) -> str:
 
 
 def raw_to_pony(raw: float) -> int:
-    """原始美学分 [0,1] → score_0 … score_9. 
+    """原始美学分 [0,1] → score_0 … score_9.
+
+    Args:
+        raw (float): 原始美学分, 超出 [0, 0.99] 时夹到边界.
+
+    Returns:
+        int: 0-9 的美学档位.
 
     Callers:
-        - ``format_pony_score_tag``
+        - ``services/tagging/clean.py:format_pony_score_tag``
     """
     return int(max(0.0, min(0.99, float(raw))) * 10)
 
 
 def format_pony_score_tag(raw: float) -> str:
-    """生成 pony 美学标签(保留下划线), 如 score_9. 
+    """生成 pony 美学标签(保留下划线), 如 score_9.
+
+    Args:
+        raw (float): 原始美学分 [0,1].
+
+    Returns:
+        str: 形如 ``score_0`` … ``score_9`` 的标签.
 
     Callers:
-        - ``clean_txt_dirs``
-        - ``batch_edit_tags``
+        - ``services/tagging/clean.py:_lookup_pony_quality``
     """
     return f"score_{raw_to_pony(raw)}"
 
 
 def rel_image_for_txt(txt: Path, root: Path) -> str | None:
-    """同 stem 旁路图片相对数据集根的路径(用于查美学分/质量分). 
+    """同 stem 旁路图片相对数据集根的路径(用于查美学分/质量分).
+
+    Args:
+        txt (Path): 旁路 txt 文件路径.
+        root (Path): 数据集根目录.
+
+    Returns:
+        str | None: 命中图片的 posix 相对路径; 无同 stem 图片时为 None.
 
     Callers:
-        - ``clean_txt_dirs``
-        - ``batch_edit_tags``
+        - ``services/tagging/clean.py:_lookup_pony_quality``
     """
     root_r = root.resolve()
     parent = txt.parent
@@ -249,34 +282,59 @@ DROP_EXACT = frozenset({"highres", "original", "absurdres"})
 
 
 def normalize_tag_underscores(tag: str) -> str:
-    """Danbooru 风格下划线词转为空格. 
+    """Danbooru 风格下划线词转为空格.
+
+    Args:
+        tag (str): 原始标签.
+
+    Returns:
+        str: 下划线转空格并折叠空白后的标签.
 
     Callers:
-        - ``tag_key``
-        - ``clean_caption``
-        - ``batch_edit_tags``
+        - ``services/tagging/clean.py:tag_key``
+        - ``services/tagging/clean.py:clean_caption``
     """
     return " ".join(tag.replace("_", " ").split())
 
 
 def tag_key(tag: str) -> str:
-    """忽略大小写与下划线差异的比较键. 
+    """忽略大小写与下划线差异的比较键.
+
+    Args:
+        tag (str): 原始标签.
+
+    Returns:
+        str: 小写、下划线转空格并折叠空白的归一化键.
 
     Callers:
-        - ``should_drop_tag``
-        - ``apply_promote_tags``
-        - ``clean_caption``
-        - ``batch_edit_tags``
+        - ``services/tagging/clean.py:should_drop_tag``
+        - ``services/tagging/clean.py:promote_keys_ordered``
+        - ``services/tagging/clean.py:apply_promote_tags``
+        - ``services/tagging/clean.py:clean_caption``
+        - ``services/tagging/clean.py:check_tag_in_caption``
+        - ``services/tagging/clean.py:add_tag_to_caption``
+        - ``services/tagging/clean.py:delete_tag_from_caption``
+        - ``services/tagging/clean.py:classify_patterns``
+        - ``services/tagging/clean.py:clean_txt_dirs``
+        - ``services/tagging/clean.py:batch_edit_tags``
+        - ``services/tagging/stats.py:count_tags``
     """
     return normalize_tag_underscores(tag).strip().lower()
 
 
 def expand_cli_list(items: list[str]) -> list[str]:
-    """合并多次传入与逗号分隔的列表项. 
+    """合并多次传入与逗号分隔的列表项.
+
+    Args:
+        items (list[str]): 原始列表项, 可含逗号分隔的多值.
+
+    Returns:
+        list[str]: 展开并去空白后的非空列表.
 
     Callers:
-        - ``clean_txt_dirs``
-        - ``batch_edit_tags``
+        - ``services/tagging/clean.py:clean_txt_dirs``
+        - ``services/tagging/clean.py:classify_patterns``
+        - ``services/tagging/clean.py:batch_edit_tags``
     """
     out: list[str] = []
     for it in items:
@@ -293,10 +351,18 @@ def should_drop_tag(
     user_drop_exact: frozenset[str],
     user_drop_contains: tuple[str, ...],
 ) -> bool:
-    """是否删除该标签(整词表 + commentary/request + 子串). 
+    """是否删除该标签(整词表 + commentary/request + 子串).
+
+    Args:
+        tag (str): 原始标签.
+        user_drop_exact (frozenset[str]): 用户整词删除表(已按 ``tag_key`` 归一化).
+        user_drop_contains (tuple[str, ...]): 用户子串删除表(小写).
+
+    Returns:
+        bool: 命中删除规则则为 True.
 
     Callers:
-        - ``clean_caption``
+        - ``services/tagging/clean.py:clean_caption``
     """
     low = tag.strip().lower()
     if not low:
@@ -315,10 +381,16 @@ def should_drop_tag(
 
 
 def promote_keys_ordered(promote_tags: tuple[str, ...]) -> list[str]:
-    """promote 列表 → 去重且保序的 tag_key 序列. 
+    """promote 列表 → 去重且保序的 tag_key 序列.
+
+    Args:
+        promote_tags (tuple[str, ...]): 待提升的标签原文列表.
+
+    Returns:
+        list[str]: 去重保序后的 tag_key 列表.
 
     Callers:
-        - ``clean_caption``
+        - ``services/tagging/clean.py:clean_caption``
     """
     seen: set[str] = set()
     out: list[str] = []
@@ -333,13 +405,17 @@ def promote_keys_ordered(promote_tags: tuple[str, ...]) -> list[str]:
 
 
 def apply_promote_tags(kept: list[str], promote_order_keys: list[str]) -> tuple[list[str], int]:
-    """将 promote 列表中的标签移到最前(先精确后子串匹配). 
+    """将 promote 列表中的标签移到最前(先精确后子串匹配).
+
+    Args:
+        kept (list[str]): 待重排的标签原文列表.
+        promote_order_keys (list[str]): promote 的 tag_key 顺序.
 
     Returns:
-        ``(新列表, 被提升数量)``. 
+        tuple[list[str], int]: ``(新列表, 被提升数量)``.
 
     Callers:
-        - ``clean_caption``
+        - ``services/tagging/clean.py:clean_caption``
     """
     if not promote_order_keys:
         return kept, 0
@@ -384,12 +460,27 @@ def clean_caption(
     quality_tag: str | None = None,
     use_promote_separator: bool = False,
 ) -> str:
-    """
-    清洗单条 caption. 
+    """清洗单条 caption.
 
-    顺序: HTML 实体还原与下划线规范化 → 删除 → 提升重排 → 美学/质量标签 → 头部前置. 
-    pony_score_tag(如 score_9)和 quality_tag(如 masterpiece)写入头部前置之前, 
-    两者随机排序, 并移除既有 score_0…score_9 和质量标签. 
+    顺序: HTML 实体还原与下划线规范化 → 删除 → 提升重排 → 美学/质量标签 → 头部前置.
+    pony_score_tag(如 score_9)和 quality_tag(如 masterpiece)写入头部前置之前,
+    两者随机排序, 并移除既有 score_0…score_9 和质量标签.
+
+    Args:
+        raw (str): 原始 caption 文本.
+        user_drop_exact (frozenset[str] | None): 整词删除表(已按 ``tag_key`` 归一化).
+        user_drop_contains (tuple[str, ...]): 子串删除表(小写).
+        promote_tags (tuple[str, ...]): 提升至头部的标签列表.
+        prepend_tags (tuple[str, ...]): 头部前置标签列表(可新增).
+        pony_score_tag (str | None): 美学档位标签, 如 ``score_9``.
+        quality_tag (str | None): 质量标签, 如 ``masterpiece``.
+        use_promote_separator (bool): 是否用 ``|||`` 分隔提升块.
+
+    Returns:
+        str: 清洗后的 caption 字符串.
+
+    Callers:
+        - ``services/tagging/clean.py:clean_txt_dirs``
     """
     s = html.unescape(raw.strip())
     tags = [normalize_tag_underscores(t) for t in split_tags_line(s)]
@@ -428,8 +519,11 @@ def clean_caption(
 def _collect_txt_files(dirs: list[Path]) -> list[Path]:
     """收集目录下所有 ``*.txt``(不递归, 排序).
 
-    Callers:
-        - ``_run_batch_edit``
+    Args:
+        dirs (list[Path]): 目录绝对路径列表.
+
+    Returns:
+        list[Path]: 排序后的 txt 文件路径列表.
     """
     files: list[Path] = []
     for d in dirs:
@@ -444,19 +538,17 @@ def _lookup_pony_quality(path: Path, root: Path | None, *,
     """按旁路图片得分查美学/质量档位标签并返回计数增量.
 
     Args:
-        path: txt 文件路径.
-        root: 数据集根目录; None 时无法解析相对路径, 记缺失.
-        inject_pony_score: 是否注入美学档位.
-        scores: 相对路径 → 原始美学分 [0,1].
-        inject_quality_tag: 是否注入质量标签.
-        q_scores: 相对路径 → 质量分 [0,1].
+        path (Path): txt 文件路径.
+        root (Path | None): 数据集根目录; None 时无法解析相对路径, 记缺失.
+        inject_pony_score (bool): 是否注入美学档位.
+        scores (dict[str, float]): 相对路径 → 原始美学分 [0,1].
+        inject_quality_tag (bool): 是否注入质量标签.
+        q_scores (dict[str, float]): 相对路径 → 质量分 [0,1].
 
     Returns:
+        tuple[str | None, str | None, int, int, int, int]:
         ``(score_tag, quality_tag_val, pony_injected, pony_missing,
         quality_injected, quality_missing)``; 未注入的维度计数为 0.
-
-    Callers:
-        - ``_run_batch_edit``
     """
     score_tag: str | None = None
     quality_tag_val: str | None = None
@@ -483,13 +575,19 @@ def _lookup_pony_quality(path: Path, root: Path | None, *,
 
 def _record_sample(raw: str, new: str, *, path: Path, root: Path | None, dry_run: bool,
                    samples: list[TagCleanSample], sample_limit: int) -> None:
-    """变更时追加前后对比样本并写文件; path 字段存相对数据集根的路径. 
+    """变更时追加前后对比样本并写文件; path 字段存相对数据集根的路径.
 
     Args:
-        root: 数据集根目录; 为 None 时无相对路径可用, 以文件名为标识. 
+        raw (str): 原始 caption.
+        new (str): 编辑后的 caption.
+        path (Path): txt 文件绝对路径.
+        root (Path | None): 数据集根目录; 为 None 时无相对路径可用, 以文件名为标识.
+        dry_run (bool): True 仅预览, 不写文件.
+        samples (list[TagCleanSample]): 样本收集列表(就地追加).
+        sample_limit (int): 样本上限.
 
-    Callers:
-        - ``_run_batch_edit``
+    Returns:
+        None
     """
     if len(samples) < sample_limit:
         samples.append(
@@ -505,11 +603,7 @@ def _record_sample(raw: str, new: str, *, path: Path, root: Path | None, dry_run
 
 
 class _BatchStats(NamedTuple):
-    """批量处理统计与样本.
-
-    Callers:
-        - ``_run_batch_edit``
-    """
+    """批量处理统计与样本."""
     files: list[Path]
     changed: int
     unchanged: int
@@ -533,21 +627,20 @@ def _run_batch_edit(
     """通用批量编辑骨架: 遍历 txt、查分、编辑、统计并记录样本.
 
     Args:
-        dirs: 绝对路径目录列表(不递归). 
-        root: 数据集根目录(解析旁路图片相对路径). 
-        inject_pony_score / scores: 美学档位注入开关与得分表. 
-        inject_quality_tag / q_scores: 质量标签注入开关与得分表. 
-        dry_run: True 仅预览, 不写文件. 
-        sample_limit: 返回样本上限. 
-        edit: 单文件编辑函数 ``(raw, score_tag, quality_tag_val) -> (new, extra)``,
-            ``extra`` 为编辑附带数据(无则为 None), 按文件顺序收集返回. 
+        dirs (list[Path]): 绝对路径目录列表(不递归).
+        root (Path | None): 数据集根目录(解析旁路图片相对路径).
+        inject_pony_score (bool): 美学档位注入开关.
+        scores (dict[str, float]): 相对路径 → 原始美学分 [0,1].
+        inject_quality_tag (bool): 质量标签注入开关.
+        q_scores (dict[str, float]): 相对路径 → 质量分 [0,1].
+        dry_run (bool): True 仅预览, 不写文件.
+        sample_limit (int): 返回样本上限.
+        edit (Callable[[str, str | None, str | None], tuple[str, Any]]): 单文件编辑函数
+            ``(raw, score_tag, quality_tag_val) -> (new, extra)``,
+            ``extra`` 为编辑附带数据(无则为 None), 按文件顺序收集返回.
 
     Returns:
-        ``(_BatchStats, extras)``; extras 与 files 一一对应, 读取失败的文件为 None. 
-
-    Callers:
-        - ``clean_txt_dirs``
-        - ``batch_edit_tags``
+        tuple[_BatchStats, list[Any]]: ``(_BatchStats, extras)``; extras 与 files 一一对应, 读取失败的文件为 None.
     """
     files = _collect_txt_files(dirs)
     changed = unchanged = failed = 0
@@ -605,28 +698,28 @@ def clean_txt_dirs(
     dry_run: bool = True,
     sample_limit: int = 40,
 ) -> TagCleanResult:
-    """
-    对若干目录内的 *.txt 执行清洗. 
+    """对若干目录内的 *.txt 执行清洗.
 
     Args:
-        dirs: 绝对路径目录列表(不递归). 
-        drop: 整词删除列表. 
-        drop_contains: 子串删除列表(另有内置 commentary/request). 
-        promote / prepend: 提升与前置列表. 
-        promote_separator: 是否用 ||| 分隔提升块. 
-        inject_pony_score: 是否根据 .aesthetic_scores.json 写入 score_0…score_9. 
-        inject_quality_tag: 是否根据 .quality_scores.json 写入质量标签. 
-        dataset_root: 数据集根目录(用于解析旁路图像相对路径). 
-        aesthetic_scores: 相对路径 → 原始美学分 [0,1]. 
-        quality_scores: 相对路径 → 质量分 [0,1]. 
-        dry_run: True 仅预览, 不写文件. 
-        sample_limit: 返回的前后对比样本上限. 
+        dirs (list[Path]): 绝对路径目录列表(不递归).
+        drop (list[str] | None): 整词删除列表.
+        drop_contains (list[str] | None): 子串删除列表(另有内置 commentary/request).
+        promote (list[str] | None): 提升列表.
+        prepend (list[str] | None): 前置列表.
+        promote_separator (bool): 是否用 ||| 分隔提升块.
+        inject_pony_score (bool): 是否根据 .aesthetic_scores.json 写入 score_0…score_9.
+        inject_quality_tag (bool): 是否根据 .quality_scores.json 写入质量标签.
+        dataset_root (Path | None): 数据集根目录(用于解析旁路图像相对路径).
+        aesthetic_scores (dict[str, float] | None): 相对路径 → 原始美学分 [0,1].
+        quality_scores (dict[str, float] | None): 相对路径 → 质量分 [0,1].
+        dry_run (bool): True 仅预览, 不写文件.
+        sample_limit (int): 返回的前后对比样本上限.
 
     Returns:
-        统计与可选样本对比. 
+        TagCleanResult: 统计与可选样本对比.
 
-    引用:
-        ``routes/tag_stats.py``. 
+    Callers:
+        - ``routes/tag_stats.py:clean``
     """
     user_drop_exact = frozenset(tag_key(t) for t in expand_cli_list(drop or []))
     user_drop_contains = tuple(
@@ -639,7 +732,7 @@ def clean_txt_dirs(
     root = dataset_root.resolve() if dataset_root is not None else None
 
     def _edit(raw: str, score_tag: str | None, quality_tag_val: str | None) -> tuple[str, object]:
-        """单文件清洗. Callers: ``_run_batch_edit``. """
+        """单文件清洗闭包, 由 ``_run_batch_edit`` 逐文件调用."""
         return clean_caption(
             raw,
             user_drop_exact=user_drop_exact,
@@ -682,16 +775,17 @@ def classify_patterns(patterns: list[str], mode: str) -> tuple[set[str], dict[st
     """把标签/模式分类为 精确 key 集合 与 模式正则字典.
 
     Args:
-        patterns: 标签或模式列表. 仅 ``exact`` 模式按逗号二次展开. 
-        mode: ``exact``(tag_key 精确) | ``regex``(正则搜索) | ``danbooru``(* 通配). 
+        patterns (list[str]): 标签或模式列表. 仅 ``exact`` 模式按逗号二次展开.
+        mode (str): ``exact``(tag_key 精确) | ``regex``(正则搜索) | ``danbooru``(* 通配).
 
     Returns:
-        ``(exact_keys, pattern_re)``; exact_keys 为 ``set[str]``(归一化 tag_key),
-        pattern_re 为 ``dict[模式原文, re.Pattern]``; exact 模式 pattern_re 为空. 
+        tuple[set[str], dict[str, re.Pattern[str]]]: ``(exact_keys, pattern_re)``;
+        exact_keys 为 ``set[str]``(归一化 tag_key), pattern_re 为
+        ``dict[模式原文, re.Pattern]``; exact 模式 pattern_re 为空.
 
     Callers:
-        - ``make_tag_matcher``
-        - ``batch_edit_tags``
+        - ``services/tagging/clean.py:make_tag_matcher``
+        - ``services/tagging/clean.py:batch_edit_tags``
     """
     if mode == "exact":
         return {tag_key(p) for p in expand_cli_list(patterns)}, {}
@@ -711,26 +805,26 @@ _BACKREF_RE = re.compile(r"\\\d+|\$\d+")
 
 
 def _has_backref(template: str) -> bool:
-    """替换模板是否含分组占位符(``\\1`` 或 ``$1``). 
+    """替换模板是否含分组占位符(``\\1`` 或 ``$1``).
 
-    Callers:
-        - ``batch_edit_tags``
+    Args:
+        template (str): 替换模板原文.
+
+    Returns:
+        bool: 含分组占位符则为 True.
     """
     return _BACKREF_RE.search(template) is not None
 
 
 def _expand_template(match: re.Match[str], template: str) -> str:
-    """展开替换模板, 支持 ``\\1`` 与 ``$1`` 两种分组占位符语法. 
+    """展开替换模板, 支持 ``\\1`` 与 ``$1`` 两种分组占位符语法.
 
     Args:
-        match: 已命中的正则匹配对象. 
-        template: 替换模板, 可用 ``\\1`` / ``$1`` 引用捕获组. 
+        match (re.Match[str]): 已命中的正则匹配对象.
+        template (str): 替换模板, 可用 ``\\1`` / ``$1`` 引用捕获组.
 
     Returns:
-        展开后的替换文本. 
-
-    Callers:
-        - ``batch_edit_tags``
+        str: 展开后的替换文本.
     """
     if "$" in template:
         template = re.sub(r"\$(\d+)", r"\\g<\1>", template)
@@ -740,8 +834,13 @@ def _expand_template(match: re.Match[str], template: str) -> str:
 def _regex_replace(key: str, rx: re.Pattern[str], template: str) -> str | None:
     """正则替换: 命中返回展开模板(支持分组占位符), 未命中返回 None.
 
-    Callers:
-        - ``batch_edit_tags`` (replace_rules 构建)
+    Args:
+        key (str): 待匹配的 tag_key 文本.
+        rx (re.Pattern[str]): 编译后的正则.
+        template (str): 替换模板, 可用 ``\\1`` / ``$1`` 引用捕获组.
+
+    Returns:
+        str | None: 命中时返回展开后的文本; 未命中返回 None.
     """
     m = rx.search(key)
     if m is None:
@@ -753,16 +852,16 @@ def make_tag_matcher(patterns: list[str], mode: str) -> Callable[[str], bool]:
     """按匹配模式构造标签命中判定函数(任一模式命中即命中).
 
     Args:
-        patterns: 标签或模式列表. 仅 ``exact`` 模式支持逗号分隔批量传入
-            (其余模式按原样使用, 逗号是模式字符). 
-        mode: 匹配模式, 语义同 ``classify_patterns``. 
+        patterns (list[str]): 标签或模式列表. 仅 ``exact`` 模式支持逗号分隔批量传入
+            (其余模式按原样使用, 逗号是模式字符).
+        mode (str): 匹配模式, 语义同 ``classify_patterns``.
 
     Returns:
-        接受 ``tag_key`` 归一化字符串、返回是否命中的函数. 
+        Callable[[str], bool]: 接受 ``tag_key`` 归一化字符串、返回是否命中的函数.
 
     Callers:
-        - ``batch_edit_tags`` (conditional 添加判定)
-        - ``services/tagging/stats.py:count_tags`` (include/exclude 样本过滤)
+        - ``services/tagging/clean.py:batch_edit_tags``
+        - ``services/tagging/stats.py:count_tags``
     """
     keys, pats = classify_patterns(patterns, mode)
     return lambda key: key in keys or any(re_.search(key) for re_ in pats.values())
@@ -771,9 +870,12 @@ def make_tag_matcher(patterns: list[str], mode: str) -> Callable[[str], bool]:
 def _priority_tags(score_tag: str | None, quality_tag: str | None) -> list[str]:
     """收集 score/质量标签并随机排序(两者都存在时).
 
-    Callers:
-        - ``clean_caption``
-        - ``_compose_caption``
+    Args:
+        score_tag (str | None): 美学档位标签.
+        quality_tag (str | None): 质量标签.
+
+    Returns:
+        list[str]: 随机排序后的优先标签列表.
     """
     priority = [t.strip() for t in (score_tag, quality_tag) if t and t.strip()]
     if len(priority) > 1:
@@ -786,8 +888,16 @@ def _compose_caption(header: list[str], body: list[str], *,
                      use_separator: str, n_added_head: int) -> str:
     """重组(score/质量标签置顶)并按分隔符模式拼接 caption.
 
-    Callers:
-        - ``batch_edit_tags``
+    Args:
+        header (list[str]): 头部标签列表.
+        body (list[str]): 正文标签列表.
+        score_tag (str | None): 美学档位标签.
+        quality_tag_val (str | None): 质量标签.
+        use_separator (str): ``|||`` 模式: ``add`` / ``keep`` / ``remove``.
+        n_added_head (int): 本次添加到头部的标签数.
+
+    Returns:
+        str: 拼接后的 caption 字符串.
     """
     priority = _priority_tags(score_tag, quality_tag_val)
     header = priority + header
@@ -824,33 +934,33 @@ def batch_edit_tags(
     dry_run: bool = True,
     sample_limit: int = 40,
 ) -> TagCleanResult:
-    """
-    批量删除/添加标签. 
+    """批量删除/添加标签.
 
     Args:
-        dirs: 绝对路径目录列表(不递归). 
-        delete_tags: 要删除的标签列表. 
-        add_tags: 要添加的标签列表. 
-        replace_pairs: 原位置替换对 ``(原标签, 新标签)``. 
-        match_mode: 应用于删除、替换原标签及 conditional 判定的匹配模式:
-            ``exact``(tag_key 精确) | ``regex``(正则搜索) | ``danbooru``(* 通配). 
-        position: ``"before"`` 放置在 ``|||`` 之前, ``"after"`` 之后. 
-        insert_mode: ``"top"`` 置顶 / ``"bottom"`` 置底 / ``"random"`` 随机插入. 
-        conditional: 仅当文件中已有匹配标签(按 match_mode)时才插入. 
-        keep_duplicates: 不删除已有重复标签. 
-        inject_pony_score: 根据美学分注入 score_0…score_9. 
-        inject_quality_tag: 根据质量分注入质量标签. 
-        use_separator: ||| 分隔模式: "add"(添加) | "keep"(保留) | "remove"(删除). 
-        dataset_root: 数据集根目录(解析旁路图像路径). 
-        aesthetic_scores: 相对路径 → 原始美学分 [0,1]. 
-        quality_scores: 相对路径 → 质量分 [0,1]. 
-        dry_run: True 仅预览. 
-        sample_limit: 返回样本上限. 
+        dirs (list[Path]): 绝对路径目录列表(不递归).
+        delete_tags (list[str] | None): 要删除的标签列表.
+        add_tags (list[str] | None): 要添加的标签列表.
+        replace_pairs (list[tuple[str, str]] | None): 原位置替换对 ``(原标签, 新标签)``.
+        match_mode (str): 应用于删除、替换原标签及 conditional 判定的匹配模式:
+            ``exact``(tag_key 精确) | ``regex``(正则搜索) | ``danbooru``(* 通配).
+        position (str): ``"before"`` 放置在 ``|||`` 之前, ``"after"`` 之后.
+        insert_mode (str): ``"top"`` 置顶 / ``"bottom"`` 置底 / ``"random"`` 随机插入.
+        conditional (bool): 仅当文件中已有匹配标签(按 match_mode)时才插入.
+        keep_duplicates (bool): 不删除已有重复标签.
+        inject_pony_score (bool): 根据美学分注入 score_0…score_9.
+        inject_quality_tag (bool): 根据质量分注入质量标签.
+        use_separator (str): ||| 分隔模式: "add"(添加) | "keep"(保留) | "remove"(删除).
+        dataset_root (Path | None): 数据集根目录(解析旁路图像路径).
+        aesthetic_scores (dict[str, float] | None): 相对路径 → 原始美学分 [0,1].
+        quality_scores (dict[str, float] | None): 相对路径 → 质量分 [0,1].
+        dry_run (bool): True 仅预览.
+        sample_limit (int): 返回样本上限.
 
     Returns:
-        统计与可选样本对比. 
+        TagCleanResult: 统计与可选样本对比.
 
-    引用: ``routes/tag_stats.py``. 
+    Callers:
+        - ``routes/tag_stats.py:batch_edit``
     """
     del_keys, del_pats = classify_patterns(delete_tags or [], match_mode)
 
@@ -875,9 +985,9 @@ def batch_edit_tags(
     root = dataset_root.resolve() if dataset_root is not None else None
 
     def _edit(raw: str, score_tag: str | None, quality_tag_val: str | None) -> tuple[str, object]:
-        """单文件批量编辑: 整理食材 → for 生成头部/尾部 → 添加 → 重组拼接.
+        """单文件批量编辑闭包, 由 ``_run_batch_edit`` 逐文件调用.
 
-        返回 ``(new, matched_file)``. Callers: ``_run_batch_edit``.
+        返回 ``(new, matched_file)``.
         """
         # 整理食材: 拆分; 仅在注入对应维度时移除旧 score/质量标签,
         # 否则保留(除非用户明确指定删除, 由 _transform 处理)
@@ -891,12 +1001,12 @@ def batch_edit_tags(
         matched_file: dict[str, list[str]] = {}
 
         def _record(pat: str, k: str) -> None:
-            """记录模式命中(仅非精确模式, 本文件去重). Callers: 本闭包. """
+            """记录模式命中(仅非精确模式, 本文件去重)."""
             if match_mode != "exact" and k not in matched_file.setdefault(pat, []):
                 matched_file[pat].append(k)
 
         def _transform(t: str) -> str | None:
-            """单个标签变换: 命中删除→None; 命中替换→新标签; 否则原样. Callers: 本闭包. """
+            """单个标签变换: 命中删除→None; 命中替换→新标签; 否则原样."""
             k = tag_key(t)
             if k in del_keys:
                 return None

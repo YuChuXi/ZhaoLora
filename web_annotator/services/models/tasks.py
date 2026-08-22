@@ -1,6 +1,9 @@
-"""任务清单模型. 
+"""任务清单模型.
 
-引用: ``services.models`` 包导出；各 routes / services. 
+Callers:
+    - ``services.models``: 包导出.
+    - ``routes.tasks``: 任务路由.
+    - ``services.state.tasks``: 任务存储.
 """
 
 from __future__ import annotations
@@ -9,11 +12,7 @@ from pydantic import BaseModel, Field
 
 
 class TaskEntry(BaseModel):
-    """``.annotator_tasks.json`` 中的单条任务. 
-
-    引用:
-        ``task_store.TaskStore``. 
-    """
+    """``.annotator_tasks.json`` 中的单条任务."""
 
     completed: bool = False
     created: int = 0
@@ -23,21 +22,13 @@ class TaskEntry(BaseModel):
 
 
 class TaskListFile(BaseModel):
-    """任务清单文件根对象. 
-
-    引用:
-        ``task_store.TaskStore``. 
-    """
+    """任务清单文件根对象."""
 
     tasks: dict[str, TaskEntry] = Field(default_factory=dict)
 
 
 class TaskInfo(BaseModel):
-    """任务操作回执. 
-
-    引用:
-        ``task_store.add`` / ``set_completed``；``routes.tasks``. 
-    """
+    """任务操作回执."""
 
     name: str
     completed: bool
@@ -49,11 +40,7 @@ class TaskInfo(BaseModel):
 
 
 class TaskCard(BaseModel):
-    """首页任务卡片. 
-
-    引用:
-        ``routes.tasks.list_tasks``. 
-    """
+    """首页任务卡片."""
 
     name: str
     completed: bool
@@ -67,31 +54,19 @@ class TaskCard(BaseModel):
 
 
 class TaskListResponse(BaseModel):
-    """任务列表响应. 
-
-    引用:
-        ``routes.tasks.list_tasks``. 
-    """
+    """任务列表响应."""
 
     tasks: list[TaskCard]
 
 
 class TaskCandidatesResponse(BaseModel):
-    """可登记任务名候选. 
-
-    引用:
-        ``routes.tasks.list_candidates``. 
-    """
+    """可登记任务名候选."""
 
     candidates: list[str]
 
 
 class TaskOkResponse(BaseModel):
-    """任务写操作成功回执. 
-
-    引用:
-        ``routes.tasks``. 
-    """
+    """任务写操作成功回执."""
 
     ok: bool = True
     name: str
@@ -101,32 +76,24 @@ class TaskOkResponse(BaseModel):
 
 
 class SetNoteBody(BaseModel):
-    """修改任务备注请求体. 引用: ``POST /api/tasks/{name}/note``. """
+    """修改任务备注请求体."""
 
     note: str = Field(default="", max_length=200)
 
 
 class SetTriggerWordBody(BaseModel):
-    """修改任务触发词请求体. 引用: ``POST /api/tasks/{name}/trigger-word``. """
+    """修改任务触发词请求体."""
 
     trigger_word: str = Field(default="", max_length=100)
 
 
 class DatasetItem(BaseModel):
-    """未完成任务(业务页路径校验). 
-
-    引用:
-        ``routes.meta.list_datasets``. 
-    """
+    """未完成任务(业务页路径校验)."""
 
     name: str
 
 
 class DatasetsResponse(BaseModel):
-    """任务别名列表. 
-
-    引用:
-        ``routes.meta.list_datasets``. 
-    """
+    """任务别名列表."""
 
     datasets: list[DatasetItem]

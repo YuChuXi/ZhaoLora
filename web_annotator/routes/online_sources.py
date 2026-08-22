@@ -49,7 +49,7 @@ _NETWORK_ERRORS = (RuntimeError, OSError, _NetworkError, CffiError)
 
 
 class SearchBody(BaseModel):
-    """Booru 搜索请求体. 引用: ``POST /online-sources/search``. """
+    """Booru 搜索请求体."""
 
     source: str = Field(..., description="gelbooru | danbooru")
     tags: str = ""
@@ -61,7 +61,7 @@ class SearchBody(BaseModel):
 
 
 class DownloadBody(BaseModel):
-    """Booru 下载 / 取消下载请求体. 引用: ``POST /online-sources/download|undownload``. """
+    """Booru 下载 / 取消下载请求体."""
 
     source: str
     id: str = Field(..., min_length=1)
@@ -73,7 +73,14 @@ class DownloadBody(BaseModel):
 
 @router.get("/sources")
 def list_sources() -> BooruSourcesResponse:
-    """列出可用图站与代理. 引用: ``booru_filter.js``. """
+    """列出可用图站与代理。
+
+    Returns:
+        BooruSourcesResponse: 含来源名列表与代理地址。
+
+    Callers:
+        - 无前端调用(预留接口)
+    """
     proxy = os.environ.get("HTTP_PROXY", "") or os.environ.get("HTTPS_PROXY", "")
     return BooruSourcesResponse(
         sources=list_source_names(),
@@ -87,7 +94,19 @@ async def tag_suggest(
     q: str = Query(..., min_length=1, max_length=100, description="标签前缀"),
     limit: int = Query(10, ge=1, le=50),
 ) -> dict:
-    """标签自动补全. 引用: ``booru_filter.js`` 标签输入框. """
+    """标签自动补全。
+
+    Args:
+        source (str): 来源名(gelbooru | danbooru)。
+        q (str): 标签前缀, 长度 1-100。
+        limit (int): 返回数量上限, 1-50。
+
+    Returns:
+        dict: ``{"tags": list[str]}``, 补全候选标签列表。
+
+    Callers:
+        - ``static/js/booru_filter.js:onInput``
+    """
     try:
         src = get_source(source)
     except ValueError:
@@ -101,7 +120,18 @@ async def tag_suggest(
 
 @router.post("/search")
 async def search(request: Request, body: SearchBody) -> BooruSearchResult:
-    """搜索图站并标记本地下载状态. 引用: ``booru_filter.js``. """
+    """搜索图站并标记本地下载状态。
+
+    Args:
+        request (Request): FastAPI 请求对象, 由路由参数注入。
+        body (SearchBody): 搜索参数, 含来源、标签、分页、排序等。
+
+    Returns:
+        BooruSearchResult: 搜索结果, 含帖子列表与本地下载状态。
+
+    Callers:
+        - ``static/js/booru_filter.js:search``
+    """
     source = body.source.strip().lower()
     src = get_source(source)
     order = (body.order or "").strip().lower()
@@ -157,10 +187,23 @@ async def proxy_image(
     id: str = Query(None, description="Gelbooru 帖 id, 用于合法性校验"),
     kind: str = Query("", description="thumb 或 sample"),
 ) -> StreamingResponse:
-    """按来源代理图片(防盗链), 流式传输. 引用: ``booru_filter.js``. 
-    
-    图床白名单 / 防盗链头 / 超时均由各 ``SourceClient`` 自描述, 见 
-    ``SourceClient.proxy_image``. 
+    """按来源代理图片(防盗链), 流式传输。
+
+    图床白名单 / 防盗链头 / 超时均由各 ``SourceClient`` 自描述, 见
+    ``SourceClient.proxy_image``。
+
+    Args:
+        source (str): 来源名。
+        url (str): 图床原图 URL, 长度至少 8。
+        id (str | None): Gelbooru 帖 id, 用于合法性校验。
+        kind (str): 缩略图(thumb)或样本图(sample)。
+
+    Returns:
+        StreamingResponse: 流式图片响应, 含缓存头。
+
+    Callers:
+        - ``static/js/booru_filter.js:thumb``
+        - ``static/js/booru_filter.js:sample``
     """
     try:
         src = get_source(source)
@@ -182,17 +225,20 @@ async def proxy_image(
 
 
 async def _cancel_on_disconnect(request: Request, task: asyncio.Task) -> None:
-    """客户端断开时取消正在执行的下载任务.
+    """客户端断开时取消正在执行的下载任务。
 
     下载网络 IO 全部位于 await 点, task.cancel() 会在此抛 CancelledError;
-    同步写文件块要么完整执行要么未执行, 不会留下半截目标文件.
+    同步写文件块要么完整执行要么未执行, 不会留下半截目标文件。
 
     Args:
-        request: 请求对象, 用于探测连接是否已断开.
-        task: 封装的下载协程.
+        request (Request): 请求对象, 用于探测连接是否已断开。
+        task (asyncio.Task): 封装的下载协程。
+
+    Returns:
+        None: 无返回值, 仅在断连时取消任务。
 
     Callers:
-        - `routes/online_sources.py:download`
+        - ``routes/online_sources:download``
     """
     while not task.done():
         if await request.is_disconnected():
@@ -205,14 +251,21 @@ async def _cancel_on_disconnect(request: Request, task: asyncio.Task) -> None:
 async def download(
     request: Request, body: DownloadBody
 ) -> BooruDownloadResult | JobSubmitResponse:
-    """下载帖子: 图片帖同步, 视频帖提交长任务.
+    """下载帖子: 图片帖同步, 视频帖提交长任务。
 
     图片帖同步下载到 ``body.dir`` 子目录; 视频帖 (``post.is_video``) 提交为
     长任务异步下载到数据集 ``video`` 目录, 返回 ``JobSubmitResponse`` 供前端
-    监听进度. 引用: ``booru_filter.js``.
+    监听进度。
+
+    Args:
+        request (Request): FastAPI 请求对象, 由路由参数注入。
+        body (DownloadBody): 下载参数, 含来源、帖子 id、目录、是否覆盖、帖子原始数据。
+
+    Returns:
+        BooruDownloadResult | JobSubmitResponse: 图片帖返回下载结果; 视频帖返回任务提交响应。
 
     Callers:
-        - `static/js/booru_filter.js:downloadOne`
+        - ``static/js/booru_filter.js:downloadOne``
     """
     source = body.source.strip().lower()
     if source not in list_source_names():
@@ -269,26 +322,26 @@ async def download(
 async def _submit_video_download(
     request: Request, source: str, post: BooruPost, root: Path
 ) -> JobSubmitResponse:
-    """提交视频下载长任务, 经 ``download_post`` 写入数据集 ``video`` 目录.
+    """提交视频下载长任务, 经 ``download_post`` 写入数据集 ``video`` 目录。
 
     工作线程内运行 ``download_post`` (视频帖进入对应来源的 ``download`` 视频
     分支, B 站用 BBDown, 其余来源下载原始文件); 异常由 ``JobManager`` 捕获并
     置为 error 状态, 本函数无需自行捕获处理异常。
 
     Args:
-        request: 请求对象.
-        source: 来源名.
-        post: 视频帖 (``is_video`` 为真).
-        root: 数据集根目录.
+        request (Request): 请求对象。
+        source (str): 来源名。
+        post (BooruPost): 视频帖 (``is_video`` 为真)。
+        root (Path): 数据集根目录。
 
     Returns:
-        JobSubmitResponse: 任务提交结果, 前端据 ``job_id`` 监听进度.
+        JobSubmitResponse: 任务提交结果, 前端据 ``job_id`` 监听进度。
 
     Raises:
-        HTTPException: 已有进行中的视频下载任务时返回 409.
+        HTTPException: 已有进行中的视频下载任务时返回 409。
 
     Callers:
-        - `routes/online_sources.py:download`
+        - ``routes/online_sources:download``
     """
     rt = get_runtime(request)
     mgr = jobs(request)
@@ -297,9 +350,27 @@ async def _submit_video_download(
     video_dir = root / VIDEO_DIRNAME
 
     def run(emit: EmitFn) -> None:
-        """工作线程入口. 引用: ``JobManager.submit``. """
+        """工作线程入口。
+
+        Args:
+            emit (EmitFn): 任务事件推送回调。
+
+        Returns:
+            None: 无返回值, 仅推送进度并完成下载。
+
+        Callers:
+            - ``services.core.jobs:JobManager.submit``
+        """
         def on_progress(pct: int, total: int) -> None:
-            """把来源的 ``(pct, total)`` 进度转为 JobSnapshot 推送. 引用: ``download_post``. """
+            """把来源的 ``(pct, total)`` 进度转为 JobSnapshot 推送。
+
+            Args:
+                pct (int): 进度百分比。
+                total (int): 总量。
+
+            Returns:
+                None: 无返回值, 仅推送快照。
+            """
             emit(
                 JobSnapshot(
                     status="running", phase="downloading",
@@ -334,7 +405,18 @@ async def _submit_video_download(
 
 @router.post("/undownload")
 def undownload(request: Request, body: DownloadBody) -> BooruUndownloadResult:
-    """删除工作目录中该帖已下载文件. 引用: ``booru_filter.js``. """
+    """删除工作目录中该帖已下载文件。
+
+    Args:
+        request (Request): FastAPI 请求对象, 由路由参数注入。
+        body (DownloadBody): 取消下载参数, 含来源、文件名、目录。
+
+    Returns:
+        BooruUndownloadResult: 含删除的图片列表与目录名。
+
+    Callers:
+        - ``static/js/booru_filter.js:undownloadOne``
+    """
     source = body.source.strip().lower()
     if source not in list_source_names():
         raise HTTPException(400, f"不支持的源: {body.source}")
@@ -363,11 +445,19 @@ def undownload(request: Request, body: DownloadBody) -> BooruUndownloadResult:
 async def batch_start(
     request: Request, body: BatchStartBody
 ) -> JobSubmitResponse:
-    """
-    提交批量下载长任务. 
+    """提交批量下载长任务。
 
-    进度见 GET /api/jobs/{id}/events；刷新后用 GET /api/jobs/active?kind=online_batch&dataset={dataset} 重连.
-    引用: ``booru_filter.js``. 
+    进度见 GET /api/jobs/{id}/events；刷新后用 GET /api/jobs/active?kind=online_batch&dataset={dataset} 重连。
+
+    Args:
+        request (Request): FastAPI 请求对象, 由路由参数注入。
+        body (BatchStartBody): 批量下载参数, 含来源、标签、分页、连接、限速等。
+
+    Returns:
+        JobSubmitResponse: 含 job_id, 前端据以订阅 SSE 进度。
+
+    Callers:
+        - ``static/js/booru_filter.js:runBatch``
     """
     source = body.source.strip().lower()
     src = get_source(source)
@@ -403,7 +493,17 @@ async def batch_start(
     job_box: dict[str, str] = {"id": ""}
 
     def run(emit: EmitFn) -> None:
-        """工作线程入口. 引用: ``JobManager.submit``. """
+        """工作线程入口。
+
+        Args:
+            emit (EmitFn): 任务事件推送回调。
+
+        Returns:
+            None: 无返回值, 由 ``run_batch`` 内部推送进度。
+
+        Callers:
+            - ``services.core.jobs:JobManager.submit``
+        """
         run_batch(
             job_id=job_box["id"],
             source=source,
@@ -435,7 +535,18 @@ async def batch_start(
 
 @router.post("/batch/params")
 def batch_params(request: Request, body: BatchParamsBody) -> JobSubmitResponse:
-    """运行中更新数量 / 连接 / 限速. 引用: ``booru_filter.js``. """
+    """运行中更新数量 / 连接 / 限速。
+
+    Args:
+        request (Request): FastAPI 请求对象, 由路由参数注入。
+        body (BatchParamsBody): 参数更新体, 含 limit/conn/rate_rps 可选字段。
+
+    Returns:
+        JobSubmitResponse: 含原 job_id, 便于前端续接进度。
+
+    Callers:
+        - ``static/js/booru_filter.js:pushBatchParams``
+    """
     rt = get_runtime(request)
     job = jobs(request).find_active(dataset=rt.name, kind="online_batch")
     if job is None:
@@ -453,7 +564,7 @@ def batch_params(request: Request, body: BatchParamsBody) -> JobSubmitResponse:
 
 
 class RegenerateCaptionsBody(BaseModel):
-    """批量重生成 caption 请求. 引用: ``POST /online-sources/regenerate-captions``. """
+    """批量重生成 caption 请求."""
 
     dir: str = Field("main", description="工作子目录")
     anima_format: bool = Field(True, description="Anima 格式")
@@ -463,9 +574,17 @@ class RegenerateCaptionsBody(BaseModel):
 
 @router.post("/regenerate-captions")
 async def regenerate_captions(request: Request, body: RegenerateCaptionsBody) -> dict:
-    """从 .danbooru_meta / .gelbooru_meta 批量重生成旁路 .txt. 
+    """从 .danbooru_meta / .gelbooru_meta 批量重生成旁路 .txt。
 
-    引用: ``booru_filter.js`` 批量重生成按钮. 
+    Args:
+        request (Request): FastAPI 请求对象, 由路由参数注入。
+        body (RegenerateCaptionsBody): 重生成参数, 含目录、格式、元数据开关。
+
+    Returns:
+        dict: ``{"ok": bool, "count": int}``, 含成功标志与重生成数量。
+
+    Callers:
+        - ``static/js/booru_filter.js:regenerateCaptions``
     """
     rt = get_runtime(request)
     try:
@@ -483,17 +602,24 @@ async def regenerate_captions(request: Request, body: RegenerateCaptionsBody) ->
 
 
 class RefreshMetadataBody(BaseModel):
-    """刷新元数据请求. 引用: ``POST /online-sources/refresh-metadata``. """
+    """刷新元数据请求."""
 
     dir: str = Field("main", description="工作子目录")
 
 
 @router.post("/refresh-metadata")
 async def refresh_metadata(request: Request, body: RefreshMetadataBody) -> JobSubmitResponse:
-    """
-    扫描现有图片, 根据文件名 ID 重新拉取 booru 元数据(长任务). 
+    """扫描现有图片, 根据文件名 ID 重新拉取 booru 元数据(长任务)。
 
-    引用: ``booru_filter.js``. 
+    Args:
+        request (Request): FastAPI 请求对象, 由路由参数注入。
+        body (RefreshMetadataBody): 刷新参数, 含工作子目录。
+
+    Returns:
+        JobSubmitResponse: 含 job_id, 前端据以订阅 SSE 进度。
+
+    Callers:
+        - ``static/js/booru_filter.js:refreshMetadata``
     """
     rt = get_runtime(request)
     try:
