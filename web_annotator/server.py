@@ -88,7 +88,19 @@ async def _block_chinese_ua_middleware(
 
 
 def _read_template(name: str) -> HTMLResponse:
-    """读取 templates 下 HTML. 引用: index_page / dataset_page. """
+    """读取 ``templates`` 目录下 HTML 模板并返回 ``HTMLResponse``.
+
+    Args:
+        name: ``templates`` 目录下的 HTML 文件名.
+
+    Returns:
+        HTMLResponse: 文件内容响应; 文件缺失时返回 404 提示页.
+
+    Callers:
+        - ``server.py:_block_chinese_ua_middleware``
+        - ``server.py:index_page``
+        - ``server.py:dataset_page``
+    """
     template = Path(__file__).parent / "templates" / name
     if not template.exists():
         return HTMLResponse(f"<h1>{name} not found</h1>", status_code=404)
@@ -100,10 +112,19 @@ async def bind_dataset_middleware(
     request: Request,
     call_next: Callable[[Request], Awaitable[Response]],
 ) -> Response:
-    """
-    从路径解析任务名；须在清单中, 再按需加载运行时. 
+    """从路径解析任务名；须在清单中, 再按需加载运行时.
 
-    引用: routes/deps.get_runtime. 
+    写入 ``request.state.runtime``, 由下游 ``routes/deps.py:get_runtime`` 读取.
+
+    Args:
+        request: 当前 HTTP 请求; 路径匹配 ``/d/{name}/...`` 时触发数据集绑定.
+        call_next: ASGI 链中下一个中间件/路由处理器.
+
+    Returns:
+        Response: 下游响应; 任务名未知时返回 404 JSON.
+
+    Callers:
+        - ``server.py:app`` (FastAPI ``@app.middleware`` 装饰器注册, 由 Starlette ASGI 框架调度)
     """
     m = _DS_PATH_RE.match(request.url.path)
     if m:
@@ -158,13 +179,31 @@ app.include_router(docs_router)
 
 @app.get("/")
 def index_page() -> HTMLResponse:
-    """任务与文档首页. 引用: 浏览器打开根路径. """
+    """任务与文档首页.
+
+    Returns:
+        HTMLResponse: ``index.html`` 渲染结果.
+
+    Callers:
+        - ``static/js/nav.js:render`` (业务页"首页"标签链接)
+        - 浏览器直接访问 ``/``
+    """
     return _read_template("index.html")
 
 
 @app.get("/d/{dataset}")
 def dataset_root_redirect(dataset: str) -> RedirectResponse:
-    """任务根路径重定向到筛选页. 引用: 浏览器打开 ``/d/{name}``. """
+    """任务根路径重定向到筛选页.
+
+    Args:
+        dataset: 任务名; 须已在任务清单中(由 ``bind_dataset_middleware`` 校验).
+
+    Returns:
+        RedirectResponse: 302 重定向到 ``/d/{dataset}/filter``.
+
+    Callers:
+        - 浏览器直接访问 ``/d/{dataset}`` (无子路径时触发重定向)
+    """
     return RedirectResponse(url=f"/d/{dataset}/filter", status_code=302)
 
 
@@ -195,10 +234,17 @@ async def dataset_thumb(request: Request, dataset: str, filename: str) -> FileRe
 
 @app.get("/d/{dataset}/{page}", response_model=None)
 def dataset_page(dataset: str, page: str) -> HTMLResponse | RedirectResponse:
-    """
-    业务页面. 任务名须已在清单中(中间件校验). 
+    """业务页面. 任务名须已在清单中(中间件校验).
 
-    引用: nav.js 功能标签. 
+    Args:
+        dataset: 任务名; 须已在任务清单中(由 ``bind_dataset_middleware`` 校验).
+        page: 业务页标识; 命中 ``_PAGE_TEMPLATES`` 返回对应模版, ``tagging`` 重定向到 ``tags``.
+
+    Returns:
+        HTMLResponse | RedirectResponse: 页面 HTML; ``tagging`` 返回 302 重定向, 未知页抛 404.
+
+    Callers:
+        - ``static/js/nav.js:render`` (功能标签链接: 筛选/评分/去重/裁剪/蒙版/标签/标签检查/就绪)
     """
     if page == "tagging":
         return RedirectResponse(url=f"/d/{dataset}/tags", status_code=302)
@@ -209,7 +255,14 @@ def dataset_page(dataset: str, page: str) -> HTMLResponse | RedirectResponse:
 
 
 def main() -> int:
-    """启动 uvicorn. 引用: ``python web_annotator/server.py``. """
+    """启动 uvicorn 服务.
+
+    Returns:
+        int: 0 表示正常退出; 1 表示 ``--data-dir`` 目录校验失败.
+
+    Callers:
+        - ``server.py:__main__`` (命令行 ``python web_annotator/server.py`` 入口)
+    """
     load_dotenv()
 
     parser = argparse.ArgumentParser(description="网页图片标注工具")

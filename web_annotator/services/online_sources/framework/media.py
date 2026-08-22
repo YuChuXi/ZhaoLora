@@ -1,6 +1,7 @@
 """Booru 下载、取消下载与标签重生成.
 
-引用: ``routes.online_sources``.
+Callers:
+    - ``routes/online_sources.py``
 """
 
 from __future__ import annotations
@@ -32,8 +33,16 @@ def remove_download(
 
     以完整文件名(如 ``d12345.png``)为参数, 由文件名反推 stem 与 pid, 无需探测.
 
+    Args:
+        source (str): 来源名.
+        filename (str): 完整文件名 (如 ``d12345.png``).
+        out_dir (Path): 输出目录.
+
+    Returns:
+        BooruUndownloadResult: 删除结果, 含被删文件列表与图片文件名 (供缩略图清理).
+
     Callers:
-        - ``routes.online_sources.booru_undownload``
+        - ``routes/online_sources.py:undownload``
     """
     source = source.strip().lower()
     if source not in SOURCES:
@@ -193,8 +202,16 @@ async def download_post(
 def local_rel_path(root: Path, abs_path: str | Path) -> str:
     """绝对路径转数据集相对路径.
 
+    Args:
+        root (Path): 数据集根目录.
+        abs_path (str | Path): 绝对路径.
+
+    Returns:
+        str: 数据集相对路径, 分隔符统一为 ``/``.
+
     Callers:
         - ``routes/online_sources.py:download``
+        - ``batch.py:download_one``
     """
     p = Path(abs_path).resolve()
     return str(p.relative_to(root.resolve())).replace("\\", "/")

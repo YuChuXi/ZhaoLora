@@ -125,6 +125,9 @@ class Model:
         Callers:
             - ``services/analysis/reranker:rerank`` (@_MODEL.auto_release)
             - ``services/analysis/sam3:run_concept_query`` (@_MODEL.auto_release)
+            - ``services/analysis/sam3:run_sam3_expression_mask`` (@_MODEL.auto_release)
+            - ``services/analysis/birefnet:run_birefnet_mask`` (@_MODEL.auto_release)
+            - ``services/analysis/wd14:run_batch`` (@_MODEL.auto_release)
         """
 
         @functools.wraps(func)

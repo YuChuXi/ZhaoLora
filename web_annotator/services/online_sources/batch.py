@@ -1,6 +1,9 @@
-"""在线来源批量下载长任务(工作线程内 asyncio 跑搜索与下载). 
+"""在线来源批量下载长任务(工作线程内 asyncio 跑搜索与下载).
 
-引用: ``routes/online_sources.py``；进度经 ``JobManager`` SSE 推送. 
+进度经 ``JobManager`` SSE 推送.
+
+Callers:
+    - ``routes/online_sources.py:batch_start``
 """
 
 from __future__ import annotations
@@ -43,7 +46,12 @@ def _empty_backoff(streak: int) -> float:
 
 @dataclass
 class BatchProgress:
-    """可变进度与运行参数. 引用: ``run_batch``、参数热更新接口. """
+    """可变进度与运行参数.
+
+    Callers:
+        - ``batch.py:run_batch``
+        - ``routes/online_sources.py:batch_params``
+    """
 
     cancel_requested: bool = False
     limit: int = 50
@@ -59,7 +67,14 @@ class BatchProgress:
     dataset: str = ""
 
     def snapshot(self) -> JobSnapshot:
-        """组装 JobSnapshot. 引用: ``emit``. """
+        """组装 JobSnapshot.
+
+        Returns:
+            JobSnapshot: 当前进度的快照, 含百分比、计数与状态消息.
+
+        Callers:
+            - ``batch.py:_run_async``
+        """
         total = max(0, int(self.limit))
         done = max(0, int(self.done))
         pct = min(100.0, (done / total) * 100.0) if total > 0 else None
@@ -90,31 +105,48 @@ _ACTIVE: dict[str, BatchProgress] = {}
 
 
 def register_progress(job_id: str, prog: BatchProgress) -> None:
-    """登记进行中的批量下载任务, 供热更新接口查询. 
+    """登记进行中的批量下载任务, 供热更新接口查询.
+
+    Args:
+        job_id (str): 任务 ID.
+        prog (BatchProgress): 进度对象.
+
+    Returns:
+        None: 无返回值.
 
     Callers:
-        - ``routes/online_sources.py``
+        - ``routes/online_sources.py:batch_start``
+        - ``batch.py:run_batch``
     """
     _ACTIVE[job_id] = prog
 
 
 def unregister_progress(job_id: str) -> None:
-    """移除已结束批量任务的登记. 
+    """移除已结束批量任务的登记.
+
+    Args:
+        job_id (str): 任务 ID.
+
+    Returns:
+        None: 无返回值.
 
     Callers:
-        - ``run_batch`` (finally 块)
+        - ``batch.py:run_batch``
     """
     _ACTIVE.pop(job_id, None)
 
 
 def get_progress(job_id: str) -> BatchProgress | None:
-    """按 job_id 获取进度对象. 
+    """按 job_id 获取进度对象.
+
+    Args:
+        job_id (str): 任务 ID.
 
     Returns:
-        BatchProgress | None: 不存在时返回 None. 
+        BatchProgress | None: 进度对象; 不存在时返回 None.
 
     Callers:
-        - 参数热更新接口. 
+        - ``routes/online_sources.py:batch_params``
     """
     return _ACTIVE.get(job_id)
 
@@ -136,10 +168,29 @@ def run_batch(
     include_meta_tags: bool = False,
     keep_underscores: bool = False,
 ) -> None:
-    """
-    同步入口: 在工作线程内 ``asyncio.run`` 执行批量下载. 
+    """同步入口: 在工作线程内 ``asyncio.run`` 执行批量下载.
 
-    引用: ``routes/online_sources.py``. 
+    Args:
+        job_id (str): 任务 ID.
+        source (str): 来源名.
+        tags (str): 搜索标签表达式.
+        extra (str): 附加查询参数.
+        order (str): 排序方式.
+        out_dir (Path): 输出目录.
+        root (Path): 数据集根目录, 用于计算相对路径.
+        start_page (int): 起始页码.
+        progress (BatchProgress): 可变进度对象.
+        emit (EmitFn): 快照推送回调.
+        thumbnailer (Any | None): 缩略图生成器, 可选.
+        anima_format (bool): 是否按 Anima 格式输出标签.
+        include_meta_tags (bool): 是否保留元数据标签.
+        keep_underscores (bool): 是否保留下划线.
+
+    Returns:
+        None: 无返回值, 进度经 ``emit`` 推送.
+
+    Callers:
+        - ``routes/online_sources.py:batch_start``
     """
     register_progress(job_id, progress)
     try:
@@ -180,14 +231,42 @@ async def _run_async(
     include_meta_tags: bool = False,
     keep_underscores: bool = False,
 ) -> None:
-    """异步批量下载核心: 翻页搜索 + 并发下载, 含令牌桶限速与 429 退避. 
+    """异步批量下载核心: 翻页搜索 + 并发下载, 含令牌桶限速与 429 退避.
+
+    Args:
+        source (str): 来源名.
+        tags (str): 搜索标签表达式.
+        extra (str): 附加查询参数.
+        order (str): 排序方式.
+        out_dir (Path): 输出目录.
+        root (Path): 数据集根目录, 用于计算相对路径.
+        start_page (int): 起始页码.
+        progress (BatchProgress): 可变进度对象.
+        emit (EmitFn): 快照推送回调.
+        thumbnailer (Any | None): 缩略图生成器, 可选.
+        anima_format (bool): 是否按 Anima 格式输出标签.
+        include_meta_tags (bool): 是否保留元数据标签.
+        keep_underscores (bool): 是否保留下划线.
+
+    Returns:
+        None: 无返回值, 进度经 ``emit`` 推送.
 
     Callers:
-        - ``run_batch``
+        - ``batch.py:run_batch``
     """
 
     def push(msg: str | None = None) -> None:
-        """推送快照. 引用: 各阶段. """
+        """推送快照.
+
+        Args:
+            msg (str | None): 可选状态消息, 写入 ``progress.message`` 后推送.
+
+        Returns:
+            None: 无返回值.
+
+        Callers:
+            - ``batch.py:_run_async``
+        """
         if msg is not None:
             progress.message = msg
         emit(progress.snapshot())
@@ -209,7 +288,14 @@ async def _run_async(
     rate_lock = asyncio.Lock()
 
     async def take_rate() -> None:
-        """令牌桶限速. 引用: ``download_one``. """
+        """令牌桶限速.
+
+        Returns:
+            None: 无返回值; 阻塞至令牌可用或任务被取消.
+
+        Callers:
+            - ``batch.py:download_one``
+        """
         nonlocal rate_budget, rate_last
         rps = float(progress.rate_rps)
         if rps <= 0:
@@ -231,7 +317,14 @@ async def _run_async(
                 await asyncio.sleep(min(120.0, max(0.01, wait)))
 
     async def fill_buffer() -> None:
-        """向后翻一页并加入未下载候选. 引用: ``next_post``. """
+        """向后翻一页并加入未下载候选.
+
+        Returns:
+            None: 无返回值; 候选写入闭包 ``buffer`` 并更新 ``has_more_pages``.
+
+        Callers:
+            - ``batch.py:next_post``
+        """
         nonlocal page, session_token, empty_streak, has_more_pages
         if not has_more_pages:
             return
@@ -270,7 +363,14 @@ async def _run_async(
             await asyncio.sleep(_empty_backoff(empty_streak))
 
     async def next_post() -> Any | None:
-        """取下一个未下载帖. 引用: ``worker``. """
+        """取下一个未下载帖.
+
+        Returns:
+            Any | None: 下一个待下载帖; 达到上限、翻完或被取消时返回 None.
+
+        Callers:
+            - ``batch.py:worker``
+        """
         nonlocal buf_i, inflight
         async with gate:
             while True:
@@ -293,7 +393,17 @@ async def _run_async(
                 push("")
 
     async def download_one(post: Any) -> None:
-        """单帖下载(含 429 退避). 引用: ``worker``. """
+        """单帖下载(含 429 退避).
+
+        Args:
+            post (Any): 待下载帖对象.
+
+        Returns:
+            None: 无返回值; 结果累计进 ``progress``.
+
+        Callers:
+            - ``batch.py:worker``
+        """
         nonlocal inflight
         attempt = 0
         try:
@@ -340,7 +450,17 @@ async def _run_async(
             inflight -= 1
 
     async def worker(slot: int) -> None:
-        """并发槽位. 引用: 主循环. """
+        """并发槽位.
+
+        Args:
+            slot (int): 槽位编号, 与 ``progress.conn`` 比较决定是否活跃.
+
+        Returns:
+            None: 无返回值; 达到上限或翻完时退出.
+
+        Callers:
+            - ``batch.py:_run_async``
+        """
         while not progress.cancel_requested:
             if slot >= progress.conn:
                 # 空闲槽位: 无并发额度时挂起等待, 但批量结束(达限或翻完且无

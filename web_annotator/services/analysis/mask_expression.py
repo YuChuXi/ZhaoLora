@@ -60,31 +60,90 @@ _FUNC_OPS = {"min", "max", "blur"}
 
 
 class ExpressionError(ValueError):
-    """表达式语法或语义错误. 引用: ``parse``. """
+    """表达式语法或语义错误.
+
+    Callers:
+        - ``mask_expression:parse``
+    """
 
 
 def _add(a: np.ndarray, b: np.ndarray) -> np.ndarray:
-    """钳位加, 逐像素 clip(a+b, 0, 1). 引用: ``evaluate``. """
+    """钳位加, 逐像素 clip(a+b, 0, 1).
+
+    Args:
+        a: 0-1 域掩码 (H, W).
+        b: 0-1 域掩码 (H, W).
+
+    Returns:
+        np.ndarray: 钳位加结果 (H, W), 值域 [0, 1].
+
+    Callers:
+        - ``mask_expression:evaluate``
+    """
     return np.clip(a + b, 0, 1)
 
 
 def _sub(a: np.ndarray, b: np.ndarray) -> np.ndarray:
-    """钳位减, 逐像素 clip(a-b, 0, 1). 引用: ``evaluate``. """
+    """钳位减, 逐像素 clip(a-b, 0, 1).
+
+    Args:
+        a: 0-1 域掩码 (H, W).
+        b: 0-1 域掩码 (H, W).
+
+    Returns:
+        np.ndarray: 钳位减结果 (H, W), 值域 [0, 1].
+
+    Callers:
+        - ``mask_expression:evaluate``
+    """
     return np.clip(a - b, 0, 1)
 
 
 def _mul(a: np.ndarray, b: np.ndarray) -> np.ndarray:
-    """0-1 域乘法, 逐像素 clip(a*b, 0, 1). 引用: ``evaluate``. """
+    """0-1 域乘法, 逐像素 clip(a*b, 0, 1).
+
+    Args:
+        a: 0-1 域掩码 (H, W).
+        b: 0-1 域掩码 (H, W).
+
+    Returns:
+        np.ndarray: 乘法结果 (H, W), 值域 [0, 1].
+
+    Callers:
+        - ``mask_expression:evaluate``
+    """
     return np.clip(a * b, 0, 1)
 
 
 def _min(a: np.ndarray, b: np.ndarray) -> np.ndarray:
-    """逐像素取较小值. 引用: ``evaluate``. """
+    """逐像素取较小值.
+
+    Args:
+        a: 0-1 域掩码 (H, W).
+        b: 0-1 域掩码 (H, W).
+
+    Returns:
+        np.ndarray: 逐像素较小值 (H, W).
+
+    Callers:
+        - ``mask_expression:evaluate``
+    """
     return np.minimum(a, b)
 
 
 def _max(a: np.ndarray, b: np.ndarray) -> np.ndarray:
-    """逐像素取较大值. 引用: ``evaluate``. """
+    """逐像素取较大值.
+
+    Args:
+        a: 0-1 域掩码 (H, W).
+        b: 0-1 域掩码 (H, W).
+
+    Returns:
+        np.ndarray: 逐像素较大值 (H, W).
+
+    Callers:
+        - ``mask_expression:evaluate``
+    """
     return np.maximum(a, b)
 
 
@@ -115,32 +174,98 @@ def _blur(mask: np.ndarray, sigma: float) -> np.ndarray:
 
 
 def _gt(a: np.ndarray, b: np.ndarray) -> np.ndarray:
-    """逐像素 a > b, 结果 0/1. 引用: ``evaluate``. """
+    """逐像素 a > b, 结果 0/1.
+
+    Args:
+        a: 0-1 域掩码 (H, W).
+        b: 0-1 域掩码 (H, W).
+
+    Returns:
+        np.ndarray: 比较结果 (H, W), 值域 {0, 1}.
+
+    Callers:
+        - ``mask_expression:evaluate``
+    """
     return (a > b).astype(np.float64)
 
 
 def _lt(a: np.ndarray, b: np.ndarray) -> np.ndarray:
-    """逐像素 a < b, 结果 0/1. 引用: ``evaluate``. """
+    """逐像素 a < b, 结果 0/1.
+
+    Args:
+        a: 0-1 域掩码 (H, W).
+        b: 0-1 域掩码 (H, W).
+
+    Returns:
+        np.ndarray: 比较结果 (H, W), 值域 {0, 1}.
+
+    Callers:
+        - ``mask_expression:evaluate``
+    """
     return (a < b).astype(np.float64)
 
 
 def _ge(a: np.ndarray, b: np.ndarray) -> np.ndarray:
-    """逐像素 a >= b, 结果 0/1. 引用: ``evaluate``. """
+    """逐像素 a >= b, 结果 0/1.
+
+    Args:
+        a: 0-1 域掩码 (H, W).
+        b: 0-1 域掩码 (H, W).
+
+    Returns:
+        np.ndarray: 比较结果 (H, W), 值域 {0, 1}.
+
+    Callers:
+        - ``mask_expression:evaluate``
+    """
     return (a >= b).astype(np.float64)
 
 
 def _le(a: np.ndarray, b: np.ndarray) -> np.ndarray:
-    """逐像素 a <= b, 结果 0/1. 引用: ``evaluate``. """
+    """逐像素 a <= b, 结果 0/1.
+
+    Args:
+        a: 0-1 域掩码 (H, W).
+        b: 0-1 域掩码 (H, W).
+
+    Returns:
+        np.ndarray: 比较结果 (H, W), 值域 {0, 1}.
+
+    Callers:
+        - ``mask_expression:evaluate``
+    """
     return (a <= b).astype(np.float64)
 
 
 def _eq(a: np.ndarray, b: np.ndarray) -> np.ndarray:
-    """逐像素 a == b, 结果 0/1. 引用: ``evaluate``. """
+    """逐像素 a == b, 结果 0/1.
+
+    Args:
+        a: 0-1 域掩码 (H, W).
+        b: 0-1 域掩码 (H, W).
+
+    Returns:
+        np.ndarray: 比较结果 (H, W), 值域 {0, 1}.
+
+    Callers:
+        - ``mask_expression:evaluate``
+    """
     return (a == b).astype(np.float64)
 
 
 def _ne(a: np.ndarray, b: np.ndarray) -> np.ndarray:
-    """逐像素 a != b, 结果 0/1. 引用: ``evaluate``. """
+    """逐像素 a != b, 结果 0/1.
+
+    Args:
+        a: 0-1 域掩码 (H, W).
+        b: 0-1 域掩码 (H, W).
+
+    Returns:
+        np.ndarray: 比较结果 (H, W), 值域 {0, 1}.
+
+    Callers:
+        - ``mask_expression:evaluate``
+    """
     return (a != b).astype(np.float64)
 
 
@@ -243,7 +368,22 @@ def extract_concepts(node: ast.AST) -> list[str]:
 
 
 def _apply(op, left: np.ndarray, right: np.ndarray) -> np.ndarray:
-    """校验尺寸一致后应用逐像素运算. 引用: ``evaluate``. """
+    """校验尺寸一致后应用逐像素运算.
+
+    Args:
+        op: 逐像素运算函数, 如 ``_add`` / ``_gt``.
+        left: 左操作数掩码 (H, W).
+        right: 右操作数掩码 (H, W).
+
+    Returns:
+        np.ndarray: 运算结果 (H, W).
+
+    Raises:
+        ExpressionError: 掩码尺寸不一致.
+
+    Callers:
+        - ``mask_expression:evaluate``
+    """
     if left.shape != right.shape:
         raise ExpressionError("掩码尺寸不一致")
     return op(left, right)
@@ -252,7 +392,19 @@ def _apply(op, left: np.ndarray, right: np.ndarray) -> np.ndarray:
 def _concept_mask(
     concepts: dict[str, np.ndarray | None], text: str, default: np.ndarray
 ) -> np.ndarray:
-    """取概念掩码并归一化到 0-1 域; 缺失的概念视为全零. 引用: ``evaluate``. """
+    """取概念掩码并归一化到 0-1 域; 缺失的概念视为全零.
+
+    Args:
+        concepts: 概念名 → 二值掩码 (H, W) 或 ``None``(未命中).
+        text: 概念名.
+        default: 用于确定输出形状的参考掩码 (H, W).
+
+    Returns:
+        np.ndarray: 0-1 域掩码 (H, W); 概念缺失时为全零.
+
+    Callers:
+        - ``mask_expression:evaluate``
+    """
     mask = concepts.get(text)
     if mask is None:
         return np.zeros(default.shape, dtype=np.float64)

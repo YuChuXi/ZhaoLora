@@ -42,10 +42,13 @@ def collect_images(dirs: list[Path]) -> list[Path]:
 
 
 def _natural_key(s: str) -> tuple:
-    """自然排序键: ``img2_abc10`` → ``('img', 2, '_abc', 10)``. 
+    """自然排序键: ``img2_abc10`` → ``('img', 2, '_abc', 10)``.
 
-    引用:
-        ``scan_images``. 
+    Args:
+        s: 待解析字符串.
+
+    Returns:
+        tuple: 用于自然排序的键(数字段转为 int).
     """
     parts = re.split(r"(\d+)", s)
     return tuple(int(p) if p.isdigit() else p.lower() for p in parts)
@@ -60,11 +63,18 @@ def scan_images(data_dir: Path, *, path_prefix: str = "") -> list[ScannedImage]:
             例如 ``main`` → ``main/foo.png``. 
 
     Returns:
-        按自然序排列的 ``ScannedImage`` 列表. 
+        按自然序排列的 ``ScannedImage`` 列表.
 
-    引用:
-        ``routes/images`` / ``annotations`` / ``crop`` / ``alpha_paint`` /
-        ``dedupe`` / ``tasks``；``services/ready.py``. 
+    Callers:
+        - `routes/images.py:list_images` / `similar_images`
+        - `routes/annotations.py:select_all` / `get_state`
+        - `routes/crop.py:list_crop_images`
+        - `routes/alpha_paint.py:list_paint_images`
+        - `routes/dedupe.py:apply_delete`
+        - `routes/tasks.py:list_tasks`
+        - `routes/tag_stats.py:check` / `embedding_query` / `concept_query`
+        - `services/ready.py:subdir_mask_stats`
+        - `services/state/archiver.py:archive_task`
     """
     prefix = (path_prefix or "").replace("\\", "/").strip("/")
     stem_map: dict[str, list[Path]] = {}

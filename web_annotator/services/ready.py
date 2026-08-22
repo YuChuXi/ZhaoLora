@@ -82,7 +82,7 @@ def build_ready_toml(
         ordered.append("main")
     ordered.extend(sorted(n for n in names if n != "main"))
 
-    # 先确定有图片的目录并统计总图片数(复用统一的任务图数口径)
+    # 先确定有图片的目录并统计总图片数(复用统一的任务图数统计标准)
     valid_names = [n for n in ordered if _has_images((root / n).resolve())]
     total = total_image_count(root)
 

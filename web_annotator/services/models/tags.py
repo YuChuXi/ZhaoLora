@@ -56,11 +56,7 @@ class TagCleanSample(BaseModel):
 
 
 class TagCleanResult(BaseModel):
-    """标签清洗结果.
-
-    引用:
-        ``services.tagging.clean.clean_txt_dirs``；``routes.tag_stats``.
-    """
+    """标签清洗结果."""
 
     dry_run: bool
     file_count: int

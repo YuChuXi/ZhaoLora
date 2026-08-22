@@ -95,7 +95,7 @@ def fingerprint_file(path: Path) -> np.ndarray | None:
     Callers:
         - ``ColorIndex.fingerprint_for``
         - ``ColorIndex.ensure_many``
-        - ``routes/images.py``
+        - ``routes/images.py:similar_images``
     """
     if not path.is_file():
         return None
@@ -127,7 +127,7 @@ class ColorIndex:
 
     Callers:
         - ``services/dataset/runtime.py:DatasetRuntime``
-        - ``routes/images.py``
+        - ``routes/images.py:_color_index``
     """
 
     def __init__(self, cache_dir: Path | None = None) -> None:
@@ -153,7 +153,7 @@ class ColorIndex:
             cache_dir: npz 缓存所在目录. 
 
         Callers:
-            - ``routes/images.py``
+            - ``routes/images.py:similar_images``
         """
         with self._lock:
             self._cache_path = cache_dir / _CACHE_NAME
@@ -165,9 +165,10 @@ class ColorIndex:
         """清空内存中的全部指纹(标注删除或去重移动后调用). 
 
         Callers:
-            - ``routes/annotations.py``
-            - ``routes/dedupe.py``
-        """
+        - ``routes/annotations.py:apply_delete``
+        - ``routes/annotations.py:restore``
+        - ``routes/dedupe.py:apply_delete``
+    """
         with self._lock:
             self._fps.clear()
             self._dirty = True
@@ -183,7 +184,7 @@ class ColorIndex:
         Callers:
             - ``ColorIndex.fingerprint_for``
             - ``ColorIndex.ensure_many``
-            - ``routes/images.py``
+            - ``routes/images.py:similar_images``
         """
         with self._lock:
             self._fps[rel] = (mtime, fp.astype(np.float32, copy=False))
@@ -280,7 +281,7 @@ class ColorIndex:
             thumb_paths: 可选的 ``{相对路径: 缩略图路径}`` 映射. 
 
         Callers:
-            - ``routes/images.py``
+            - ``routes/images.py:similar_images``
         """
         thumb_paths = thumb_paths or {}
         missing: list[str] = []
@@ -297,7 +298,18 @@ class ColorIndex:
             return
 
         def one(rel: str) -> tuple[str, float, np.ndarray] | None:
-            """为单张图计算指纹. 引用: ``ensure_many``. """
+            """为单张图计算指纹.
+
+            Args:
+                rel: 图片相对路径.
+
+            Returns:
+                tuple[str, float, np.ndarray] | None: ``(rel, mtime, fp)`` 三元组;
+                文件缺失或解码失败时为 ``None``.
+
+            Callers:
+                - ``similarity:ColorIndex.ensure_many``
+            """
             path = data_dir / rel
             if not path.is_file():
                 return None
@@ -338,7 +350,7 @@ class ColorIndex:
             ``[(相对路径, L2距离), ...]``, 按距离升序排列. 
 
         Callers:
-            - ``routes/images.py``
+            - ``routes/images.py:similar_images``
         """
         with self._lock:
             rows: list[str] = []

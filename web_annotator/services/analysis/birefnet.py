@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import sys
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -46,7 +47,7 @@ def _load_model() -> tuple:
         try:
             import safetensors.torch
             state_dict = safetensors.torch.load_file(weight_path)
-        except Exception:
+        except (ImportError, OSError, RuntimeError):
             state_dict = torch.load(weight_path, map_location="cpu", weights_only=True)
         for k in list(state_dict.keys()):
             for prefix in ("module.", "_orig_mod."):
@@ -158,7 +159,7 @@ def collect_images(data_dir: Path, subdir: str = "main") -> list[str]:
         相对数据集根的路径列表, 如 ``main/foo.png`` / ``head/foo.png``. 
 
     Callers:
-        - ``routes/birefnet.py``
+        - ``routes/birefnet.py:mask_generate``
     """
     subdir = (subdir or "main").strip().strip("/")
     target = data_dir / subdir
@@ -185,7 +186,7 @@ class BirefnetProgress:
         """当前进度快照. 
 
         Callers:
-            - ``routes/birefnet.py``
+            - ``routes/birefnet.py:mask_generate``
         """
         return JobSnapshot(
             status="running",
@@ -231,7 +232,7 @@ def run_birefnet_mask(
         (成功数, 总数).
 
     Callers:
-        - ``routes/birefnet.py``
+        - ``routes/birefnet.py:mask_generate``
     """
     if not image_rel_paths:
         return 0, 0
@@ -267,7 +268,8 @@ def run_birefnet_mask(
             Image.fromarray(mask).save(out_path)
             if progress is not None:
                 progress.done += 1
-        except Exception:
+        except Exception as e:
+            print(f"BiRefNet 处理失败 {rel_path}: {e}", file=sys.stderr)
             if progress is not None:
                 progress.failed += 1
 

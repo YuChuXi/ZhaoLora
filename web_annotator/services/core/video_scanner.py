@@ -13,6 +13,7 @@ import hashlib
 import json
 import os
 import subprocess
+import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
@@ -221,7 +222,8 @@ def scan_videos(video_dir: Path, *, path_prefix: str = "", probe: bool = False) 
             i = futures[f]
             try:
                 w, h, dur, _ = f.result()
-            except Exception:
+            except Exception as e:
+                print(f"视频探测失败 {paths[i]}: {e}", file=sys.stderr)
                 continue
             result[i].width = w
             result[i].height = h

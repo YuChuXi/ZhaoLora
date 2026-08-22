@@ -18,20 +18,35 @@ _BATCH_SIZE = 128
 
 
 def split_tags_line(s: str) -> list[str]:
-    """按逗号拆分标签行. 
+    """按逗号拆分标签行.
+
+    Args:
+        s (str): 原始标签行, 可含换行与 ``|||`` 分隔符.
+
+    Returns:
+        list[str]: 拆分并去空白后的非空标签列表.
 
     Callers:
-        - ``count_tags``
-        - ``services/tagging/clean.py``
+        - ``stats.py:count_tags``
+        - ``services/tagging/clean.py:split_header_body``
+        - ``services/tagging/clean.py:clean_caption``
     """
     return [x.strip() for x in s.replace("\n", ",").replace("|||", ",").split(",") if x.strip()]
 
 
 def normalize_tag(tag: str, *, lower: bool, underscores: bool) -> str:
-    """规范化单个标签. 
+    """规范化单个标签(去空白 / 下划线转空格 / 小写).
+
+    Args:
+        tag (str): 原始标签.
+        lower (bool): 是否统一小写.
+        underscores (bool): 是否将下划线归一为空格.
+
+    Returns:
+        str: 规范化后的标签.
 
     Callers:
-        - ``count_tags``
+        - ``stats.py:count_tags``
     """
     t = tag.strip()
     if underscores:
@@ -42,10 +57,22 @@ def normalize_tag(tag: str, *, lower: bool, underscores: bool) -> str:
 
 
 def resolve_selected_dirs(root: Path, names: list[str] | None) -> list[Path]:
-    """将选中的工作子目录名解析为路径；空则全选.
+    """将选中的工作子目录名解析为绝对路径; 空则返回全部工作目录.
 
-    引用:
-        ``routes/tag_stats.py``.
+    Args:
+        root (Path): 数据集根目录.
+        names (list[str] | None): 选中的子目录名列表; None/空表示全选.
+
+    Returns:
+        list[Path]: 解析后的子目录绝对路径列表.
+
+    Callers:
+        - ``routes/tag_stats.py:stats``
+        - ``routes/tag_stats.py:clean``
+        - ``routes/tag_stats.py:batch_edit``
+        - ``routes/tag_stats.py:check``
+        - ``routes/tag_stats.py:embedding_query``
+        - ``routes/tag_stats.py:concept_query``
     """
     root = root.resolve()
     available = {d.name: root / d.name for d in list_work_dirs(root) if d.name != "."}
@@ -61,10 +88,19 @@ def resolve_selected_dirs(root: Path, names: list[str] | None) -> list[Path]:
 
 
 def load_translation_map(root: Path) -> dict[str, str]:
-    """
-    加载共享翻译缓存 ``datasets/.translation_cache.json``. 
+    """加载共享翻译缓存 ``datasets/.translation_cache.json``.
 
-    引用: POST /tags/stats、POST /tags/translate-missing. 
+    缓存键为原始标签(含下划线), 值为中文译名; 同时写入下划线转空格的小写键
+    以兼容 ``lookup_zh`` 的归一化查询.
+
+    Args:
+        root (Path): 数据集根目录, 缓存文件位于其父目录.
+
+    Returns:
+        dict[str, str]: 标签到中文译名的映射; 无缓存或格式非法时返回空字典.
+
+    Callers:
+        - ``routes/tag_stats.py:stats``
     """
     cache_path = root.resolve().parent / _SHARED_CACHE_NAME
     if not cache_path.is_file():
@@ -83,10 +119,17 @@ def load_translation_map(root: Path) -> dict[str, str]:
 
 
 def lookup_zh(tag: str, zh_map: dict[str, str]) -> str:
-    """查标签中文译名；支持下划线与空格键. 
+    """查标签中文译名, 支持下划线与空格键互换匹配.
+
+    Args:
+        tag (str): 原始标签.
+        zh_map (dict[str, str]): 翻译缓存(由 ``load_translation_map`` 提供).
+
+    Returns:
+        str: 中文译名; 无匹配时返回空字符串.
 
     Callers:
-        - ``count_tags``
+        - ``stats.py:count_tags``
     """
     if tag in zh_map:
         return zh_map[tag]
@@ -141,8 +184,8 @@ def count_tags(
     Raises:
         ValueError: ``section`` 或 ``match_mode`` 非法.
 
-    引用:
-        ``routes/tag_stats.py``.
+    Callers:
+        - ``routes/tag_stats.py:stats``
     """
     if section not in ("all", "before", "after"):
         raise ValueError(f"section 非法: {section}")
@@ -227,10 +270,19 @@ def count_tags(
 
 
 async def translate_missing_tags(tags: list[str], root: Path) -> dict[str, str]:
-    """
-    批量翻译标签(en → zh-CN), 写入共享缓存 ``.translation_cache.json``. 
+    """批量翻译标签(en → zh-CN), 写入共享缓存 ``.translation_cache.json``.
 
-    引用: POST /tags/translate-missing. 
+    经 Google Translate API 批量翻译缺失译名的标签, 合并已有缓存后回写磁盘.
+
+    Args:
+        tags (list[str]): 待翻译的标签列表.
+        root (Path): 数据集根目录, 缓存文件位于其父目录.
+
+    Returns:
+        dict[str, str]: 标签到中文译名的映射(含已有缓存与新翻译).
+
+    Callers:
+        - ``routes/tag_stats.py:translate_missing``
     """
     if not tags:
         return {}

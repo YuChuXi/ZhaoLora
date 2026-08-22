@@ -37,17 +37,29 @@ class Tags:
 
     @staticmethod
     def split_caption(caption: str) -> list[str]:
-        """按逗号拆分 caption. 
+        """按逗号拆分 caption.
+
+        Args:
+            caption: 原始 caption 文本, 换行符视为逗号.
+
+        Returns:
+            list[str]: 去除空白后的非空标签列表.
 
         Callers:
             - ``Tags.merge_for_disk_by_confidence``
-            - ``process_one``
+            - ``wd14:process_one``
         """
         return [x.strip() for x in caption.replace("\n", ",").split(",") if x.strip()]
 
     @staticmethod
     def join_caption(tags: Iterable[str]) -> str:
-        """用逗号空格拼接标签. 
+        """用逗号空格拼接标签.
+
+        Args:
+            tags: 标签可迭代对象.
+
+        Returns:
+            str: 以 ``", "`` 拼接的非空标签字符串.
 
         Callers:
             - ``Tags.merge_for_disk_by_confidence``
@@ -56,7 +68,13 @@ class Tags:
 
     @staticmethod
     def equivalence_key(tag: str) -> str:
-        """标签等价键(小写、空格化). 
+        """标签等价键(小写、空格化).
+
+        Args:
+            tag: 原始标签文本.
+
+        Returns:
+            str: 小写、下划线转空格、折叠空白后的等价键.
 
         Callers:
             - ``Tags.merge_for_disk_by_confidence``
@@ -65,7 +83,13 @@ class Tags:
 
     @staticmethod
     def _canonical_spacing(tag: str) -> str:
-        """规范化空格, 保留大小写. 
+        """规范化空格, 保留大小写.
+
+        Args:
+            tag: 原始标签文本.
+
+        Returns:
+            str: 下划线转空格、折叠空白后的规范标签, 保留原大小写.
 
         Callers:
             - ``Tags.merge_for_disk_by_confidence``
@@ -145,10 +169,20 @@ _SKIP_TAG_DIRS = frozenset({
 
 
 def list_image_subdirs(root: Path) -> list[WorkDirInfo]:
-    """列出根下含图片的一级子目录. 
+    """列出根下含图片的一级子目录.
 
-    引用:
-        ``services/core/work_dir.py:list_work_dirs``；``resolve_image_dirs``；打标 / 美学目录选择. 
+    Args:
+        root: 数据集根目录.
+
+    Returns:
+        list[WorkDirInfo]: 含图片的一级子目录信息列表; 根目录自身有图时以
+        ``name="."`` 列首, ``main`` 次之, 其余按名排序.
+
+    Callers:
+        - ``routes/tagging.py:dirs``
+        - ``routes/scoring.py:dirs``
+        - ``services/core/work_dir.py:list_work_dirs``
+        - ``wd14:resolve_image_dirs``
     """
     root = root.resolve()
     out: list[WorkDirInfo] = []
@@ -156,7 +190,17 @@ def list_image_subdirs(root: Path) -> list[WorkDirInfo]:
         return out
 
     def count_images(d: Path) -> int:
-        """统计目录内图像数. 引用: ``list_image_subdirs``. """
+        """统计目录内图像数.
+
+        Args:
+            d: 待统计目录.
+
+        Returns:
+            int: 目录内图片文件数.
+
+        Callers:
+            - ``wd14:list_image_subdirs``
+        """
         return sum(1 for p in d.iterdir() if p.is_file() and p.suffix.lower() in IMAGE_EXTS)
 
     n_root = count_images(root)
@@ -183,8 +227,8 @@ def resolve_image_dirs(root: Path, names: list[str] | None) -> list[Path]:
     """将子目录名解析为绝对路径；未知名跳过. 
 
     Callers:
-        - ``routes/scoring.py``
-        - ``routes/tagging.py``
+        - ``routes/scoring.py:start``
+        - ``routes/tagging.py:start``
     """
     root = root.resolve()
     available = {
@@ -205,7 +249,8 @@ def model_ready() -> tuple[bool, str]:
     """检查本地 WD14 权重是否齐全; 返回相对仓库根的模型目录路径. 
 
     Callers:
-        - ``routes/tagging.py``
+        - ``routes/tagging.py:dirs``
+        - ``routes/tagging.py:start``
     """
     rel = WD14_MODEL_DIR.relative_to(_REPO_ROOT).as_posix()
     if WD14_ONNX_PATH.is_file() and WD14_CSV_PATH.is_file():
@@ -334,7 +379,14 @@ class TaggingProgress:
     cancel_requested: bool = False
 
     def snapshot(self) -> JobSnapshot:
-        """导出进度快照. 引用: ``routes.tagging`` 长任务 emit. """
+        """导出进度快照.
+
+        Returns:
+            JobSnapshot: 当前进度的快照对象, 供长任务 SSE 推送.
+
+        Callers:
+            - ``routes/tagging.py:start``
+        """
         total = self.total
         done = self.done
         pct = round(100.0 * done / total, 1) if total > 0 else 0.0
@@ -356,7 +408,14 @@ class TaggingProgress:
         )
 
     def log(self, line: str) -> None:
-        """追加进度日志并截断. 引用: run_batch. """
+        """追加进度日志并截断.
+
+        Args:
+            line: 日志行文本.
+
+        Callers:
+            - ``wd14:run_batch``
+        """
         self.logs.append(line)
         if len(self.logs) > 400:
             self.logs = self.logs[-300:]
@@ -413,7 +472,21 @@ def run_batch(
     on_update: Callable[[], None] | None = None,
     artist_tag: str = "",
 ) -> None:
-    """批量打标主循环. 引用: ``routes/tagging.py``. """
+    """批量打标主循环.
+
+    Args:
+        dirs: 待打标的图片目录列表.
+        handle: WD14 模型句柄 ``(session, labels)``, 由 ``auto_release`` 注入.
+        threshold: 置信度阈值.
+        disable_orig_tags: 是否丢弃原标签.
+        force: 是否覆盖已存在的 ``.txt``.
+        progress: 进度对象.
+        on_update: 进度变更回调.
+        artist_tag: 追加的画师标签 (以 ``@`` 开头).
+
+    Callers:
+        - ``routes/tagging.py:start``
+    """
     items = collect_images(dirs)
     progress.total = len(items)
     progress.done = 0

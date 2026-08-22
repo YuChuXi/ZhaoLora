@@ -1,7 +1,13 @@
-"""
-长任务编排: asyncio.Lock 串行, 整段 asyncio.to_thread, Server-Sent Events 推送进度. 
+"""长任务编排: asyncio.Lock 串行, 整段 asyncio.to_thread, Server-Sent Events 推送进度.
 
-引用: ``routes/meta.py``；``routes/scoring.py``、``tagging.py``、``dedupe.py``、``tag_stats.py`` 通过 submit 提交. 
+Callers:
+    - `routes/meta.py:find_active_job` / `job_events` / `job_cancel`
+    - `routes/scoring.py:start` (via ``submit``)
+    - `routes/tagging.py:start` (via ``submit``)
+    - `routes/dedupe.py:scan_duplicate` (via ``submit``)
+    - `routes/tag_stats.py:clean` / `batch_edit` (via ``submit``)
+    - `routes/online_sources.py:batch_start` / `refresh_metadata` (via ``submit``)
+    - `routes/birefnet.py:birefnet_mask` (via ``submit``)
 """
 
 from __future__ import annotations
@@ -21,10 +27,11 @@ RunFn = Callable[[EmitFn], JobResult | None]
 
 @dataclass
 class Job:
-    """单个长任务状态. 
+    """单个长任务状态.
 
-    引用:
-        ``JobManager``、SSE 事件流. 
+    Callers:
+        - `services/core/jobs.py:JobManager`
+        - `services/core/jobs.py:JobManager.event_stream` (SSE 事件流)
     """
 
     id: str
@@ -38,20 +45,39 @@ class Job:
 
 
 class JobManager:
-    """
-    全局长任务管理器. 
+    """全局长任务管理器.
 
-    通过 ``group`` 参数实现互斥分组: 同一组内任务串行, 不同组之间可并行. 
-    引用: server.py 挂到 app.state.jobs；routes/meta.py. 
+    通过 ``group`` 参数实现互斥分组: 同一组内任务串行, 不同组之间可并行.
+
+    Callers:
+        - `server.py:main` (挂到 ``app.state.jobs``)
+        - `routes/meta.py:find_active_job` / `job_events` / `job_cancel`
     """
 
     def __init__(self) -> None:
-        """初始化锁与任务表. 引用: ``server.main``. """
+        """初始化锁与任务表.
+
+        Returns:
+            None
+
+        Callers:
+            - `server.py:main`
+        """
         self._locks: dict[str, asyncio.Lock] = {}
         self._jobs: dict[str, Job] = {}
 
     def get(self, job_id: str) -> Job | None:
-        """按 id 取任务. 引用: ``routes.meta``. """
+        """按 id 取任务.
+
+        Args:
+            job_id: 任务 ID.
+
+        Returns:
+            Job | None: 任务对象; 不存在时为 None.
+
+        Callers:
+            - `routes/meta.py:job_events`
+        """
         return self._jobs.get(job_id)
 
     def find_active(
@@ -60,7 +86,19 @@ class JobManager:
         dataset: str | None = None,
         kind: str | None = None,
     ) -> Job | None:
-        """找最近一个未结束任务(刷新后重连). 引用: ``routes.online_sources``. """
+        """找最近一个未结束任务(刷新后重连).
+
+        Args:
+            dataset: 数据集名过滤; None 表示不限.
+            kind: 任务类型过滤; None 表示不限.
+
+        Returns:
+            Job | None: 最近一个未结束任务; 无则 None.
+
+        Callers:
+            - `routes/meta.py:find_active_job`
+            - `routes/online_sources.py:_submit_video_download` / `batch_start` / `batch_params`
+        """
         found: Job | None = None
         for job in self._jobs.values():
             if job.latest.status in TERMINAL:
@@ -128,7 +166,20 @@ class JobManager:
         return job_id
 
     def cancel(self, job_id: str) -> JobSnapshot:
-        """请求协作取消. 引用: ``routes/meta.py``. """
+        """请求协作取消.
+
+        Args:
+            job_id: 任务 ID.
+
+        Returns:
+            JobSnapshot: 标记为 ``cancel_requested`` 的最新快照.
+
+        Raises:
+            KeyError: 任务不存在.
+
+        Callers:
+            - `routes/meta.py:job_cancel`
+        """
         job = self._jobs.get(job_id)
         if job is None:
             raise KeyError(job_id)
@@ -146,7 +197,15 @@ class JobManager:
         return snap
 
     def _publish(self, job: Job, snap: JobSnapshot) -> None:
-        """写入最新快照并唤醒 SSE 等待方. 引用: ``cancel`` / ``_execute`` / ``emit``. """
+        """写入最新快照并唤醒 SSE 等待方.
+
+        Args:
+            job: 任务对象.
+            snap: 待发布的快照.
+
+        Returns:
+            None
+        """
         payload = snap.model_copy(
             update={
                 "job_id": snap.job_id or job.id,
@@ -163,15 +222,42 @@ class JobManager:
         job: Job,
         snap: JobSnapshot,
     ) -> None:
-        """工作线程安全地回传进度. 引用: ``_execute`` 内 ``emit``. """
+        """工作线程安全地回传进度.
+
+        Args:
+            loop: 事件循环(用于线程安全回调).
+            job: 任务对象.
+            snap: 待发布的快照.
+
+        Returns:
+            None
+        """
         loop.call_soon_threadsafe(self._publish, job, snap)
 
     async def _execute(self, job: Job, run: RunFn) -> None:
-        """在锁内执行任务并发布终态. 引用: ``submit``. """
+        """在锁内执行任务并发布终态.
+
+        Args:
+            job: 任务对象.
+            run: 同步可调用对象, 签名 ``run(emit)``.
+
+        Returns:
+            None
+        """
         loop = asyncio.get_running_loop()
 
         def emit(snap: JobSnapshot) -> None:
-            """线程安全发布快照. 引用: ``run``. """
+            """线程安全发布快照.
+
+            Args:
+                snap: 待发布的快照.
+
+            Returns:
+                None
+
+            Callers:
+                - `services/core/jobs.py:JobManager._execute` (作为 ``emit`` 回调传入 ``run``)
+            """
             self._emit_from_thread(loop, job, snap)
 
         async with self._locks.setdefault(job.group, asyncio.Lock()):
@@ -190,7 +276,14 @@ class JobManager:
             self._publish(job, job.latest.model_copy(update={"status": "running"}))
 
             def thread_main() -> JobResult | None:
-                """在工作线程执行 ``run``. 引用: ``asyncio.to_thread``. """
+                """在工作线程执行 ``run``.
+
+                Returns:
+                    JobResult | None: ``run`` 的返回值.
+
+                Callers:
+                    - `services/core/jobs.py:JobManager._execute` (经 ``asyncio.to_thread`` 调度)
+                """
                 return run(emit)
 
             try:
@@ -220,13 +313,16 @@ class JobManager:
                 )
 
     async def event_stream(self, job_id: str) -> AsyncIterator[str]:
-        """
-        异步生成 Server-Sent Events 文本块. 
+        """异步生成 Server-Sent Events 文本块.
 
-        Yields:
-            SSE 文本块. 
+        Args:
+            job_id: 任务 ID.
 
-        引用: ``routes/meta.py``. 
+        Returns:
+            AsyncIterator[str]: SSE 文本块迭代器.
+
+        Callers:
+            - `routes/meta.py:job_events`
         """
         job = self._jobs.get(job_id)
         if job is None:
@@ -250,5 +346,12 @@ class JobManager:
 
 
 def _sse(data: JobSnapshot) -> str:
-    """序列化为 SSE ``data:`` 行. 引用: ``event_stream``. """
+    """序列化为 SSE ``data:`` 行.
+
+    Args:
+        data: 任务快照.
+
+    Returns:
+        str: SSE 文本块.
+    """
     return f"data: {data.model_dump_json()}\n\n"

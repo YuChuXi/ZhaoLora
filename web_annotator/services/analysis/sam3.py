@@ -16,6 +16,7 @@ from __future__ import annotations
 import base64
 import io
 import os
+import sys
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -311,7 +312,11 @@ def run_concept_query(
 
 @dataclass
 class Sam3MaskProgress:
-    """SAM3 表达式蒙版生成进度. 引用: ``routes/birefnet.py:mask_generate``. """
+    """SAM3 表达式蒙版生成进度.
+
+    Callers:
+        - ``routes/birefnet.py:mask_generate``
+    """
 
     done: int = 0
     total: int = 0
@@ -319,7 +324,14 @@ class Sam3MaskProgress:
     cancel_requested: bool = False
 
     def snapshot(self) -> JobSnapshot:
-        """当前进度快照. 引用: ``routes/birefnet.py:mask_generate``. """
+        """当前进度快照.
+
+        Returns:
+            JobSnapshot: 当前进度的快照对象.
+
+        Callers:
+            - ``routes/birefnet.py:mask_generate``
+        """
         return JobSnapshot(
             status="running",
             kind="sam3_mask",
@@ -430,7 +442,8 @@ def run_sam3_expression_mask(
                 "RGBA", (white, white, white, Image.fromarray(result, mode="L"))
             ).save(out_path, format="PNG")
             done += 1
-        except Exception:
+        except Exception as e:
+            print(f"SAM3 处理失败 {rel}: {e}", file=sys.stderr)
             failed += 1
 
         if progress is not None:

@@ -479,7 +479,7 @@ def run_scoring(
         ValueError: ``kind`` 不是 ``"aesthetic"`` 或 ``"quality"`` 时抛出. 
 
     Callers:
-        - ``routes/scoring.py``
+        - ``routes/scoring.py:start``
     """
     if kind not in ("aesthetic", "quality"):
         raise ValueError(f"kind 必须是 'aesthetic' 或 'quality', 收到: {kind!r}")

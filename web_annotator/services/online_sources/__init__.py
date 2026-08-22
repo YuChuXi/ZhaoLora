@@ -4,7 +4,8 @@
 ``SourceClient`` 抽象并注册; 对外暴露搜索、下载、缩略图代理等公共 API。
 通用框架 (基类、网络、媒体操作) 位于 ``framework`` 子包。
 
-引用: ``routes.online_sources``. 
+Callers:
+    - ``routes/online_sources.py``
 """
 
 from services.online_sources.framework.base import (

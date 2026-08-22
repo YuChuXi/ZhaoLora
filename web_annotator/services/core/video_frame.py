@@ -54,6 +54,9 @@ class VideoFrameStore:
             data_dir: 数据集根目录(用于视频定位与位流缓存).
             out_dir: 保存帧的输出目录(数据集 ``main``).
 
+        Returns:
+            None
+
         Callers:
             - `routes/video.py:video_detail`
         """
@@ -64,11 +67,25 @@ class VideoFrameStore:
     # ---- 路径与缓存 ----
 
     def _cache_dir(self, video_rel: str) -> Path:
-        """位流缓存目录. 引用: ``load_bitstream`` / ``save_bitstream``. """
+        """位流缓存目录.
+
+        Args:
+            video_rel: 相对数据集根的视频路径.
+
+        Returns:
+            Path: 位流缓存目录.
+        """
         return self._cache_root / cover_hash(video_rel)
 
     def _bitstream_path(self, video_rel: str) -> Path:
-        """位流缓存文件路径. 引用: ``load_bitstream`` / ``save_bitstream``. """
+        """位流缓存文件路径.
+
+        Args:
+            video_rel: 相对数据集根的视频路径.
+
+        Returns:
+            Path: 位流缓存文件路径.
+        """
         return self._cache_dir(video_rel) / "bitstream.json"
 
     def load_bitstream(self, video_rel: str) -> BitstreamTypes:
@@ -131,6 +148,9 @@ class VideoFrameStore:
         Args:
             video_rel: 相对数据集根的视频路径.
             bits: 待持久化的紧凑位流.
+
+        Returns:
+            None
 
         Callers:
             - `VideoFrameStore.load_bitstream`
@@ -314,7 +334,20 @@ class VideoFrameStore:
     # ---- 保存帧 ----
 
     def frame_name(self, stem: str, index: int) -> str:
-        """拼接保存帧文件名. 引用: ``save_frame`` / ``remove_frame`` / ``saved_indices``. """
+        """拼接保存帧文件名.
+
+        Args:
+            stem: 视频名 stem.
+            index: 帧索引.
+
+        Returns:
+            str: 形如 ``{stem}_frame_{index:06d}.png`` 的文件名.
+
+        Callers:
+            - `services/core/video_frame.py:VideoFrameStore.save_frame`
+            - `services/core/video_frame.py:VideoFrameStore.remove_frame`
+            - `services/core/video_frame.py:VideoFrameStore.saved_indices`
+        """
         return FRAME_NAME_TPL.format(stem=stem, idx=index)
 
     def save_frame(self, video_rel: str, index: int) -> Path:
@@ -367,6 +400,12 @@ class VideoFrameStore:
 
     def saved_indices(self, video_rel: str) -> list[int]:
         """扫描输出目录, 返回该视频已保存的帧索引(升序).
+
+        Args:
+            video_rel: 相对数据集根的视频路径.
+
+        Returns:
+            list[int]: 已保存的帧索引升序列表; 输出目录不存在时为空.
 
         Callers:
             - `routes/video.py:video_detail`
@@ -440,6 +479,9 @@ class VideoFrameStore:
 
         def drain_stderr() -> None:
             """后台线程收集 ffprobe stderr 输出(``-v error`` 下仅错误信息).
+
+            Returns:
+                None
 
             Callers:
                 - `VideoFrameStore.analyze_bitstream`
