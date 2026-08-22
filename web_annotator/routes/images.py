@@ -14,7 +14,7 @@ from services.core.scanner import scan_images
 from services.analysis.similarity import ColorIndex, fingerprint_file
 from services.models import (
     DirsResponse,
-    ImageListItem,
+    FilterImageItem,
     SimilarItem,
     SimilarResponse,
 )
@@ -68,7 +68,7 @@ def list_images(
     show_trash: bool = Query(False),
     dirs: str = Query(""),
     dir: str = Query("main"),
-) -> list[ImageListItem]:
+) -> list[FilterImageItem]:
     """列出指定子目录图片(dirs=main,head 或 dir=main). 路径相对数据集根. """
     root, thumbnailer, state_mgr = _services(request)
     names = parse_dir_names(dirs, dir)
@@ -82,7 +82,7 @@ def list_images(
     trashed_state = set(state.trashed.keys())
     scores = load_score_json(root, ".aesthetic_scores.json")
     quality_scores = load_score_json(root, ".quality_scores.json")
-    result: list[ImageListItem] = []
+    result: list[FilterImageItem] = []
     seen: set[str] = set()
 
     for sub, work in pairs:
@@ -94,7 +94,7 @@ def list_images(
             seen.add(rel)
             w, h = image_size(root / rel)
             result.append(
-                ImageListItem(
+                FilterImageItem(
                     **img.model_dump(),
                     width=w,
                     height=h,
@@ -120,7 +120,7 @@ def list_images(
                 tp = trash_dir / img.path
                 w, h = image_size(tp)
                 result.append(
-                    ImageListItem(
+                    FilterImageItem(
                         **img.model_dump(),
                         width=w,
                         height=h,
@@ -142,7 +142,7 @@ def list_images(
                 seen.add(rel)
                 w, h = image_size(tp)
                 result.append(
-                    ImageListItem(
+                    FilterImageItem(
                         path=rel,
                         stem=Path(rel).stem,
                         suffix=Path(rel).suffix.lower(),

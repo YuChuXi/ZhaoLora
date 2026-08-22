@@ -1,7 +1,7 @@
 /**
- * home.js —— 首页：任务卡片、添加补全、左侧文档导航。
+ * index.js —— 首页：任务卡片、添加补全、左侧文档导航。
  *
- * 引用：templates/home.html。
+ * 引用：templates/index.html。
  */
 (function () {
   'use strict';

@@ -61,8 +61,8 @@
 4. `services/online_sources/__init__.py` 中 `register_source(XXXSource())`。
 5. 若图床需防盗链代理，在 `SourceClient` 子类声明 `image_hosts` / `image_referer`（必要时覆盖 `image_timeout_for`）；`routes/online_sources.py` 的统一 `/online-sources/{source}-image` 端点会自动适配。
 
-前端（`templates/index.html` + `static/js/booru_filter.js`）：
-1. `index.html` 加一个 `<option>` 与对应 `toolbar-xxx` 工具栏（控件 id 与注册表 `stateKeys` 一致）。
+前端（`templates/filter.html` + `static/js/booru_filter.js`）：
+1. `filter.html` 加一个 `<option>` 与对应 `toolbar-xxx` 工具栏（控件 id 与注册表 `stateKeys` 一致）。
 2. `booru_filter.js` 的 `_SOURCES` 注册表加一项：`toolbarId` / `searchBtn` / `batchBtn` / `batchDialog` / `stemPrefix` / `nameLabel` / `stateKeys` / `buildRequest` / `thumb` / `sample` / `pageUrl`，预览渲染特殊时加 `renderPreviewTags`。
 3. 业务主干（搜索、分页、下载、预览、工具栏切换）无需改动。
 

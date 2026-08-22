@@ -7,6 +7,8 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
+from services.models.dataset import ImageThumbItem
+
 
 class CropMatchConfig(BaseModel):
     """裁剪边长网格配置. 
@@ -22,17 +24,14 @@ class CropMatchConfig(BaseModel):
     max_output_pixels: int
 
 
-class CropImageItem(BaseModel):
-    """裁剪页图片列表项. 
+class CropImageItem(ImageThumbItem):
+    """裁剪页图片列表项.
 
     引用:
-        ``routes.crop.list_crop_images``. 
+        ``routes.crop.list_crop_images``.
     """
 
-    path: str
-    stem: str
     done: bool
-    thumbnail_hash: str = ""
 
 
 class CropPageConfig(BaseModel):

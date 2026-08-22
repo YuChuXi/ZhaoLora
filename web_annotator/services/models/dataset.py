@@ -45,23 +45,32 @@ class AnnotatorState(BaseModel):
     trashed: dict[str, int] = Field(default_factory=dict)
 
 
-class ImageListItem(BaseModel):
-    """筛选页图片列表项. 
+class ImageThumbItem(BaseModel):
+    """图片缩略图列表项基类(含路径 / stem / 原始尺寸 / 缩略图 hash).
 
     引用:
-        ``routes.images.list_images``. 
+        ``FilterImageItem`` / ``PaintImageItem`` / ``CropImageItem`` / ``TagCheckItem`` 继承.
     """
 
     path: str
     stem: str
+    width: int = 0
+    height: int = 0
+    thumbnail_hash: str = ""
+
+
+class FilterImageItem(ImageThumbItem):
+    """筛选页图片列表项.
+
+    引用:
+        ``routes.images.list_images``.
+    """
+
     suffix: str
     size: int = Field(ge=0)
     siblings: list[str] = Field(default_factory=list)
-    width: int = 0
-    height: int = 0
     selected: bool = False
     trashed: bool = False
-    thumbnail_hash: str = ""
     dir: str = ""
     aesthetic: float | None = None
     quality: float | None = None

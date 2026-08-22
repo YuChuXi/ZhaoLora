@@ -13,6 +13,7 @@ from PIL import Image
 
 from routes.deps import get_runtime, resolve_path
 from services.core.scanner import scan_images
+from services.core.thumbnailer import image_size
 from services.dataset.crop import clamp_target_size, match_config
 from services.dataset.layout import RESERVED_DIR_NAMES, DatasetLayout
 from services.models import (
@@ -112,12 +113,15 @@ def list_crop_images(request: Request) -> list[CropImageItem]:
     result: list[CropImageItem] = []
     for img in images:
         rel = f"main/{img.path}"
+        w, h = image_size(layout.main_dir / img.path)
         result.append(
             CropImageItem(
                 path=img.path,
                 stem=img.stem,
                 done=layout.stem_has_part_output(img.stem),
                 thumbnail_hash=thumbnailer.hash_for(rel),
+                width=w,
+                height=h,
             )
         )
     result.sort(key=lambda x: (1 if x.done else 0, x.path))

@@ -46,7 +46,7 @@ _MD_LINK = re.compile(r"\]\(([\w\-]+)\.md(#[^)]*)?\)")
 
 
 def docs_nav() -> list[DocNavItem]:
-    """引用: GET /api/docs；home.js. """
+    """引用: GET /api/docs；index.js. """
     return [DocNavItem(slug=s, label=lab) for s, lab in _NAV]
 
 
@@ -79,13 +79,13 @@ def render_markdown(text: str) -> str:
 
 @router.get("/api/docs")
 def list_docs() -> DocsListResponse:
-    """引用: home.js. """
+    """引用: index.js. """
     return DocsListResponse(nav=docs_nav())
 
 
 @router.get("/api/docs/{slug}")
 def get_doc(slug: str = "readme") -> DocContentResponse:
-    """引用: home.js. """
+    """引用: index.js. """
     path = resolve_doc(slug)
     out_slug = "readme" if slug in ("readme", "index", "") else slug
     raw = path.read_text(encoding="utf-8")

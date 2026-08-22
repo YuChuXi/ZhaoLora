@@ -434,7 +434,7 @@ body {
 /* display:flex 会顶掉 [hidden] 默认 display:none, 需显式声明 */
 .filmstrip[hidden] { display: none; }
 .filmstrip img {
-  height: 44px;
+  height: 120px;
   width: auto;
   border-radius: 3px;
   border: 2px solid transparent;

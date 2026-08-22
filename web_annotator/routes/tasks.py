@@ -86,7 +86,7 @@ async def list_tasks(
     """
     列出清单内全部任务及概况. 
 
-    引用: home.js. 
+    引用: index.js. 
     """
     store = _store(request)
     reg = registry(request)
@@ -135,7 +135,7 @@ def list_candidates(request: Request) -> TaskCandidatesResponse:
     """
     任务根下尚未登记、名称合法的一级子目录, 供添加任务补全. 
 
-    引用: home.js. 
+    引用: index.js. 
     """
     store = _store(request)
     registered = {e.name for e in store.list_entries()}
@@ -163,7 +163,7 @@ async def add_task(request: Request, body: AddTaskBody) -> TaskOkResponse:
     须为协程: ``ensure`` 会经 JobManager.submit 提交后台缩略图任务, 而后者
     依赖运行中的事件循环, 同步路由在线程池中执行会触发 no running event loop.
 
-    引用: home.js. 
+    引用: index.js. 
     """
     store = _store(request)
     try:
@@ -182,7 +182,7 @@ async def add_task(request: Request, body: AddTaskBody) -> TaskOkResponse:
 
 @router.post("/{name}/complete")
 def complete_task(request: Request, name: str) -> TaskOkResponse:
-    """引用: home.js. """
+    """引用: index.js. """
     store = _store(request)
     try:
         info = store.set_completed(name, True)
@@ -193,7 +193,7 @@ def complete_task(request: Request, name: str) -> TaskOkResponse:
 
 @router.post("/{name}/reopen")
 def reopen_task(request: Request, name: str) -> TaskOkResponse:
-    """引用: home.js. """
+    """引用: index.js. """
     store = _store(request)
     try:
         info = store.set_completed(name, False)
@@ -204,7 +204,7 @@ def reopen_task(request: Request, name: str) -> TaskOkResponse:
 
 @router.post("/{name}/note")
 def set_note(request: Request, name: str, body: SetNoteBody) -> TaskOkResponse:
-    """修改任务备注. 引用: home.js 双击卡片标题. """
+    """修改任务备注. 引用: index.js 双击卡片标题. """
     store = _store(request)
     try:
         info = store.set_note(name, body.note)
@@ -215,7 +215,7 @@ def set_note(request: Request, name: str, body: SetNoteBody) -> TaskOkResponse:
 
 @router.post("/{name}/trigger-word")
 def set_trigger_word(request: Request, name: str, body: SetTriggerWordBody) -> TaskOkResponse:
-    """修改任务触发词(写入就绪 TOML 的 subset class_tokens). 引用: home.js 卡片触发词输入框. """
+    """修改任务触发词(写入就绪 TOML 的 subset class_tokens). 引用: index.js 卡片触发词输入框. """
     store = _store(request)
     try:
         info = store.set_trigger_word(name, body.trigger_word)
@@ -235,7 +235,7 @@ def reorder_tasks(request: Request, body: ReorderBody) -> dict:
     """
     按指定名称顺序重设所有任务的 sort_order. 
 
-    引用: home.js 拖拽回调. 
+    引用: index.js 拖拽回调. 
     """
     store = _store(request)
     try:
@@ -255,7 +255,7 @@ async def archive_task_route(request: Request, name: str) -> JobSubmitResponse:
     须为协程: 内部提交 JobManager 任务, 后者依赖事件循环.
 
     Callers:
-        - ``home.js``
+        - ``index.js``
     """
     store = _store(request)
     entries = {e.name: e for e in store.list_entries()}
@@ -289,7 +289,7 @@ def list_archived(request: Request) -> ArchivedListResponse:
     """列出所有已归档任务.
 
     Callers:
-        - ``home.js``
+        - ``index.js``
     """
     store = _store(request)
     return ArchivedListResponse(archives=list_archives(store.root))
@@ -302,7 +302,7 @@ async def restore_task_route(request: Request, base: str) -> JobSubmitResponse:
     须为协程: 内部提交 JobManager 任务, 后者依赖事件循环.
 
     Callers:
-        - ``home.js``
+        - ``index.js``
     """
     store = _store(request)
     meta = find_archive(store.root, base)
@@ -333,7 +333,7 @@ def serve_archive_preview(request: Request, base: str, filename: str) -> FileRes
         filename: 缩略图文件名({hash}.avif).
 
     Callers:
-        - ``home.js``
+        - ``index.js``
     """
     store = _store(request)
     f = store.root / PACKED_DIR / f"{base}.previews" / filename

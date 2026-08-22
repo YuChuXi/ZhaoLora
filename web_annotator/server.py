@@ -52,7 +52,7 @@ from services.state.tasks import TaskStore
 app = FastAPI(title="Image Annotator", version="3.1.0")
 
 _PAGE_TEMPLATES = {
-    "filter": "index.html",
+    "filter": "filter.html",
     "scoring": "scoring.html",
     "dedupe": "dedupe.html",
     "crop": "crop.html",
@@ -88,7 +88,7 @@ async def _block_chinese_ua_middleware(
 
 
 def _read_template(name: str) -> HTMLResponse:
-    """读取 templates 下 HTML. 引用: home_page / dataset_page. """
+    """读取 templates 下 HTML. 引用: index_page / dataset_page. """
     template = Path(__file__).parent / "templates" / name
     if not template.exists():
         return HTMLResponse(f"<h1>{name} not found</h1>", status_code=404)
@@ -157,9 +157,9 @@ app.include_router(docs_router)
 
 
 @app.get("/")
-def home_page() -> HTMLResponse:
+def index_page() -> HTMLResponse:
     """任务与文档首页. 引用: 浏览器打开根路径. """
-    return _read_template("home.html")
+    return _read_template("index.html")
 
 
 @app.get("/d/{dataset}")
@@ -173,7 +173,7 @@ async def dataset_thumb(request: Request, dataset: str, filename: str) -> FileRe
     """返回数据集的 AVIF 缩略图文件, 缺失时即时生成.
 
     Callers:
-        - `static/js/home.js:211`
+        - `static/js/index.js:211`
         - `static/js/api.js:120`
     """
     store: TaskStore = request.app.state.task_store

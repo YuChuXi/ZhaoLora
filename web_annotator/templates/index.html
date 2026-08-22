@@ -3,400 +3,214 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>筛选</title>
+<title>任务 · ZhaoLora 标注工具</title>
 <link rel="stylesheet" href="/static/css/annotator.css">
 <style>
-  .toolbar-input {
-    background: #0a1a30; color: var(--text);
-    border: 1px solid var(--border); border-radius: 4px; padding: 4px 8px; font-size: 12px;
+  body { margin: 0; height: 100vh; display: flex; flex-direction: column; overflow: hidden; background: var(--bg); }
+  .home-shell { flex: 1; display: flex; min-height: 0; overflow: hidden; }
+  .docs-side {
+    width: 200px; flex-shrink: 0; background: var(--surface);
+    border-right: 1px solid var(--border);
+    display: flex; flex-direction: column; overflow: hidden;
   }
-  #booru-tags   { width: min(220px, 28vw); }
-  #bilibili-uid { width: min(130px, 16vw); }
-  #x-user       { width: min(150px, 18vw); }
-  #pixiv-query  { width: min(180px, 22vw); }
-  .booru-page-wrap {
-    display: inline-flex; align-items: stretch;
-    border: 1px solid var(--border); border-radius: 4px;
-    overflow: hidden; background: #0a1a30; height: 26px;
+  .side-tasks {
+    display: block; margin: 12px 8px 4px; padding: 9px 10px; border-radius: 6px;
+    font-size: 14px; font-weight: 600; color: var(--text-dim); text-decoration: none;
   }
-  .booru-page-wrap input {
-    width: 3.2rem; border: 0; border-radius: 0;
-    border-left: 1px solid var(--border); border-right: 1px solid var(--border);
-    background: transparent; color: var(--text);
-    padding: 0 4px; font-size: 12px; text-align: center;
-    -moz-appearance: textfield;
+  .side-tasks:hover { background: rgba(255,255,255,0.04); color: var(--text); }
+  .side-tasks.active {
+    background: rgba(233,69,96,0.16); color: var(--text);
   }
-  .booru-page-wrap input::-webkit-outer-spin-button,
-  .booru-page-wrap input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
-  .booru-page-btn {
-    width: 22px; border: 0; background: transparent; color: var(--text-dim);
-    cursor: pointer; font-size: 14px; line-height: 1; padding: 0;
+  .docs-side-head {
+    padding: 14px 14px 8px; font-size: 12px; color: var(--text-dim); font-weight: 600;
+    letter-spacing: 0.04em; text-transform: uppercase;
   }
-  .booru-page-btn:hover:not(:disabled) { color: var(--text); background: rgba(255,255,255,0.06); }
-  .booru-page-btn:disabled { opacity: 0.28; cursor: default; }
-  #filter-mode, #booru-order {
-    background: var(--card-bg); color: var(--text);
-    border: 1px solid var(--border); border-radius: 4px; padding: 3px 6px; font-size: 12px;
+  .docs-nav { flex: 1; overflow-y: auto; padding: 4px 8px 16px; }
+  .docs-nav a {
+    display: block; padding: 7px 10px; border-radius: 6px;
+    font-size: 13px; color: var(--text-dim); text-decoration: none;
   }
-  #booru-cheat {
-    font-size: 12px; color: var(--accent, #6af); text-decoration: none; white-space: nowrap;
-    margin-right: auto;
+  .docs-nav a:hover { background: rgba(255,255,255,0.04); color: var(--text); }
+  .docs-nav a.active {
+    background: rgba(233,69,96,0.16); color: var(--text); font-weight: 600;
   }
-  #booru-cheat:hover { text-decoration: underline; }
-  /* 标签自动补全下拉: 固定定位到输入框下方 */
-  .tag-suggest {
-    position: fixed; z-index: 600; min-width: 180px; max-width: 340px; max-height: 240px; overflow: auto;
-    background: var(--card-bg, #0d1b2e); border: 1px solid var(--border); border-radius: 6px;
-    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.4); padding: 4px; font-size: 12px;
+  .home-main { flex: 1; min-width: 0; overflow-y: auto; padding: 28px 32px 72px; }
+  .home-pane { max-width: 1280px; margin: 0 auto; }
+  .home-pane[hidden] { display: none !important; }
+  .home-pane h1 { font-size: 26px; font-weight: 700; margin: 0 0 8px; color: var(--text); }
+  .home-lead { font-size: 14px; color: var(--text-dim); margin: 0 0 24px; line-height: 1.55; max-width: 52em; }
+  .task-add { display: flex; gap: 10px; margin-bottom: 28px; flex-wrap: wrap; align-items: center; }
+  .task-input-wrap { position: relative; flex: 1; min-width: 220px; max-width: 360px; }
+  .task-add input {
+    width: 100%; box-sizing: border-box; padding: 10px 12px;
+    background: var(--surface); color: var(--text); border: 1px solid var(--border);
+    border-radius: 8px; font-size: 14px;
   }
-  .tag-suggest-table {
-    width: 100%; border-collapse: collapse;
+  .task-suggest {
+    position: absolute; left: 0; right: 0; top: 100%; z-index: 20; margin-top: 4px;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+    max-height: 240px; overflow-y: auto; display: none;
   }
-  .tag-suggest-row { cursor: pointer; }
-  .tag-suggest-row.active { background: rgba(255, 255, 255, 0.08); }
-  .tag-suggest-row td { padding: 5px 8px; }
-  .tag-suggest-name {
-    text-align: left; color: var(--text); white-space: nowrap;
+  .task-suggest.open { display: block; }
+  .task-suggest button {
+    display: block; width: 100%; text-align: left; padding: 10px 12px;
+    background: transparent; border: 0; color: var(--text); font-size: 14px; cursor: pointer;
   }
-  .tag-suggest-cat {
-    width: 48px; text-align: right; color: var(--text-dim); font-size: 11px; white-space: nowrap;
+  .task-suggest button:hover, .task-suggest button.active { background: rgba(233,69,96,0.16); }
+  .task-grid {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+    gap: 20px; margin-bottom: 16px;
   }
-  .tag-suggest-cnt {
-    width: 56px; text-align: right; color: var(--text-dim); font-size: 11px; white-space: nowrap;
+  .task-card {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 14px;
+    overflow: hidden; display: flex; flex-direction: column;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease, opacity 0.15s ease;
+    position: relative;
   }
-  /* display:contents 会盖掉 [hidden]，用 class 切换 */
-  .toolbar-group { display: contents; }
-  .toolbar-group.is-off { display: none !important; }
-
-  /* 语义搜索排序对话框（参考标签检查页语义检索对话框） */
-  .emb-dlg-row {
-    display: flex; align-items: center; gap: 8px;
+  .task-card:hover {
+    border-color: #4a6a9a;
+    box-shadow: 0 10px 28px rgba(0,0,0,0.28);
   }
-  .emb-dlg-row label { font-size: 13px; color: var(--text-dim); white-space: nowrap; }
-  .emb-dlg-row input[type="text"],
-  .emb-dlg-row select {
-    background: var(--card-bg); color: var(--text);
-    border: 1px solid var(--border); border-radius: 4px;
-    padding: 4px 8px; font-size: 13px;
+  .task-card.drag-over {
+    border-color: #e94560; box-shadow: 0 0 0 2px rgba(233,69,96,0.35);
+    transform: scale(1.015);
   }
-  #search-query { flex: 1; }
-  #search-history { flex: 1; }
-  #search-status { color: var(--text-dim); font-size: 11px; white-space: nowrap; }
-
-  .booru-preview {
-    position: fixed; inset: 0; z-index: 500;
-    display: none; align-items: stretch; justify-content: center;
-    background: rgba(6, 8, 14, 0.82);
-    padding: 20px;
-    gap: 16px;
-  }
-  .booru-preview.show { display: flex; }
-  .booru-preview-stage {
-    flex: 1 1 auto; min-width: 0;
+  .task-card.dragging { opacity: 0.4; transform: scale(0.97); }
+  .task-card.sortable { cursor: grab; }
+  .task-card.sortable:active { cursor: grabbing; }
+  .task-drag-handle {
+    position: absolute; top: 8px; right: 8px; width: 24px; height: 24px;
     display: flex; align-items: center; justify-content: center;
-    background: #05070d; border: 1px solid var(--border); border-radius: 10px;
-    overflow: hidden;
-  }
-  .booru-preview-stage img {
-    max-width: 100%; max-height: calc(100vh - 40px);
-    object-fit: contain; display: block;
-  }
-  .booru-preview-side {
-    flex: 0 0 min(340px, 36vw);
-    display: flex; flex-direction: column; gap: 10px;
-    max-height: calc(100vh - 40px); overflow: hidden;
-    background: var(--card-bg); border: 1px solid var(--border);
-    border-radius: 10px; padding: 12px 14px;
-  }
-  .booru-preview-meta {
-    font-size: 12px; color: var(--text-dim); line-height: 1.5;
-  }
-  .booru-preview-meta b { color: var(--text); }
-  .booru-preview-actions { display: flex; gap: 8px; flex-wrap: wrap; }
-  .booru-preview-tags {
-    flex: 1; overflow: auto; display: flex; flex-wrap: wrap; gap: 6px;
-    align-content: flex-start; padding-top: 4px;
-  }
-  .booru-tag-chip {
-    font-size: 11px; line-height: 1.3;
-    padding: 3px 8px; border-radius: 4px;
-    background: #0a1a30; color: var(--text);
-    border: 1px solid var(--border); cursor: pointer;
-    max-width: 100%; word-break: break-all;
-  }
-  .booru-tag-chip:hover { border-color: var(--accent); color: #fff; }
-  .bili-preview-text {
-    flex: 1 0 100%;
-    font-size: 12px; line-height: 1.7; color: var(--text);
-    white-space: pre-wrap; word-break: break-word;
-  }
-
-  /* 筛选页对话框复用公共 .modal 组件；以下为 booru 特有内容行样式 */
-  .booru-extra-row {
-    display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
-    font-size: 12px; color: var(--text-dim);
-  }
-  .booru-extra-row[hidden] { display: none !important; }
-  .booru-extra-row > span.label { min-width: 2.5em; color: var(--text-dim); }
-  .booru-extra-row input[type="number"],
-  .booru-extra-row input[type="text"],
-  .booru-extra-row input[type="date"],
-  .booru-extra-row select {
-    background: #0a1a30; color: var(--text);
-    border: 1px solid var(--border); border-radius: 4px;
-    padding: 4px 8px; font-size: 12px;
-  }
-  .booru-extra-row input[type="number"] { width: 5.5rem; }
-  .booru-extra-row input[type="date"] { width: 9.2rem; }
-  .booru-extra-row input[type="text"] { flex: 1; min-width: 8rem; }
-  .booru-rate-chip {
-    font-size: 11px; padding: 4px 10px; border-radius: 4px;
-    border: 1px solid var(--border); background: #0a1a30; color: var(--text);
-    cursor: pointer;
-  }
-  .booru-rate-chip.on { border-color: var(--accent); background: #132a4a; color: #fff; }
-  .booru-batch-progress {
-    flex-direction: column; align-items: stretch; gap: 6px;
-  }
-  .booru-batch-progress .job-progress {
-    width: 100%; padding: 0; border: 0; background: transparent;
-  }
-  .booru-batch-progress .job-progress:not([hidden]) {
-    display: flex;
-  }
-  #btn-booru-extra { position: relative; }
-  #btn-booru-extra.has-extra { border-color: var(--accent); color: #9cf; }
-  .booru-extra-badge {
-    position: absolute; top: -5px; right: -6px;
-    min-width: 15px; height: 15px; padding: 0 4px;
-    border-radius: 8px; background: var(--accent, #4a8);
-    color: #061018; font-size: 10px; font-weight: 700;
-    line-height: 15px; text-align: center;
+    color: var(--text-dim); font-size: 16px; opacity: 0; transition: opacity 0.15s;
     pointer-events: none;
   }
-  .booru-extra-badge:empty { display: none; }
-
-  /* 工具栏内的批量进度条：独占一整行 */
-  #booru-batch-bar:not([hidden]) {
-    width: 100%; flex-basis: 100%;
-    border-bottom: none;
-    padding-top: 2px; padding-bottom: 2px;
+  .task-card.sortable:hover .task-drag-handle { opacity: 0.6; }
+  .task-previews {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 2px; background: #060a12;
   }
-
-  @media (max-width: 860px) {
-    .booru-preview { flex-direction: column; }
-    .booru-preview-side { flex: 0 0 auto; max-height: 40vh; width: 100%; }
-    .booru-preview-stage img { max-height: 50vh; }
+  .task-previews img, .task-previews .empty-slot {
+    aspect-ratio: 1 / 1; width: 100%; object-fit: cover; background: #0a101c; display: block;
+  }
+  .task-body {
+    padding: 16px 18px 18px; display: flex; flex-direction: column; gap: 12px; flex: 1;
+  }
+  .task-card h3 { margin: 0; font-size: 18px; font-weight: 700; color: var(--text); letter-spacing: 0.01em; }
+  .task-card .meta { font-size: 13px; color: var(--text-dim); }
+  .task-note {
+    font-size: 13px; color: var(--text-dim); line-height: 1.5;
+    padding: 6px 10px; background: rgba(255,255,255,0.03); border-radius: 6px;
+    cursor: default; min-height: 20px; word-break: break-word;
+  }
+  .task-note.empty { font-style: italic; opacity: 0.45; }
+  .task-note:hover { background: rgba(255,255,255,0.06); }
+  .task-note-input {
+    width: 100%; box-sizing: border-box; padding: 6px 10px;
+    background: var(--bg); color: var(--text); border: 1px solid var(--border);
+    border-radius: 6px; font-size: 13px; font-family: inherit; line-height: 1.5;
+    resize: vertical; min-height: 32px;
+  }
+  .task-trigger { display: flex; align-items: center; gap: 8px; }
+  .task-trigger-label {
+    font-size: 12px; color: var(--text-dim); flex-shrink: 0; font-weight: 600;
+  }
+  .task-trigger-input {
+    flex: 1; min-width: 0; box-sizing: border-box; padding: 5px 10px;
+    background: var(--bg); color: var(--text); border: 1px solid var(--border);
+    border-radius: 6px; font-size: 13px; font-family: inherit;
+  }
+  .task-trigger-input:focus { outline: none; border-color: #4a6a9a; }
+  .task-trigger-copy {
+    flex-shrink: 0; padding: 4px 10px; font-size: 12px;
+    border: 1px solid var(--border); border-radius: 6px;
+    background: var(--bg); color: var(--text-dim); cursor: pointer;
+  }
+  .task-trigger-copy:hover { color: var(--text); border-color: #4a6a9a; }
+  .sort-bar {
+    display: flex; align-items: center; gap: 10px; margin-bottom: 24px;
+  }
+  .sort-label { font-size: 13px; color: var(--text-dim); }
+  .sort-group { display: flex; gap: 4px; }
+  .sort-btn {
+    padding: 6px 14px; border: 1px solid var(--border); border-radius: 7px;
+    background: var(--bg); color: var(--text-dim); font-size: 13px; cursor: pointer;
+    transition: background 0.15s, color 0.15s, border-color 0.15s;
+  }
+  .sort-btn:hover { background: rgba(255,255,255,0.06); color: var(--text); }
+  .sort-btn.active {
+    background: rgba(233,69,96,0.16); color: var(--text); border-color: transparent;
+  }
+  .task-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: auto; }
+  .task-actions .btn { padding: 7px 14px; font-size: 13px; }
+  .task-actions .btn.green { min-width: 88px; }
+  .home-empty { color: var(--text-dim); font-size: 14px; padding: 28px 0; }
+  details.completed-block { margin-top: 32px; }
+  details.completed-block > summary {
+    cursor: pointer; color: var(--text-dim); font-size: 14px; margin-bottom: 14px;
+  }
+  .task-card.archiving { pointer-events: none; opacity: 0.6; }
+  .task-card .job-bar {
+    position: absolute; left: 0; right: 0; bottom: 0; height: 3px;
+    background: rgba(233,69,96,0.15); overflow: hidden; z-index: 5;
+  }
+  .task-card .job-bar > div { height: 100%; background: #e94560; transition: width 0.3s; width: 0; }
+  .task-card .job-msg {
+    position: absolute; left: 0; right: 0; bottom: 10px; text-align: center;
+    font-size: 12px; color: var(--text-dim); z-index: 5;
   }
 </style>
 </head>
 <body>
 <nav class="app-tabs" id="app-tabs"></nav>
-
-<div class="toolbar">
-  <label style="font-size:12px;color:var(--text-dim);display:flex;align-items:center;gap:4px;">
-    来源
-    <select id="filter-mode">
-      <option value="local">本地</option>
-      <option value="gelbooru">Gelbooru</option>
-      <option value="danbooru">Danbooru</option>
-      <option value="bilibili">Bilibili</option>
-      <option value="x">X</option>
-      <option value="pixiv">Pixiv</option>
-      <option value="video">视频</option>
-    </select>
-  </label>
-  <span class="sep"></span>
-  <span class="status-seg">已收录 <b id="stat-kept">0</b></span>
-  <span class="status-seg" id="stat-loaded-wrap" hidden>已加载 <b id="stat-loaded">0</b></span>
-  <span class="status-seg" id="stat-selected-wrap">已选择 <b id="stat-selected">0</b></span>
-  <span class="status-seg" id="stat-trashed-wrap">回收站 <b id="stat-trashed">0</b></span>
-  <span class="sep"></span>
-
-  <div id="toolbar-source" class="toolbar-group is-off"></div>
-
-  <label class="toolbar-group is-off bili-time-row" id="remote-page-wrap" title="当前页；两侧可加载上/下一页">
-    页
-    <span class="booru-page-wrap">
-      <button type="button" class="booru-page-btn" id="btn-booru-page-prev" title="上一页" disabled>‹</button>
-      <input type="number" id="booru-start-page" min="1" max="10000" value="1" step="1">
-      <button type="button" class="booru-page-btn" id="btn-booru-page-next" title="下一页" disabled>›</button>
-    </span>
-  </label>
-
-  <div id="toolbar-local" class="toolbar-group">
-    <label style="font-size:12px;color:var(--text-dim);display:flex;align-items:center;gap:4px;">
-      排序
-      <select id="sort-by">
-        <option value="name">名称</option>
-        <option value="aesthetic">美学</option>
-        <option value="quality">质量</option>
-        <option value="pixels">像素</option>
-        <option value="search">搜索</option>
-      </select>
-    </label>
-    <button class="btn" id="btn-search-dlg" type="button" hidden title="语义搜索排序（Qwen3-VL-Reranker-2B）">搜索</button>
-    <span class="sep"></span>
-    <button class="btn" id="btn-select-all" title="Ctrl+A">全选</button>
-    <button class="btn" id="btn-deselect-all" title="Ctrl+Shift+A">取消全选</button>
-    <button class="btn" id="btn-invert" title="Ctrl+I">反选</button>
-    <span class="sep"></span>
-    <button class="btn danger" id="btn-apply" title="Delete">删除</button>
-    <button class="btn green" id="btn-restore" title="Ctrl+Z">恢复</button>
-    <span class="sep"></span>
-    <label style="font-size:12px;color:var(--text-dim);cursor:pointer;user-select:none;display:flex;align-items:center;gap:4px;">
-      <input type="checkbox" id="chk-show-trash"> 显示回收站
-    </label>
-    <span class="sep"></span>
-  </div>
-
-  <label style="font-size:12px;color:var(--text-dim);display:flex;align-items:center;gap:4px;">
-    列数 <input type="range" id="cols-slider" min="0" max="16" value="0" step="1" style="width:90px;">
-    <span id="cols-label">自动</span>
-  </label>
-
-  <div class="job-progress compact" id="booru-batch-bar" hidden>
-    <div class="job-progress-meta">
-      <span class="job-progress-label" id="booru-batch-bar-label">批量下载</span>
-      <span class="job-progress-pct" id="booru-batch-bar-pct">0%</span>
-    </div>
-    <div class="job-progress-track">
-      <div class="job-progress-fill" id="booru-batch-bar-fill"></div>
-    </div>
-    <div class="job-progress-text" id="booru-batch-bar-text">-</div>
-  </div>
-</div>
-
-<div class="masonry" id="masonry"></div>
-<div class="toast" id="toast"></div>
-<div class="hint" id="filter-hint">点击选中 · 右键相似 · Delete 删除</div>
-
-<div class="booru-preview" id="booru-preview">
-  <div class="booru-preview-stage">
-    <img id="booru-preview-img" alt="">
-  </div>
-  <aside class="booru-preview-side">
-    <div class="booru-preview-meta" id="booru-preview-meta"></div>
-    <div class="booru-preview-actions">
-      <button type="button" class="btn green" id="booru-preview-dl">下载</button>
-      <a class="btn" id="booru-preview-open" href="#" target="_blank" rel="noopener">原站</a>
-      <button type="button" class="btn" id="booru-preview-close">关闭</button>
-    </div>
-    <div class="booru-preview-tags" id="booru-preview-tags"></div>
+<div class="home-shell">
+  <aside class="docs-side">
+    <a class="side-tasks" id="nav-tasks" href="/">任务</a>
+    <div class="docs-side-head">文档</div>
+    <nav class="docs-nav" id="docs-nav"></nav>
   </aside>
-</div>
-
-<div class="modal" id="booru-extra-dlg" aria-hidden="true">
-  <div class="modal-panel" role="dialog" aria-labelledby="booru-extra-title" style="width:min(520px,94vw);height:auto;max-height:min(80vh,640px);">
-    <div class="modal-head">
-      <span class="modal-title" id="booru-extra-title">条件</span>
-    </div>
-    <div class="modal-body" style="padding:14px 16px;display:flex;flex-direction:column;gap:12px;">
-      <div id="booru-extra-fields"></div>
-    </div>
-    <div class="modal-foot">
-      <a id="booru-cheat" href="https://gelbooru.com/index.php?page=help&topic=cheatsheet" target="_blank" rel="noopener">cheatsheet</a>
-      <button type="button" class="btn" data-ex-act="clear">清空</button>
-      <button type="button" class="btn green" data-ex-act="apply">确定</button>
-      <button type="button" class="btn" data-ex-act="cancel">取消</button>
-    </div>
-  </div>
-</div>
-
-<div class="modal" id="booru-batch-dlg" aria-hidden="true">
-  <div class="modal-panel" role="dialog" aria-labelledby="booru-batch-title" style="width:min(520px,94vw);height:auto;max-height:min(80vh,640px);">
-    <div class="modal-head">
-      <span class="modal-title" id="booru-batch-title">批量下载</span>
-    </div>
-    <div class="modal-body" style="padding:14px 16px;display:flex;flex-direction:column;gap:12px;">
-    <div class="booru-extra-row">
-      <span class="label">数量</span>
-      <input type="number" id="booru-batch-limit" min="1" max="5000" value="50" step="1" title="最多下载张数（跳过已保存；运行中可改）">
-    </div>
-    <div class="booru-extra-row">
-      <span class="label">连接</span>
-      <input type="number" id="booru-batch-conn" min="1" max="8" value="2" step="1" title="同时下载数（运行中可改）">
-    </div>
-    <div class="booru-extra-row">
-      <span class="label">限速</span>
-      <input type="number" id="booru-batch-rate" min="0" max="60" value="0" step="0.5" title="每秒最多发起几次下载，0=不限（运行中可改）">
-      <span>次/秒（0=不限）</span>
-    </div>
-    <div class="booru-extra-row">
-      <label style="font-size:12px;color:var(--text-dim);cursor:pointer;user-select:none;display:flex;align-items:center;gap:6px;">
-        <input type="checkbox" id="booru-batch-anima" checked> Anima 格式
-      </label>
-    </div>
-    <div class="booru-extra-row">
-      <label style="font-size:12px;color:var(--text-dim);cursor:pointer;user-select:none;display:flex;align-items:center;gap:6px;">
-        <input type="checkbox" id="booru-batch-meta-tags"> 下载元数据标签
-      </label>
-    </div>
-    <div class="booru-extra-row">
-      <label style="font-size:12px;color:var(--text-dim);cursor:pointer;user-select:none;display:flex;align-items:center;gap:6px;">
-        <input type="checkbox" id="booru-batch-keep-underscores"> 保留下划线
-      </label>
-    </div>
-    <div class="booru-extra-row booru-batch-progress" id="booru-batch-progress" hidden>
-      <div class="job-progress compact">
-        <div class="job-progress-track">
-          <div class="job-progress-fill" id="booru-batch-fill"></div>
+  <div class="home-main">
+    <div class="home-pane" id="pane-tasks">
+      <h1>任务</h1>
+      <p class="home-lead">手动添加任务后进入处理。未登记的子目录不会出现；输入框可补全尚未登记的目录名。</p>
+      <form class="task-add" id="task-add-form" autocomplete="off">
+        <div class="task-input-wrap">
+          <input type="text" id="task-name" placeholder="任务目录名" required
+            pattern="[A-Za-z0-9][A-Za-z0-9_-]{0,63}" title="字母、数字、下划线或连字符"
+            aria-autocomplete="list" aria-controls="task-suggest">
+          <div class="task-suggest" id="task-suggest" role="listbox"></div>
         </div>
-        <span class="job-progress-pct" id="booru-batch-pct">0%</span>
-      </div>
-      <span id="booru-batch-progress-text">-</span>
-    </div>
-    </div>
-    <div class="modal-foot">
-      <button type="button" class="btn" id="booru-batch-regenerate" title="从 .danbooru_meta 重生成当前目录所有 txt">重生成 Caption</button>
-      <button type="button" class="btn" id="booru-batch-refresh-meta" title="根据文件 ID 重新拉取 booru 元数据">刷新元数据</button>
-      <button type="button" class="btn danger" id="booru-batch-stop" hidden>停止</button>
-      <button type="button" class="btn green" id="booru-batch-start">开始</button>
-      <button type="button" class="btn" id="booru-batch-close">关闭</button>
-    </div>
-  </div>
-</div>
-
-<!-- 语义搜索排序对话框（参考标签检查页语义检索对话框） -->
-<div class="modal" id="search-dlg" aria-hidden="true">
-  <div class="modal-panel" role="dialog" aria-labelledby="search-dlg-title" style="width:min(480px,92vw);height:auto;">
-    <div class="modal-head">
-      <span class="modal-title" id="search-dlg-title">语义搜索排序</span>
-    </div>
-    <div class="modal-body" style="display:flex;flex-direction:column;gap:12px;padding:16px;">
-      <div class="emb-dlg-row">
-        <label>查询文本</label>
-        <input type="text" id="search-query" placeholder="查询文本，回车或点击排序" spellcheck="false">
-      </div>
-      <div class="emb-dlg-row">
-        <label>最近搜索</label>
-        <select id="search-history" hidden></select>
-      </div>
-      <div class="emb-dlg-row">
-        <button class="btn green" type="button" id="btn-search-sort">按相似度排序</button>
-      </div>
-      <div class="job-progress compact" id="search-progress" hidden>
-        <div class="job-progress-track">
-          <div class="job-progress-fill" id="search-progress-fill"></div>
+        <button type="submit" class="btn green">添加任务</button>
+      </form>
+      <div class="sort-bar">
+        <span class="sort-label">排序：</span>
+        <div class="sort-group" id="sort-group">
+          <button type="button" class="sort-btn active" data-sort="sort_order" data-order="asc">手动</button>
+          <button type="button" class="sort-btn" data-sort="name" data-order="asc">名称</button>
+          <button type="button" class="sort-btn" data-sort="image_count" data-order="desc">图像数</button>
+          <button type="button" class="sort-btn" data-sort="created" data-order="desc">创建时间</button>
         </div>
-        <span class="job-progress-pct" id="search-progress-pct">0%</span>
       </div>
-      <span id="search-status"></span>
+      <div class="task-grid" id="task-active"></div>
+      <p class="home-empty" id="task-empty" hidden>尚未添加任务</p>
+      <details class="completed-block" id="completed-wrap" hidden>
+        <summary>已完成（<span id="completed-count">0</span>）</summary>
+        <div class="task-grid" id="task-completed"></div>
+      </details>
+      <details class="completed-block" id="archived-wrap" hidden>
+        <summary>已归档（<span id="archived-count">0</span>）</summary>
+        <div class="task-grid" id="task-archived"></div>
+      </details>
     </div>
-    <div class="modal-foot">
-      <button class="btn" type="button" id="btn-search-close">关闭</button>
+    <div class="home-pane" id="pane-docs" hidden>
+      <article class="docs-article" id="docs-article">
+        <p class="docs-empty">加载中…</p>
+      </article>
     </div>
   </div>
 </div>
-
+<div class="toast" id="toast"></div>
 <script src="/static/js/ui.js"></script>
 <script src="/static/js/api.js"></script>
-<script src="/static/js/dir_picker.js"></script>
 <script src="/static/js/nav.js"></script>
-<script src="/static/js/store.js"></script>
-<script src="/static/js/masonry.js"></script>
-<script src="/static/js/similar_hover.js"></script>
-<script src="/static/js/booru_filter.js"></script>
-<script src="/static/js/app.js"></script>
+<script src="/static/js/index.js"></script>
 </body>
 </html>

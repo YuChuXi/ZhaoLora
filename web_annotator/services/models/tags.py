@@ -7,6 +7,8 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
+from services.models.dataset import ImageThumbItem
+
 
 class TagStatRow(BaseModel):
     """标签频率一行. 
@@ -88,18 +90,13 @@ TAG_CHECK_POSITIONS = frozenset({"any", "top", "bottom", "before-sep", "after-se
 TAG_INSERT_POSITIONS = frozenset({"top", "bottom", "before-sep", "after-sep", "random", "random-before", "random-after"})
 
 
-class TagCheckItem(BaseModel):
+class TagCheckItem(ImageThumbItem):
     """单张图片的标签检查结果.
 
     引用:
         ``routes.tag_stats.check`` / ``edit_one``.
     """
 
-    path: str
-    stem: str
-    width: int = 0
-    height: int = 0
-    thumbnail_hash: str
     dir: str
     exists: bool
     position_ok: bool

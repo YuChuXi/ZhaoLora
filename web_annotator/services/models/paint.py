@@ -7,12 +7,14 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
+from services.models.dataset import ImageThumbItem
+
 
 class PaintSaveResponse(BaseModel):
-    """蒙版保存回执. 
+    """蒙版保存回执.
 
     引用:
-        ``routes.alpha_paint``. 
+        ``routes.alpha_paint``.
     """
 
     saved: str
@@ -20,28 +22,23 @@ class PaintSaveResponse(BaseModel):
 
 
 class DefaultAlphaResponse(BaseModel):
-    """默认透明度配置. 
+    """默认透明度配置.
 
     引用:
-        ``routes.alpha_paint``. 
+        ``routes.alpha_paint``.
     """
 
     default_alpha: int
 
 
-class PaintImageItem(BaseModel):
-    """蒙版页图片列表项. 
+class PaintImageItem(ImageThumbItem):
+    """蒙版页图片列表项.
 
-    ``width`` / ``height`` 为原图尺寸(视觉预览已压缩, 蒙版须按原尺寸绘制). 
+    ``width`` / ``height`` 为原图尺寸(视觉预览已压缩, 蒙版须按原尺寸绘制).
 
     引用:
-        ``routes.alpha_paint.list_paint_images``. 
+        ``routes.alpha_paint.list_paint_images``.
     """
 
-    path: str
-    stem: str
     has_mask: bool
-    width: int = 0
-    height: int = 0
-    thumbnail_hash: str = ""
 

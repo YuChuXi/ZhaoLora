@@ -174,7 +174,7 @@ var API = (function () {
    * @param {string} jobId
    * @param {(ev: object) => void} onEvent
    * @returns {{ close: function }}
-   * 引用：home.js、scoring.js、booru_filter.js。
+   * 引用：index.js、scoring.js、booru_filter.js。
    */
   function watchJob(jobId, onEvent) {
     var closed = false;
@@ -213,7 +213,7 @@ var API = (function () {
    * @param {string} kind 任务类型: archive / aesthetic / quality / online_batch
    * @param {string} [dataset] 数据集名, 省略则不限
    * @returns {Promise<object|null>} JobSnapshot 或 null
-   * 引用：home.js、scoring.js、booru_filter.js。
+   * 引用：index.js、scoring.js、booru_filter.js。
    */
   async function findActiveJob(kind, dataset) {
     var qs = 'kind=' + encodeURIComponent(kind);

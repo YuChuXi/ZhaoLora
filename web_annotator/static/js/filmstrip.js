@@ -49,10 +49,13 @@ var Filmstrip = (function () {
       for (var i = 0; i < items.length; i++) {
         (function (idx, item) {
           var img = document.createElement('img');
-          img.src = opts.thumbSrc(item);
+          img.loading = 'lazy';
           img.title = item.stem || '';
+          if (item.width && item.height)
+            img.style.aspectRatio = item.width + ' / ' + item.height;
           img.addEventListener('click', function () { opts.onSelect(idx); });
           el.appendChild(img);
+          img.src = opts.thumbSrc(item);
         })(i, items[i]);
       }
       renderActive();
