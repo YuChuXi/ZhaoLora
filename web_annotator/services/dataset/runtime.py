@@ -41,7 +41,7 @@ class DatasetRuntime:
         """任务根目录. 
 
         Callers:
-            - 各路由 `get_runtime`
+            - ``routes/deps.py:get_runtime`` : 各路由经此访问 root.
         """
         return self.layout.root
 
@@ -50,7 +50,7 @@ class DatasetRuntime:
         """main 图像目录. 
 
         Callers:
-            - 各路由
+            - ``routes/deps.py:get_runtime`` : 各路由经此访问 main_dir.
         """
         return self.layout.main_dir
 
@@ -80,9 +80,6 @@ class DatasetRegistry:
 
     def names(self) -> list[str]:
         """已加载任务名列表. 
-
-        Callers:
-            - 管理接口
         """
         return sorted(self.by_name.keys())
 

@@ -81,6 +81,15 @@ class TaskStore:
             ValidationError: JSON 结构不符合模型.
             OSError: 读取失败.
         """
+        Callers:
+            - ``services/state/tasks.py:TaskStore.add``
+            - ``services/state/tasks.py:TaskStore.contains``
+            - ``services/state/tasks.py:TaskStore.list_entries``
+            - ``services/state/tasks.py:TaskStore.remove``
+            - ``services/state/tasks.py:TaskStore.reorder``
+            - ``services/state/tasks.py:TaskStore.set_completed``
+            - ``services/state/tasks.py:TaskStore.set_note``
+            - ``services/state/tasks.py:TaskStore.set_trigger_word``
         if not self.path.is_file():
             return TaskListFile()
         data = json.loads(self.path.read_text(encoding="utf-8"))
@@ -95,6 +104,13 @@ class TaskStore:
         Returns:
             None
         """
+        Callers:
+            - ``services/state/tasks.py:TaskStore.add``
+            - ``services/state/tasks.py:TaskStore.remove``
+            - ``services/state/tasks.py:TaskStore.reorder``
+            - ``services/state/tasks.py:TaskStore.set_completed``
+            - ``services/state/tasks.py:TaskStore.set_note``
+            - ``services/state/tasks.py:TaskStore.set_trigger_word``
         self.root.mkdir(parents=True, exist_ok=True)
         text = data.model_dump_json(indent=2) + "\n"
         self.path.write_text(text, encoding="utf-8")

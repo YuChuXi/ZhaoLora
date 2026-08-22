@@ -154,32 +154,17 @@ class SourceClient(ABC):
         """从已规范化的帖模型提取缩略图 URL. 
 
         Callers:
-            - ``services/online_sources/framework/base.py:SourceClient.preview_url``
-
-        Callers:
             - ``services/online_sources/framework/base.py:SourceClient.sample_url``
         """
         return post.preview_url or post.file_url
 
     def sample_url(self, post: BooruPost) -> str:
         """从已规范化的帖模型提取大图 URL. 
-
-        Callers:
-            - ``services/online_sources/framework/base.py:SourceClient.sample_url``
-
-        Callers:
-            - ``routes/online_sources.py:booru_sample`` 预览框
         """
         return post.sample_url or self.preview_url(post)
 
     def is_media_url(self, url: str) -> bool:
         """判断 URL 是否为本来源图床. 
-
-        Callers:
-            - ``services/online_sources/framework/base.py:SourceClient.is_media_url``
-
-        Callers:
-            - ``routes/online_sources.py:booru_thumb`` 缩略图代理白名单
         """
         return True
 

@@ -93,6 +93,9 @@ def _first_content_index(tags: list[str]) -> int:
     Returns:
         int: 首个非优先标签的索引; 全为优先标签时返回列表长度.
     """
+    Callers:
+        - ``services/tagging/clean.py:add_tag_to_caption``
+        - ``services/tagging/clean.py:check_tag_in_caption``
     for i, t in enumerate(tags):
         if tag_key(t) not in PRIORITY_TAG_KEYS:
             return i
@@ -525,6 +528,8 @@ def _collect_txt_files(dirs: list[Path]) -> list[Path]:
     Returns:
         list[Path]: 排序后的 txt 文件路径列表.
     """
+    Callers:
+        - ``services/tagging/clean.py:_run_batch_edit``
     files: list[Path] = []
     for d in dirs:
         if d.is_dir():
@@ -550,6 +555,8 @@ def _lookup_pony_quality(path: Path, root: Path | None, *,
         ``(score_tag, quality_tag_val, pony_injected, pony_missing,
         quality_injected, quality_missing)``; 未注入的维度计数为 0.
     """
+    Callers:
+        - ``services/tagging/clean.py:_run_batch_edit``
     score_tag: str | None = None
     quality_tag_val: str | None = None
     pony_injected = pony_missing = 0
@@ -589,6 +596,8 @@ def _record_sample(raw: str, new: str, *, path: Path, root: Path | None, dry_run
     Returns:
         None
     """
+    Callers:
+        - ``services/tagging/clean.py:_run_batch_edit``
     if len(samples) < sample_limit:
         samples.append(
             TagCleanSample(
@@ -642,6 +651,9 @@ def _run_batch_edit(
     Returns:
         tuple[_BatchStats, list[Any]]: ``(_BatchStats, extras)``; extras 与 files 一一对应, 读取失败的文件为 None.
     """
+    Callers:
+        - ``services/tagging/clean.py:batch_edit_tags``
+        - ``services/tagging/clean.py:clean_txt_dirs``
     files = _collect_txt_files(dirs)
     changed = unchanged = failed = 0
     pony_injected = pony_missing = 0
@@ -813,6 +825,8 @@ def _has_backref(template: str) -> bool:
     Returns:
         bool: 含分组占位符则为 True.
     """
+    Callers:
+        - ``services/tagging/clean.py:_regex_replace``
     return _BACKREF_RE.search(template) is not None
 
 
@@ -826,6 +840,8 @@ def _expand_template(match: re.Match[str], template: str) -> str:
     Returns:
         str: 展开后的替换文本.
     """
+    Callers:
+        - ``services/tagging/clean.py:_regex_replace``
     if "$" in template:
         template = re.sub(r"\$(\d+)", r"\\g<\1>", template)
     return match.expand(template)
@@ -842,6 +858,9 @@ def _regex_replace(key: str, rx: re.Pattern[str], template: str) -> str | None:
     Returns:
         str | None: 命中时返回展开后的文本; 未命中返回 None.
     """
+    Callers:
+        - ``services/tagging/clean.py:_transform``
+        - ``services/tagging/clean.py:batch_edit_tags``
     m = rx.search(key)
     if m is None:
         return None
@@ -877,6 +896,9 @@ def _priority_tags(score_tag: str | None, quality_tag: str | None) -> list[str]:
     Returns:
         list[str]: 随机排序后的优先标签列表.
     """
+    Callers:
+        - ``services/tagging/clean.py:_compose_caption``
+        - ``services/tagging/clean.py:clean_caption``
     priority = [t.strip() for t in (score_tag, quality_tag) if t and t.strip()]
     if len(priority) > 1:
         random.shuffle(priority)
@@ -899,6 +921,8 @@ def _compose_caption(header: list[str], body: list[str], *,
     Returns:
         str: 拼接后的 caption 字符串.
     """
+    Callers:
+        - ``services/tagging/clean.py:batch_edit_tags``
     priority = _priority_tags(score_tag, quality_tag_val)
     header = priority + header
 

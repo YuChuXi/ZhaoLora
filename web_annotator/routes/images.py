@@ -28,12 +28,18 @@ router = APIRouter(tags=["images"])
 
 def _services(request: Request) -> tuple[Path, Thumbnailer, StateManager]:
     """引用: 本模块列表与相似接口. """
+    Callers:
+        - ``routes/images.py:get_image``
+        - ``routes/images.py:list_images``
+        - ``routes/images.py:similar_images``
     rt = get_runtime(request)
     return rt.root, rt.thumbnailer, rt.state_manager
 
 
 def _color_index(request: Request) -> ColorIndex:
     """引用: ``similar_images``. """
+    Callers:
+        - ``routes/images.py:similar_images``
     rt = get_runtime(request)
     if rt.color_index is None:
         rt.color_index = ColorIndex()
@@ -43,8 +49,9 @@ def _color_index(request: Request) -> ColorIndex:
 def _resolve_image(root: Path, trash_dir: Path, rel: str) -> Path:
     """在数据集根或回收站中解析图片路径. 
 
-    引用:
-        ``get_image`` / ``similar_images``. 
+    Callers:
+        - ``routes/images.py:get_image``
+        - ``routes/images.py:similar_images``
     """
     main = resolve_path(root, rel)
     if main.is_file():

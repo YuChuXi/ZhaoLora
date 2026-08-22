@@ -29,7 +29,7 @@ class StartBody(BaseModel):
     """评分启动请求. 
 
     Callers:
-        - ``POST /scoring/start``
+        - ``routes/scoring.py:start`` : POST /scoring/start 端点请求体.
     """
 
     kind: str = Field(default="aesthetic", description="评分类型: 'aesthetic' | 'quality'")

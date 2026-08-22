@@ -3,8 +3,14 @@
 Callers:
     - ``services/models/__init__.py:`` : 包导出.
     - ``routes/online_sources.py:`` : 在线图站路由.
-    - ``services.online_sources.framework.{base,media,gallerydl}`` : 下载框架.
-    - ``services.online_sources.{gelbooru,danbooru,pixiv,bilibili,x}.source`` : 各图站适配.
+    - ``services/online_sources/framework/base.py:`` : 下载框架.
+    - ``services/online_sources/framework/media.py:`` : 下载框架.
+    - ``services/online_sources/framework/gallerydl.py:`` : 下载框架.
+    - ``services/online_sources/gelbooru/source.py:`` : 各图站适配.
+    - ``services/online_sources/danbooru/source.py:`` : 各图站适配.
+    - ``services/online_sources/pixiv/source.py:`` : 各图站适配.
+    - ``services/online_sources/bilibili/source.py:`` : 各图站适配.
+    - ``services/online_sources/x/source.py:`` : 各图站适配.
 """
 
 from __future__ import annotations

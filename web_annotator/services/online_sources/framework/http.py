@@ -43,8 +43,8 @@ class HttpClient(httpx.AsyncClient):
             resp = await client.get(url)
 
     Callers:
-        - ``online_sources.gelbooru.source``
-        - ``online_sources.pixiv.source``
+        - ``services/online_sources/gelbooru/source.py:``
+        - ``services/online_sources/pixiv/source.py:``
         - ``routes/online_sources.py:``
         - ``services/online_sources/batch.py:`` (批量下载任务自持实例复用连接)
     """
@@ -107,7 +107,7 @@ class HttpClient(httpx.AsyncClient):
             NetworkError: 网络或 HTTP 状态错误.
 
         Callers:
-            - ``online_sources.pixiv.source``
+            - ``services/online_sources/pixiv/source.py:``
             - ``routes/online_sources.py:``
         """
         h = self._headers_for(headers, referer)

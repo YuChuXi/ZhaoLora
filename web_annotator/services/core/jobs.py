@@ -212,6 +212,9 @@ class JobManager:
         Returns:
             None
         """
+        Callers:
+            - ``services/core/jobs.py:JobManager._execute``
+            - ``services/core/jobs.py:JobManager.cancel``
         payload = snap.model_copy(
             update={
                 "job_id": snap.job_id or job.id,
@@ -238,6 +241,9 @@ class JobManager:
         Returns:
             None
         """
+        Callers:
+            - ``services/core/jobs.py:JobManager._execute``
+            - ``services/core/jobs.py:JobManager.emit``
         loop.call_soon_threadsafe(self._publish, job, snap)
 
     async def _execute(self, job: Job, run: RunFn) -> None:
@@ -250,6 +256,8 @@ class JobManager:
         Returns:
             None
         """
+        Callers:
+            - ``services/core/jobs.py:JobManager.submit``
         loop = asyncio.get_running_loop()
 
         def emit(snap: JobSnapshot) -> None:
@@ -360,4 +368,6 @@ def _sse(data: JobSnapshot) -> str:
     Returns:
         str: SSE 文本块.
     """
+    Callers:
+        - ``services/core/jobs.py:JobManager.event_stream``
     return f"data: {data.model_dump_json()}\n\n"

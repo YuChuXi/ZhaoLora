@@ -60,6 +60,10 @@ def _layout(request: Request) -> DatasetLayout:
     Returns:
         DatasetLayout: 当前数据集布局, 用于定位 main/crops/部位目录.
     """
+    Callers:
+        - ``routes/crop.py:get_config``
+        - ``routes/crop.py:list_crop_images``
+        - ``routes/crop.py:save_crops``
     return get_runtime(request).layout
 
 
@@ -72,6 +76,8 @@ def _main_dir(request: Request) -> Path:
     Returns:
         Path: main 目录绝对路径.
     """
+    Callers:
+        - ``routes/crop.py:serve_original_image``
     return get_runtime(request).main_dir
 
 
@@ -87,6 +93,8 @@ def _require_part_name(name: str) -> str:
     Raises:
         HTTPException: 名称为空、不匹配命名规则或占用保留名时抛出.
     """
+    Callers:
+        - ``routes/crop.py:save_crops``
     name = (name or "").strip()
     if not name or not _SAFE_NAME.match(name):
         raise HTTPException(400, "需要合法部位名(如 head / foot)")
@@ -114,6 +122,8 @@ def _resolve_out_path(layout: DatasetLayout, stem: str, part_name: str, index: i
     Raises:
         HTTPException: 部位名占用保留名时抛出.
     """
+    Callers:
+        - ``routes/crop.py:save_crops``
     if part_name and _SAFE_NAME.match(part_name):
         if part_name.lower() in RESERVED_DIR_NAMES:
             raise HTTPException(400, f"选区名称不能使用保留名: {part_name}")

@@ -46,15 +46,20 @@ _MD_LINK = re.compile(r"\]\(([\w\-]+)\.md(#[^)]*)?\)")
 
 
 def docs_nav() -> list[DocNavItem]:
-    """引用: GET /api/docs；index.js. """
+    """返回文档导航项列表. 
+
+    Callers:
+        - ``routes/docs.py:list_docs`` : GET /api/docs 端点.
+        - ``static/js/index.js:`` : 文档导航渲染.
+    """
     return [DocNavItem(slug=s, label=lab) for s, lab in _NAV]
 
 
 def resolve_doc(slug: str) -> Path:
     """按白名单解析文档文件路径. 
 
-    引用:
-        ``get_doc``. 
+    Callers:
+        - ``routes/docs.py:get_doc``
     """
     key = (slug or "").strip().lower().lstrip("/")
     name = _DOC_MAP.get(key)
@@ -69,6 +74,8 @@ def resolve_doc(slug: str) -> Path:
 
 def render_markdown(text: str) -> str:
     """MD → HTML；模块间 .md 链接改为 ?doc=. 引用: get_doc. """
+    Callers:
+        - ``routes/docs.py:get_doc``
     text = _MD_LINK.sub(r"](?doc=\1\2)", text)
     return markdown.markdown(
         text,

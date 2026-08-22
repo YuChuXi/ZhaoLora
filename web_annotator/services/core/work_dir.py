@@ -147,6 +147,8 @@ def _count_images(d: Path) -> int:
     Returns:
         int: 目录内图像文件数; 目录不存在时为 0.
     """
+    Callers:
+        - ``services/core/work_dir.py:pin_main``
     if not d.is_dir():
         return 0
     return sum(1 for p in d.iterdir() if p.is_file() and p.suffix.lower() in IMAGE_EXTS)

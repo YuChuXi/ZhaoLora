@@ -124,7 +124,7 @@ async def bind_dataset_middleware(
         Response: 下游响应; 任务名未知时返回 404 JSON.
 
     Callers:
-        - ``server.py:app`` (FastAPI ``@app.middleware`` 装饰器注册, 由 Starlette ASGI 框架调度)
+        - ``server.py:`` (FastAPI ``@app.middleware`` 装饰器注册, 由 Starlette ASGI 框架调度)
     """
     m = _DS_PATH_RE.match(request.url.path)
     if m:
@@ -186,7 +186,6 @@ def index_page() -> HTMLResponse:
 
     Callers:
         - ``static/js/nav.js:render`` (业务页"首页"标签链接)
-        - 浏览器直接访问 ``/``
     """
     return _read_template("index.html")
 
@@ -200,9 +199,6 @@ def dataset_root_redirect(dataset: str) -> RedirectResponse:
 
     Returns:
         RedirectResponse: 302 重定向到 ``/d/{dataset}/filter``.
-
-    Callers:
-        - 浏览器直接访问 ``/d/{dataset}`` (无子路径时触发重定向)
     """
     return RedirectResponse(url=f"/d/{dataset}/filter", status_code=302)
 
@@ -261,7 +257,7 @@ def main() -> int:
         int: 0 表示正常退出; 1 表示 ``--data-dir`` 目录校验失败.
 
     Callers:
-        - ``server.py:__main__`` (命令行 ``python web_annotator/server.py`` 入口)
+        - ``server.py:main`` (命令行 ``python web_annotator/server.py`` 入口)
     """
     load_dotenv()
 

@@ -54,6 +54,19 @@ def _store(request: Request) -> TaskStore:
     Returns:
         TaskStore: 任务存储实例。
     """
+    Callers:
+        - ``routes/tasks.py:add_task``
+        - ``routes/tasks.py:archive_task_route``
+        - ``routes/tasks.py:complete_task``
+        - ``routes/tasks.py:list_archived``
+        - ``routes/tasks.py:list_candidates``
+        - ``routes/tasks.py:list_tasks``
+        - ``routes/tasks.py:reopen_task``
+        - ``routes/tasks.py:reorder_tasks``
+        - ``routes/tasks.py:restore_task_route``
+        - ``routes/tasks.py:serve_archive_preview``
+        - ``routes/tasks.py:set_note``
+        - ``routes/tasks.py:set_trigger_word``
     return request.app.state.task_store
 
 

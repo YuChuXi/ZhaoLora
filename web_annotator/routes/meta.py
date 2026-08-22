@@ -17,7 +17,8 @@ def list_datasets(request: Request) -> DatasetsResponse:
     """
     返回清单中未完成的任务名, 供业务页路径校验. 
 
-    引用: nav.js boot. 
+    Callers:
+        - ``static/js/nav.js:boot`` : 页面启动时加载任务清单.
     """
     store = request.app.state.task_store
     items = [DatasetItem(name=name) for name in store.active_names()]
@@ -42,7 +43,7 @@ def find_active_job(
         JobSnapshot: 含 job_id; 无活跃任务时 status="idle".
 
     Callers:
-        - ``api.js`` : ``findActiveJob`` 通用重连.
+        - ``static/js/api.js:findActiveJob`` : 通用重连.
     """
     mgr = jobs(request)
     job = mgr.find_active(kind=kind, dataset=dataset)
@@ -68,7 +69,8 @@ async def job_events(request: Request, job_id: str) -> StreamingResponse:
     """
     Server-Sent Events: 推送任务进度直至结束. 
 
-    引用: 前端 API.watchJob. 
+    Callers:
+        - ``static/js/api.js:watchJob`` : SSE 进度订阅.
     """
     mgr = jobs(request)
     if mgr.get(job_id) is None:
@@ -90,7 +92,9 @@ def job_cancel(request: Request, job_id: str) -> JobCancelResponse:
     """
     请求协作取消长任务. 
 
-    引用: aesthetic.js、tagging.js. 
+    Callers:
+        - ``static/js/scoring.js:`` : 取消评分任务.
+        - ``static/js/tagging.js:`` : 取消打标任务.
     """
     mgr = jobs(request)
     try:

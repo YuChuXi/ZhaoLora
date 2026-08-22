@@ -55,6 +55,9 @@ def _names(dirs: list[str] | None, legacy: str | None) -> list[str]:
     Returns:
         list[str]: 非空目录名列表, 全部为空时返回 ``["main"]``.
     """
+    Callers:
+        - ``routes/dedupe.py:apply_delete``
+        - ``routes/dedupe.py:scan_duplicates``
     if dirs:
         return list(dirs)
     if legacy:

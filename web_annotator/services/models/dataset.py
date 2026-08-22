@@ -2,7 +2,11 @@
 
 Callers:
     - ``services/models/__init__.py:`` : 包导出.
-    - ``services.models.{tags,crop,paint,ready,pages}`` : 内部模型继承 ``ImageThumbItem`` / ``WorkDirInfo``.
+    - ``services/models/tags.py:`` : 内部模型继承 ``ImageThumbItem`` / ``WorkDirInfo``.
+    - ``services/models/crop.py:`` : 内部模型继承 ``ImageThumbItem`` / ``WorkDirInfo``.
+    - ``services/models/paint.py:`` : 内部模型继承 ``ImageThumbItem`` / ``WorkDirInfo``.
+    - ``services/models/ready.py:`` : 内部模型继承 ``ImageThumbItem`` / ``WorkDirInfo``.
+    - ``services/models/pages.py:`` : 内部模型继承 ``ImageThumbItem`` / ``WorkDirInfo``.
     - ``routes/images.py:`` : 图片列表与相似图路由.
     - ``services/core/scanner.py:`` : 目录扫描.
     - ``services/core/work_dir.py:`` : 工作目录枚举.

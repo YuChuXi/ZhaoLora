@@ -24,8 +24,6 @@ _ENTRY_RE = re.compile(r"^\s*-\s+``([^`]+)``(?:\s+.*)?$")
 # 唯一合法引用格式: file:function / file:Class.method / file:(模块级引用, func 留空但冒号必须保留)
 _FILEFUNC_RE = re.compile(r"^[\w./]+\.(?:py|js):[\w.]*$")
 
-DESCRIPTIONS: list[tuple[str, int, str]] = []
-TEXT_ONLY: list[tuple[str, int, str]] = []
 total = 0
 
 # JS 函数名提取
@@ -89,6 +87,8 @@ def _locate(target: str, files: list[Path]) -> tuple[Path | None, list[Path]]:
     Returns:
         tuple[Path | None, list[Path]]: (最短匹配文件, 全部候选); 无匹配时 (None, []).
     """
+    Callers:
+        - ``_check_callers.py:_verify``
     # 精确尾部匹配, 取最短(最精确)路径
     cands = [p for p in files if p.as_posix().endswith(target)]
     if not cands:
@@ -122,6 +122,10 @@ def main() -> None:
                     total += 1
                     _verify(m.group(1), path, i + 1, dangling)
                 continue
+            # 非标准块标题(引用: / Caller:) → 报告并要求统一为 Callers:
+            if re.match(r"^\s*(?:引用|Caller)[:：]", line):
+                dangling.append((path.as_posix(), i + 1, line.strip()[:60], "格式不规范: 块标题应为 Callers:"))
+                continue
             if in_callers:
                 stripped = line.strip()
                 if not stripped:
@@ -138,12 +142,6 @@ def main() -> None:
     print(f"悬空/错误引用: {len(dangling)}")
     for d in dangling:
         print(f"  {d[0]}:{d[1]}  ->  {d[2]}  ({d[3]})")
-    print(f"描述性条目(待人工审查): {len(DESCRIPTIONS)}")
-    for d in DESCRIPTIONS:
-        print(f"  {d[0]}:{d[1]}  ->  {d[2]}")
-    print(f"无引用目标的纯文字条目: {len(TEXT_ONLY)}")
-    for d in TEXT_ONLY:
-        print(f"  {d[0]}:{d[1]}  ->  {d[2]}")
 
 
 def _check_entry_line(line: str, path: Path, lineno: int, dangling: list) -> None:
@@ -159,6 +157,8 @@ def _check_entry_line(line: str, path: Path, lineno: int, dangling: list) -> Non
         lineno: 行号.
         dangling: 悬空/格式违规引用收集列表.
     """
+    Callers:
+        - ``_check_callers.py:main``
     global total
     stripped = line.strip()
     if not stripped.startswith("-"):
@@ -183,6 +183,9 @@ def _verify(ref: str, src: Path, lineno: int, dangling: list) -> None:
         lineno: 引用行号.
         dangling: 悬空引用收集列表.
     """
+    Callers:
+        - ``_check_callers.py:_check_entry_line``
+        - ``_check_callers.py:main``
     if not _FILEFUNC_RE.match(ref):
         dangling.append((src.as_posix(), lineno, ref, "格式不规范: 应为 file:function (如 routes/tasks.py:list_tasks)"))
         return

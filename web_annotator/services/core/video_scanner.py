@@ -79,7 +79,7 @@ def resolve_ffmpeg() -> str:
         VideoScanError: 未找到支持 rawvideo 的 ffmpeg.
 
     Callers:
-        - 模块级常量 ``FFMPEG`` / ``FFPROBE`` 的初始化
+        - ``services/core/video_scanner.py:`` : 模块级常量 ``FFMPEG`` / ``FFPROBE`` 的初始化.
     """
     seen: set[str] = set()
     candidates: list[str] = []

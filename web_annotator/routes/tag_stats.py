@@ -66,6 +66,10 @@ def _root(request: Request) -> Path:
     Returns:
         Path: 数据集根目录的绝对路径。
     """
+    Callers:
+        - ``routes/tag_stats.py:dirs``
+        - ``routes/tag_stats.py:stats``
+        - ``routes/tag_stats.py:translate_missing``
     return get_runtime(request).root
 
 
@@ -205,9 +209,6 @@ async def clean(request: Request, body: CleanBody) -> JobSubmitResponse:
 
     Returns:
         JobSubmitResponse: 含 job_id, 前端据以订阅 SSE 进度。
-
-    Callers:
-        - 无前端调用(前端使用 ``/tags/batch-edit`` 替代)
     """
     rt = get_runtime(request)
     root = rt.root

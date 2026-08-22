@@ -134,6 +134,8 @@ async def _retry_coro(
     Raises:
         NetworkException: 重试耗尽后最后一次网络异常。
     """
+    Callers:
+        - ``services/online_sources/bilibili/client.py:fetch_dynamics``
     last_exc: Exception | None = None
     for attempt in range(1, retries + 1):
         try:
@@ -163,6 +165,11 @@ def _norm_url(url: str | None) -> str | None:
     Returns:
         str | None: 规范化后的 URL; 空值原样返回。
     """
+    Callers:
+        - ``services/online_sources/bilibili/client.py:_extract_images``
+        - ``services/online_sources/bilibili/client.py:_extract_topic``
+        - ``services/online_sources/bilibili/client.py:_extract_video``
+        - ``services/online_sources/bilibili/client.py:_parse_item``
     if not url:
         return None
     if url.startswith("//"):
@@ -395,6 +402,10 @@ def _parse_item(item: dict[str, Any], depth: int = 0) -> DynamicRecord | None:
     Returns:
         DynamicRecord | None: 解析结果; 条目无效或超深时返回 None。
     """
+    Callers:
+        - ``services/online_sources/bilibili/client.py:_parse_item``
+        - ``services/online_sources/bilibili/client.py:fetch_dynamics``
+        - ``services/online_sources/bilibili/client.py:resolve_image``
     if not isinstance(item, dict) or depth > MAX_FORWARD_DEPTH:
         return None
     dynamic_id = item.get("id_str")

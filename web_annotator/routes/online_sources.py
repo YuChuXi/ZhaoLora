@@ -77,9 +77,6 @@ def list_sources() -> BooruSourcesResponse:
 
     Returns:
         BooruSourcesResponse: 含来源名列表与代理地址。
-
-    Callers:
-        - 无前端调用(预留接口)
     """
     proxy = os.environ.get("HTTP_PROXY", "") or os.environ.get("HTTPS_PROXY", "")
     return BooruSourcesResponse(

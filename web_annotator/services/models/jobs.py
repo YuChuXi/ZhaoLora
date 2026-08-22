@@ -7,7 +7,10 @@ Callers:
     - ``services/dataset/runtime.py:`` : 运行时快照.
     - ``services/online_sources/batch.py:`` : 批量下载.
     - ``services/state/archiver.py:`` : 归档.
-    - ``services.analysis.{sam3,wd14,scoring,birefnet}`` : 各分析任务.
+    - ``services/analysis/sam3.py:`` : 各分析任务.
+    - ``services/analysis/wd14.py:`` : 各分析任务.
+    - ``services/analysis/scoring.py:`` : 各分析任务.
+    - ``services/analysis/birefnet.py:`` : 各分析任务.
 """
 
 from __future__ import annotations

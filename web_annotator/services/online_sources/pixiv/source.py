@@ -66,7 +66,7 @@ class PixivSource(SourceClient):
             dict[str, str]: 含 ``mode`` 与 ``value`` 两键。
 
         Callers:
-            - 前端 booru_filter.js
+            - ``static/js/booru_filter.js:`` : 前端来源选择页面.
         """
         mode = "user"
         for token in (extra or "").split():

@@ -32,7 +32,7 @@ class Tags:
     """WD14 标签工具集, 提供拆分、拼接、等价键比较与置信度合并. 
 
     Callers:
-        - ``process_one`` : 调用 ``split_caption``、``merge_for_disk_by_confidence``
+        - ``services/analysis/wd14.py:_process_one`` : 调用 ``split_caption``、``merge_for_disk_by_confidence``
     """
 
     @staticmethod

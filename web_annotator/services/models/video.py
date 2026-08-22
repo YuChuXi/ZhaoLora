@@ -5,7 +5,7 @@ Callers:
     - ``services/core/video_frame.py:`` (引用 ``BitstreamTypes``)
     - ``routes/video.py:list_videos``
     - ``routes/video.py:video_detail``
-    - ``save_frame``
+    - ``routes/video.py:save_frame``
     - ``routes/video.py:delete_frame`` (HTTP 端点)
 """
 

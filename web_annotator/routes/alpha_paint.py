@@ -38,6 +38,12 @@ def _services(request: Request) -> tuple[Path, Path]:
     Returns:
         tuple[Path, Path]: ``(root, mask_dir)``, 数据集根与 mask 目录绝对路径.
     """
+    Callers:
+        - ``routes/alpha_paint.py:get_existing_mask``
+        - ``routes/alpha_paint.py:list_paint_images``
+        - ``routes/alpha_paint.py:serve_mask_preview``
+        - ``routes/alpha_paint.py:serve_original_image``
+        - ``routes/alpha_paint.py:upload_mask``
     rt = get_runtime(request)
     return rt.root, rt.mask_dir
 
