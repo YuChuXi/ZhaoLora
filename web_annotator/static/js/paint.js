@@ -13,9 +13,10 @@
   var _viewW = 0, _viewH = 0, _dpr = 1;
   var _brushRadius = 80, _brushPct = 3, _defaultAlpha = 255;
   var _tool = 'brush', _isDrawing = false, _isTouch = false, _paintValue = 0;
-  var _rectStart = null, _mouseScreen = null;
-  // shift 直线模式: 落笔按下 shift 后, 从落笔点画直线到抬笔点
-  var _lineMode = false, _lineStart = null, _lineEnd = null;
+  // _mouseOrig: 鼠标视口坐标经 screenToOrig 钳位后的原图坐标, 预览与实际绘制共用的单一事实源
+  var _rectStart = null, _mouseOrig = null;
+  // shift 直线模式: 落笔按下 shift 后, 从落笔点画直线到抬笔点, 终点即 _mouseOrig
+  var _lineMode = false, _lineStart = null;
   var _preloadCache = {};
   var _renderScheduled = false;
 
@@ -283,44 +284,27 @@
     errshow(String(e.reason && e.reason.message ? e.reason.message : e.reason));
   });
 
-  // ---- API ----
-  async function api(path, opts) {
-    opts = opts || {};
-    var url = path.indexOf('/api/') === 0 ? API.apiPath(path.slice(4)) : path;
-    var res = await fetch(url, { headers: opts.headers || {}, method: opts.method || 'GET', body: opts.body || undefined });
-    if (!res.ok) {
-      var msg = await res.text();
-      throw new Error(res.status + ': ' + msg);
-    }
-    return res;
-  }
-
   // ---- 配置 ----
   async function loadConfig() {
-    var cfg = await (await api('/api/paint/config')).json();
+    var cfg = await API.request(API.apiPath('/paint/config'));
     _defaultAlpha = cfg.default_alpha == null ? 255 : cfg.default_alpha;
     document.getElementById('default-alpha').value = _defaultAlpha;
   }
   async function saveConfig() {
     var value = parseInt(document.getElementById('default-alpha').value);
     _defaultAlpha = Number.isNaN(value) ? 255 : value;
-    await api('/api/paint/config', { method: 'POST',
-      body: JSON.stringify({ default_alpha: _defaultAlpha }),
-      headers: { 'Content-Type': 'application/json' } });
+    await API.request(API.apiPath('/paint/config'), { method: 'POST',
+      body: JSON.stringify({ default_alpha: _defaultAlpha }) });
   }
 
   // ---- 加载 ----
-  function currentDir() {
-    return (typeof API !== 'undefined' && API.getDir) ? API.getDir() : 'main';
-  }
-
   async function loadImages() {
-    var res = await (await api('/api/paint/images?dir=' + encodeURIComponent(currentDir()))).json();
+    var res = await API.request(API.apiPath('/paint/images') + '?dir=' + encodeURIComponent(API.getDir()));
     _images = res;
     if (_strip) _strip.refresh();
     if (_images.length > 0) loadIndex(0);
     else {
-      updateNav();
+      updateStatusBar();
       toast('没有图片');
     }
   }
@@ -351,12 +335,20 @@
     _cur = cur;
     _calcBrush(); _updateBrushUI();
     AlphaGL.loadRGB(cur.rgbImg);
-    fitCanvas(); _scheduleRender(); updateNav();
+    fitCanvas(); _scheduleRender(); updateStatusBar();
   }
 
   async function loadIndex(idx) {
     if (_images.length === 0) return;
     idx = Math.max(0, Math.min(_images.length - 1, idx));
+    // 切图终止进行中的绘制: 清理橡皮筋/落笔状态并解绑 document 级跟踪,
+    // 防止抬笔事件在新图上执行绘制(跨图污染)或残留红线预览
+    if (_isDrawing) {
+      _isDrawing = false;
+      document.removeEventListener('mousemove', _docMouseMove);
+      document.removeEventListener('mouseup', _docMouseUp);
+    }
+    _rectStart = null; _lineMode = false; _lineStart = null; _mouseOrig = null;
     var img = _images[idx];
     var token = ++_loadToken;
     // 每次加载持有独立状态副本, 完成后经 _applyCurrent 整体交换到 _cur;
@@ -413,7 +405,7 @@
   }
 
   /**
-   * 刷新底部六段状态栏。引用：updateNav、预加载完成。
+   * 刷新底部六段状态栏。引用：各切图/加载/保存入口、预加载完成。
    */
   function updateStatusBar() {
     var cur = _cur;
@@ -484,9 +476,7 @@
 
   async function _preloadOne(img) {
     if (_preloadCache[img.path]) return;
-    try {
-      _preloadCache[img.path] = await _loadEntry(img);
-    } catch (e) { /* 预加载失败不阻断翻页 */ }
+    _preloadCache[img.path] = await _loadEntry(img);
     updateStatusBar();
   }
   function _updateBrushUI() {
@@ -543,23 +533,29 @@
       _lineSvg.style.zIndex = '10';
       wrap.appendChild(_lineSvg);
     }
-    if (!_lineMode || !_lineStart || !_cur || !_mouseScreen) {
+    if (!_lineMode || !_lineStart || !_mouseOrig || !_cur) {
       _lineSvg.style.display = 'none';
       return;
     }
     _lineSvg.style.display = '';
+    // 两端点均从原图坐标映射回视口: 终点 _mouseOrig 由事件上游 screenToOrig 钳位产出,
+    // 与笔刷预览同一条数据流, 鼠标移出图片时同步停在边缘
     var wrapRect = wrap.getBoundingClientRect();
-    var canvasRect = canvas.getBoundingClientRect();
-    var scale = canvasRect.width / Math.max(1, _cur.w);
-    var x1 = canvasRect.left - wrapRect.left + (_lineStart[0] + 0.5) * scale;
-    var y1 = canvasRect.top - wrapRect.top + (_lineStart[1] + 0.5) * scale;
-    var x2 = _mouseScreen[0] - wrapRect.left;
-    var y2 = _mouseScreen[1] - wrapRect.top;
-    var lw = Math.max(1, _brushRadius * 2 * scale);
+    var p1 = _origToScreen(_lineStart[0], _lineStart[1]);
+    var p2 = _origToScreen(_mouseOrig[0], _mouseOrig[1]);
+    var lw = Math.max(1, _brushRadius * 2 * (canvas.getBoundingClientRect().width / Math.max(1, _cur.w)));
     _lineSvg.setAttribute('viewBox', '0 0 ' + wrapRect.width + ' ' + wrapRect.height);
     _lineSvg.innerHTML =
-      '<line x1="' + x1 + '" y1="' + y1 + '" x2="' + x2 + '" y2="' + y2 +
+      '<line x1="' + (p1[0] - wrapRect.left) + '" y1="' + (p1[1] - wrapRect.top) +
+      '" x2="' + (p2[0] - wrapRect.left) + '" y2="' + (p2[1] - wrapRect.top) +
       '" stroke="rgba(255,0,0,0.3)" stroke-width="' + lw + '" stroke-linecap="round"/>';
+  }
+
+  // 原图坐标 → 画布视口坐标(中心 +0.5 对齐). 引用: _updateLinePreview, _updateBrushPreview.
+  function _origToScreen(x, y) {
+    var rect = canvas.getBoundingClientRect();
+    return [rect.left + (x + 0.5) / _cur.w * rect.width,
+            rect.top + (y + 0.5) / _cur.h * rect.height];
   }
   function _applyBackdrop() {
     if (_bgStyle === 'checker') {
@@ -576,17 +572,14 @@
 
   // ---- 笔刷预览 ----
   function _updateBrushPreview() {
-    if (_tool !== 'brush' || !_mouseScreen || !_cur) {
+    if (_tool !== 'brush' || !_mouseOrig || !_cur) {
       _brushPreview.style.display = 'none'; return;
     }
+    // _mouseOrig 由事件上游 screenToOrig 钳位产出, 与实际绘制位置一致
     var wrapRect = wrap.getBoundingClientRect();
-    var canvasRect = canvas.getBoundingClientRect();
-    // 经 screenToOrig 钳位到画布内再转回屏幕坐标, 与实际绘制位置一致
-    var orig = screenToOrig(_mouseScreen[0], _mouseScreen[1]);
-    var sx = canvasRect.left + (orig[0] + 0.5) / _cur.w * canvasRect.width;
-    var sy = canvasRect.top + (orig[1] + 0.5) / _cur.h * canvasRect.height;
-    var mx = sx - wrapRect.left, my = sy - wrapRect.top;
-    var r = _brushRadius * (canvasRect.width / Math.max(1, _cur.w));
+    var p = _origToScreen(_mouseOrig[0], _mouseOrig[1]);
+    var mx = p[0] - wrapRect.left, my = p[1] - wrapRect.top;
+    var r = _brushRadius * (canvas.getBoundingClientRect().width / Math.max(1, _cur.w));
     if (r < 2) { _brushPreview.style.display = 'none'; return; }
     _brushPreview.style.display = 'block';
     _brushPreview.style.width = (r * 2) + 'px';
@@ -643,35 +636,35 @@
     var pos = screenToOrig(t.clientX, t.clientY);
     _paintValue = _alphaFor(0);
     if (_tool === 'brush') stampDisc(pos[0], pos[1], _brushRadius, _paintValue);
-    _mouseScreen = [t.clientX, t.clientY];
+    _mouseOrig = pos;
     _rectStart = pos; _scheduleRender();
   }, { passive: false });
   canvas.addEventListener('touchmove', function(e) {
     e.preventDefault(); if (!_cur || !_cur.alpha || !_isDrawing) return;
     var t = e.touches[0];
-    _mouseScreen = [t.clientX, t.clientY];
+    _mouseOrig = screenToOrig(t.clientX, t.clientY);
     _updateBrushPreview();
-    var pos = screenToOrig(t.clientX, t.clientY);
+    var pos = _mouseOrig;
     if (_tool === 'brush' && _rectStart) { strokeLine(_rectStart[0], _rectStart[1], pos[0], pos[1], _brushRadius, _paintValue); _rectStart = pos; }
     _scheduleRender();
   }, { passive: false });
   canvas.addEventListener('touchend', function(e) {
     e.preventDefault(); if (!_isTouch || !_isDrawing || !_cur || !_cur.alpha) return;
-    var t = e.changedTouches[0];
-    if (_tool === 'rect' && _rectStart && t) { var pos = screenToOrig(t.clientX, t.clientY); fillRect(_rectStart[0], _rectStart[1], pos[0], pos[1], _paintValue); }
-    _isDrawing = false; _isTouch = false; _rectStart = null; _brushPreview.style.display = 'none'; _cur.modified = true; _scheduleRender();
+    // 终点沿用 _mouseOrig(最后 touchmove 的钳位坐标), 与实际预览一致
+    if (_tool === 'rect' && _rectStart && _mouseOrig) fillRect(_rectStart[0], _rectStart[1], _mouseOrig[0], _mouseOrig[1], _paintValue);
+    _isDrawing = false; _isTouch = false; _rectStart = null; _mouseOrig = null; _brushPreview.style.display = 'none'; _cur.modified = true; _scheduleRender();
   }, { passive: false });
-  canvas.addEventListener('touchcancel', function() { _isDrawing = false; _isTouch = false; _rectStart = null; _mouseScreen = null; _brushPreview.style.display = 'none'; });
+  canvas.addEventListener('touchcancel', function() { _isDrawing = false; _isTouch = false; _rectStart = null; _mouseOrig = null; _brushPreview.style.display = 'none'; });
   // 防止触屏时触发对应的 mouse 事件
   canvas.addEventListener('mousedown', function(e) { if (_isTouch) return; e.preventDefault(); if (!_cur || !_cur.alpha) return;
     _isDrawing = true;
-    var pos = screenToOrig(e.clientX, e.clientY);
+    _mouseOrig = screenToOrig(e.clientX, e.clientY);
+    var pos = _mouseOrig;
     _paintValue = _alphaFor(e.button);
     if (_tool === 'brush' && e.shiftKey) {
-      // shift 直线: 只记录起点, 橡皮筋预览, 抬笔时画落笔到抬笔的直线
-      _lineMode = true; _lineStart = pos; _lineEnd = pos;
-      stampDisc(pos[0], pos[1], _brushRadius, _paintValue);
-      _scheduleRender();
+      // shift 直线: 只记录起点, 橡皮筋预览, 抬笔时一次 strokeLine 画落笔到抬笔的直线
+      _lineMode = true; _lineStart = pos;
+      _updateLinePreview();
       document.addEventListener('mousemove', _docMouseMove);
       document.addEventListener('mouseup', _docMouseUp);
       return;
@@ -682,32 +675,36 @@
     document.addEventListener('mousemove', _docMouseMove);
     document.addEventListener('mouseup', _docMouseUp);
   });
-  // 画布内 mouse 事件: 仅用于未按下时的预览 (按下后绘制由 _docMouseMove 接管)
+  // 画布内 mouse 事件: 仅负责未按下时的 hover 预览; 按下后由 _docMouseMove 统一接管
   canvas.addEventListener('mousemove', function(e) {
-    _mouseScreen = [e.clientX, e.clientY];
-    if (!_cur || !_cur.alpha || _isDrawing) return;
+    if (_isDrawing) return;
+    _mouseOrig = screenToOrig(e.clientX, e.clientY);
+    if (!_cur || !_cur.alpha) return;
     _updateBrushPreview();
   });
-  canvas.addEventListener('mouseleave', function() { _brushPreview.style.display = 'none'; });
-  // 文档级跟踪: 按住鼠标后离开画布仍可绘制, 坐标由 screenToOrig 钳位到图片边缘
+  // 移出画布: 仅未按下时隐藏预览; 按下中(按住绘制/直线)由 _docMouseMove 以钳位坐标
+  // 继续更新预览, 与红线同步停在图片边缘, 不破坏数据流
+  canvas.addEventListener('mouseleave', function() { if (!_isDrawing) _brushPreview.style.display = 'none'; });
+  // 文档级跟踪: 按住鼠标后离开画布仍可绘制, 坐标统一经 screenToOrig 钳位到图片边缘
   function _docMouseMove(e) {
-    _mouseScreen = [e.clientX, e.clientY];
+    _mouseOrig = screenToOrig(e.clientX, e.clientY);
     if (!_isDrawing || !_cur || !_cur.alpha) return;
     _updateBrushPreview();
-    if (_lineMode) { _lineEnd = screenToOrig(e.clientX, e.clientY); _scheduleRender(); return; }
-    var pos = screenToOrig(e.clientX, e.clientY);
+    // 直线模式只改预览不落笔画布: 同步刷新红线与笔刷预览, 不经 rAF 避免两者错帧
+    if (_lineMode) { _updateLinePreview(); return; }
+    var pos = _mouseOrig;
     if (_tool === 'brush' && _rectStart) { strokeLine(_rectStart[0], _rectStart[1], pos[0], pos[1], _brushRadius, _paintValue); _rectStart = pos; }
     _scheduleRender();
   }
-  function _docMouseUp(e) {
-    if (!_isDrawing || !_cur || !_cur.alpha) return;
+  function _docMouseUp() {
+    if (!_isDrawing || !_cur || !_cur.alpha || !_mouseOrig) return;
+    // 终点统一沿用 _mouseOrig(最后 mousemove 的钳位坐标), 与红线/笔刷预览同一条数据流
     if (_lineMode) {
-      var end = screenToOrig(e.clientX, e.clientY);
-      strokeLine(_lineStart[0], _lineStart[1], end[0], end[1], _brushRadius, _paintValue);
+      strokeLine(_lineStart[0], _lineStart[1], _mouseOrig[0], _mouseOrig[1], _brushRadius, _paintValue);
     } else if (_tool === 'rect' && _rectStart) {
-      var pos = screenToOrig(e.clientX, e.clientY); fillRect(_rectStart[0], _rectStart[1], pos[0], pos[1], _paintValue);
+      fillRect(_rectStart[0], _rectStart[1], _mouseOrig[0], _mouseOrig[1], _paintValue);
     }
-    _isDrawing = false; _rectStart = null; _lineMode = false; _lineStart = null; _lineEnd = null;
+    _isDrawing = false; _rectStart = null; _lineMode = false; _lineStart = null; _mouseOrig = null;
     _brushPreview.style.display = 'none'; _cur.modified = true; _scheduleRender();
     document.removeEventListener('mousemove', _docMouseMove);
     document.removeEventListener('mouseup', _docMouseUp);
@@ -718,6 +715,7 @@
     var d = e.deltaY < 0 ? 1 : -1;
     _brushPct = Math.max(0.5, Math.min(20, _brushPct + d * Math.max(0.1, _brushPct * 0.15)));
     _calcBrush(); _updateBrushUI(); _updateBrushPreview();
+    if (_lineMode) _updateLinePreview(); // 直线模式下同步刷新红线线宽
   });
 
   // ---- 保存 ----
@@ -746,7 +744,7 @@
           method: 'POST', headers: { 'Content-Type': 'image/png' }, body: blob
         }).then(function(r) { return r.json(); }).then(function(res) {
           cur.modified = false;
-          img.has_mask = true; updateNav();
+          img.has_mask = true; updateStatusBar();
           toast('已保存: ' + res.saved);
           var cached = _preloadCache[img.path];
           if (cached) {
@@ -789,8 +787,8 @@
   });
   document.getElementById('seg-pos').addEventListener('click', function () { _strip.toggle(); });
   var toolSel = document.getElementById('tool-select');
-  if (toolSel) toolSel.addEventListener('change', function() { _tool = this.value; });
-  document.getElementById('brush-slider').addEventListener('input', function() { _brushPct = parseFloat(this.value); _calcBrush(); _updateBrushUI(); _updateBrushPreview(); });
+  if (toolSel) toolSel.addEventListener('change', function() { _tool = this.value; _brushPreview.style.display = 'none'; });
+  document.getElementById('brush-slider').addEventListener('input', function() { _brushPct = parseFloat(this.value); _calcBrush(); _updateBrushUI(); _updateBrushPreview(); if (_lineMode) _updateLinePreview(); });
   document.getElementById('bg-style').addEventListener('change', function() {
     _bgStyle = this.value;
     _applyBackdrop();
@@ -823,10 +821,6 @@
     else if (e.key === 'x' || e.key === 'X') { goSkip(); }
   });
 
-  function updateNav() {
-    updateStatusBar();
-  }
-
   // 蒙版生成 (BiRefNet / SAM3)
   var birefnetBtn = document.getElementById('btn-birefnet-mask');
   var birefnetDlg = document.getElementById('birefnet-dlg');
@@ -855,7 +849,7 @@
       var batch = document.getElementById('birefnet-batch').checked;
       // 单图模式无「跳过已有蒙版」概念, 始终重新生成; 仅批量模式应用该选项
       var skipExisting = batch ? document.getElementById('birefnet-skip').checked : false;
-      var body = { dir: currentDir(), mode: mode, skip_existing: skipExisting };
+      var body = { dir: API.getDir(), mode: mode, skip_existing: skipExisting };
       if (mode === 'sam3') {
         var expression = document.getElementById('sam3-expression').value.trim();
         if (!expression) { toast('请输入蒙板表达式'); return; }
@@ -872,12 +866,7 @@
         body.path = _cur.item.path;
       }
       birefnetDlg.hidden = true;
-      fetch('/api/d/' + API.dataset() + '/mask-generate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body)
-      })
-        .then(function (r) { return r.json(); })
+      API.request(API.apiPath('/mask-generate'), { method: 'POST', body: JSON.stringify(body) })
         .then(function (resp) {
           if (resp.ok && resp.job_id) {
             watchBirefnetJob(resp.job_id, batch);
@@ -900,9 +889,8 @@
     var pct = document.getElementById('birefnet-pct');
     var text = document.getElementById('birefnet-text');
     bar.hidden = false;
-    var evtSource = new EventSource('/api/jobs/' + jobId + '/events');
-    evtSource.onmessage = function (e) {
-      var snap = JSON.parse(e.data);
+    // 复用 API.watchJob 统一 SSE 订阅(断线重连/终态自动 close), 这里只做 UI 与后续动作
+    API.watchJob(jobId, function (snap) {
       if (snap.total) {
         var p = Math.round(snap.done / snap.total * 100);
         fill.style.width = p + '%';
@@ -910,7 +898,6 @@
         text.textContent = snap.done + '/' + snap.total + (snap.failed ? ' 失败' + snap.failed : '');
       }
       if (snap.status === 'done') {
-        evtSource.close();
         fill.style.width = '100%';
         pct.textContent = '100%';
         text.textContent = '完成 ' + snap.done + '/' + snap.total;
@@ -930,17 +917,14 @@
         return;
       }
       if (snap.status === 'error') {
-        evtSource.close();
         text.textContent = '失败: ' + (snap.message || '未知错误');
         setTimeout(function () { bar.hidden = true; }, 5000);
         return;
       }
       if (snap.status === 'cancelled') {
-        evtSource.close();
         setTimeout(function () { bar.hidden = true; }, 3000);
       }
-    };
-    evtSource.onerror = function () { evtSource.close(); };
+    });
   }
 
   /**
@@ -950,10 +934,10 @@
    */
   async function refreshAfterMaskDone() {
     var curPath = _cur && _cur.item ? _cur.item.path : null;
-    var res = await (await api('/api/paint/images?dir=' + encodeURIComponent(currentDir()))).json();
+    var res = await API.request(API.apiPath('/paint/images') + '?dir=' + encodeURIComponent(API.getDir()));
     _images = res;
     if (_strip) _strip.refresh();
-    if (!curPath) { updateNav(); return; }
+    if (!curPath) { updateStatusBar(); return; }
     // 按路径定位当前图片(列表顺序可能变化), 更新 _cur 指向后只重载其蒙板
     for (var i = 0; i < _images.length; i++) {
       if (_images[i].path === curPath) {
@@ -981,7 +965,7 @@
     _preloadCache[_cur.item.path] = { img: _cur.rgbImg, mask: mCanvas, w: _cur.w, h: _cur.h };
     _initAlphaCanvas(_cur);
     _scheduleRender();
-    updateNav();
+    updateStatusBar();
   }
 
   if (typeof DirPicker !== 'undefined') {
