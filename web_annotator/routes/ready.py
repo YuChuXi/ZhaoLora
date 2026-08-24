@@ -68,10 +68,10 @@ def toml(request: Request, body: ReadyBody) -> ReadyTomlResult:
 
 @router.post("/export", response_model=TrainExportResult)
 def export(request: Request, body: ReadyBody) -> TrainExportResult:
-    """按 anima 模板导出整套训练配置到 ``{LORA_CONFIG_ROOT}/{数据集名}/``.
+    """按代码内置的 anima 固定配置导出整套训练配置到 ``{LORA_CONFIG_ROOT}/{数据集名}/``.
 
     LORA_CONFIG_ROOT 由 .env 配置; 相对路径按 web_annotator/ 目录解析.
-    数据集 main 段由就绪页参数生成, 回归段与模型/编码器路径沿用模板;
+    数据集 main 段由就绪页参数生成, 固定训练段(含回归数据/模型路径/超参)由代码内置;
     prompt.txt 触发词取自该数据集的已配置触发词(note 页设置).
 
     Args:
