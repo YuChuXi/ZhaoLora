@@ -173,7 +173,7 @@
       method: 'POST',
       body: JSON.stringify({ dirs: dirs, target_images: target, resolutions: resolutions })
     });
-    toast('已导出: ' + data.files.join(', ') + ' → ' + data.out_dir);
+    toast('已导出: ' + data.files.join(', '));
   }
 
   /**

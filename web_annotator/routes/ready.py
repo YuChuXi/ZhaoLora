@@ -82,7 +82,7 @@ def export(
         overwrite (bool): 目标目录已存在可视化配置时, 需置 True 才覆盖写入, 否则返回 409.
 
     Returns:
-        TrainExportResult: 导出目录与该目录下实际写入的配置文件文件名.
+        TrainExportResult: 实际写入的配置文件文件名列表(不返回绝对路径).
 
     Raises:
         HTTPException: 无可导出的图片目录、未配置 LORA_CONFIG_ROOT、目标目录已存在配置且未确认覆盖时抛错.
@@ -128,4 +128,4 @@ def export(
         tmp.write_text(content, encoding="utf-8")
         tmp.replace(p)
         written.append(name)
-    return TrainExportResult(out_dir=str(out_dir), files=written)
+    return TrainExportResult(files=written)

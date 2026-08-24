@@ -65,12 +65,11 @@ class ReadyTomlResult(BaseModel):
 
 
 class TrainExportResult(BaseModel):
-    """就绪页导出整套训练配置的结果.
+    """就绪页导出整套训练配置的结果(仅有文件名, 不向前端暴露导出绝对路径).
 
     Callers:
         - ``routes/ready.py:export``
     """
 
-    out_dir: str
-    files: list[str] = Field(default_factory=list, description="写入的配置文件文件名(相对导出目录)")
+    files: list[str] = Field(default_factory=list, description="写入的配置文件文件名")
 
