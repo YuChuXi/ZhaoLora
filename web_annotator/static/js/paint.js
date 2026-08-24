@@ -32,10 +32,10 @@
   // ---- WebGL 渲染层: RGB 纹理 + alpha 纹理 shader 合成, 无 2D 中间画布 ----
   var AlphaGL = (function () {
     var gl = null, canvas = null;
-    var texRGB = null, texAlpha = null, fbo = null, _rawBuf = null;
+    var texRGB = null, texAlpha = null, texTpl = null, texMerge = null, fbo = null, fboMerge = null;
     var W = 0, H = 0;
-    var progDraw = null, progShow = null, quadBuf = null;
-    var DLOC = {}, SLOC = {};
+    var progDraw = null, progShow = null, progCopy = null, progMerge = null, quadBuf = null;
+    var DLOC = {}, SLOC = {}, CLOC = {}, MLOC = {};
 
     var VS = 'attribute vec2 a_pos;varying vec2 v_uv;' +
       'void main(){v_uv=a_pos*0.5+0.5;gl_Position=vec4(a_pos,0.0,1.0);}';
@@ -52,6 +52,22 @@
       'vec4 rgb=texture2D(u_rgb,v_uv);' +
       'float a=texture2D(u_alpha,v_uv).a;' +
       'gl_FragColor=vec4(rgb.rgb,a);}';
+    // 蒙板合并(模板贴回当前蒙板的内部分叉): u_cur 为拷贝后的当前蒙板副本, u_tpl 为模板图案,
+    // u_rect 为模板矩形(画布顶部坐标), 片段按 min/max 合成. 配合 scissor 只写交集矩形.
+    var FS_COPY = 'precision mediump float;' +
+      'uniform sampler2D u_src;varying vec2 v_uv;' +
+      'void main(){gl_FragColor=texture2D(u_src,v_uv);}';
+    var FS_MERGE = 'precision mediump float;' +
+      'uniform sampler2D u_cur;uniform sampler2D u_tpl;' +
+      'uniform vec2 u_res;uniform vec4 u_rect;uniform float u_merge;' +
+      'varying vec2 v_uv;' +
+      'void main(){' +
+      'vec2 px=vec2(v_uv.x,1.0-v_uv.y)*u_res;' +
+      'float cur=texture2D(u_cur,v_uv).a;' +
+      'vec2 tuv=clamp(vec2((px.x-u_rect.x)/u_rect.z,(px.y-u_rect.y)/u_rect.w),0.0,1.0);' +
+      'float t=texture2D(u_tpl,tuv).a;' +
+      'float outA=(u_merge>0.5)?max(cur,t):min(cur,t);' +
+      'gl_FragColor=vec4(1.0,1.0,1.0,outA);}';
 
     function _compile(type, src) {
       var s = gl.createShader(type);
@@ -96,6 +112,8 @@
       var vs = _compile(gl.VERTEX_SHADER, VS);
       progDraw = _link(vs, _compile(gl.FRAGMENT_SHADER, FS_DRAW));
       progShow = _link(vs, _compile(gl.FRAGMENT_SHADER, FS_SHOW));
+      progCopy = _link(vs, _compile(gl.FRAGMENT_SHADER, FS_COPY));
+      progMerge = _link(vs, _compile(gl.FRAGMENT_SHADER, FS_MERGE));
       quadBuf = gl.createBuffer();
       gl.bindBuffer(gl.ARRAY_BUFFER, quadBuf);
       gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
@@ -107,12 +125,27 @@
       gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
       gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, texAlpha, 0);
       gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      // 模板合并用的辅助纹理/帧缓存: texTpl 承载模板图案, texMerge 为合并前的当前蒙板副本
+      texTpl = gl.createTexture(); _initTexParams(texTpl);
+      texMerge = gl.createTexture(); _initTexParams(texMerge);
+      gl.bindTexture(gl.TEXTURE_2D, texMerge);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, W, H, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+      fboMerge = gl.createFramebuffer();
+      gl.bindFramebuffer(gl.FRAMEBUFFER, fboMerge);
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, texMerge, 0);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
       DLOC.res = gl.getUniformLocation(progDraw, 'u_res');
       DLOC.center = gl.getUniformLocation(progDraw, 'u_center');
       DLOC.radius = gl.getUniformLocation(progDraw, 'u_radius');
       DLOC.alpha = gl.getUniformLocation(progDraw, 'u_alpha');
       SLOC.rgb = gl.getUniformLocation(progShow, 'u_rgb');
       SLOC.alpha = gl.getUniformLocation(progShow, 'u_alpha');
+      CLOC.src = gl.getUniformLocation(progCopy, 'u_src');
+      MLOC.cur = gl.getUniformLocation(progMerge, 'u_cur');
+      MLOC.tpl = gl.getUniformLocation(progMerge, 'u_tpl');
+      MLOC.res = gl.getUniformLocation(progMerge, 'u_res');
+      MLOC.rect = gl.getUniformLocation(progMerge, 'u_rect');
+      MLOC.merge = gl.getUniformLocation(progMerge, 'u_merge');
     }
 
     /**
@@ -129,6 +162,9 @@
       gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
       gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, texAlpha, 0);
       gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      // texMerge 与 texAlpha 保持同尺寸, 作实时蒙板副本
+      gl.bindTexture(gl.TEXTURE_2D, texMerge);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, W, H, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
     }
 
     function _toTex() {
@@ -195,21 +231,81 @@
     }
 
     /**
-     * 直接以 Canvas 坐标系 alpha 数组上传纹理(复用内部 RGBA 缓冲), 免去构建 canvas 与 WebGL 回读解码.
-     * 传入 alpha 为 y=0 顶部在前的 Canvas 顺序; 因 UNPACK_FLIP_Y 仅对 DOM 源生效, 手动按倒序写入以复现
-     * loadAlpha(canvas) 的纹理行序. 引用: _applyTemplate/_initAlphaCanvas 的原始数组上传可复用.
-     * @param {Uint8Array} alpha W*H 的 alpha 值(Canvas 坐标, y=0 顶部).
+     * 读取画布局部矩形蒙板 alpha(Canvas 坐标, 顶部为 y0). 仅回读 tw*th 而不整幅 readPixels,
+     * 供模板应用按交集局部合并, 避免全画布回读的带宽与逐像素打包开销.
+     * 引用: _applyTemplate.
+     * @param {number} x0 左 x(含).
+     * @param {number} y0 上 y(画布顶部, 含).
+     * @param {number} tw 宽.
+     * @param {number} th 高.
+     * @returns {Uint8Array} tw*th 行序 alpha(与 Canvas 同向, 自上而下).
      */
-    function loadAlphaRaw(alpha) {
-      var n = W * H;
-      if (!_rawBuf || _rawBuf.length !== n * 4) _rawBuf = new Uint8Array(n * 4);
-      var d = _rawBuf;
-      for (var y = 0; y < H; y++) {
-        var src = (H - 1 - y) * W, dst = y * W * 4;
-        for (var x = 0; x < W; x++) d[dst + x * 4 + 3] = alpha[src + x];
+    function readAlphaRegion(x0, y0, tw, th) {
+      gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+      var raw = new Uint8Array(tw * th * 4);
+      gl.readPixels(x0, H - (y0 + th), tw, th, gl.RGBA, gl.UNSIGNED_BYTE, raw);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      var alpha = new Uint8Array(tw * th);
+      for (var r = 0; r < th; r++) {
+        var src = (th - 1 - r) * tw * 4, dst = r * tw;
+        for (var c = 0; c < tw; c++) alpha[dst + c] = raw[src + c * 4 + 3];
       }
-      gl.bindTexture(gl.TEXTURE_2D, texAlpha);
-      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, W, H, 0, gl.RGBA, gl.UNSIGNED_BYTE, d);
+      return alpha;
+    }
+
+    /**
+     * 把局部蒙板 alpha(Canvas 行序)经 texSubImage2D 更新到 alpha 纹理的指定矩形,
+     * 仅上传 tw*th 区域而不用整幅 texImage2D. 引用: _applyTemplate.
+     * @param {number} x0 左 x(含).
+     * @param {number} y0 上 y(画布顶部, 含).
+     * @param {number} tw 宽.
+     * @param {number} th 高.
+     * @param {Uint8Array} local tw*th Canvas 行序 alpha(与 readAlphaRegion 同向).
+     */
+    /**
+     * 在 GPU 上把模板图案按 min/max 合并到当前蒙板的交集矩形. 因同一纹理不能同时作为
+     * 渲染目标与采样源, 先经 texMerge 拷贝当前蒙板一份, 再在 fbo 上以 scissor 约束到
+     * 交集矩形由片元着色器合成写回, 无任何 CPU 逐像素循环. 引用: _applyTemplate.
+     * @param {number} x0 交集左 x(含, 画布顶部坐标).
+     * @param {number} y0 交集上 y(含).
+     * @param {number} tw 交集宽.
+     * @param {number} th 交集高.
+     * @param {number} rx 模板矩形左(画布顶部坐标).
+     * @param {number} ry 模板矩形上.
+     * @param {number} rw 模板矩形宽.
+     * @param {number} rh 模板矩形高.
+     * @param {Uint8ClampedArray} tplData 模板 RGBA 数据(alpha 为图案).
+     * @param {number} tplW 模板像素宽.
+     * @param {number} tplH 模板像素高.
+     * @param {boolean} isMax 是否 max 合并(min 否则).
+     */
+    function applyTemplate(x0, y0, tw, th, rx, ry, rw, rh, tplData, tplW, tplH, isMax) {
+      // 1) 上传模板图案纹理(v=0 对应数据首行=模板顶部, 与画布同向, 故片段 y 不必翻转)
+      gl.bindTexture(gl.TEXTURE_2D, texTpl);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, tplW, tplH, 0, gl.RGBA, gl.UNSIGNED_BYTE, tplData);
+      // 2) 全屏拷贝当前蒙板 texAlpha → texMerge, 作为合并采样源(规避同纹理读写冲突)
+      gl.bindFramebuffer(gl.FRAMEBUFFER, fboMerge);
+      gl.viewport(0, 0, W, H);
+      gl.disable(gl.BLEND);
+      _bindQuad(progCopy);
+      gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, texAlpha);
+      gl.uniform1i(CLOC.src, 0);
+      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+      // 3) 在 fbo 上仅对交集矩形合成并写回 texAlpha
+      gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+      gl.viewport(0, 0, W, H);
+      gl.scissor(x0, H - (y0 + th), tw, th);
+      gl.enable(gl.SCISSOR_TEST);
+      _bindQuad(progMerge);
+      gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, texMerge);
+      gl.uniform1i(MLOC.cur, 0);
+      gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, texTpl);
+      gl.uniform1i(MLOC.tpl, 1);
+      gl.uniform2f(MLOC.res, W, H);
+      gl.uniform4f(MLOC.rect, rx, ry, rw, rh);
+      gl.uniform1f(MLOC.merge, isMax ? 1.0 : 0.0);
+      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+      gl.disable(gl.SCISSOR_TEST);
     }
 
     /**
@@ -246,7 +342,8 @@
     }
 
     return {
-      init: init, resize: resize, loadRGB: loadRGB, loadAlpha: loadAlpha, loadAlphaRaw: loadAlphaRaw,
+      init: init, resize: resize, loadRGB: loadRGB, loadAlpha: loadAlpha,
+      readAlphaRegion: readAlphaRegion, applyTemplate: applyTemplate,
       stampDisc: stampDisc, clear: clear, fill: fill,
       readAlpha: readAlpha, render: render,
       get canvas() { return canvas; }, get w() { return W; }, get h() { return H; }
@@ -622,14 +719,6 @@
 
   // ---- 蒙板模板 ----
 
-  /**
-   * 读取当前蒙板 alpha 数组(CSS 坐标, 尺寸 W*H). 引用: 模板捕获/应用.
-   * @returns {Uint8Array|null} 无当前画布时返回 null.
-   */
-  function _readCurrentAlpha() {
-    return _cur && _cur.alpha ? AlphaGL.readAlpha() : null;
-  }
-
   /** 槽位索引 → 键盘键位: 0-8 → '1'-'9', 9 → '0'. 引用: 提示/卡片/快捷键. */
   function _slotKey(i) { return i === 9 ? '0' : String(i + 1); }
 
@@ -676,8 +765,7 @@
    * @param {number} y1 框选右下 orig y
    */
   function _captureToSlot(x0, y0, x1, y1) {
-    var arr = _readCurrentAlpha();
-    if (!arr) return;
+    if (!_cur || !_cur.alpha) return;
     var px0 = Math.max(0, Math.floor(Math.min(x0, x1)));
     var py0 = Math.max(0, Math.floor(Math.min(y0, y1)));
     var px1 = Math.min(_cur.w, Math.ceil(Math.max(x0, x1)));
@@ -687,12 +775,14 @@
     var slot = -1;
     for (var i = 0; i < 10; i++) { if (!_templates[i]) { slot = i; break; } }
     if (slot === -1) { toast('模板已满 (最多 10 个)'); return; }
+    // 仅读取框选区域蒙板, 避免整幅画布 readPixels 的带宽与打包开销
+    var local = AlphaGL.readAlphaRegion(px0, py0, pw, ph);
     var data = new Uint8ClampedArray(pw * ph * 4);
     for (var y = 0; y < ph; y++) {
       for (var x = 0; x < pw; x++) {
         var j = (y * pw + x) * 4;
         data[j] = data[j + 1] = data[j + 2] = 255;
-        data[j + 3] = arr[(py0 + y) * _cur.w + (px0 + x)];
+        data[j + 3] = local[y * pw + x];
       }
     }
     _templates[slot] = { data: data, w: pw, h: ph };
@@ -801,7 +891,7 @@
         id.data[j] = 255;
         id.data[j + 1] = 0;
         id.data[j + 2] = 0;
-        id.data[j + 3] = Math.round(Math.abs(pv - _defaultAlpha) / 2);
+        id.data[j + 3] = pv > 0 ? Math.round(Math.max(0, Math.min(1, (_defaultAlpha + 255 - pv) / 510)) * 255) : 0;
       }
     }
     cv.getContext('2d').putImageData(id, 0, 0);
@@ -894,28 +984,44 @@
    * 重建 alpha 纹理并重绘. 引用: 模板实例双击.
    */
   function _applyTemplate() {
-    if (!_floating || !_cur) return;
-    var arr = _readCurrentAlpha();
-    if (!arr) return;
+    if (!_floating || !_cur || !_cur.alpha) return;
     var f = _floating;
+    // 模板允许拖出画布: 应用时先求模板与画布的相交区间, 仅把落在画布内的部分合入,
+    // 溢出画布的部分自然裁剪忽略. 钳位并非限制模板位置, 而是裁剪到蒙板可写入的像素范围.
     var x0 = Math.max(0, Math.floor(f.rx)), y0 = Math.max(0, Math.floor(f.ry));
     var x1 = Math.min(_cur.w, Math.ceil(f.rx + f.rw)), y1 = Math.min(_cur.h, Math.ceil(f.ry + f.rh));
-    var tw = Math.max(1, x1 - x0), th = Math.max(1, y1 - y0);
-    // 预计算每列/每行的最近邻采样索引, 避免逐像素浮点运算
+    // 完全在画布外则与蒙板无交集: 不做任何修改, 仅清理浮动模板
+    if (x0 >= x1 || y0 >= y1) {
+      _floating = null; _floatDrag = null; _templateInst.style.display = 'none';
+      return;
+    }
+    var tw = x1 - x0, th = y1 - y0;
+    // 预计算每列/每行的最近邻采样索引(基于 orig 绝对坐标)以省去逐像素浮点运算.
+    // 必须以模板在 orig 域的起始 rx/ry 为采样基准, 而非应用区局部偏移 k:
+    // 模板部分拖出画布时二者不再成正比, 用局部 k 会带来源错位,
+    // 使超界部分在应用时被错误平移(模板被整块"压回"画布内且形状偏移).
     var mapX = new Int32Array(tw), mapY = new Int32Array(th);
-    for (var k = 0; k < tw; k++) mapX[k] = Math.min(f.w - 1, Math.max(0, (k * f.w / tw) | 0));
-    for (var k2 = 0; k2 < th; k2++) mapY[k2] = Math.min(f.h - 1, Math.max(0, (k2 * f.h / th) | 0));
+    for (var k = 0; k < tw; k++) {
+      var px = x0 + k;
+      mapX[k] = Math.min(f.w - 1, Math.max(0, Math.floor((px - f.rx) / f.rw * f.w)));
+    }
+    for (var k2 = 0; k2 < th; k2++) {
+      var py = y0 + k2;
+      mapY[k2] = Math.min(f.h - 1, Math.max(0, Math.floor((py - f.ry) / f.rh * f.h)));
+    }
     var isMax = _mergeMode === 'max';
-    for (var py = y0; py < y1; py++) {
-      var prow = mapY[py - y0] * f.w;
-      var i = py * _cur.w + x0;
-      for (var px = x0; px < x1; px++) {
-        var pv = f.data[(prow + mapX[px - x0]) * 4 + 3];
-        arr[i] = isMax ? (arr[i] > pv ? arr[i] : pv) : (arr[i] < pv ? arr[i] : pv);
-        i++;
+    // 仅回读/改写模板与画布的交集矩形, 避免整幅画布的 readPixels 与 texImage2D 往返开销
+    var local = AlphaGL.readAlphaRegion(x0, y0, tw, th);
+    for (var r = 0; r < th; r++) {
+      var prow = mapY[r] * f.w;
+      var li = r * tw;
+      for (var c = 0; c < tw; c++) {
+        var pv = f.data[(prow + mapX[c]) * 4 + 3];
+        var idx = li + c;
+        local[idx] = isMax ? (local[idx] > pv ? local[idx] : pv) : (local[idx] < pv ? local[idx] : pv);
       }
     }
-    AlphaGL.loadAlphaRaw(arr);
+    AlphaGL.applyAlphaRegion(x0, y0, tw, th, local);
     _floating = null; _floatDrag = null;
     _templateInst.style.display = 'none';
     _cur.modified = true;
