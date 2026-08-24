@@ -8,20 +8,6 @@
   var _selected = {};
 
   /**
-   * @param {string} url
-   * @param {RequestInit} [opts]
-   * @returns {Promise<object>}
-   */
-  async function api(url, opts) {
-    var res = await fetch(url, opts);
-    if (!res.ok) {
-      var t = await res.text();
-      throw new Error(t || res.statusText);
-    }
-    return res.json();
-  }
-
-  /**
    * @returns {Array<object>}
    */
   function selectedTags() {
@@ -134,9 +120,8 @@
       exclude: parseTagList(document.getElementById('opt-exclude').value),
       match_mode: document.getElementById('opt-match-mode').value,
     };
-    var data = await api(API.apiPath('/tags/stats'), {
+    var data = await API.request(API.apiPath('/tags/stats'), {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     });
     _tags = data.tags || [];
@@ -211,9 +196,8 @@
       return;
     }
     var word = sel.map(function (t) { return t.tag; }).join(', ');
-    await api('/api/tasks/' + encodeURIComponent(API.dataset()) + '/trigger-word', {
+    await API.request('/api/tasks/' + encodeURIComponent(API.dataset()) + '/trigger-word', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ trigger_word: word }),
     });
     toast('已设为触发词: ' + word);
@@ -233,9 +217,8 @@
     btn.disabled = true;
     btn.textContent = '翻译中…';
     try {
-      var res = await api(API.apiPath('/tags/translate-missing'), {
+      var res = await API.request(API.apiPath('/tags/translate-missing'), {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ tags: missing }),
       });
       toast('已翻译 ' + res.translated + ' 个标签');

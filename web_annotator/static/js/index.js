@@ -14,24 +14,6 @@
   var _dragSrcName = null;
 
   /**
-   * @param {string} url
-   * @param {object} body
-   * @returns {Promise<object>}
-   */
-  async function postJson(url, body) {
-    var res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
-    if (!res.ok) {
-      var t = await res.text();
-      throw new Error(t || res.statusText);
-    }
-    return res.json();
-  }
-
-  /**
    * @returns {string}
    */
   function currentSlug() {
@@ -99,12 +81,13 @@
     }
     var article = document.getElementById('docs-article');
     article.innerHTML = '<p class="docs-empty">加载中…</p>';
-    var res = await fetch('/api/docs/' + encodeURIComponent(slug));
-    if (!res.ok) {
-      article.innerHTML = '<p class="docs-empty">文档加载失败：' + res.status + '</p>';
+    var data;
+    try {
+      data = await API.request('/api/docs/' + encodeURIComponent(slug));
+    } catch (e) {
+      article.innerHTML = '<p class="docs-empty">文档加载失败：' + e.message + '</p>';
       return;
     }
-    var data = await res.json();
     article.innerHTML = data.html || '';
     var title = (data.title || data.file || '文档').replace(/\.md$/, '');
     if (slug === 'readme') title = '概览';
@@ -148,7 +131,7 @@
         noteWrap.className = 'task-note' + (val ? '' : ' empty');
         return;
       }
-      postJson('/api/tasks/' + encodeURIComponent(name) + '/note', { note: val })
+      API.request('/api/tasks/' + encodeURIComponent(name) + '/note', { method: 'POST', body: JSON.stringify({ note: val }) })
         .then(function () {
           noteWrap.textContent = val || '双击添加备注…';
           noteWrap.className = 'task-note' + (val ? '' : ' empty');
@@ -209,8 +192,7 @@
   function archiveTask(name, card) {
     var prog = attachProgress(card);
     prog.msg.textContent = '准备归档…';
-    fetch('/api/tasks/' + encodeURIComponent(name) + '/archive', { method: 'POST' })
-      .then(function (r) { return r.json(); })
+    API.request('/api/tasks/' + encodeURIComponent(name) + '/archive', { method: 'POST' })
       .then(function (data) {
         API.watchJob(data.job_id, function (ev) {
           if (ev.pct != null) {
@@ -241,8 +223,7 @@
   function restoreArchive(base, card) {
     var prog = attachProgress(card);
     prog.msg.textContent = '准备恢复…';
-    fetch('/api/archived/' + encodeURIComponent(base) + '/restore', { method: 'POST' })
-      .then(function (r) { return r.json(); })
+    API.request('/api/archived/' + encodeURIComponent(base) + '/restore', { method: 'POST' })
       .then(function (data) {
         API.watchJob(data.job_id, function (ev) {
           prog.msg.textContent = ev.message || ev.phase || '';
@@ -321,9 +302,7 @@
    * @returns {Promise<void>}
    */
   async function loadArchived() {
-    var res = await fetch('/api/archived');
-    if (!res.ok) return;
-    var data = await res.json();
+    var data = await API.request('/api/archived');
     var archives = data.archives || [];
     var host = document.getElementById('task-archived');
     host.innerHTML = '';
@@ -402,7 +381,7 @@
     triggerInput.placeholder = '无';
     triggerInput.maxLength = 100;
     triggerInput.addEventListener('change', function () {
-      postJson('/api/tasks/' + encodeURIComponent(t.name) + '/trigger-word', { trigger_word: triggerInput.value.trim() })
+      API.request('/api/tasks/' + encodeURIComponent(t.name) + '/trigger-word', { method: 'POST', body: JSON.stringify({ trigger_word: triggerInput.value.trim() }) })
         .catch(function (err) { toast(String(err.message || err)); });
     });
     var triggerCopy = document.createElement('button');
@@ -452,7 +431,7 @@
       reopen.className = 'btn';
       reopen.textContent = '重新打开';
       reopen.addEventListener('click', function () {
-        postJson('/api/tasks/' + encodeURIComponent(t.name) + '/reopen', {}).then(loadTasks);
+        API.request('/api/tasks/' + encodeURIComponent(t.name) + '/reopen', { method: 'POST', body: '{}' }).then(loadTasks);
       });
       actions.appendChild(reopen);
     } else {
@@ -461,7 +440,7 @@
       done.className = 'btn';
       done.textContent = '完成';
       done.addEventListener('click', function () {
-        postJson('/api/tasks/' + encodeURIComponent(t.name) + '/complete', {}).then(loadTasks);
+        API.request('/api/tasks/' + encodeURIComponent(t.name) + '/complete', { method: 'POST', body: '{}' }).then(loadTasks);
       });
       actions.appendChild(done);
     }
@@ -485,9 +464,7 @@
 
   async function loadTasks() {
     var url = '/api/tasks?sort_by=' + encodeURIComponent(_sortBy) + '&sort_order=' + encodeURIComponent(_sortOrder);
-    var res = await fetch(url);
-    if (!res.ok) throw new Error('无法读取任务列表');
-    var data = await res.json();
+    var data = await API.request(url);
     var tasks = data.tasks || [];
     var active = document.getElementById('task-active');
     var completedHost = document.getElementById('task-completed');
@@ -511,8 +488,8 @@
   }
 
   async function loadCandidates() {
-    var res = await fetch('/api/tasks/candidates');
-    _candidates = res.ok ? ((await res.json()).candidates || []) : [];
+    var data = await API.request('/api/tasks/candidates');
+    _candidates = (data && data.candidates) || [];
   }
 
   /**
@@ -569,7 +546,7 @@
     e.preventDefault();
     setSuggestOpen(false);
     var name = document.getElementById('task-name').value.trim();
-    postJson('/api/tasks', { name: name })
+    API.request('/api/tasks', { method: 'POST', body: JSON.stringify({ name: name }) })
       .then(function () {
         document.getElementById('task-name').value = '';
         toast('已添加 ' + name);
@@ -619,9 +596,7 @@
   });
 
   async function init() {
-    var res = await fetch('/api/docs');
-    if (!res.ok) throw new Error('无法读取文档目录');
-    var data = await res.json();
+    var data = await API.request('/api/docs');
     _nav = data.nav || [];
 
     var sortGroup = document.getElementById('sort-group');
@@ -746,7 +721,7 @@
       ordered.splice(srcIdx, 1);
       ordered.splice(dstIdx, 0, _dragSrcName);
 
-      postJson('/api/tasks/reorder', { order: ordered }).then(function () {
+      API.request('/api/tasks/reorder', { method: 'POST', body: JSON.stringify({ order: ordered }) }).then(function () {
         return loadTasks();
       });
     });

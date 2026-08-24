@@ -200,11 +200,11 @@
       }
 
       html += '<div class="card" onclick="ScoringView.openLightbox(\'' + _currentType + '\',' + i + ')">' +
-        '<div class="card-img"><img src="' + _escapeHtml(r.thumb_url || r.image_url) +
-        '" loading="lazy" onerror="this.src=\'' + _escapeHtml(r.image_url) + '\'"></div>' +
+        '<div class="card-img"><img src="' + escHtml(r.thumb_url || r.image_url) +
+        '" loading="lazy" onerror="this.src=\'' + escHtml(r.image_url) + '\'"></div>' +
         _scoreBadge(r) +
         '<div class="card-score-val">' + _scoreValue(r) + '</div>' +
-        '<div class="card-path" title="' + _escapeAttr(r.path) + '">' + _fileName(r.path) + '</div>' +
+        '<div class="card-path" title="' + escHtml(r.path) + '">' + _fileName(r.path) + '</div>' +
         '</div>';
     }
 
@@ -450,14 +450,6 @@
   function _fileName(p) {
     var parts = p.split('/');
     return parts[parts.length - 1];
-  }
-
-  function _escapeHtml(s) {
-    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-  }
-
-  function _escapeAttr(s) {
-    return String(s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   }
 
   initPage().catch(function (e) { toast(String(e.message || e)); });

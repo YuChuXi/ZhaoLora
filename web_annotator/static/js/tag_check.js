@@ -259,16 +259,6 @@
   }
 
   /**
-   * 转义 HTML 特殊字符。
-   * @param {string} s
-   * @returns {string}
-   */
-  function escHtml(s) {
-    return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-            .replace(/"/g, '&quot;');
-  }
-
-  /**
    * 渲染补全下拉列表。
    * @param {Array} matches matchTags 返回值
    */

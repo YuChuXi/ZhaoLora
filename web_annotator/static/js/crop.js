@@ -37,29 +37,6 @@
   var ctx = canvas.getContext('2d');
   var wrap = document.getElementById('canvas-wrap');
 
-  function errshow(msg) {
-    toast('⚠ ' + msg);
-  }
-  window.addEventListener('error', function (e) { errshow(e.message); });
-  window.addEventListener('unhandledrejection', function (e) {
-    errshow(String(e.reason && e.reason.message ? e.reason.message : e.reason));
-  });
-
-  async function api(path, opts) {
-    opts = opts || {};
-    var url = path.indexOf('/api/') === 0 ? API.apiPath(path.slice(4)) : path;
-    var res = await fetch(url, {
-      headers: opts.headers || {},
-      method: opts.method || 'GET',
-      body: opts.body || undefined,
-    });
-    if (!res.ok) {
-      var msg = await res.text();
-      throw new Error(res.status + ': ' + msg);
-    }
-    return res;
-  }
-
   // ---- 吸附：按 zoom 反推 target，不建 SIDE×SIDE×ZOOM 全表 ----
   function snapSide(x) {
     var t = Math.round((x - SIDE_MIN) / SIDE_STEP);
@@ -1013,7 +990,7 @@
 
   // ---- 加载 ----
   async function loadImages() {
-    var res = await (await api('/api/crop/images')).json();
+    var res = await API.request('/api/crop/images');
     _images = res;
     if (_strip) _strip.refresh();
     if (_images.length > 0) {
@@ -1054,7 +1031,10 @@
     if (!_images.length) return;
     _index = Math.max(0, Math.min(_images.length - 1, idx));
     var imgMeta = _images[_index];
-    var blob = await (await api('/api/crop/image?path=' + encodeURIComponent(imgMeta.path))).blob();
+    // 裁剪图二进制: 非 JSON 边界, 直接 fetch + blob (API.request 仅支持 JSON)
+    var imgRes = await fetch(API.apiPath('/crop/image?path=' + encodeURIComponent(imgMeta.path)));
+    if (!imgRes.ok) throw new Error(imgRes.status + ': ' + await imgRes.text());
+    var blob = await imgRes.blob();
     var url = URL.createObjectURL(blob);
     var im = new Image();
     await new Promise(function (resolve, reject) {
@@ -1101,11 +1081,10 @@
       toast('请至少保留一个选区');
       return;
     }
-    var res = await (await api('/api/crop/save', {
+    var res = await API.request('/api/crop/save', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
-    })).json();
+    });
     imgMeta.done = true;
     toast('已保存 ' + res.count + ' 张');
     var next = findNextUnfinished(_index);
@@ -1174,10 +1153,10 @@
   }
 
   async function init() {
-    var cfg = await (await api('/api/crop/config')).json();
+    var cfg = await API.request('/api/crop/config');
     loadParts(cfg.parts || []);
 
-    var matchCfg = await (await api('/api/crop/candidates')).json();
+    var matchCfg = await API.request('/api/crop/candidates');
     applyMatchConfig(matchCfg);
 
     var globalDefault = document.getElementById('crop-default-global');

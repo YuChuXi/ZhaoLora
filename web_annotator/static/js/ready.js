@@ -6,20 +6,6 @@
 (function () {
   'use strict';
 
-  /**
-   * @param {string} url
-   * @param {object} [opts]
-   * @returns {Promise<object>}
-   */
-  async function api(url, opts) {
-    var res = await fetch(url, opts);
-    if (!res.ok) {
-      var t = await res.text();
-      throw new Error(t || res.statusText);
-    }
-    return res.json();
-  }
-
   var _enabled = {};
 
   /**
@@ -109,9 +95,8 @@
     var dirs = Object.keys(_enabled).filter(function (n) { return _enabled[n]; });
     var data;
     try {
-      data = await api(API.apiPath('/ready/toml'), {
+      data = await API.request(API.apiPath('/ready/toml'), {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ dirs: dirs, target_images: target, resolutions: resolutions })
       });
     } catch (e) {
@@ -171,7 +156,7 @@
     copyText().catch(function (e) { toast(String(e.message || e)); });
   });
 
-  api(API.apiPath('/ready/dirs'))
+  API.request(API.apiPath('/ready/dirs'))
     .then(function (data) {
       renderSide(data);
       return generate();

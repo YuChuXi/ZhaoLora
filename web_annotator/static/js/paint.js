@@ -272,18 +272,6 @@
   if (_bgColorEl) _bgColor = _bgColorEl.value;
   _applyBackdrop();
 
-  /**
-   * @param {string} msg
-   * 引用：保存成功、错误提示。
-   */
-  function errshow(msg) {
-    toast('\u26a0 ' + msg);
-  }
-  window.addEventListener('error', function(e) { errshow(e.message); });
-  window.addEventListener('unhandledrejection', function(e) {
-    errshow(String(e.reason && e.reason.message ? e.reason.message : e.reason));
-  });
-
   // ---- 配置 ----
   async function loadConfig() {
     var cfg = await API.request(API.apiPath('/paint/config'));

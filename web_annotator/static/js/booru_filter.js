@@ -532,13 +532,9 @@ var BooruFilter = (function () {
       var mySeq = ++seq;
       clearTimeout(timer);
       timer = setTimeout(function () {
-        fetch(API.apiPath('/online-sources/tag-suggest')
+        API.request(API.apiPath('/online-sources/tag-suggest')
           + '?source=' + encodeURIComponent(src)
           + '&q=' + encodeURIComponent(word))
-          .then(function (r) {
-            if (!r.ok) throw new Error('补全失败');
-            return r.json();
-          })
           .then(function (data) {
             if (mySeq !== seq) return; // 丢弃过期响应
             render(data && data.tags ? data.tags : []);
@@ -1223,9 +1219,7 @@ var BooruFilter = (function () {
   async function refreshDiskCount() {
     if (!isRemote()) return;
     var keptEl = document.getElementById('stat-kept');
-    var res = await fetch(API.apiPath('/dirs'));
-    if (!res.ok) throw new Error('无法读取目录统计');
-    var data = await res.json();
+    var data = await API.request(API.apiPath('/dirs'));
     var name = destDir();
     var hit = null;
     var dirs = data.dirs || [];
@@ -2007,9 +2001,8 @@ var BooruFilter = (function () {
   }
 
   async function undownloadOne(post) {
-    var res = await fetch(API.apiPath('/online-sources/undownload'), {
+    var res = await API.request(API.apiPath('/online-sources/undownload'), {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         source: post.source,
         id: String(post.id),
@@ -2017,14 +2010,10 @@ var BooruFilter = (function () {
         dir: destDir(),
       }),
     });
-    if (!res.ok) {
-      var t = await res.text();
-      throw new Error(t || res.statusText);
-    }
     delete _status[post.key];
     updateCard(post.key);
     await refreshDiskCount();
-    return res.json();
+    return res;
   }
 
   /**
@@ -2103,9 +2092,7 @@ var BooruFilter = (function () {
     _loading = true;
     updatePageStatus();
     try {
-      var res = await fetch(API.apiPath('/videos') + '?probe=1');
-      if (!res.ok) throw new Error(await res.text());
-      var list = await res.json();
+      var list = await API.request(API.apiPath('/videos') + '?probe=1');
       _posts = (list || []).map(function (v) {
         return {
           source: 'video', path: v.path, key: v.path, stem: v.stem, name: v.name,
@@ -2166,16 +2153,10 @@ var BooruFilter = (function () {
       };
       if (noJump()) pbody.session = isReset ? '' : _session;
       else pbody.page = fetchPage;
-      var res = await fetch(API.apiPath('/online-sources/search'), {
+      var data = await API.request(API.apiPath('/online-sources/search'), {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(pbody),
       });
-      if (!res.ok) {
-        var err = await res.text();
-        throw new Error(err || res.statusText);
-      }
-      var data = await res.json();
       var list = data.posts || [];
       if (noJump()) {
         _session = data.session || '';

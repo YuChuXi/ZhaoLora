@@ -11,17 +11,6 @@
   var _previewOpen = false;
   var _algorithm = 'mse';
 
-  async function api(url, opts) {
-    var res = await fetch(url, Object.assign({
-      headers: { 'Content-Type': 'application/json' },
-    }, opts || {}));
-    if (!res.ok) {
-      var t = await res.text();
-      throw new Error(t || res.statusText);
-    }
-    return res.json();
-  }
-
   function getDirs() {
     return DirPicker.getDirs();
   }
@@ -280,7 +269,7 @@
     main.innerHTML = '<div class="dedupe-empty">扫描中…</div>';
     document.getElementById('btn-scan').disabled = true;
     try {
-      var submitted = await api(API.apiPath('/dedupe/scan'), {
+      var submitted = await API.request(API.apiPath('/dedupe/scan'), {
         method: 'POST',
         body: JSON.stringify({
           dirs: dirs,
@@ -355,7 +344,7 @@
     if (!confirm('删除 ' + paths.length + ' 张到回收站？')) return;
     hidePreview();
     try {
-      var res = await api(API.apiPath('/dedupe/apply'), {
+      var res = await API.request(API.apiPath('/dedupe/apply'), {
         method: 'POST',
         body: JSON.stringify({ paths: paths, dirs: getDirs() }),
       });
