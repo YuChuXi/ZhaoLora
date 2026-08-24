@@ -156,11 +156,7 @@
     copyText().catch(function (e) { toast(String(e.message || e)); });
   });
 
-  /**
-   * 按当前参数把数据集导出为整套训练配置(lora/dataset/prompt)到配置路径.
-   * 引用: tpl btn-export.
-   */
-  async function exportConfig() {
+  async function doExport(overwrite) {
     var target = parseInt(document.getElementById('target-images').value, 10);
     var resText = document.getElementById('resolutions').value.trim();
     var resolutions = [];
@@ -171,11 +167,33 @@
       });
     }
     var dirs = Object.keys(_enabled).filter(function (n) { return _enabled[n]; });
-    var data = await API.request(API.apiPath('/ready/export'), {
+    var url = API.apiPath('/ready/export');
+    if (overwrite) url += '?overwrite=1';
+    var data = await API.request(url, {
       method: 'POST',
       body: JSON.stringify({ dirs: dirs, target_images: target, resolutions: resolutions })
     });
     toast('已导出: ' + data.files.join(', ') + ' → ' + data.out_dir);
+  }
+
+  /**
+   * 按当前参数把数据集导出为整套训练配置(lora/dataset/prompt)到配置路径.
+   * 目标目录已存在配置时(409)先提示确认覆盖.
+   * 引用: tpl btn-export.
+   */
+  async function exportConfig() {
+    try {
+      await doExport(false);
+    } catch (e) {
+      var status = parseInt(String(e.message), 10);
+      if (status === 409) {
+        if (window.confirm('目标目录已存在配置, 是否覆盖写入?')) {
+          await doExport(true);
+          return;
+        }
+      }
+      throw e;
+    }
   }
 
   document.getElementById('btn-export').addEventListener('click', function () {

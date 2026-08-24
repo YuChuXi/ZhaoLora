@@ -67,7 +67,9 @@ def toml(request: Request, body: ReadyBody) -> ReadyTomlResult:
 
 
 @router.post("/export", response_model=TrainExportResult)
-def export(request: Request, body: ReadyBody) -> TrainExportResult:
+def export(
+    request: Request, body: ReadyBody, overwrite: bool = False
+) -> TrainExportResult:
     """按代码内置的 anima 固定配置导出整套训练配置到 ``{LORA_CONFIG_ROOT}/{数据集名}/``.
 
     LORA_CONFIG_ROOT 由 .env 配置; 相对路径按 web_annotator/ 目录解析.
@@ -77,12 +79,13 @@ def export(request: Request, body: ReadyBody) -> TrainExportResult:
     Args:
         request (Request): FastAPI 请求对象, 由路由参数注入.
         body (ReadyBody): 就绪页导出参数(dirs / target_images / resolutions).
+        overwrite (bool): 目标目录已存在可视化配置时, 需置 True 才覆盖写入, 否则返回 409.
 
     Returns:
         TrainExportResult: 导出目录与该目录下实际写入的配置文件文件名.
 
     Raises:
-        HTTPException: 无可导出的图片目录或未配置 LORA_CONFIG_ROOT 时抛错.
+        HTTPException: 无可导出的图片目录、未配置 LORA_CONFIG_ROOT、目标目录已存在配置且未确认覆盖时抛错.
 
     Callers:
         - ``static/js/ready.js:exportConfig``
@@ -105,6 +108,10 @@ def export(request: Request, body: ReadyBody) -> TrainExportResult:
     base = Path(config_root).expanduser()
     base = base if base.is_absolute() else (_APP_DIR / base).resolve()
     out_dir = base / root.name
+    if not overwrite and out_dir.exists() and any(out_dir.iterdir()):
+        raise HTTPException(
+            409, f"目标目录已存在配置({out_dir}), 确认覆盖请重试"
+        )
     out_dir.mkdir(parents=True, exist_ok=True)
     files = build_train_config(
         root,
