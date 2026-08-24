@@ -101,6 +101,8 @@ from services.models.paint import (
     PaintSaveResponse,
     DefaultAlphaResponse,
     PaintImageItem,
+    TemplateItem,
+    TemplatesPayload,
 )
 from services.models.archive import (
     ArchivedTask,
@@ -197,6 +199,8 @@ __all__ = [
     'PaintSaveResponse',
     'DefaultAlphaResponse',
     'PaintImageItem',
+    'TemplateItem',
+    'TemplatesPayload',
     'ArchivedTask',
     'ArchivedListResponse',
     'ScoringDirsResponse',

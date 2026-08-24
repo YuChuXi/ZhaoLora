@@ -15,7 +15,14 @@ from routes.deps import get_runtime, resolve_path
 from services.core.scanner import scan_images
 from services.core.thumbnailer import image_size
 from services.state.mask import has_mask, load_mask, mask_out_path, save_mask
-from services.models import DefaultAlphaResponse, PaintImageItem, PaintSaveResponse
+from services.state.mask_templates import load_templates, save_templates
+from services.models import (
+    DefaultAlphaResponse,
+    PaintImageItem,
+    PaintSaveResponse,
+    TemplateItem,
+    TemplatesPayload,
+)
 
 router = APIRouter(prefix="/paint", tags=["paint"])
 
@@ -297,3 +304,46 @@ def set_config(request: Request, body: PaintConfigBody) -> DefaultAlphaResponse:
     """
     request.app.state.paint_default_alpha = body.default_alpha
     return DefaultAlphaResponse(default_alpha=body.default_alpha)
+
+
+@router.get("/templates", response_model=TemplatesPayload)
+def get_templates(request: Request) -> TemplatesPayload:
+    """读取当前数据集的蒙板模板全量集(含各模板 base64 图案).
+
+    Args:
+        request (Request): FastAPI 请求对象, 由路由参数注入.
+
+    Returns:
+        TemplatesPayload: 模板全量集; 未创建过模板时为空列表.
+
+    Raises:
+        OSError: 模板文件存在但无法读取.
+        JSONDecodeError: 模板文件已损坏.
+
+    Callers:
+        - ``static/js/paint.js:_loadTemplates``
+    """
+    root, _ = _services(request)
+    return TemplatesPayload(templates=[TemplateItem(**t) for t in load_templates(root)])
+
+
+@router.put("/templates", response_model=TemplatesPayload)
+def set_templates(request: Request, body: TemplatesPayload) -> TemplatesPayload:
+    """全量覆盖写入当前数据集的蒙板模板(按数据集持久化到 ``.mask_templates.json``).
+
+    Args:
+        request (Request): FastAPI 请求对象, 由路由参数注入.
+        body (TemplatesPayload): 待写入的模板全量集(≤10).
+
+    Returns:
+        TemplatesPayload: 写入后的模板全量集.
+
+    Raises:
+        OSError: 无法写入.
+
+    Callers:
+        - ``static/js/paint.js:_saveTemplates``
+    """
+    root, _ = _services(request)
+    save_templates(root, [t.model_dump() for t in body.templates])
+    return body

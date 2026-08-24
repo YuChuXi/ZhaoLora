@@ -33,3 +33,32 @@ class PaintImageItem(ImageThumbItem):
 
     has_mask: bool
 
+
+class TemplateItem(BaseModel):
+    """单个蒙板模板项.
+
+    图案以 base64 PNG 编码无损传输(保留捕获时区域内各像素 alpha), 服务端按数据集持久化.
+
+    Callers:
+        - ``routes/alpha_paint.py:get_templates``
+        - ``routes/alpha_paint.py:set_templates``
+    """
+
+    slot: int = Field(ge=0, le=9)
+    w: int = Field(ge=1)
+    h: int = Field(ge=1)
+    image_b64: str
+
+
+class TemplatesPayload(BaseModel):
+    """蒙板模板全量集(服务端按数据集持久化).
+
+    PUT 以全量覆盖写入, GET 返回当前存储的全部模板(含各模板 base64 图案).
+
+    Callers:
+        - ``routes/alpha_paint.py:get_templates``
+        - ``routes/alpha_paint.py:set_templates``
+    """
+
+    templates: list[TemplateItem] = Field(default_factory=list, max_length=10)
+

@@ -12,13 +12,22 @@
   var _scale = 1;
   var _viewW = 0, _viewH = 0, _dpr = 1;
   var _brushRadius = 80, _brushPct = 3, _defaultAlpha = 255;
-  var _tool = 'brush', _isDrawing = false, _isTouch = false, _paintValue = 0;
+  var _isDrawing = false, _isTouch = false, _paintValue = 0;
   // _mouseOrig: 鼠标视口坐标经 screenToOrig 钳位后的原图坐标, 预览与实际绘制共用的单一事实源
   var _rectStart = null, _mouseOrig = null;
   // shift 直线模式: 落笔按下 shift 后, 从落笔点画直线到抬笔点, 终点即 _mouseOrig
   var _lineMode = false, _lineStart = null;
   var _preloadCache = {};
   var _renderScheduled = false;
+
+  // ---- 蒙板模板 ----
+  var _mergeMode = 'min';      // 模板与当前蒙板的合并方式: min(默认) / max
+  var _templates = [];         // 模板槽位(≤10): {data:Uint8ClampedArray, w, h}
+  var _captureMode = false;    // 框选当前图区域保存模板进行中
+  var _captureStart = null;    // 框选起点(orig 坐标)
+  var _floating = null;        // 未确认模板实例: {rx,ry,rw,rh,data,w,h}
+  var _floatDrag = null;       // 模板拖动状态: {mode, sx, sy, rx, ry, rw, rh}
+  var _floatingDrawn = { ref: null, w: 0, h: 0 }; // 已绘制的图案 shape 尺寸, 避免拖动时重复重绘
 
   // ---- WebGL 渲染层: RGB 纹理 + alpha 纹理 shader 合成, 无 2D 中间画布 ----
   var AlphaGL = (function () {
@@ -32,14 +41,10 @@
       'void main(){v_uv=a_pos*0.5+0.5;gl_Position=vec4(a_pos,0.0,1.0);}';
     var FS_DRAW = 'precision mediump float;' +
       'uniform vec2 u_res;uniform vec2 u_center;uniform float u_radius;' +
-      'uniform float u_alpha;uniform int u_shape;uniform vec4 u_rect;' +
-      'varying vec2 v_uv;' +
+      'uniform float u_alpha;varying vec2 v_uv;' +
       'void main(){' +
       'vec2 px=vec2(v_uv.x,1.0-v_uv.y)*u_res;' +
-      'bool inside=false;' +
-      'if(u_shape==0){inside=distance(px,u_center)<=u_radius;}' +
-      'else{inside=px.x>=u_rect.x&&px.x<=u_rect.z&&px.y>=u_rect.y&&px.y<=u_rect.w;}' +
-      'if(inside){gl_FragColor=vec4(1.0,1.0,1.0,u_alpha);}else{discard;}}';
+      'if(distance(px,u_center)<=u_radius){gl_FragColor=vec4(1.0,1.0,1.0,u_alpha);}else{discard;}}';
     var FS_SHOW = 'precision mediump float;' +
       'uniform sampler2D u_rgb;uniform sampler2D u_alpha;' +
       'varying vec2 v_uv;' +
@@ -106,8 +111,6 @@
       DLOC.center = gl.getUniformLocation(progDraw, 'u_center');
       DLOC.radius = gl.getUniformLocation(progDraw, 'u_radius');
       DLOC.alpha = gl.getUniformLocation(progDraw, 'u_alpha');
-      DLOC.shape = gl.getUniformLocation(progDraw, 'u_shape');
-      DLOC.rect = gl.getUniformLocation(progDraw, 'u_rect');
       SLOC.rgb = gl.getUniformLocation(progShow, 'u_rgb');
       SLOC.alpha = gl.getUniformLocation(progShow, 'u_alpha');
     }
@@ -153,25 +156,6 @@
       gl.uniform2f(DLOC.center, cx, cy);
       gl.uniform1f(DLOC.radius, r);
       gl.uniform1f(DLOC.alpha, val / 255);
-      gl.uniform1i(DLOC.shape, 0);
-      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
-      gl.disable(gl.SCISSOR_TEST);
-    }
-
-    /** 画矩形: 矩形区域内 alpha 覆盖为 val. 引用: fillRect. */
-    function fillRect(x0, y0, x1, y1, val) {
-      _toTex();
-      var xa = Math.max(0, Math.min(x0, x1)), xb = Math.min(W - 1, Math.max(x0, x1));
-      var ya = Math.max(0, Math.min(y0, y1)), yb = Math.min(H - 1, Math.max(y0, y1));
-      var sx = Math.max(0, Math.floor(xa));
-      var sy = Math.max(0, Math.floor(H - yb - 1));
-      var sw = Math.min(W - sx, Math.ceil(xb - xa + 2));
-      var sh = Math.min(H - sy, Math.ceil(yb - ya + 2));
-      gl.enable(gl.SCISSOR_TEST);
-      gl.scissor(sx, sy, sw, sh);
-      gl.uniform1f(DLOC.alpha, val / 255);
-      gl.uniform1i(DLOC.shape, 1);
-      gl.uniform4f(DLOC.rect, x0, y0, x1, y1);
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
       gl.disable(gl.SCISSOR_TEST);
     }
@@ -245,7 +229,7 @@
 
     return {
       init: init, resize: resize, loadRGB: loadRGB, loadAlpha: loadAlpha,
-      stampDisc: stampDisc, fillRect: fillRect, clear: clear, fill: fill,
+      stampDisc: stampDisc, clear: clear, fill: fill,
       readAlpha: readAlpha, render: render,
       get canvas() { return canvas; }, get w() { return W; }, get h() { return H; }
     };
@@ -266,6 +250,9 @@
   AlphaGL.init(canvas, 1, 1);
   var wrap = document.getElementById('canvas-wrap');
   var _brushPreview = document.getElementById('brush-preview');
+  var _templateInst = document.getElementById('template-inst');
+  var _captureRectEl = document.getElementById('capture-rect');
+  var _templateDlg = document.getElementById('template-dlg');
   var _bgStyleEl = document.getElementById('bg-style');
   var _bgColorEl = document.getElementById('bg-color');
   if (_bgStyleEl) _bgStyle = _bgStyleEl.value;
@@ -337,6 +324,10 @@
       document.removeEventListener('mouseup', _docMouseUp);
     }
     _rectStart = null; _lineMode = false; _lineStart = null; _mouseOrig = null;
+    // 切图终断模板实例/框选状态, 防止未确认模板或选区残留到新图
+    _floating = null; _floatDrag = null; _captureMode = false; _captureStart = null;
+    if (_floatDrag) { document.removeEventListener('pointermove', _floatMove); document.removeEventListener('pointerup', _floatUp); _floatDrag = null; }
+    _templateInst.style.display = 'none'; _captureRectEl.style.display = 'none';
     var img = _images[idx];
     var token = ++_loadToken;
     // 每次加载持有独立状态副本, 完成后经 _applyCurrent 整体交换到 _cur;
@@ -560,7 +551,7 @@
 
   // ---- 笔刷预览 ----
   function _updateBrushPreview() {
-    if (_tool !== 'brush' || !_mouseOrig || !_cur) {
+    if (!_mouseOrig || !_cur) {
       _brushPreview.style.display = 'none'; return;
     }
     // _mouseOrig 由事件上游 screenToOrig 钳位产出, 与实际绘制位置一致
@@ -599,11 +590,6 @@
     }
   }
 
-  function fillRect(x0, y0, x1, y1, val) {
-    if (!_cur || !_cur.alpha) return;
-    AlphaGL.fillRect(x0, y0, x1, y1, val);
-  }
-
   /**
    * 读取指定鼠标按键对应的 Alpha 值; 左键 0 默认 0, 右键默认 255, 越界钳位到 0-255.
    * @param {number} button 鼠标按键(0=左, 其它=右)
@@ -616,6 +602,338 @@
     return Number.isNaN(v) ? fallback : Math.max(0, Math.min(255, v));
   }
 
+  // ---- 蒙板模板 ----
+
+  /**
+   * 读取当前蒙板 alpha 数组(CSS 坐标, 尺寸 W*H). 引用: 模板捕获/应用.
+   * @returns {Uint8Array|null} 无当前画布时返回 null.
+   */
+  function _readCurrentAlpha() {
+    return _cur && _cur.alpha ? AlphaGL.readAlpha() : null;
+  }
+
+  /**
+   * 由 alpha 数组构造等尺寸 RGBA canvas(RGB 恒 0, alpha 取数组值). 引用: _applyTemplate(重传纹理).
+   * @param {Uint8Array} arr
+   * @returns {HTMLCanvasElement}
+   */
+  function _buildAlphaCanvas(arr) {
+    var c = document.createElement('canvas');
+    c.width = _cur.w; c.height = _cur.h;
+    var ctx = c.getContext('2d');
+    var id = ctx.createImageData(_cur.w, _cur.h);
+    for (var i = 0; i < arr.length; i++) {
+      var j = i * 4;
+      id.data[j] = 0; id.data[j + 1] = 0; id.data[j + 2] = 0; id.data[j + 3] = arr[i];
+    }
+    ctx.putImageData(id, 0, 0);
+    return c;
+  }
+
+  /** 槽位索引 → 键盘键位: 0-8 → '1'-'9', 9 → '0'. 引用: 提示/卡片/快捷键. */
+  function _slotKey(i) { return i === 9 ? '0' : String(i + 1); }
+
+  /**
+   * 从模板管理对话框进入框选模式: 隐藏对话框开启 _captureMode, 随后在画布拖框选区域保存模板.
+   * Callers: 模板管理对话框「框选当前图区域」点击.
+   */
+  function beginTemplateCapture() {
+    if (!_cur || !_cur.alpha) { toast('当前没有可框选的画布'); return; }
+    _templateDlg.hidden = true;
+    _captureMode = true;
+    _templateInst.style.display = 'none';
+    toast('在图上拖拽框选区域保存为模板 (Esc 取消)');
+  }
+
+  /** 取消框选模式并隐藏选区矩形. Callers: keydown Esc. */
+  function cancelTemplateCapture() {
+    _captureMode = false; _captureStart = null;
+    if (_captureRectEl) _captureRectEl.style.display = 'none';
+  }
+
+  /**
+   * 更新框选选区矩形显示(红色虚线, 指针穿过). 引用: _docMouseMove.
+   */
+  function _updateCaptureRect() {
+    if (!_captureMode || !_captureStart || !_mouseOrig || !_cur) { _captureRectEl.style.display = 'none'; return; }
+    var wrapRect = wrap.getBoundingClientRect();
+    var rect = canvas.getBoundingClientRect();
+    var x0 = Math.min(_captureStart[0], _mouseOrig[0]), y0 = Math.min(_captureStart[1], _mouseOrig[1]);
+    var x1 = Math.max(_captureStart[0], _mouseOrig[0]), y1 = Math.max(_captureStart[1], _mouseOrig[1]);
+    _captureRectEl.style.display = 'block';
+    _captureRectEl.style.left = (rect.left + x0 / _cur.w * rect.width - wrapRect.left) + 'px';
+    _captureRectEl.style.top = (rect.top + y0 / _cur.h * rect.height - wrapRect.top) + 'px';
+    _captureRectEl.style.width = ((x1 - x0 + 1) / _cur.w * rect.width) + 'px';
+    _captureRectEl.style.height = ((y1 - y0 + 1) / _cur.h * rect.height) + 'px';
+  }
+
+  /**
+   * 把框选区域作为新模板存入首个空闲槽位(上限 10). 图案保留捕获时区域内各像素的实际 alpha.
+   * Callers: _finishTemplateCapture.
+   * @param {number} x0 框选左上 orig x
+   * @param {number} y0 框选左上 orig y
+   * @param {number} x1 框选右下 orig x
+   * @param {number} y1 框选右下 orig y
+   */
+  function _captureToSlot(x0, y0, x1, y1) {
+    var arr = _readCurrentAlpha();
+    if (!arr) return;
+    var px0 = Math.max(0, Math.floor(Math.min(x0, x1)));
+    var py0 = Math.max(0, Math.floor(Math.min(y0, y1)));
+    var px1 = Math.min(_cur.w, Math.ceil(Math.max(x0, x1)));
+    var py1 = Math.min(_cur.h, Math.ceil(Math.max(y0, y1)));
+    var pw = px1 - px0, ph = py1 - py0;
+    if (pw < 2 || ph < 2) { toast('框选区域过小'); return; }
+    var slot = -1;
+    for (var i = 0; i < 10; i++) { if (!_templates[i]) { slot = i; break; } }
+    if (slot === -1) { toast('模板已满 (最多 10 个)'); return; }
+    var data = new Uint8ClampedArray(pw * ph * 4);
+    for (var y = 0; y < ph; y++) {
+      for (var x = 0; x < pw; x++) {
+        var j = (y * pw + x) * 4;
+        data[j] = data[j + 1] = data[j + 2] = 255;
+        data[j + 3] = arr[(py0 + y) * _cur.w + (px0 + x)];
+      }
+    }
+    _templates[slot] = { data: data, w: pw, h: ph };
+    _renderTemplateCards();
+    toast('已保存模板到槽位 ' + (slot + 1) + ' (按 ' + _slotKey(slot) + ' 放置)');
+    _saveTemplates().catch(function (e) { toast('模板保存失败: ' + String(e.message || e)); });
+  }
+
+  /**
+   * 重建模板管理对话框的 10 个槽位卡片(键位 + 图案预览 + 删除). 引用: 捕获/删除后刷新.
+   */
+  function _renderTemplateCards() {
+    var box = document.getElementById('tmpl-cards');
+    if (!box) return;
+    box.innerHTML = '';
+    for (var i = 0; i < 10; i++) {
+      var cell = document.createElement('div');
+      cell.className = 'tmpl-card' + (_templates[i] ? '' : ' empty');
+      var head = document.createElement('div');
+      head.className = 'key'; head.textContent = '键 ' + _slotKey(i);
+      cell.appendChild(head);
+      if (_templates[i]) {
+        var t = _templates[i];
+        var cv = document.createElement('canvas');
+        cv.width = t.w; cv.height = t.h;
+        var id = cv.getContext('2d').createImageData(t.w, t.h);
+        id.data.set(t.data);
+        cv.getContext('2d').putImageData(id, 0, 0);
+        cell.appendChild(cv);
+        var del = document.createElement('button');
+        del.className = 'del'; del.textContent = '×'; del.title = '删除模板';
+        (function (slot) { del.addEventListener('click', function () { deleteTemplate(slot); }); })(i);
+        cell.appendChild(del);
+      }
+      box.appendChild(cell);
+    }
+  }
+
+  /** 删除指定槽位模板并刷新卡片. Callers: 卡片删除按钮. */
+  function deleteTemplate(slot) {
+    _templates[slot] = null;
+    _renderTemplateCards();
+    _saveTemplates().catch(function (e) { toast('模板保存失败: ' + String(e.message || e)); });
+  }
+
+  /**
+   * 将指定槽位模板作为未确认实例放到画布中心(红色矩形, 可拖动/缩放). 引用: keydown 1-9/0.
+   * @param {number} slot 模板槽位索引 0-9.
+   */
+  function placeTemplate(slot) {
+    var t = _templates[slot];
+    if (!t || !_cur || !_cur.alpha) return;
+    if (_floatDrag) {
+      document.removeEventListener('pointermove', _floatMove);
+      document.removeEventListener('pointerup', _floatUp);
+      _floatDrag = null;
+    }
+    var rw = Math.min(t.w, _cur.w), rh = Math.min(t.h, _cur.h);
+    _floating = { rx: Math.round((_cur.w - rw) / 2), ry: Math.round((_cur.h - rh) / 2), rw: rw, rh: rh,
+      data: t.data, w: t.w, h: t.h };
+    _updateFloatingHTML();
+  }
+
+  /**
+   * 依据未确认实例(orig 坐标)渲染未确认模板: 定位容器并更新位置, 仅当实例或尺寸变化时重绘
+   * 图案形状(洞/空白不涂红). 每个像素红色透明度按需求公式 (模板+255-默认)/2 计算
+   * (0-255 域): 图案 alpha 为 pv 的像素, op=(pv+255-默认alpha)/510; pv=0 时透明.
+   * 引用: placeTemplate/拖动/缩放.
+   */
+  function _updateFloatingHTML() {
+    if (!_floating || !_cur) { _templateInst.style.display = 'none'; return; }
+    var wrapRect = wrap.getBoundingClientRect();
+    var rect = canvas.getBoundingClientRect();
+    var sx = rect.width / _cur.w, sy = rect.height / _cur.h;
+    _templateInst.style.display = 'block';
+    _templateInst.style.left = (rect.left + _floating.rx * sx - wrapRect.left) + 'px';
+    _templateInst.style.top = (rect.top + _floating.ry * sy - wrapRect.top) + 'px';
+    var w = Math.max(1, Math.round(_floating.rw * sx)), h = Math.max(1, Math.round(_floating.rh * sy));
+    _templateInst.style.width = w + 'px';
+    _templateInst.style.height = h + 'px';
+    if (!_floatingDrawn.ref || _floatingDrawn.ref !== _floating || _floatingDrawn.w !== w || _floatingDrawn.h !== h) {
+      _redrawFloatingShape(w, h);
+      _floatingDrawn = { ref: _floating, w: w, h: h };
+    }
+  }
+
+  /**
+   * 把未确认模板的图案以红色形式绘制到容器内 canvas(最近邻缩放, 洞/空白像素透明).
+   * 引用: _updateFloatingHTML.
+   * @param {number} w 容器可视宽(px).
+   * @param {number} h 容器可视高(px).
+   */
+  function _redrawFloatingShape(w, h) {
+    var cv = _templateInst.querySelector('canvas');
+    if (cv.width !== w) cv.width = w;
+    if (cv.height !== h) cv.height = h;
+    var id = cv.getContext('2d').createImageData(w, h);
+    var f = _floating, data = f.data;
+    for (var y = 0; y < h; y++) {
+      var sy2 = Math.min(f.h - 1, Math.max(0, Math.floor(y / h * f.h)));
+      for (var x = 0; x < w; x++) {
+        var sx2 = Math.min(f.w - 1, Math.max(0, Math.floor(x / w * f.w)));
+        var pv = data[(sy2 * f.w + sx2) * 4 + 3];
+        var j = (y * w + x) * 4;
+        id.data[j] = 255;
+        id.data[j + 1] = 0;
+        id.data[j + 2] = 0;
+        id.data[j + 3] = pv > 0 ? Math.round(Math.max(0, Math.min(1, (pv + 255 - _defaultAlpha) / 510)) * 255) : 0;
+      }
+    }
+    cv.getContext('2d').putImageData(id, 0, 0);
+  }
+
+  /** 未确认模板按下: 命中缩放柄则缩放, 否则平移; 记录起点并挂 doc 级跟踪. Callers: template-inst pointerdown. */
+  function _floatPointerDown(e) {
+    e.preventDefault(); e.stopPropagation();
+    if (!_floating || !_cur) return;
+    var target = e.target;
+    var resize = target && target.classList && target.classList.contains('tmpl-resize');
+    _floatDrag = { mode: resize ? 'resize' : 'move', sx: e.clientX, sy: e.clientY,
+      rx: _floating.rx, ry: _floating.ry, rw: _floating.rw, rh: _floating.rh };
+    document.addEventListener('pointermove', _floatMove);
+    document.addEventListener('pointerup', _floatUp);
+  }
+
+  /** 未确认模板拖动中: move 平移 / resize 两轴独立缩放(任意比例), 均在 orig 域运算避免缩放的像素累积误差. Callers: document pointermove. */
+  function _floatMove(e) {
+    var d = _floatDrag;
+    if (!d || !_cur) return;
+    var rect = canvas.getBoundingClientRect();
+    var sx = rect.width / _cur.w, sy = rect.height / _cur.h;
+    if (d.mode === 'move') {
+      _floating.rx = Math.max(0, Math.min(_cur.w - d.rw, d.rx + (e.clientX - d.sx) / sx));
+      _floating.ry = Math.max(0, Math.min(_cur.h - d.rh, d.ry + (e.clientY - d.sy) / sy));
+    } else {
+      _floating.rw = Math.max(4, Math.min(_cur.w - d.rx, d.rw + (e.clientX - d.sx) / sx));
+      _floating.rh = Math.max(4, Math.min(_cur.h - d.ry, d.rh + (e.clientY - d.sy) / sy));
+    }
+    _updateFloatingHTML();
+  }
+
+  /** 未确认模板拖动结束: 卸载 doc 级跟踪. Callers: document pointerup. */
+  function _floatUp() {
+    document.removeEventListener('pointermove', _floatMove);
+    document.removeEventListener('pointerup', _floatUp);
+    _floatDrag = null;
+  }
+
+  /**
+   * 应用未确认模板: 读当前蒙板, 将模板图案(最近邻缩放)按 _mergeMode(min/max) 合并到目标矩形,
+   * 重建 alpha 纹理并重绘. 引用: 模板实例双击.
+   */
+  function _applyTemplate() {
+    if (!_floating || !_cur) return;
+    var arr = _readCurrentAlpha();
+    if (!arr) return;
+    var f = _floating;
+    var x0 = Math.max(0, Math.floor(f.rx)), y0 = Math.max(0, Math.floor(f.ry));
+    var x1 = Math.min(_cur.w, Math.ceil(f.rx + f.rw)), y1 = Math.min(_cur.h, Math.ceil(f.ry + f.rh));
+    var tw = Math.max(1, x1 - x0), th = Math.max(1, y1 - y0);
+    for (var py = y0; py < y1; py++) {
+      for (var px = x0; px < x1; px++) {
+        var sx = Math.min(f.w - 1, Math.max(0, Math.floor((px - x0) * f.w / tw)));
+        var sy = Math.min(f.h - 1, Math.max(0, Math.floor((py - y0) * f.h / th)));
+        var pv = f.data[(sy * f.w + sx) * 4 + 3];
+        var cur = arr[py * _cur.w + px];
+        arr[py * _cur.w + px] = _mergeMode === 'max' ? Math.max(cur, pv) : Math.min(cur, pv);
+      }
+    }
+    AlphaGL.loadAlpha(_buildAlphaCanvas(arr));
+    _floating = null; _floatDrag = null;
+    _templateInst.style.display = 'none';
+    _cur.modified = true;
+    _scheduleRender();
+  }
+
+  /** 把模板图案化为 base64 PNG(带上限 RGB=255/A=alpha, 无损持久化). 引用: _saveTemplates. */
+  function _templateToB64(t) {
+    var c = document.createElement('canvas');
+    c.width = t.w; c.height = t.h;
+    var ctx = c.getContext('2d');
+    var id = ctx.createImageData(t.w, t.h);
+    id.data.set(t.data);
+    ctx.putImageData(id, 0, 0);
+    return c.toDataURL('image/png').replace(/^data:image\/png;base64,/, '');
+  }
+
+  /**
+   * 解码服务端返回的 base64 PNG 模板项为本地图案数据. 引用: _loadTemplates.
+   * @param {object} item 服务端模板项 {slot, w, h, image_b64}.
+   * @returns {Promise<object>} 本地模板 {data, w, h}.
+   */
+  async function _b64ToTemplate(item) {
+    var c = document.createElement('canvas');
+    c.width = item.w; c.height = item.h;
+    var img = new Image();
+    img.src = 'data:image/png;base64,' + item.image_b64;
+    await img.decode();
+    c.getContext('2d').drawImage(img, 0, 0);
+    return { data: c.getContext('2d').getImageData(0, 0, item.w, item.h).data,
+      w: item.w, h: item.h };
+  }
+
+  /**
+   * 把全部非空槽位模板持久化到服务端(按数据集全量覆盖). 引用: _captureToSlot/deleteTemplate.
+   */
+  async function _saveTemplates() {
+    var list = [];
+    for (var i = 0; i < 10; i++) {
+      var t = _templates[i];
+      if (!t) continue;
+      list.push({ slot: i, w: t.w, h: t.h, image_b64: _templateToB64(t) });
+    }
+    await API.request(API.apiPath('/paint/templates'), {
+      method: 'PUT',
+      body: JSON.stringify({ templates: list }),
+    });
+  }
+
+  /**
+   * 从服务端按数据集加载蒙板模板并刷新槽位卡片. 引用: 页面初始化.
+   */
+  async function _loadTemplates() {
+    var res = await API.request(API.apiPath('/paint/templates'));
+    _templates = new Array(10);
+    for (var i = 0; i < res.templates.length; i++) {
+      var item = res.templates[i];
+      if (item.slot < 0 || item.slot > 9) continue;
+      _templates[item.slot] = await _b64ToTemplate(item);
+    }
+    _renderTemplateCards();
+  }
+
+  /** 框选结束: 保存模板至槽位并退出框选模式. Callers: _docMouseUp. */
+  function _finishTemplateCapture() {
+    var s = _captureStart, e = _mouseOrig;
+    _captureMode = false; _captureStart = null;
+    if (_captureRectEl) _captureRectEl.style.display = 'none';
+    if (s && e) _captureToSlot(s[0], s[1], e[0], e[1]);
+  }
+
   // ---- 触屏 ----
   canvas.addEventListener('touchstart', function(e) {
     e.preventDefault(); if (!_cur || !_cur.alpha || e.touches.length !== 1) return;
@@ -623,7 +941,7 @@
     var t = e.touches[0];
     var pos = screenToOrig(t.clientX, t.clientY);
     _paintValue = _alphaFor(0);
-    if (_tool === 'brush') stampDisc(pos[0], pos[1], _brushRadius, _paintValue);
+    stampDisc(pos[0], pos[1], _brushRadius, _paintValue);
     _mouseOrig = pos;
     _rectStart = pos; _scheduleRender();
   }, { passive: false });
@@ -633,13 +951,11 @@
     _mouseOrig = screenToOrig(t.clientX, t.clientY);
     _updateBrushPreview();
     var pos = _mouseOrig;
-    if (_tool === 'brush' && _rectStart) { strokeLine(_rectStart[0], _rectStart[1], pos[0], pos[1], _brushRadius, _paintValue); _rectStart = pos; }
+    if (_rectStart) { strokeLine(_rectStart[0], _rectStart[1], pos[0], pos[1], _brushRadius, _paintValue); _rectStart = pos; }
     _scheduleRender();
   }, { passive: false });
   canvas.addEventListener('touchend', function(e) {
     e.preventDefault(); if (!_isTouch || !_isDrawing || !_cur || !_cur.alpha) return;
-    // 终点沿用 _mouseOrig(最后 touchmove 的钳位坐标), 与实际预览一致
-    if (_tool === 'rect' && _rectStart && _mouseOrig) fillRect(_rectStart[0], _rectStart[1], _mouseOrig[0], _mouseOrig[1], _paintValue);
     _isDrawing = false; _isTouch = false; _rectStart = null; _mouseOrig = null; _brushPreview.style.display = 'none'; _cur.modified = true; _scheduleRender();
   }, { passive: false });
   canvas.addEventListener('touchcancel', function() { _isDrawing = false; _isTouch = false; _rectStart = null; _mouseOrig = null; _brushPreview.style.display = 'none'; });
@@ -648,8 +964,15 @@
     _isDrawing = true;
     _mouseOrig = screenToOrig(e.clientX, e.clientY);
     var pos = _mouseOrig;
+    if (_captureMode) {
+      // 框选模板捕获: 记录起点并挂 doc 级跟踪, 抬笔时经 _finishTemplateCapture 存入槽位
+      _captureStart = pos;
+      document.addEventListener('mousemove', _docMouseMove);
+      document.addEventListener('mouseup', _docMouseUp);
+      return;
+    }
     _paintValue = _alphaFor(e.button);
-    if (_tool === 'brush' && e.shiftKey) {
+    if (e.shiftKey) {
       // shift 直线: 只记录起点, 橡皮筋预览, 抬笔时一次 strokeLine 画落笔到抬笔的直线
       _lineMode = true; _lineStart = pos;
       _updateLinePreview();
@@ -657,7 +980,7 @@
       document.addEventListener('mouseup', _docMouseUp);
       return;
     }
-    if (_tool === 'brush') stampDisc(pos[0], pos[1], _brushRadius, _paintValue);
+    stampDisc(pos[0], pos[1], _brushRadius, _paintValue);
     _rectStart = pos; _scheduleRender();
     // 按住鼠标后用 document 事件跟踪, 离开画布仍可绘制
     document.addEventListener('mousemove', _docMouseMove);
@@ -677,20 +1000,26 @@
   function _docMouseMove(e) {
     _mouseOrig = screenToOrig(e.clientX, e.clientY);
     if (!_isDrawing || !_cur || !_cur.alpha) return;
+    if (_captureMode) { _updateCaptureRect(); return; }
     _updateBrushPreview();
     // 直线模式只改预览不落笔画布: 同步刷新红线与笔刷预览, 不经 rAF 避免两者错帧
     if (_lineMode) { _updateLinePreview(); return; }
     var pos = _mouseOrig;
-    if (_tool === 'brush' && _rectStart) { strokeLine(_rectStart[0], _rectStart[1], pos[0], pos[1], _brushRadius, _paintValue); _rectStart = pos; }
+    if (_rectStart) { strokeLine(_rectStart[0], _rectStart[1], pos[0], pos[1], _brushRadius, _paintValue); _rectStart = pos; }
     _scheduleRender();
   }
   function _docMouseUp() {
     if (!_isDrawing || !_cur || !_cur.alpha || !_mouseOrig) return;
+    if (_captureMode) {
+      _finishTemplateCapture();
+      _isDrawing = false; _rectStart = null; _mouseOrig = null;
+      document.removeEventListener('mousemove', _docMouseMove);
+      document.removeEventListener('mouseup', _docMouseUp);
+      return;
+    }
     // 终点统一沿用 _mouseOrig(最后 mousemove 的钳位坐标), 与红线/笔刷预览同一条数据流
     if (_lineMode) {
       strokeLine(_lineStart[0], _lineStart[1], _mouseOrig[0], _mouseOrig[1], _brushRadius, _paintValue);
-    } else if (_tool === 'rect' && _rectStart) {
-      fillRect(_rectStart[0], _rectStart[1], _mouseOrig[0], _mouseOrig[1], _paintValue);
     }
     _isDrawing = false; _rectStart = null; _lineMode = false; _lineStart = null; _mouseOrig = null;
     _brushPreview.style.display = 'none'; _cur.modified = true; _scheduleRender();
@@ -774,8 +1103,6 @@
     onSelect: function (i) { loadIndex(i); },
   });
   document.getElementById('seg-pos').addEventListener('click', function () { _strip.toggle(); });
-  var toolSel = document.getElementById('tool-select');
-  if (toolSel) toolSel.addEventListener('change', function() { _tool = this.value; _brushPreview.style.display = 'none'; });
   document.getElementById('brush-slider').addEventListener('input', function() { _brushPct = parseFloat(this.value); _calcBrush(); _updateBrushUI(); _updateBrushPreview(); if (_lineMode) _updateLinePreview(); });
   document.getElementById('bg-style').addEventListener('change', function() {
     _bgStyle = this.value;
@@ -791,7 +1118,7 @@
     if (_cur && _cur.alpha) { AlphaGL.clear(); if (_defaultAlpha > 0) AlphaGL.fill(_defaultAlpha); _cur.modified = true; _scheduleRender(); }
     saveConfig();
   });
-  document.getElementById('default-alpha').addEventListener('change', function() { saveConfig(); _applyBackdrop(); });
+  document.getElementById('default-alpha').addEventListener('change', function() { saveConfig(); _applyBackdrop(); _updateFloatingHTML(); });
   // 快捷交换左右键 Alpha
   document.getElementById('btn-swap-alpha').addEventListener('click', function() {
     var left = document.getElementById('left-alpha');
@@ -801,8 +1128,37 @@
     right.value = tmp;
   });
 
+  // ---- 蒙板模板绑定 ----
+  // 未确认模板实例: 拖动/缩放 + 双击应用
+  _templateInst.addEventListener('pointerdown', _floatPointerDown);
+  _templateInst.addEventListener('dblclick', function(e) {
+    e.preventDefault(); e.stopPropagation();
+    if (_floating && _cur) _applyTemplate();
+  });
+  // 工具栏「模板」按钮打开管理对话框
+  document.getElementById('btn-template').addEventListener('click', function() {
+    if (_templateDlg.hidden) { _renderTemplateCards(); _templateDlg.hidden = false; }
+  });
+  document.getElementById('tmpl-close').addEventListener('click', function() { _templateDlg.hidden = true; });
+  document.getElementById('tmpl-capture').addEventListener('click', beginTemplateCapture);
+  // 默认合并方式: min(默认) / max
+  document.querySelectorAll('input[name="merge-mode"]').forEach(function(el) {
+    el.addEventListener('change', function() { if (el.checked) _mergeMode = el.value; });
+  });
+
   document.addEventListener('keydown', function(e) {
-    if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || e.target.tagName === 'TEXTAREA') return;
+    // Esc 取消模板框选
+    if (e.key === 'Escape' && _captureMode) { cancelTemplateCapture(); toast('已取消框选'); return; }
+    // 快捷键 1-9 / 0 放置对应槽位模板到画布
+    var slot = null;
+    if (e.key.length === 1 && e.key >= '1' && e.key <= '9') slot = parseInt(e.key, 10) - 1;
+    else if (e.key === '0') slot = 9;
+    if (slot !== null) {
+      if (!_captureMode && _templates[slot]) placeTemplate(slot);
+      e.preventDefault();
+      return;
+    }
     if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') { e.preventDefault(); goPrev(); }
     else if (e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D') { e.preventDefault(); goNext(); }
     else if (e.key === 's' || e.key === 'S') { e.preventDefault(); doSave(true); }
@@ -964,5 +1320,5 @@
     });
   }
 
-  loadConfig().then(loadImages);
+  loadConfig().then(function() { Promise.all([loadImages(), _loadTemplates()]); });
 })();
