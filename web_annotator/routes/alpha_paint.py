@@ -26,8 +26,35 @@ from services.models import (
 
 router = APIRouter(prefix="/paint", tags=["paint"])
 
-# 蒙版页视觉预览长边上限(px): 预览仅用于展示, 压缩后可大幅降低传输量; 蒙版仍按原分辨率
+# 蒙版页视觉预览长边上限(px): 预览仅用于展示, 压缩后降低传输量
 _PAINT_PREVIEW_MAX = 2048
+# 蒙板工作分辨率上限(px): 超大原图不直接按原分辨率开 WebGL 画布, 否则超出纹理/视口
+# 上限会只渲染局部、画笔错位. 列表尺寸/视觉/蒙版/画布四者统一钳制到该长边.
+_PAINT_CANVAS_MAX = 2048
+
+
+def _canvas_size(path: Path) -> tuple[int, int]:
+    """钳制到蒙板工作分辨率的尺寸(长边不超过 _PAINT_CANVAS_MAX).
+
+    Args:
+        path: 图片绝对路径.
+
+    Returns:
+        tuple[int, int]: 钳制后的 (width, height); 原图长边未超限时即原尺寸.
+
+    Raises:
+        OSError: 无法读取图片尺寸.
+
+    Callers:
+        - ``routes/alpha_paint.py:list_paint_images``
+        - ``routes/alpha_paint.py:get_existing_mask``
+    """
+    w, h = image_size(path)
+    longest = max(w, h)
+    if longest <= _PAINT_CANVAS_MAX:
+        return w, h
+    s = _PAINT_CANVAS_MAX / longest
+    return max(1, round(w * s)), max(1, round(h * s))
 
 
 class PaintConfigBody(BaseModel):
@@ -78,7 +105,7 @@ def list_paint_images(request: Request, dir: str = "main") -> list[PaintImageIte
     images = scan_images(root / subdir, path_prefix=subdir)
     result: list[PaintImageItem] = []
     for img in images:
-        w, h = image_size(root / img.path)
+        w, h = _canvas_size(root / img.path)
         result.append(
             PaintImageItem(
                 path=img.path,
@@ -150,12 +177,17 @@ def get_existing_mask(request: Request, path: str = Query(...)) -> Response:
     src = resolve_path(root, path)
     if not src.is_file():
         raise HTTPException(404, "Image not found")
-    alpha = load_mask(mask_dir, path, Image.open(src).size)
-    if alpha is None:
+    mask_path = mask_out_path(mask_dir, path)
+    if not mask_path.is_file():
         raise HTTPException(404, "No mask saved")
-    h, w = alpha.shape
-    white = Image.new("L", (w, h), 255)
-    mask_img = Image.merge("RGBA", (white, white, white, Image.fromarray(alpha, mode="L")))
+    im = Image.open(mask_path)
+    a = im if im.mode == "L" else im.convert("RGBA").getchannel("A")
+    cw, ch = _canvas_size(src)
+    if a.size != (cw, ch):
+        a = a.resize((cw, ch), Image.Resampling.LANCZOS)
+    mask_img = Image.merge(
+        "RGBA", (Image.new("L", a.size, 255), Image.new("L", a.size, 255),
+                 Image.new("L", a.size, 255), a))
     buf = io.BytesIO()
     mask_img.save(buf, format="PNG")
     buf.seek(0)
@@ -266,9 +298,16 @@ async def upload_mask(request: Request, path: str = Query(...)) -> PaintSaveResp
         raise HTTPException(404, f"Image not found: {path}")
     body = await request.body()
     mask_img = Image.open(io.BytesIO(body))
-    alpha = np.array(mask_img.getchannel("A"), dtype=np.uint8)
-    save_mask(mask_dir, path, alpha)
-    return PaintSaveResponse(saved=str(Path(path).with_suffix(".png")), size=list(Image.open(src).size))
+    a = mask_img.getchannel("A")
+    with Image.open(src) as im:
+        size = im.size
+    # 前端画布运行在钳制分辨率(工作视图), 但磁盘存储契约必须为原图尺寸:
+    # serve_mask_preview / SAM3 均按原图尺寸 load_mask 校验, 尺寸不符会返回空或退化为全 255.
+    # 故上传时升采样回原尺寸存储, 读取时再降采样到钳制分辨率供画布, 双向显式转换.
+    if a.size != size:
+        a = a.resize(size, Image.Resampling.LANCZOS)
+    save_mask(mask_dir, path, np.array(a, dtype=np.uint8))
+    return PaintSaveResponse(saved=str(Path(path).with_suffix(".png")), size=list(size))
 
 
 @router.get("/config")

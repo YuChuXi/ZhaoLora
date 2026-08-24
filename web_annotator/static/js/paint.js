@@ -52,7 +52,7 @@
       'vec4 rgb=texture2D(u_rgb,v_uv);' +
       'float a=texture2D(u_alpha,v_uv).a;' +
       'gl_FragColor=vec4(rgb.rgb,a);}';
-    // 蒙板合并(模板贴回当前蒙板的内部分叉): u_cur 为拷贝后的当前蒙板副本, u_tpl 为模板图案,
+    // 蒙板合并(模板贴回当前蒙板): u_cur 为拷贝后的当前蒙板副本, u_tpl 为模板图案,
     // u_rect 为模板矩形(画布顶部坐标), 片段按 min/max 合成. 配合 scissor 只写交集矩形.
     var FS_COPY = 'precision mediump float;' +
       'uniform sampler2D u_src;varying vec2 v_uv;' +
@@ -281,6 +281,7 @@
      */
     function applyTemplate(x0, y0, tw, th, rx, ry, rw, rh, tplData, tplW, tplH, isMax) {
       // 1) 上传模板图案纹理(v=0 对应数据首行=模板顶部, 与画布同向, 故片段 y 不必翻转)
+      gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
       gl.bindTexture(gl.TEXTURE_2D, texTpl);
       gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, tplW, tplH, 0, gl.RGBA, gl.UNSIGNED_BYTE, tplData);
       // 2) 全屏拷贝当前蒙板 texAlpha → texMerge, 作为合并采样源(规避同纹理读写冲突)
@@ -564,7 +565,7 @@
     var results = await Promise.all([visualP, maskP]);
     var visualEl = await _decodeImage(results[0]);
     var maskEl = results[1] ? await _decodeImage(results[1]) : null;
-    // 原图尺寸取自图片列表(预览已压缩, 蒙版须按原尺寸绘制)
+    // 蒙板工作尺寸取自列表(后端已钳制到预览量级); 视觉/蒙版/画布四者同尺寸
     return { img: visualEl, mask: maskEl, w: img.width, h: img.height };
   }
 
@@ -996,32 +997,11 @@
       return;
     }
     var tw = x1 - x0, th = y1 - y0;
-    // 预计算每列/每行的最近邻采样索引(基于 orig 绝对坐标)以省去逐像素浮点运算.
-    // 必须以模板在 orig 域的起始 rx/ry 为采样基准, 而非应用区局部偏移 k:
-    // 模板部分拖出画布时二者不再成正比, 用局部 k 会带来源错位,
-    // 使超界部分在应用时被错误平移(模板被整块"压回"画布内且形状偏移).
-    var mapX = new Int32Array(tw), mapY = new Int32Array(th);
-    for (var k = 0; k < tw; k++) {
-      var px = x0 + k;
-      mapX[k] = Math.min(f.w - 1, Math.max(0, Math.floor((px - f.rx) / f.rw * f.w)));
-    }
-    for (var k2 = 0; k2 < th; k2++) {
-      var py = y0 + k2;
-      mapY[k2] = Math.min(f.h - 1, Math.max(0, Math.floor((py - f.ry) / f.rh * f.h)));
-    }
-    var isMax = _mergeMode === 'max';
-    // 仅回读/改写模板与画布的交集矩形, 避免整幅画布的 readPixels 与 texImage2D 往返开销
-    var local = AlphaGL.readAlphaRegion(x0, y0, tw, th);
-    for (var r = 0; r < th; r++) {
-      var prow = mapY[r] * f.w;
-      var li = r * tw;
-      for (var c = 0; c < tw; c++) {
-        var pv = f.data[(prow + mapX[c]) * 4 + 3];
-        var idx = li + c;
-        local[idx] = isMax ? (local[idx] > pv ? local[idx] : pv) : (local[idx] < pv ? local[idx] : pv);
-      }
-    }
-    AlphaGL.applyAlphaRegion(x0, y0, tw, th, local);
+    // 由 GPU 片元着色器按模板矩形(f.rx..+f.rw)采样合成, 只对交集矩形写回;
+    // 模板矩形以 orig 起始坐标为采样基准, 超界部分自然由交集裁剪.
+    // 模板完全在画布内时 tx≈rx、tw≈rw, 与画布外的采样保持一致, 无位置偏移.
+    AlphaGL.applyTemplate(x0, y0, tw, th, f.rx, f.ry, f.rw, f.rh,
+      f.data, f.w, f.h, _mergeMode === 'max');
     _floating = null; _floatDrag = null;
     _templateInst.style.display = 'none';
     _cur.modified = true;
