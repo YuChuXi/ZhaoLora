@@ -32,7 +32,7 @@
   // ---- WebGL 渲染层: RGB 纹理 + alpha 纹理 shader 合成, 无 2D 中间画布 ----
   var AlphaGL = (function () {
     var gl = null, canvas = null;
-    var texRGB = null, texAlpha = null, fbo = null;
+    var texRGB = null, texAlpha = null, fbo = null, _rawBuf = null;
     var W = 0, H = 0;
     var progDraw = null, progShow = null, quadBuf = null;
     var DLOC = {}, SLOC = {};
@@ -195,6 +195,24 @@
     }
 
     /**
+     * 直接以 Canvas 坐标系 alpha 数组上传纹理(复用内部 RGBA 缓冲), 免去构建 canvas 与 WebGL 回读解码.
+     * 传入 alpha 为 y=0 顶部在前的 Canvas 顺序; 因 UNPACK_FLIP_Y 仅对 DOM 源生效, 手动按倒序写入以复现
+     * loadAlpha(canvas) 的纹理行序. 引用: _applyTemplate/_initAlphaCanvas 的原始数组上传可复用.
+     * @param {Uint8Array} alpha W*H 的 alpha 值(Canvas 坐标, y=0 顶部).
+     */
+    function loadAlphaRaw(alpha) {
+      var n = W * H;
+      if (!_rawBuf || _rawBuf.length !== n * 4) _rawBuf = new Uint8Array(n * 4);
+      var d = _rawBuf;
+      for (var y = 0; y < H; y++) {
+        var src = (H - 1 - y) * W, dst = y * W * 4;
+        for (var x = 0; x < W; x++) d[dst + x * 4 + 3] = alpha[src + x];
+      }
+      gl.bindTexture(gl.TEXTURE_2D, texAlpha);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, W, H, 0, gl.RGBA, gl.UNSIGNED_BYTE, d);
+    }
+
+    /**
      * 读取 alpha 通道数据(y 翻转为 Canvas 坐标). 引用: doSave.
      * @returns {Uint8Array} W*H 的 alpha 值数组.
      */
@@ -228,7 +246,7 @@
     }
 
     return {
-      init: init, resize: resize, loadRGB: loadRGB, loadAlpha: loadAlpha,
+      init: init, resize: resize, loadRGB: loadRGB, loadAlpha: loadAlpha, loadAlphaRaw: loadAlphaRaw,
       stampDisc: stampDisc, clear: clear, fill: fill,
       readAlpha: readAlpha, render: render,
       get canvas() { return canvas; }, get w() { return W; }, get h() { return H; }
@@ -612,24 +630,6 @@
     return _cur && _cur.alpha ? AlphaGL.readAlpha() : null;
   }
 
-  /**
-   * 由 alpha 数组构造等尺寸 RGBA canvas(RGB 恒 0, alpha 取数组值). 引用: _applyTemplate(重传纹理).
-   * @param {Uint8Array} arr
-   * @returns {HTMLCanvasElement}
-   */
-  function _buildAlphaCanvas(arr) {
-    var c = document.createElement('canvas');
-    c.width = _cur.w; c.height = _cur.h;
-    var ctx = c.getContext('2d');
-    var id = ctx.createImageData(_cur.w, _cur.h);
-    for (var i = 0; i < arr.length; i++) {
-      var j = i * 4;
-      id.data[j] = 0; id.data[j + 1] = 0; id.data[j + 2] = 0; id.data[j + 3] = arr[i];
-    }
-    ctx.putImageData(id, 0, 0);
-    return c;
-  }
-
   /** 槽位索引 → 键盘键位: 0-8 → '1'-'9', 9 → '0'. 引用: 提示/卡片/快捷键. */
   function _slotKey(i) { return i === 9 ? '0' : String(i + 1); }
 
@@ -758,8 +758,8 @@
 
   /**
    * 依据未确认实例(orig 坐标)渲染未确认模板: 定位容器并更新位置, 仅当实例或尺寸变化时重绘
-   * 图案形状(洞/空白不涂红). 每个像素红色透明度按需求公式 (模板+255-默认)/2 计算
-   * (0-255 域): 图案 alpha 为 pv 的像素, op=(pv+255-默认alpha)/510; pv=0 时透明.
+   * 图案. 每个像素红色 alpha = abs(图案alpha - 默认alpha)/2: 与默认填充一致处透明,
+   * 差异越大越红(量化应用该模板对蒙板的改动程度).
    * 引用: placeTemplate/拖动/缩放.
    */
   function _updateFloatingHTML() {
@@ -780,7 +780,8 @@
   }
 
   /**
-   * 把未确认模板的图案以红色形式绘制到容器内 canvas(最近邻缩放, 洞/空白像素透明).
+   * 把未确认模板的图案以红色形式绘制到容器内 canvas(最近邻缩放).
+   * 每个像素 alpha = abs(图案alpha - 默认alpha)/2, 量化该处被模板改动的程度.
    * 引用: _updateFloatingHTML.
    * @param {number} w 容器可视宽(px).
    * @param {number} h 容器可视高(px).
@@ -800,38 +801,85 @@
         id.data[j] = 255;
         id.data[j + 1] = 0;
         id.data[j + 2] = 0;
-        id.data[j + 3] = pv > 0 ? Math.round(Math.max(0, Math.min(1, (pv + 255 - _defaultAlpha) / 510)) * 255) : 0;
+        id.data[j + 3] = Math.round(Math.abs(pv - _defaultAlpha) / 2);
       }
     }
     cv.getContext('2d').putImageData(id, 0, 0);
   }
 
-  /** 未确认模板按下: 命中缩放柄则缩放, 否则平移; 记录起点并挂 doc 级跟踪. Callers: template-inst pointerdown. */
+  /** 未确认模板按下: 命中缩放柄(data-resize)则缩放, 否则平移; 记录起点并挂 doc 级跟踪. Callers: template-inst pointerdown. */
+  /** 缩放手柄映射: 每个手柄对应一个可动的水平边(l=左/r=右/null=不动)与垂直边(t=上/b=下/null=不动). 引用: _floatPointerDown. */
+  var _RESIZE_HV = { nw: { h: 'l', v: 't' }, n: { h: null, v: 't' }, ne: { h: 'r', v: 't' },
+    w: { h: 'l', v: null }, e: { h: 'r', v: null }, sw: { h: 'l', v: 'b' }, s: { h: null, v: 'b' }, se: { h: 'r', v: 'b' } };
+
   function _floatPointerDown(e) {
     e.preventDefault(); e.stopPropagation();
     if (!_floating || !_cur) return;
-    var target = e.target;
-    var resize = target && target.classList && target.classList.contains('tmpl-resize');
-    _floatDrag = { mode: resize ? 'resize' : 'move', sx: e.clientX, sy: e.clientY,
-      rx: _floating.rx, ry: _floating.ry, rw: _floating.rw, rh: _floating.rh };
+    var hv = null;
+    var t = e.target;
+    if (t && t.getAttribute) {
+      var rk = t.getAttribute('data-resize');
+      if (rk && _RESIZE_HV[rk]) hv = _RESIZE_HV[rk];
+    }
+    _floatDrag = { mode: hv ? 'resize' : 'move', sx: e.clientX, sy: e.clientY,
+      x0: _floating.rx, y0: _floating.ry, w0: _floating.rw, h0: _floating.rh,
+      h: hv ? hv.h : null, v: hv ? hv.v : null };
     document.addEventListener('pointermove', _floatMove);
     document.addEventListener('pointerup', _floatUp);
   }
 
-  /** 未确认模板拖动中: move 平移 / resize 两轴独立缩放(任意比例), 均在 orig 域运算避免缩放的像素累积误差. Callers: document pointermove. */
+  /** 未确认模板拖动中: move 平移(可超出画布) / resize 按手柄锚定对边缩放(按住 Shift 等比例), 均在 orig 域运算避免缩放的像素累积误差. Callers: document pointermove. */
   function _floatMove(e) {
     var d = _floatDrag;
     if (!d || !_cur) return;
     var rect = canvas.getBoundingClientRect();
     var sx = rect.width / _cur.w, sy = rect.height / _cur.h;
+    var ox = (e.clientX - d.sx) / sx, oy = (e.clientY - d.sy) / sy;
     if (d.mode === 'move') {
-      _floating.rx = Math.max(0, Math.min(_cur.w - d.rw, d.rx + (e.clientX - d.sx) / sx));
-      _floating.ry = Math.max(0, Math.min(_cur.h - d.rh, d.ry + (e.clientY - d.sy) / sy));
+      _floating.rx = d.x0 + ox;
+      _floating.ry = d.y0 + oy;
+    } else if (e.shiftKey) {
+      var r = _floatShiftResize(d, ox, oy);
+      _floating.rx = r.rx; _floating.ry = r.ry; _floating.rw = r.rw; _floating.rh = r.rh;
     } else {
-      _floating.rw = Math.max(4, Math.min(_cur.w - d.rx, d.rw + (e.clientX - d.sx) / sx));
-      _floating.rh = Math.max(4, Math.min(_cur.h - d.ry, d.rh + (e.clientY - d.sy) / sy));
+      var right = d.x0 + d.w0, bottom = d.y0 + d.h0;
+      if (d.h === null) { _floating.rx = d.x0; _floating.rw = d.w0; }
+      else if (d.h === 'l') { _floating.rx = Math.min(d.x0 + ox, right - 4); _floating.rw = right - _floating.rx; }
+      else { _floating.rx = d.x0; _floating.rw = Math.max(4, d.w0 + ox); }
+      if (d.v === null) { _floating.ry = d.y0; _floating.rh = d.h0; }
+      else if (d.v === 't') { _floating.ry = Math.min(d.y0 + oy, bottom - 4); _floating.rh = bottom - _floating.ry; }
+      else { _floating.ry = d.y0; _floating.rh = Math.max(4, d.h0 + oy); }
     }
     _updateFloatingHTML();
+  }
+
+  /**
+   * Shift 等比例缩放: 以对边(或对边中心)为锚点, 按指针距锚点的主导轴距离推算宽高比不变的尺寸.
+   * 引用: _floatMove.
+   * @param {object} d 拖拽状态(d.h/d.v 为该手柄可动水平/垂直边).
+   * @param {number} ox orig 域水平位移.
+   * @param {number} oy orig 域垂直位移.
+   * @returns {{rx:number,ry:number,rw:number,rh:number}} 新几何(orig 域).
+   */
+  function _floatShiftResize(d, ox, oy) {
+    var ratio = d.w0 / d.h0;
+    var right = d.x0 + d.w0, bottom = d.y0 + d.h0;
+    var ax, ay, mx, my;
+    if (d.h === 'l') { ax = right; mx = d.x0 + ox; }
+    else if (d.h === 'r') { ax = d.x0; mx = right + ox; }
+    else { ax = d.x0 + d.w0 / 2; mx = null; }
+    if (d.v === 't') { ay = bottom; my = d.y0 + oy; }
+    else if (d.v === 'b') { ay = d.y0; my = bottom + oy; }
+    else { ay = d.y0 + d.h0 / 2; my = null; }
+    var w, h;
+    if (mx !== null && my !== null) {
+      if (Math.abs(mx - ax) * ratio > Math.abs(my - ay)) { w = Math.max(4, Math.abs(mx - ax)); h = w / ratio; }
+      else { h = Math.max(4, Math.abs(my - ay)); w = h * ratio; }
+    } else if (my !== null) { h = Math.max(4, Math.abs(my - ay)); w = h * ratio; }
+    else { w = Math.max(4, Math.abs(mx - ax)); h = w / ratio; }
+    var rx = d.h === 'l' ? right - w : d.h === 'r' ? d.x0 : d.x0 + d.w0 / 2 - w / 2;
+    var ry = d.v === 't' ? bottom - h : d.v === 'b' ? d.y0 : d.y0 + d.h0 / 2 - h / 2;
+    return { rx: rx, ry: ry, rw: w, rh: h };
   }
 
   /** 未确认模板拖动结束: 卸载 doc 级跟踪. Callers: document pointerup. */
@@ -853,16 +901,21 @@
     var x0 = Math.max(0, Math.floor(f.rx)), y0 = Math.max(0, Math.floor(f.ry));
     var x1 = Math.min(_cur.w, Math.ceil(f.rx + f.rw)), y1 = Math.min(_cur.h, Math.ceil(f.ry + f.rh));
     var tw = Math.max(1, x1 - x0), th = Math.max(1, y1 - y0);
+    // 预计算每列/每行的最近邻采样索引, 避免逐像素浮点运算
+    var mapX = new Int32Array(tw), mapY = new Int32Array(th);
+    for (var k = 0; k < tw; k++) mapX[k] = Math.min(f.w - 1, Math.max(0, (k * f.w / tw) | 0));
+    for (var k2 = 0; k2 < th; k2++) mapY[k2] = Math.min(f.h - 1, Math.max(0, (k2 * f.h / th) | 0));
+    var isMax = _mergeMode === 'max';
     for (var py = y0; py < y1; py++) {
+      var prow = mapY[py - y0] * f.w;
+      var i = py * _cur.w + x0;
       for (var px = x0; px < x1; px++) {
-        var sx = Math.min(f.w - 1, Math.max(0, Math.floor((px - x0) * f.w / tw)));
-        var sy = Math.min(f.h - 1, Math.max(0, Math.floor((py - y0) * f.h / th)));
-        var pv = f.data[(sy * f.w + sx) * 4 + 3];
-        var cur = arr[py * _cur.w + px];
-        arr[py * _cur.w + px] = _mergeMode === 'max' ? Math.max(cur, pv) : Math.min(cur, pv);
+        var pv = f.data[(prow + mapX[px - x0]) * 4 + 3];
+        arr[i] = isMax ? (arr[i] > pv ? arr[i] : pv) : (arr[i] < pv ? arr[i] : pv);
+        i++;
       }
     }
-    AlphaGL.loadAlpha(_buildAlphaCanvas(arr));
+    AlphaGL.loadAlphaRaw(arr);
     _floating = null; _floatDrag = null;
     _templateInst.style.display = 'none';
     _cur.modified = true;

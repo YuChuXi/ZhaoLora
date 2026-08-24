@@ -33,8 +33,21 @@
   .template-inst { position: absolute; box-sizing: border-box; border: 1.5px solid #f33; cursor: move;
     z-index: 12; display: none; user-select: none; background: transparent; }
   .template-inst canvas { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 0; pointer-events: none; }
-  .template-inst .tmpl-resize { position: absolute; right: -6px; bottom: -6px; width: 14px; height: 14px;
-    background: #f33; border-radius: 2px; cursor: nwse-resize; border: 1px solid #fff; box-sizing: border-box; z-index: 2; }
+  /* 缩放手柄: 4 角(双向)+ 4 边(单向), 均内嵌可见, 不依赖越界命中 */
+  .template-inst [data-resize] { position: absolute; z-index: 3; }
+  .template-inst [data-resize="nw"], .template-inst [data-resize="ne"],
+  .template-inst [data-resize="sw"], .template-inst [data-resize="se"] { width: 12px; height: 12px; }
+  .template-inst [data-resize="n"], .template-inst [data-resize="s"] { height: 10px; width: 46px; left: 50%; transform: translateX(-50%); }
+  .template-inst [data-resize="w"], .template-inst [data-resize="e"] { width: 10px; height: 46px; top: 50%; transform: translateY(-50%); }
+  .template-inst [data-resize="nw"] { left: 0; top: 0; cursor: nwse-resize; }
+  .template-inst [data-resize="ne"] { right: 0; top: 0; cursor: nesw-resize; }
+  .template-inst [data-resize="sw"] { left: 0; bottom: 0; cursor: nesw-resize; }
+  .template-inst [data-resize="se"] { right: 0; bottom: 0; cursor: nwse-resize;
+    background: linear-gradient(135deg, transparent 40%, #f33 41%, #f33 59%, transparent 60%); }
+  .template-inst [data-resize="n"] { left: 50%; transform: translateX(-50%); top: 0; cursor: ns-resize; }
+  .template-inst [data-resize="s"] { left: 50%; transform: translateX(-50%); bottom: 0; cursor: ns-resize; }
+  .template-inst [data-resize="w"] { top: 50%; transform: translateY(-50%); left: 0; cursor: ew-resize; }
+  .template-inst [data-resize="e"] { top: 50%; transform: translateY(-50%); right: 0; cursor: ew-resize; }
   /* 框选模板捕获选区(红色虚线) */
   .capture-rect { position: absolute; box-sizing: border-box; border: 1.5px dashed #f33;
     background: rgba(255,0,0,0.15); pointer-events: none; z-index: 12; display: none; }
@@ -115,7 +128,9 @@
   <div class="brush-preview" id="brush-preview"></div>
   <div class="template-inst" id="template-inst">
     <canvas></canvas>
-    <span class="tmpl-resize" title="拖动缩放"></span>
+    <span data-resize="nw"></span><span data-resize="n"></span><span data-resize="ne"></span>
+    <span data-resize="w"></span><span data-resize="e"></span>
+    <span data-resize="sw"></span><span data-resize="s"></span><span data-resize="se"></span>
   </div>
   <div class="capture-rect" id="capture-rect"></div>
 </div>
