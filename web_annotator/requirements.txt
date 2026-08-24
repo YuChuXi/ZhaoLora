@@ -10,3 +10,4 @@ torchvision>=0.15
 transformers>=4.40
 python-dotenv>=1.0
 py7zr>=1.0
+tomlkit>=0.13

@@ -63,3 +63,14 @@ class ReadyTomlResult(BaseModel):
     mask_none: int = 0
     main_count: int = 0
 
+
+class TrainExportResult(BaseModel):
+    """就绪页导出整套训练配置的结果.
+
+    Callers:
+        - ``routes/ready.py:export``
+    """
+
+    out_dir: str
+    files: list[str] = Field(default_factory=list, description="写入的配置文件文件名(相对导出目录)")
+

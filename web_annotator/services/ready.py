@@ -2,12 +2,85 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
+
+import tomlkit
 
 from services.state.mask import has_mask
 from services.models import MaskStats, ReadySubset, ReadyTomlResult
 from services.core.scanner import IMAGE_EXTS, scan_images
 from services.core.work_dir import list_work_dirs, total_image_count
+
+
+# ---- Anima-Flux LoRA 固定训练配置(全部由代码构造, 无模板文件) ----
+# 回归数据集根目录(独立于当前标注数据集, 为共享回归库)
+_REGL_ROOT = "/home/yuchuxi/Projects/Experiments/Dataset/ZhaoLora/datasets/regL"
+
+# dataset.toml 的回归段: (resolution, 子目录名)
+_REGL_DATASETS = [(1536, "256_1"), (1024, "256_2")]
+
+# dataset.toml 的 [general] 段
+_GENERAL_CONFIG = {
+    "enable_bucket": True,
+    "min_bucket_reso": 256,
+    "max_bucket_reso": 1536,
+    "bucket_reso_steps": 64,
+    "bucket_no_upscale": True,
+}
+
+# lora.toml 固定字段(模型/编码器路径与训练超参; output_name/sample_prompts/dataset_config 导出时覆写)
+_LORA_CONFIG = {
+    "pretrained_model_name_or_path": "/media/yuchuxi/Data/Servers/ComfyUI/models/diffusion_models/anima-base-v1.0.safetensors",
+    "vae": "/media/yuchuxi/Data/Servers/ComfyUI/models/vae/qwen_image_vae.safetensors",
+    "qwen3": "/media/yuchuxi/Data/Servers/ComfyUI/models/text_encoders/qwen_3_06b_base.safetensors",
+    "qwen3_max_token_length": 1024,
+    "t5_max_token_length": 1024,
+    "timestep_sampling": "flux_shift",
+    "sigmoid_scale": 1.0,
+    "attn_mode": "flash",
+    "prior_loss_weight": 0.5,
+    "resolution": "1536",
+    "output_dir": "./output",
+    "save_model_as": "safetensors",
+    "save_precision": "bf16",
+    "save_every_n_steps": 50,
+    "max_train_steps": 500,
+    "train_batch_size": 2,
+    "gradient_checkpointing": True,
+    "gradient_accumulation_steps": 4,
+    "network_train_unet_only": True,
+    "learning_rate": 5e-05,
+    "unet_lr": 5e-05,
+    "text_encoder_lr": 0,
+    "lr_scheduler": "cosine_with_min_lr",
+    "lr_scheduler_min_lr_ratio": 1e-2,
+    "lr_warmup_steps": 50,
+    "optimizer_type": "AdamW",
+    "network_dim": 8,
+    "network_alpha": 8,
+    "network_module": "networks.lora_anima",
+    "network_dropout": 0.1,
+    "network_args": [],
+    "sample_at_first": True,
+    "sample_every_n_steps": 50,
+    "log_with": "wandb",
+    "logging_dir": "./logs",
+    "caption_extension": ".txt",
+    "shuffle_caption": True,
+    "keep_tokens_separator": "|||",
+    "caption_tag_dropout_rate": 0.5,
+    "seed": 1337,
+    "mixed_precision": "bf16",
+    "cache_latents": True,
+    "cache_latents_to_disk": True,
+    "max_data_loader_n_workers": 0,
+    "optimizer_args": ["weight_decay=0.001"],
+    "masked_loss": True,
+}
+
+# prompt.txt 样本提示(触发词由导出时注入)
+_PROMPT_TEMPLATE = "{trigger},  --n worst quality, low quality, score_1, score_2, score_3, artist name, jpeg artifacts  --w 1024 --h 1024 --l 4  --s 30  --d 42"
 
 
 def _has_images(d: Path) -> bool:
@@ -203,3 +276,69 @@ def build_ready_toml(
         mask_none=main_ms.mask_none,
         main_count=main_ms.main_count,
     )
+
+
+def build_train_config(
+    root: Path,
+    *,
+    out_dir: Path | None = None,
+    dirs: list[str] | None = None,
+    target_images: int = 512,
+    resolutions: list[int] | None = None,
+    trigger_word: str = "",
+) -> dict[str, str]:
+    """为数据集渲染整套训练配置文本(全部由代码构造, 无模板文件).
+
+    dataset.toml = ``[general]`` 固定段 + 就绪页生成的 main 段 + 回归段;
+    lora.toml 由 ``_LORA_CONFIG`` 固定字段构成, 另覆写 ``output_name`` /
+    ``sample_prompts`` / ``dataset_config``; prompt.txt 将 ``{trigger}`` 占位
+    替换为数据集触发词.
+
+    Args:
+        root (Path): 数据集根目录, 用于取数据集名与生成 main 段.
+        out_dir (Path | None): 导出目标目录, 用于写出 prompt.txt / dataset.toml 的引用路径.
+        dirs (list[str] | None): 参与导出的工作目录名; None 表示全部(透传 build_ready_toml).
+        target_images (int): 目标图片数(透传 build_ready_toml).
+        resolutions (list[int] | None): 多分辨率列表(透传 build_ready_toml).
+        trigger_word (str): 该数据集触发词, 替换 prompt.txt 中的 ``{trigger}`` 占位.
+
+    Returns:
+        dict[str, str]: 文件名→配置文本(lora.toml / dataset.toml / prompt.txt).
+
+    Callers:
+        - ``routes/ready.py:export``
+    """
+    main_toml = build_ready_toml(
+        root, dirs=dirs, target_images=target_images, resolutions=resolutions
+    ).toml
+    main_doc = tomlkit.parse(main_toml)
+
+    # dataset.toml: 固定 [general] 段 + 生成的主块 + 固定回归段(均为数组表)
+    doc = tomlkit.document()
+    doc["general"] = dict(_GENERAL_CONFIG)
+    aot = tomlkit.aot()
+    aot.extend(main_doc.get("datasets", []))
+    for res, sub in _REGL_DATASETS:
+        seg = tomlkit.table()
+        seg["resolution"] = res
+        subs = tomlkit.aot()
+        subs.append({"image_dir": f"{_REGL_ROOT}/{sub}"})
+        seg["subsets"] = subs
+        aot.append(seg)
+    doc["datasets"] = aot
+    dataset_toml = tomlkit.dumps(doc)
+
+    # lora.toml: 固定字段 + 导出时覆写的三项
+    out = out_dir or root
+    lora_doc = tomlkit.document()
+    for key, value in _LORA_CONFIG.items():
+        lora_doc[key] = value
+    lora_doc["output_name"] = f"{root.name}_anima"
+    lora_doc["sample_prompts"] = str(out / "prompt.txt")
+    lora_doc["dataset_config"] = str(out / "dataset.toml")
+    lora = tomlkit.dumps(lora_doc)
+
+    prompt = _PROMPT_TEMPLATE
+    if trigger_word:
+        prompt = prompt.replace("{trigger}", trigger_word)
+    return {"lora.toml": lora, "dataset.toml": dataset_toml, "prompt.txt": prompt}

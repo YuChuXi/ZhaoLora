@@ -48,6 +48,7 @@ from services.models.ready import (
     ReadyDirsResponse,
     ReadySubset,
     ReadyTomlResult,
+    TrainExportResult,
 )
 from services.models.tags import (
     TagStatRow,
@@ -158,6 +159,7 @@ __all__ = [
     'ReadyDirsResponse',
     'ReadySubset',
     'ReadyTomlResult',
+    'TrainExportResult',
     'TagStatRow',
     'TagStatsResult',
     'TagCleanSample',

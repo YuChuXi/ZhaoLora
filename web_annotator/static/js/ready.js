@@ -156,6 +156,32 @@
     copyText().catch(function (e) { toast(String(e.message || e)); });
   });
 
+  /**
+   * 按当前参数把数据集导出为整套训练配置(lora/dataset/prompt)到配置路径.
+   * 引用: tpl btn-export.
+   */
+  async function exportConfig() {
+    var target = parseInt(document.getElementById('target-images').value, 10);
+    var resText = document.getElementById('resolutions').value.trim();
+    var resolutions = [];
+    if (resText) {
+      resText.split(/\s*,\s*/).forEach(function (n) {
+        var v = parseInt(n, 10);
+        if (v > 0) resolutions.push(v);
+      });
+    }
+    var dirs = Object.keys(_enabled).filter(function (n) { return _enabled[n]; });
+    var data = await API.request(API.apiPath('/ready/export'), {
+      method: 'POST',
+      body: JSON.stringify({ dirs: dirs, target_images: target, resolutions: resolutions })
+    });
+    toast('已导出: ' + data.files.join(', ') + ' → ' + data.out_dir);
+  }
+
+  document.getElementById('btn-export').addEventListener('click', function () {
+    exportConfig().catch(function (e) { toast(String((e && e.message) || e)); });
+  });
+
   API.request(API.apiPath('/ready/dirs'))
     .then(function (data) {
       renderSide(data);
