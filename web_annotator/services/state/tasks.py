@@ -139,13 +139,13 @@ class TaskStore:
         return name in self.tasks
 
     def add(self, name: str) -> TaskInfo:
-        """登记新任务；必要时自动创建 main/ 与 mask/ 目录.
+        """登记新任务, 默认排在最前; 必要时自动创建 main/ 与 mask/ 目录.
 
         Args:
             name (str): 待登记的任务名, 须通过 ``validate_task_name``.
 
         Returns:
-            TaskInfo: 新创建的任务信息.
+            TaskInfo: 新创建的任务信息, 排序位置位于现有任务之前.
 
         Raises:
             ValueError: 名称非法或任务已存在.
@@ -164,10 +164,10 @@ class TaskStore:
             main.mkdir(parents=True, exist_ok=True)
         if not mask.is_dir():
             mask.mkdir(parents=True, exist_ok=True)
-        max_order = max((e.sort_order for e in self.tasks.values()), default=-1)
-        self.tasks[name] = TaskEntry(name=name, completed=False, created=int(time.time()), sort_order=max_order + 1)
+        min_order = min((e.sort_order for e in self.tasks.values()), default=1)
+        self.tasks[name] = TaskEntry(name=name, completed=False, created=int(time.time()), sort_order=min_order - 1)
         self._write()
-        return TaskInfo(name=name, completed=False, root=str(task_root), note="", trigger_word="", sort_order=max_order + 1)
+        return TaskInfo(name=name, completed=False, root=str(task_root), note="", trigger_word="", sort_order=min_order - 1)
 
     def set_completed(self, name: str, completed: bool) -> TaskInfo:
         """标记任务完成或重新打开.
