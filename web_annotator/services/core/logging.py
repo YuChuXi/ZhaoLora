@@ -37,6 +37,7 @@ _LEVELS = {
     "info": logging.INFO,
     "warn": logging.WARNING,
     "error": logging.ERROR,
+    "fatal": logging.FATAL,
 }
 
 _RESET = "\x1b[0m"
@@ -48,7 +49,7 @@ _LEVEL_COLORS = {
     "INFO": "\x1b[38;5;40m",
     "WARN": "\x1b[38;5;214m",
     "ERROR": "\x1b[31m",
-    "CRITICAL": "\x1b[41;97m",
+    "FATAL": "\x1b[41;97m",
 }
 
 # 常规日志(DEBUG/INFO)的来源色池: 取 xterm-256 中彼此可区分的前景色, 数量足以覆盖全部日志来源的点分段.

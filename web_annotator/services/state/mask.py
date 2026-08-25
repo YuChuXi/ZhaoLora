@@ -79,10 +79,8 @@ def load_mask(out_dir: Path, src_path: str, size: tuple[int, int]) -> np.ndarray
     im = Image.open(p)
     if im.size != size:
         return None
-    if im.mode in ("L", "LA"):
-        return np.array(im.getchannel("L"), dtype=np.uint8, copy=True)
-    rgba = im.convert("RGBA")
-    return np.array(rgba.getchannel("A"), dtype=np.uint8, copy=True)
+    # mask 恒以单通道 L 存储, 直接取 "L" 通道(L/LA 均可), 无需在线转换其他颜色模式.
+    return np.array(im.getchannel("L"), dtype=np.uint8, copy=True)
 
 
 def save_mask(out_dir: Path, src_path: str, alpha: np.ndarray) -> Path:

@@ -184,7 +184,7 @@ def get_existing_mask(request: Request, path: str = Query(...)) -> Response:
     if not mask_path.is_file():
         raise HTTPException(404, "No mask saved")
     im = Image.open(mask_path)
-    a = im if im.mode == "L" else im.convert("RGBA").getchannel("A")
+    a = im.getchannel("L")
     cw, ch = _canvas_size(src)
     if a.size != (cw, ch):
         a = a.resize((cw, ch), Image.Resampling.LANCZOS)
