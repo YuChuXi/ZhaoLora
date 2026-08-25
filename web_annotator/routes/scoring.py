@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
@@ -17,6 +19,8 @@ from services.models.pages import (
     ScoringStartResponse,
 )
 from services.analysis.wd14 import list_image_subdirs, resolve_image_dirs
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/scoring", tags=["scoring"])
 
@@ -144,6 +148,12 @@ async def start(request: Request, body: StartBody) -> ScoringStartResponse:
         dataset=rt.name,
         run=run,
         cancel_fn=lambda: setattr(prog, "cancel_requested", True),
+    )
+    logger.info(
+        "评分任务启动 dataset=%s kind=%s dirs=%d",
+        request.state.runtime.root.name,
+        kind,
+        len(selected),
     )
     return ScoringStartResponse(
         ok=True,

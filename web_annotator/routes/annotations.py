@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request
@@ -17,6 +18,8 @@ from services.models import (
 from services.core.scanner import scan_images
 from services.state.annotator import StateManager
 from services.core.work_dir import parse_dir_names, resolve_subdirs
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["annotations"])
 
@@ -224,6 +227,8 @@ def apply_delete(request: Request) -> CountResponse:
     idx = get_runtime(request).color_index
     if idx is not None:
         idx.clear()
+    logger.info("数据集 dataset=%s 删除到回收站 %s 张 (%d 张源文件已不存在, 仅更新状态)",
+                request.state.runtime.root.name, moved, len(already_gone))
     return CountResponse(moved=moved)
 
 
@@ -254,6 +259,7 @@ def restore(request: Request, body: RestoreBody) -> CountResponse:
     idx = get_runtime(request).color_index
     if idx is not None:
         idx.clear()
+    logger.info("数据集 dataset=%s 从回收站恢复 %s 张", request.state.runtime.root.name, restored)
     return CountResponse(restored=restored)
 
 

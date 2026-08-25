@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
+import logging
 import os
-import sys
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -18,6 +18,8 @@ from torchvision import transforms
 from services.models import JobSnapshot
 from services.core.scanner import IMAGE_EXTS
 from services.core.device import register_model
+
+logger = logging.getLogger(__name__)
 
 MODEL_REPO = "ZhengPeng7/BiRefNet"
 IMAGE_SIZE = (1024, 1024)
@@ -269,7 +271,7 @@ def run_birefnet_mask(
             if progress is not None:
                 progress.done += 1
         except Exception as e:
-            print(f"BiRefNet 处理失败 {rel_path}: {e}", file=sys.stderr)
+            logger.error("BiRefNet 处理失败 %s: %s", rel_path, e)
             if progress is not None:
                 progress.failed += 1
 

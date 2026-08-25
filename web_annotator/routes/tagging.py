@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
@@ -16,6 +17,8 @@ from services.analysis.wd14 import (
     resolve_image_dirs,
     run_batch,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/tagging", tags=["tagging"])
 
@@ -112,6 +115,13 @@ async def start(request: Request, body: StartBody) -> TaggingStartResponse:
         dataset=rt.name,
         run=run,
         cancel_fn=lambda: setattr(prog, "cancel_requested", True),
+    )
+    logger.info(
+        "批量打标任务提交 dataset=%s dirs=%s threshold=%.3f job_id=%s",
+        rt.name,
+        [p.name if p != root else "." for p in selected],
+        body.threshold,
+        job_id,
     )
     return TaggingStartResponse(
         ok=True,

@@ -18,12 +18,15 @@ Callers:
 from __future__ import annotations
 
 import asyncio
+import logging
 import re
 from collections.abc import Callable
 from typing import Any
 
 from bilibili_api import user
 from bilibili_api.exceptions import NetworkException, ResponseCodeException
+
+logger = logging.getLogger(__name__)
 
 from services.online_sources.bilibili.models import (
     Author,
@@ -105,7 +108,9 @@ async def _desktop_detail(
             last_exc = exc
             if attempt < retries:
                 wait = base_sleep * (2 ** (attempt - 1))
-                print(f"详情 {dynamic_id} 请求失败 ({exc}), {wait:.0f} 秒后重试...")
+                logger.warning(
+                    "详情 %s 请求失败 (%s), %.0f 秒后重试...", dynamic_id, exc, wait
+                )
                 await asyncio.sleep(wait)
     raise last_exc or RuntimeError(f"详情 {dynamic_id} 请求失败")
 
@@ -148,9 +153,13 @@ async def _retry_coro(
             last_exc = exc
         if attempt < retries:
             wait = base_sleep * (2 ** (attempt - 1))
-            print(
-                f"{what} 请求失败 ({last_exc}), {wait:.0f} 秒后重试 "
-                f"({attempt}/{retries - 1})..."
+            logger.warning(
+                "%s 请求失败 (%s), %.0f 秒后重试 (%d/%d)...",
+                what,
+                last_exc,
+                wait,
+                attempt,
+                retries - 1,
             )
             await asyncio.sleep(wait)
     raise last_exc or RuntimeError(f"{what} 重试失败")

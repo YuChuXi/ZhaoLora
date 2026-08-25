@@ -24,9 +24,13 @@
 from __future__ import annotations
 
 import functools
+import logging
 import threading
 from collections.abc import Callable
 from typing import TYPE_CHECKING, cast
+
+# 设备与模型生命周期管理日志
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:  # torch 惰性导入, 仅用于类型注解
     import torch
@@ -101,12 +105,17 @@ class Model:
         Args:
             load: 加载回调, 无参, 返回真实模型句柄.
             unload: 卸载回调, 接收真实模型句柄并释放其占用的资源.
+
+        Callers:
+            - ``services/core/device.py:register_model``
         """
         self._load = load
         self._unload = unload
         self._handle: object | None = None
         self._refs = 0
         self._lock = threading.Lock()
+        # 从加载回调所属模块派生模型名, 使日志可定位到具体模型.
+        self._name = (getattr(load, "__module__", "") or "model").rsplit(".", 1)[-1]
 
     def auto_release(self, func: Callable) -> Callable:
         """装饰器: 包装任务执行函数, 自动持有并注入本模型句柄, 退出时释放.
@@ -180,6 +189,7 @@ class Model:
         with self._lock:
             if self._handle is None:
                 self._handle = self._load()
+                logger.info("模型 %s 加载完成并驻留内存", self._name)
             self._refs += 1
             return self._handle
 
@@ -197,6 +207,7 @@ class Model:
             if self._refs > 0:
                 return
             self._refs = 0
+        logger.info("模型 %s 引用归零, 驻留内存待复用", self._name)
         self._schedule_eviction()
 
     def _schedule_eviction(self) -> None:
@@ -215,6 +226,7 @@ class Model:
                     return  # 期间被复用或已由其他路径释放
                 handle = self._handle
                 self._handle = None
+            logger.info("模型 %s 空闲超时, 彻底释放", self._name)
             self._unload(handle)
             release_cuda()
 

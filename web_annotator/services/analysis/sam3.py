@@ -15,8 +15,8 @@ from __future__ import annotations
 
 import base64
 import io
+import logging
 import os
-import sys
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -29,6 +29,8 @@ from services.core.device import register_model
 from services.analysis.mask_expression import evaluate, extract_concepts, parse, to_uint8
 from services.models import JobSnapshot
 from services.state.mask import load_mask
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     import torch
@@ -443,7 +445,7 @@ def run_sam3_expression_mask(
             ).save(out_path, format="PNG")
             done += 1
         except Exception as e:
-            print(f"SAM3 处理失败 {rel}: {e}", file=sys.stderr)
+            logger.error("SAM3 处理失败 %s: %s", rel, e)
             failed += 1
 
         if progress is not None:

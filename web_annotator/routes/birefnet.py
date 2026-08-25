@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
@@ -18,6 +20,8 @@ from services.analysis.sam3 import (
     Sam3MaskProgress,
     run_sam3_expression_mask,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["birefnet"])
 
@@ -124,5 +128,11 @@ async def mask_generate(request: Request, body: MaskGenerateBody) -> MaskGenerat
         dataset=rt.name,
         run=run,
         cancel_fn=lambda: setattr(prog, "cancel_requested", True),
+    )
+    logger.info(
+        "蒙版生成任务提交 dataset=%s mode=%s images=%d",
+        request.state.runtime.root.name,
+        body.mode,
+        len(image_rel_paths),
     )
     return MaskGenerateResponse(job_id=job_id)

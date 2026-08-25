@@ -17,11 +17,15 @@ Callers:
 from __future__ import annotations
 
 import asyncio
+import logging
 import uuid
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
 
 from services.models import JobResult, JobSnapshot
+
+# 长任务编排模块日志
+logger = logging.getLogger(__name__)
 
 TERMINAL = frozenset({"done", "error", "cancelled"})
 
@@ -169,6 +173,7 @@ class JobManager:
         job.event.set()
         loop = asyncio.get_running_loop()
         job._task = loop.create_task(self._execute(job, run))
+        logger.info("提交任务 kind=%s group=%s dataset=%s job_id=%s", kind, group, dataset, job_id)
         return job_id
 
     def cancel(self, job_id: str) -> JobSnapshot:
@@ -193,6 +198,7 @@ class JobManager:
             return job.latest
         if job.cancel_fn is not None:
             job.cancel_fn()
+        logger.info("请求取消任务 kind=%s dataset=%s job_id=%s", job.kind, job.dataset, job_id)
         snap = job.latest.model_copy(
             update={
                 "cancel_requested": True,
@@ -223,6 +229,7 @@ class JobManager:
             }
         )
         job.latest = payload
+        logger.debug("任务进度 kind=%s job_id=%s status=%s", job.kind, job.id, payload.status)
         job.event.set()
 
     def _emit_from_thread(
@@ -284,9 +291,11 @@ class JobManager:
                         dataset=job.dataset,
                     ),
                 )
+                logger.info("任务在排队时取消 kind=%s dataset=%s job_id=%s", job.kind, job.dataset, job.id)
                 return
 
             self._publish(job, job.latest.model_copy(update={"status": "running"}))
+            logger.info("任务开始运行 kind=%s dataset=%s job_id=%s", job.kind, job.dataset, job.id)
 
             def thread_main() -> JobResult | None:
                 """在工作线程执行 ``run``.
@@ -311,6 +320,13 @@ class JobManager:
                         dataset=job.dataset,
                     ),
                 )
+                logger.error(
+                    "任务执行失败 kind=%s dataset=%s job_id=%s: %s",
+                    job.kind,
+                    job.dataset,
+                    job.id,
+                    e,
+                )
                 return
 
             final = job.latest
@@ -324,6 +340,7 @@ class JobManager:
                         }
                     ),
                 )
+                logger.info("任务完成 kind=%s dataset=%s job_id=%s", job.kind, job.dataset, job.id)
 
     async def event_stream(self, job_id: str) -> AsyncIterator[str]:
         """异步生成 Server-Sent Events 文本块.

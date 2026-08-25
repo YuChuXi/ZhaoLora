@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 from pathlib import Path
 
@@ -12,6 +13,8 @@ from routes.deps import get_runtime
 from services.models import ReadyDirsResponse, ReadyTomlResult, TrainExportResult
 from services.ready import build_ready_toml, build_train_config, subdir_mask_stats
 from services.core.work_dir import list_work_dirs
+
+logger = logging.getLogger(__name__)
 
 # web_annotator 应用根目录(server.py 所在目录), 用于把相对的 LORA_CONFIG_ROOT 锚定到项目内
 _APP_DIR = Path(__file__).resolve().parents[1]
@@ -63,6 +66,8 @@ def toml(request: Request, body: ReadyBody) -> ReadyTomlResult:
     )
     if not result.subsets:
         raise HTTPException(400, "没有可导出的图片目录")
+    logger.info("数据集 %s 生成就绪 TOML: %d 个子集, 目标图片数 %d, 分辨率 %s",
+                root.name, len(result.subsets), body.target_images, body.resolutions or "默认")
     return result
 
 
@@ -128,4 +133,6 @@ def export(
         tmp.write_text(content, encoding="utf-8")
         tmp.replace(p)
         written.append(name)
+    logger.info("数据集 %s 导出训练配置到 %s: 写入 %d 个文件 (%s)",
+                root.name, out_dir, len(written), ", ".join(written))
     return TrainExportResult(files=written)

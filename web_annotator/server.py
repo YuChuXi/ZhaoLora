@@ -12,9 +12,11 @@
 from __future__ import annotations
 
 import argparse
+import logging
 import os
 import re
 import sys
+import time
 from pathlib import Path
 
 from collections.abc import Awaitable, Callable
@@ -46,7 +48,11 @@ from routes.tasks import archive_router as archived_router
 from routes.video import router as video_router
 from services.dataset.runtime import DatasetRegistry
 from services.core.jobs import JobManager
+from services.core.logging import setup_logging
 from services.state.tasks import TaskStore
+
+# 访问日志专用 logger, 经根日志器统一格式化输出.
+_ACCESS_LOG = logging.getLogger("web_annotator.access")
 
 
 app = FastAPI(title="Image Annotator", version="3.1.0")
@@ -143,6 +149,39 @@ async def _ua_middleware(
     call_next: Callable[[Request], Awaitable[Response]],
 ) -> Response:
     return await _block_chinese_ua_middleware(request, call_next)
+
+
+@app.middleware("http")
+async def _access_log_middleware(
+    request: Request,
+    call_next: Callable[[Request], Awaitable[Response]],
+) -> Response:
+    """为每个 HTTP 请求记录统一访问日志.
+
+    记录方法、路径、响应状态码与处理耗时, 输出到 ``web_annotator.access`` logger,
+    经根日志器统一格式化, 供审计与性能观察。
+
+    Args:
+        request: 当前 HTTP 请求.
+        call_next: ASGI 链中下一个中间件/路由处理器.
+
+    Returns:
+        Response: 下游响应, 原样透传.
+
+    Callers:
+        - ``server.py:`` (FastAPI ``@app.middleware`` 装饰器注册, 由 Starlette ASGI 框架调度)
+    """
+    start = time.perf_counter()
+    response = await call_next(request)
+    duration_ms = (time.perf_counter() - start) * 1000
+    _ACCESS_LOG.info(
+        "%s %s %d %.1fms",
+        request.method,
+        request.url.path,
+        response.status_code,
+        duration_ms,
+    )
+    return response
 
 
 # 对超过阈值(默认 500)的响应启用 gzip, 避免小响应压缩反增开销。
@@ -272,6 +311,19 @@ def main() -> int:
     parser.add_argument("--port", type=int, default=8765, help="监听端口")
     parser.add_argument("--thumbnail-size", type=int, default=1280, help="缩略图长边像素")
     parser.add_argument(
+        "--log-level",
+        type=str,
+        default="info",
+        choices=["debug", "info", "warning", "error"],
+        help="日志级别 (默认 info)",
+    )
+    parser.add_argument(
+        "--log-dir",
+        type=str,
+        default=None,
+        help="日志输出目录; 默认写入 <data-dir>/logs",
+    )
+    parser.add_argument(
         "--block-chinese-ua",
         action="store_true",
         default=False,
@@ -280,8 +332,13 @@ def main() -> int:
     args = parser.parse_args()
 
     task_root = Path(args.data_dir).resolve()
+    # 装配统一日志体系: 默认写入 <data-dir>/logs, 可用 --log-dir 覆盖.
+    log_dir = Path(args.log_dir).resolve() if args.log_dir else (task_root / "logs")
+    setup_logging(args.log_level, log_dir)
+    log = logging.getLogger("web_annotator")
+
     if not task_root.is_dir():
-        print(f"错误: 目录不存在: {task_root}")
+        log.error("目录不存在: %s", task_root)
         return 1
 
     store = TaskStore(task_root)
@@ -299,13 +356,19 @@ def main() -> int:
     app.state.block_chinese_ua = args.block_chinese_ua
 
     n = len(store.list_entries())
-    print(f"任务根   : {task_root}")
-    print(f"清单任务 : {n}")
-    print(f"服务地址 : http://{args.host}:{args.port}")
+    log.info("任务根   : %s", task_root)
+    log.info("清单任务 : %s", n)
+    log.info("服务地址 : http://%s:%s", args.host, args.port)
     if args.block_chinese_ua:
-        print("UA 拦截  : 已启用(屏蔽 QQ/微信/国产浏览器)")
+        log.info("UA 拦截  : 已启用(屏蔽 QQ/微信/国产浏览器)")
 
-    uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
+    uvicorn.run(
+        app,
+        host=args.host,
+        port=args.port,
+        log_config=None,
+        access_log=False,
+    )
     return 0
 
 

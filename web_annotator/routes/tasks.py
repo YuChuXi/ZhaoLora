@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import random
 from typing import Literal
 
@@ -37,6 +38,8 @@ from services.state.tasks import TaskStore, validate_task_name
 router = APIRouter(prefix="/api/tasks", tags=["tasks"])
 SortField = Literal["sort_order", "name", "image_count", "created"]
 SortOrder = Literal["asc", "desc"]
+
+logger = logging.getLogger(__name__)
 
 
 class AddTaskBody(BaseModel):
@@ -212,6 +215,7 @@ async def add_task(request: Request, body: AddTaskBody) -> TaskOkResponse:
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
     await registry(request).ensure(info.name)
+    logger.info("创建任务 name=%s", info.name)
     return TaskOkResponse(
         ok=True,
         name=info.name,
@@ -240,6 +244,7 @@ def complete_task(request: Request, name: str) -> TaskOkResponse:
         info = store.set_completed(name, True)
     except KeyError:
         raise HTTPException(404, f"未知任务: {name}") from None
+    logger.info("任务完成 name=%s", name)
     return TaskOkResponse(ok=True, name=info.name, completed=info.completed, note=info.note, trigger_word=info.trigger_word)
 
 
@@ -262,6 +267,7 @@ def reopen_task(request: Request, name: str) -> TaskOkResponse:
         info = store.set_completed(name, False)
     except KeyError:
         raise HTTPException(404, f"未知任务: {name}") from None
+    logger.info("任务重新打开 name=%s", name)
     return TaskOkResponse(ok=True, name=info.name, completed=info.completed, note=info.note, trigger_word=info.trigger_word)
 
 
@@ -285,6 +291,7 @@ def set_note(request: Request, name: str, body: SetNoteBody) -> TaskOkResponse:
         info = store.set_note(name, body.note)
     except KeyError:
         raise HTTPException(404, f"未知任务: {name}") from None
+    logger.info("任务备注更新 name=%s, 备注=%r", name, body.note)
     return TaskOkResponse(ok=True, name=info.name, completed=info.completed, note=info.note, trigger_word=info.trigger_word)
 
 
@@ -309,6 +316,7 @@ def set_trigger_word(request: Request, name: str, body: SetTriggerWordBody) -> T
         info = store.set_trigger_word(name, body.trigger_word)
     except KeyError:
         raise HTTPException(404, f"未知任务: {name}") from None
+    logger.info("任务触发词更新 name=%s, 触发词=%s", name, body.trigger_word)
     return TaskOkResponse(ok=True, name=info.name, completed=info.completed, note=info.note, trigger_word=info.trigger_word)
 
 
@@ -337,6 +345,7 @@ def reorder_tasks(request: Request, body: ReorderBody) -> dict:
         store.reorder(body.order)
     except KeyError as e:
         raise HTTPException(400, str(e)) from None
+    logger.info("任务重排: %d 个任务, 顺序=%s", len(body.order), ", ".join(body.order))
     return {"ok": True}
 
 
@@ -390,6 +399,7 @@ async def archive_task_route(request: Request, name: str) -> JobSubmitResponse:
     job_id = await jobs(request).submit(
         kind="archive", group=f"archive_{name}", dataset=name, run=run,
     )
+    logger.info("任务归档 name=%s，已提交后台压缩任务 job_id=%s", name, job_id)
     return JobSubmitResponse(ok=True, job_id=job_id)
 
 

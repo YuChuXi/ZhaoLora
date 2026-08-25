@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 from pathlib import Path
 
@@ -42,6 +43,8 @@ from services.models import (
 from services.core.scanner import IMAGE_EXTS
 from services.core.work_dir import resolve_subdir
 from services.online_sources.framework.base import search_session_posts as _search_session_posts
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/online-sources", tags=["online-sources"])
 
@@ -162,6 +165,10 @@ async def search(request: Request, body: SearchBody) -> BooruSearchResult:
         post.downloaded = is_downloaded(out_dir, post.filename)
         posts.append(post)
 
+    logger.info(
+        "数据集 %s 发起搜索: 来源=%s 标签=%r 第%d页 命中%d条",
+        request.state.runtime.root.name, source, body.tags.strip(), body.page, len(posts),
+    )
     return BooruSearchResult(
         source=source,
         tags=body.tags.strip(),
@@ -273,6 +280,7 @@ async def download(
     post = BooruPost.model_validate(body.post)
 
     if post.is_video:
+        logger.info("数据集 %s 提交视频下载: 帖子id=%s", request.state.runtime.root.name, post.id)
         return await _submit_video_download(request, source, post, root)
 
     try:
@@ -304,6 +312,7 @@ async def download(
     rel = local_rel_path(root, result.path)
     thumb = get_runtime(request).thumbnailer
     await thumb.ensure_async(rel)
+    logger.info("数据集 %s 下载完成: 帖子id=%s -> %s", request.state.runtime.root.name, result.id, rel)
     return result.model_copy(
         update={
             "dir": name,
@@ -435,6 +444,10 @@ def undownload(request: Request, body: DownloadBody) -> BooruUndownloadResult:
         if path.is_file():
             path.unlink()
 
+    logger.info(
+        "数据集 %s 取消下载: 帖子文件名=%s 移除%d个文件",
+        request.state.runtime.root.name, body.filename.strip(), len(result.images),
+    )
     return result.model_copy(update={"dir": name})
 
 
@@ -527,6 +540,10 @@ async def batch_start(
     )
     job_box["id"] = job_id
     register_progress(job_id, prog)
+    logger.info(
+        "数据集 %s 启动批量下载: job=%s 来源=%s 标签=%r 目标%d个",
+        request.state.runtime.root.name, job_id, source, body.tags, body.limit,
+    )
     return JobSubmitResponse(ok=True, job_id=job_id)
 
 
@@ -557,6 +574,10 @@ def batch_params(request: Request, body: BatchParamsBody) -> JobSubmitResponse:
         prog.conn = body.conn
     if body.rate_rps is not None:
         prog.rate_rps = body.rate_rps
+    logger.info(
+        "数据集 %s 更新批量参数: job=%s limit=%s conn=%s rate_rps=%s",
+        request.state.runtime.root.name, job.id, prog.limit, prog.conn, prog.rate_rps,
+    )
     return JobSubmitResponse(ok=True, job_id=job.id)
 
 
@@ -595,6 +616,7 @@ async def regenerate_captions(request: Request, body: RegenerateCaptionsBody) ->
         include_meta_tags=body.include_meta_tags,
         keep_underscores=body.keep_underscores,
     )
+    logger.info("数据集 %s 重生成 caption: 共%d对", request.state.runtime.root.name, count)
     return {"ok": True, "count": count}
 
 
@@ -666,4 +688,5 @@ async def refresh_metadata(request: Request, body: RefreshMetadataBody) -> JobSu
                          message=f"{summary}, 错误 {len(errors)}"))
 
     job_id = await jobs(request).submit(kind="refresh_meta", group="compute", dataset=rt.name, run=run)
+    logger.info("数据集 %s 刷新元数据: job=%s 目录=%s", request.state.runtime.root.name, job_id, body.dir)
     return JobSubmitResponse(ok=True, job_id=job_id)

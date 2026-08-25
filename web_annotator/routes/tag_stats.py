@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request
@@ -47,6 +48,8 @@ from services.analysis.sam3 import (
     run_concept_query,
     model_ready as concept_model_ready,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/tags", tags=["tags"])
 
@@ -164,6 +167,13 @@ def stats(request: Request, body: StatsBody) -> TagStatsResult:
         exclude=body.exclude or None,
         match_mode=body.match_mode,
     )
+    logger.info(
+        "标签统计 dataset=%s dirs=%s min_count=%d section=%s",
+        request.state.runtime.root.name,
+        len(selected),
+        body.min_count,
+        body.section,
+    )
     return result.model_copy(
         update={
             "dirs": [p.name if p != root else "." for p in selected],
@@ -194,6 +204,12 @@ async def translate_missing(request: Request, body: TranslateMissingBody) -> dic
     """
     root = _root(request)
     result = await translate_missing_tags(body.tags, root)
+    logger.info(
+        "补译缺失标签 dataset=%s 目标=%d 已翻译=%d",
+        request.state.runtime.root.name,
+        len(body.tags),
+        len(result),
+    )
     return {"translated": len(result), "map": result}
 
 
@@ -272,6 +288,13 @@ async def clean(request: Request, body: CleanBody) -> JobSubmitResponse:
         return result
 
     job_id = await jobs(request).submit(kind="tag_clean", group="compute", dataset=rt.name, run=run)
+    logger.info(
+        "标签清洗 dataset=%s dirs=%s 模式=%s job_id=%s",
+        rt.name,
+        len(selected),
+        "dry-run" if payload.dry_run else "write",
+        job_id,
+    )
     return JobSubmitResponse(ok=True, job_id=job_id)
 
 
@@ -385,6 +408,16 @@ async def batch_edit(request: Request, body: BatchEditBody) -> JobSubmitResponse
         return result
 
     job_id = await jobs(request).submit(kind="tag_batch_edit", group="compute", dataset=rt.name, run=run)
+    logger.info(
+        "批量编辑标签 dataset=%s dirs=%s 删除=%d 新增=%d 替换=%d 模式=%s job_id=%s",
+        rt.name,
+        len(selected),
+        len(body.delete_tags),
+        len(body.add_tags),
+        len(body.replace_pairs),
+        "dry-run" if payload.dry_run else "write",
+        job_id,
+    )
     return JobSubmitResponse(ok=True, job_id=job_id)
 
 
@@ -479,6 +512,14 @@ def check(request: Request, body: TagCheckBody) -> TagCheckResponse:
             )
 
     ok_count = sum(1 for it in items if it.position_ok)
+    logger.info(
+        "标签检查 dataset=%s tag=%s total=%d ok=%d bad=%d",
+        rt.name,
+        tag,
+        len(items),
+        ok_count,
+        len(items) - ok_count,
+    )
     return TagCheckResponse(
         tag=tag,
         position=body.position,
@@ -528,6 +569,13 @@ def edit_one(request: Request, body: TagEditOneBody) -> TagCheckItem:
     work_dir = img_abs.parent
     rel = body.path.replace("\\", "/").lstrip("/")
     dir_name = rel.split("/")[0] if "/" in rel else "."
+    logger.info(
+        "单图加标签 dataset=%s path=%s tag=%s position=%s",
+        rt.name,
+        rel,
+        tag,
+        body.position,
+    )
     return _build_check_item(
         rel, stem, work_dir, dir_name, root, rt.thumbnailer, tag, body.position
     )
@@ -577,6 +625,12 @@ def delete_one(request: Request, body: TagDeleteOneBody) -> TagCheckItem:
     work_dir = img_abs.parent
     rel = body.path.replace("\\", "/").lstrip("/")
     dir_name = rel.split("/")[0] if "/" in rel else "."
+    logger.info(
+        "单图删标签 dataset=%s path=%s tag=%s",
+        rt.name,
+        rel,
+        tag,
+    )
     return _build_check_item(
         rel, stem, work_dir, dir_name, root, rt.thumbnailer, tag, "any"
     )
@@ -707,6 +761,14 @@ async def embedding_query(request: Request, body: EmbeddingQueryBody) -> JobSubm
         job_id = await jobs(request).submit(
             kind="embedding_query", group="compute", dataset=rt.name, run=run
         )
+        logger.info(
+            "语义排序-缓存命中 dataset=%s query=%s 目录数=%d 新图=%d job_id=%s",
+            rt.name,
+            query_text,
+            len(selected),
+            len(missing),
+            job_id,
+        )
         return JobSubmitResponse(ok=True, job_id=job_id)
 
     ok, msg = reranker_model_ready()
@@ -754,6 +816,14 @@ async def embedding_query(request: Request, body: EmbeddingQueryBody) -> JobSubm
         return result
 
     job_id = await jobs(request).submit(kind="embedding_query", group="compute", dataset=rt.name, run=run)
+    logger.info(
+        "语义排序 dataset=%s query=%s 目录数=%d 候选图片=%d job_id=%s",
+        rt.name,
+        query_text,
+        len(selected),
+        total,
+        job_id,
+    )
     return JobSubmitResponse(ok=True, job_id=job_id)
 
 
@@ -826,6 +896,14 @@ def embedding_batch_tag(request: Request, body: EmbeddingBatchTagBody) -> Embedd
         txt_path.write_text(new_caption + "\n", encoding="utf-8")
         changed += 1
 
+    logger.info(
+        "批量打标 dataset=%s action=%s tag=%s 匹配=%d 变更=%d",
+        request.state.runtime.root.name,
+        action,
+        tag,
+        len(body.paths),
+        changed,
+    )
     return EmbeddingBatchTagResponse(
         ok=True,
         matched_count=changed,
@@ -940,4 +1018,12 @@ async def concept_query(request: Request, body: ConceptQueryBody) -> JobSubmitRe
         return result
 
     job_id = await jobs(request).submit(kind="concept_query", group="compute", dataset=rt.name, run=run)
+    logger.info(
+        "概念分割查询 dataset=%s query=%s 目录数=%d 候选图片=%d job_id=%s",
+        rt.name,
+        concept,
+        len(selected),
+        total,
+        job_id,
+    )
     return JobSubmitResponse(ok=True, job_id=job_id)

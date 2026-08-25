@@ -7,6 +7,7 @@ CPU/IO 密集操作经 ``asyncio.to_thread`` 移入线程池, 避免阻塞事件
 from __future__ import annotations
 
 import asyncio
+import logging
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -36,6 +37,8 @@ from services.models import (
     VideoInfo,
 )
 from services.core.work_dir import resolve_subdir
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["video"])
 
@@ -228,6 +231,10 @@ async def save_frame(request: Request, body: FrameSaveBody) -> FrameSaveResponse
     except VideoFrameError as e:
         raise HTTPException(400, str(e)) from e
     saved = store.saved_indices(body.path)
+    logger.info(
+        "数据集 %s 保存视频帧: 视频=%s 帧索引=%d 已存%d帧",
+        request.state.runtime.root.name, body.path, body.index, len(saved),
+    )
     return FrameSaveResponse(path=body.path, index=body.index, saved=saved, count=len(saved))
 
 
@@ -243,6 +250,10 @@ async def delete_frame(request: Request, body: FrameSaveBody) -> FrameSaveRespon
     store, _ = _stores(request)
     await asyncio.to_thread(store.remove_frame, body.path, body.index)
     saved = store.saved_indices(body.path)
+    logger.info(
+        "数据集 %s 删除视频帧: 视频=%s 帧索引=%d 剩余%d帧",
+        request.state.runtime.root.name, body.path, body.index, len(saved),
+    )
     return FrameSaveResponse(path=body.path, index=body.index, saved=saved, count=len(saved))
 
 
@@ -310,5 +321,9 @@ async def start_analysis(request: Request, path: str = Query(...)) -> JobSubmitR
         dataset=rt.name,
         run=run,
         cancel_fn=lambda: cancel_flag.update(on=True),
+    )
+    logger.info(
+        "数据集 %s 启动帧类型分析: job=%s 视频=%s 共%d帧",
+        request.state.runtime.root.name, job_id, path, total,
     )
     return JobSubmitResponse(ok=True, job_id=job_id)

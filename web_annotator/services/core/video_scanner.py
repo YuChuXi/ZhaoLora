@@ -11,13 +11,15 @@ from __future__ import annotations
 import functools
 import hashlib
 import json
+import logging
 import os
 import subprocess
-import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 from services.models import VideoInfo
+
+logger = logging.getLogger(__name__)
 
 # 视频目录名(数据集根下)
 VIDEO_DIRNAME = "video"
@@ -223,7 +225,7 @@ def scan_videos(video_dir: Path, *, path_prefix: str = "", probe: bool = False) 
             try:
                 w, h, dur, _ = f.result()
             except Exception as e:
-                print(f"视频探测失败 {paths[i]}: {e}", file=sys.stderr)
+                logger.error("视频探测失败 %s: %s", paths[i], e)
                 continue
             result[i].width = w
             result[i].height = h

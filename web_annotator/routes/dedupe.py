@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
@@ -22,6 +24,8 @@ from services.models import (
 )
 from services.core.scanner import scan_images
 from services.core.work_dir import list_work_dirs, resolve_subdirs
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/dedupe", tags=["dedupe"])
 
@@ -301,6 +305,12 @@ async def scan_duplicates(request: Request, body: ScanBody) -> JobSubmitResponse
         return result
 
     job_id = await jobs(request).submit(kind="dedupe_scan", group="compute", dataset=rt.name, run=run)
+    logger.info(
+        "去重扫描任务提交 dataset=%s algorithm=%s dirs=%s",
+        request.state.runtime.root.name,
+        algorithm,
+        names,
+    )
     return JobSubmitResponse(ok=True, job_id=job_id)
 
 
@@ -359,6 +369,12 @@ def apply_delete(request: Request, body: ApplyBody) -> DedupeMoveResponse:
     if idx is not None:
         idx.clear()
 
+    logger.info(
+        "去重删除完成 dataset=%s moved=%d count=%d",
+        request.state.runtime.root.name,
+        moved,
+        len(paths),
+    )
     return DedupeMoveResponse(
         moved=moved,
         paths=paths,

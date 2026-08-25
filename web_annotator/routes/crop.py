@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import logging
 import re
 from pathlib import Path
 
@@ -23,6 +24,8 @@ from services.models import (
     CropSaveResponse,
     CropSavedItem,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/crop", tags=["crop"])
 
@@ -286,6 +289,8 @@ def save_crops(request: Request, body: SaveCropsBody) -> CropSaveResponse:
                 name=part,
             )
         )
+        logger.info("数据集 %s 整图保存至部位目录: %s -> %s",
+                    layout.root.name, rel, part)
         return CropSaveResponse(saved=saved, count=len(saved))
 
     used_keys: set[str] = set()
@@ -329,4 +334,6 @@ def save_crops(request: Request, body: SaveCropsBody) -> CropSaveResponse:
             )
         )
 
+    logger.info("数据集 %s 保存裁剪选区: 源图 %s, 共 %d 个输出",
+                layout.root.name, rel, len(saved))
     return CropSaveResponse(saved=saved, count=len(saved))

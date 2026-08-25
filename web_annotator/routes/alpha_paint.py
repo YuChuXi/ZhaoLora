@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import logging
 from pathlib import Path
 
 import numpy as np
@@ -23,6 +24,8 @@ from services.models import (
     TemplateItem,
     TemplatesPayload,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/paint", tags=["paint"])
 
@@ -307,6 +310,7 @@ async def upload_mask(request: Request, path: str = Query(...)) -> PaintSaveResp
     if a.size != size:
         a = a.resize(size, Image.Resampling.LANCZOS)
     save_mask(mask_dir, path, np.array(a, dtype=np.uint8))
+    logger.info("数据集 %s 保存蒙版: 图片 %s, 尺寸 %sx%s", root.name, path, size[0], size[1])
     return PaintSaveResponse(saved=str(Path(path).with_suffix(".png")), size=list(size))
 
 
@@ -342,6 +346,7 @@ def set_config(request: Request, body: PaintConfigBody) -> DefaultAlphaResponse:
         - ``static/js/paint.js:saveConfig``
     """
     request.app.state.paint_default_alpha = body.default_alpha
+    logger.info("数据集 %s 更新默认 alpha 为 %d", request.state.runtime.root.name, body.default_alpha)
     return DefaultAlphaResponse(default_alpha=body.default_alpha)
 
 
@@ -385,4 +390,5 @@ def set_templates(request: Request, body: TemplatesPayload) -> TemplatesPayload:
     """
     root, _ = _services(request)
     save_templates(root, [t.model_dump() for t in body.templates])
+    logger.info("数据集 %s 全量覆盖 %d 个蒙版模板", root.name, len(body.templates))
     return body
