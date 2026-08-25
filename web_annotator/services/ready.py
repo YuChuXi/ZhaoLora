@@ -10,7 +10,7 @@ import tomlkit
 from services.state.mask import has_mask
 from services.models import MaskStats, ReadySubset, ReadyTomlResult
 from services.core.scanner import IMAGE_EXTS, scan_images
-from services.core.work_dir import list_work_dirs, total_image_count
+from services.core.work_dir import list_work_dirs
 
 
 # ---- Anima-Flux LoRA 固定训练配置(全部由代码构造, 无模板文件) ----
@@ -154,10 +154,10 @@ def build_ready_toml(
     传入 ``resolutions`` 时, 按每个分辨率 × 每组各渲染一个 [[datasets]] 块,
     块内首行 ``resolution = N``; 不传则保持单块且不带 resolution 行.
 
-    ``target_images`` 为目标图片数: 据此计算总重复次数 ``total_repeats = ceil(target_images / 总图片数)``,
+    ``target_images`` 为目标图片数: 据此计算总重复次数 ``total_repeats = max(分辨率块数, ceil(target_images / 启用子集总图片数))``,
     再按分辨率块数均分: base = floor(total_repeats / block_count), remainder 个 +1
-    优先分配给最靠近 1024 的分辨率(同距则高分辨率优先), 使跨所有块的总重复图片数 >= target_images;
-    不传分辨率时块数为 1, num_repeats = total_repeats. 总图片数为 0 时 total_repeats 取 1.
+    优先分配给最靠近 1024 的分辨率(同距则高分辨率优先), 使每个分辨率块 num_repeats >= 1 且重复后总图片数 >= target_images;
+    不传分辨率时块数为 1, num_repeats = total_repeats. 启用子集总图片数为 0 时 total_repeats 取块数.
 
     Args:
         root (Path): 数据集根目录.
@@ -183,20 +183,21 @@ def build_ready_toml(
         ordered.append("main")
     ordered.extend(sorted(n for n in names if n != "main"))
 
-    # 先确定有图片的目录并统计总图片数(复用统一的任务图数统计标准)
+    # 先确定有图片的目录并统计启用子集总图片数(与前端 subsets 张数同源)
     valid_names = [n for n in ordered if _has_images((root / n).resolve())]
-    total = total_image_count(root)
+    total = sum(available[n].image_count for n in valid_names)
 
     # 过滤非法分辨率(须为正整数), 保留输入顺序
     res_list = [r for r in (resolutions or []) if isinstance(r, int) and r > 0]
     if not res_list:
         res_list = [None]
 
-    # total_repeats = ceil(target / total): 跨所有分辨率块的总重复次数
+    # total_repeats: 跨所有分辨率块的总重复次数, 取 ceil(target/total) 且至少为块数,
+    # 保证每个分辨率块 num_repeats >= 1, 不产生 0 重复块
     # 按 block_count 均分: base = floor(total_repeats/block_count), remainder 个 +1
     # 优先分配给最靠近 1024 的分辨率, 同距则高分辨率优先
     block_count = len(res_list)
-    total_repeats = max(1, -(-target_images // total)) if total else 1
+    total_repeats = max(block_count, -(-target_images // total)) if total else block_count
     base = total_repeats // block_count
     remainder = total_repeats % block_count
 

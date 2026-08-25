@@ -212,6 +212,5 @@ def total_image_count(root: Path) -> int:
     Callers:
         - ``routes/tasks.py:list_tasks``
         - ``services/state/archiver.py:archive_task``
-        - ``services/ready.py:build_ready_toml``
     """
     return sum(d.image_count for d in list_work_dirs(root))
