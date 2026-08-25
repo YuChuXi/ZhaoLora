@@ -167,6 +167,11 @@ var Tagging = (function () {
     if (!m) return;
     m.classList.add('open');
     m.setAttribute('aria-hidden', 'false');
+    // 触发词输入框为空时默认填充任务名(数据集名)
+    var input = document.getElementById('artist-tag');
+    if (input && !input.value.trim()) {
+      input.value = API.dataset();
+    }
   }
 
   function close() {
