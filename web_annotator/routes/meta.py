@@ -15,13 +15,16 @@ jobs_router = APIRouter(prefix="/api/jobs", tags=["jobs"])
 @datasets_router.get("/api/datasets")
 def list_datasets(request: Request) -> DatasetsResponse:
     """
-    返回清单中未完成的任务名, 供业务页路径校验. 
+    返回清单中未完成且未归档的任务名, 供业务页路径校验. 
 
     Callers:
         - ``static/js/nav.js:boot`` : 页面启动时加载任务清单.
     """
     store = request.app.state.task_store
-    items = [DatasetItem(name=name) for name in store.active_names()]
+    items = [
+        DatasetItem(name=e.name)
+        for e in store.list_entries() if not e.completed and not e.archived
+    ]
     return DatasetsResponse(datasets=items)
 
 

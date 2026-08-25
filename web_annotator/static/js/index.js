@@ -229,7 +229,6 @@
           if (ev.status === 'done') {
             toast('已归档: ' + name);
             loadTasks();
-            loadArchived();
           } else if (ev.status === 'error') {
             toast('归档失败: ' + (ev.message || ''));
             removeProgress(card);
@@ -257,7 +256,6 @@
           if (ev.status === 'done') {
             toast('恢复完成');
             loadTasks();
-            loadArchived();
           } else if (ev.status === 'error') {
             toast('恢复失败: ' + (ev.message || ''));
             removeProgress(card);
@@ -268,76 +266,6 @@
         toast(String(err.message || err));
         removeProgress(card);
       });
-  }
-
-  /**
-   * 构建已归档任务卡片.
-   * @param {object} a
-   * @returns {HTMLElement}
-   */
-  function buildArchivedCard(a) {
-    var card = document.createElement('div');
-    card.className = 'task-card';
-
-    var previews = document.createElement('div');
-    previews.className = 'task-previews';
-    var hashes = a.preview_hashes || [];
-    for (var i = 0; i < 4; i++) {
-      if (hashes[i]) {
-        var img = document.createElement('img');
-        img.src = '/api/archived/' + encodeURIComponent(a.base) + '/preview/' + hashes[i] + '.avif';
-        img.alt = '';
-        previews.appendChild(img);
-      } else {
-        var slot = document.createElement('div');
-        slot.className = 'empty-slot';
-        previews.appendChild(slot);
-      }
-    }
-
-    var body = document.createElement('div');
-    body.className = 'task-body';
-    var title = document.createElement('h3');
-    title.textContent = a.name;
-    var meta = document.createElement('div');
-    meta.className = 'meta';
-    var d = new Date(a.archived_at * 1000);
-    var ds = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
-    meta.textContent = '图像 ' + a.image_count + ' · ' + ds + ' · ' + a.format.toUpperCase();
-
-    var actions = document.createElement('div');
-    actions.className = 'task-actions';
-    var restore = document.createElement('button');
-    restore.type = 'button';
-    restore.className = 'btn green';
-    restore.textContent = '恢复';
-    restore.addEventListener('click', function () {
-      restoreArchive(a.base, card);
-    });
-    actions.appendChild(restore);
-
-    body.appendChild(title);
-    body.appendChild(meta);
-    body.appendChild(actions);
-    card.appendChild(previews);
-    card.appendChild(body);
-    return card;
-  }
-
-  /**
-   * 加载已归档任务列表.
-   * @returns {Promise<void>}
-   */
-  async function loadArchived() {
-    var data = await API.request('/api/archived');
-    var archives = data.archives || [];
-    var host = document.getElementById('task-archived');
-    host.innerHTML = '';
-    document.getElementById('archived-wrap').hidden = archives.length === 0;
-    document.getElementById('archived-count').textContent = String(archives.length);
-    archives.forEach(function (a) {
-      host.appendChild(buildArchivedCard(a));
-    });
   }
 
   /**
@@ -363,7 +291,9 @@
     for (var i = 0; i < 4; i++) {
       if (hashes[i]) {
         var img = document.createElement('img');
-        img.src = '/d/' + encodeURIComponent(t.name) + '/thumb/' + hashes[i] + '.avif';
+        img.src = t.archived
+          ? '/api/archived/' + encodeURIComponent(t.archive_base || t.name) + '/preview/' + hashes[i] + '.avif'
+          : '/d/' + encodeURIComponent(t.name) + '/thumb/' + hashes[i] + '.avif';
         img.alt = '';
         previews.appendChild(img);
       } else {
@@ -372,7 +302,7 @@
         previews.appendChild(slot);
       }
     }
-    if (!completed) {
+    if (!t.archived && !completed) {
       previews.style.cursor = 'pointer';
       previews.title = '进入处理';
       previews.addEventListener('click', function () {
@@ -386,15 +316,21 @@
     title.textContent = t.name;
     var meta = document.createElement('div');
     meta.className = 'meta';
-    meta.textContent =
-      '图像 ' + (t.image_count || 0) + (t.report_ready ? ' · 有美学报告' : '');
+    if (t.archived) {
+      meta.textContent = '图像 ' + (t.image_count || 0) + ' · 归档 ' + new Date((t.archived_at || 0) * 1000).toLocaleString();
+    } else {
+      meta.textContent =
+        '图像 ' + (t.image_count || 0) + (t.report_ready ? ' · 有美学报告' : '');
+    }
 
     var noteWrap = document.createElement('div');
     noteWrap.className = 'task-note' + (t.note ? '' : ' empty');
-    noteWrap.textContent = t.note || '双击添加备注…';
-    noteWrap.addEventListener('dblclick', function () {
-      startEditNote(noteWrap, t.name);
-    });
+    noteWrap.textContent = t.note || (t.archived ? '' : '双击添加备注…');
+    if (!t.archived) {
+      noteWrap.addEventListener('dblclick', function () {
+        startEditNote(noteWrap, t.name);
+      });
+    }
 
     var triggerRow = document.createElement('div');
     triggerRow.className = 'task-trigger';
@@ -403,13 +339,15 @@
     triggerLabel.textContent = '触发词';
     var triggerText = document.createElement('div');
     triggerText.className = 'task-trigger-text' + (t.trigger_word ? '' : ' empty');
-    triggerText.textContent = t.trigger_word || '点击设置触发词…';
-    triggerText.addEventListener('click', function () {
-      inlineEdit(triggerRow, triggerText, t.trigger_word || '', '点击设置触发词…', function (v) {
-        return API.request('/api/tasks/' + encodeURIComponent(t.name) + '/trigger-word', { method: 'POST', body: JSON.stringify({ trigger_word: v }) })
-          .then(function () { toast('触发词已更新'); });
+    triggerText.textContent = t.trigger_word || (t.archived ? '' : '点击设置触发词…');
+    if (!t.archived) {
+      triggerText.addEventListener('click', function () {
+        inlineEdit(triggerRow, triggerText, t.trigger_word || '', '点击设置触发词…', function (v) {
+          return API.request('/api/tasks/' + encodeURIComponent(t.name) + '/trigger-word', { method: 'POST', body: JSON.stringify({ trigger_word: v }) })
+            .then(function () { toast('触发词已更新'); });
+        });
       });
-    });
+    }
     var triggerCopy = document.createElement('button');
     triggerCopy.type = 'button';
     triggerCopy.className = 'task-trigger-copy';
@@ -428,47 +366,58 @@
 
     var actions = document.createElement('div');
     actions.className = 'task-actions';
-    if (!completed) {
-      var enter = document.createElement('a');
-      enter.className = 'btn green';
-      enter.href = href;
-      enter.textContent = '进入处理';
-      actions.appendChild(enter);
-    }
-    var copy = document.createElement('button');
-    copy.type = 'button';
-    copy.className = 'btn';
-    copy.textContent = '复制链接';
-    copy.addEventListener('click', function () {
-      navigator.clipboard.writeText(abs).then(function () { toast('已复制'); });
-    });
-    actions.appendChild(copy);
-    if (completed) {
-      var archive = document.createElement('button');
-      archive.type = 'button';
-      archive.className = 'btn';
-      archive.textContent = '归档';
-      archive.addEventListener('click', function () {
-        archiveTask(t.name, card);
+    if (t.archived) {
+      var restore = document.createElement('button');
+      restore.type = 'button';
+      restore.className = 'btn';
+      restore.textContent = '恢复';
+      restore.addEventListener('click', function () {
+        restoreArchive(t.archive_base, card);
       });
-      actions.appendChild(archive);
-      var reopen = document.createElement('button');
-      reopen.type = 'button';
-      reopen.className = 'btn';
-      reopen.textContent = '重新打开';
-      reopen.addEventListener('click', function () {
-        API.request('/api/tasks/' + encodeURIComponent(t.name) + '/reopen', { method: 'POST', body: '{}' }).then(loadTasks);
-      });
-      actions.appendChild(reopen);
+      actions.appendChild(restore);
     } else {
-      var done = document.createElement('button');
-      done.type = 'button';
-      done.className = 'btn';
-      done.textContent = '完成';
-      done.addEventListener('click', function () {
-        API.request('/api/tasks/' + encodeURIComponent(t.name) + '/complete', { method: 'POST', body: '{}' }).then(loadTasks);
+      if (!completed) {
+        var enter = document.createElement('a');
+        enter.className = 'btn green';
+        enter.href = href;
+        enter.textContent = '进入处理';
+        actions.appendChild(enter);
+      }
+      var copy = document.createElement('button');
+      copy.type = 'button';
+      copy.className = 'btn';
+      copy.textContent = '复制链接';
+      copy.addEventListener('click', function () {
+        navigator.clipboard.writeText(abs).then(function () { toast('已复制'); });
       });
-      actions.appendChild(done);
+      actions.appendChild(copy);
+      if (completed) {
+        var archive = document.createElement('button');
+        archive.type = 'button';
+        archive.className = 'btn';
+        archive.textContent = '归档';
+        archive.addEventListener('click', function () {
+          archiveTask(t.name, card);
+        });
+        actions.appendChild(archive);
+        var reopen = document.createElement('button');
+        reopen.type = 'button';
+        reopen.className = 'btn';
+        reopen.textContent = '重新打开';
+        reopen.addEventListener('click', function () {
+          API.request('/api/tasks/' + encodeURIComponent(t.name) + '/reopen', { method: 'POST', body: '{}' }).then(loadTasks);
+        });
+        actions.appendChild(reopen);
+      } else {
+        var done = document.createElement('button');
+        done.type = 'button';
+        done.className = 'btn';
+        done.textContent = '完成';
+        done.addEventListener('click', function () {
+          API.request('/api/tasks/' + encodeURIComponent(t.name) + '/complete', { method: 'POST', body: '{}' }).then(loadTasks);
+        });
+        actions.appendChild(done);
+      }
     }
 
     body.appendChild(title);
@@ -488,13 +437,19 @@
     var tasks = data.tasks || [];
     var active = document.getElementById('task-active');
     var completedHost = document.getElementById('task-completed');
+    var archivedHost = document.getElementById('task-archived');
     active.innerHTML = '';
     completedHost.innerHTML = '';
+    archivedHost.innerHTML = '';
     var nActive = 0;
     var nDone = 0;
+    var nArch = 0;
     var isManual = _sortBy === 'sort_order';
     tasks.forEach(function (t) {
-      if (t.completed) {
+      if (t.archived) {
+        nArch += 1;
+        archivedHost.appendChild(buildCard(t, true, false));
+      } else if (t.completed) {
         nDone += 1;
         completedHost.appendChild(buildCard(t, true, false));
       } else {
@@ -505,6 +460,8 @@
     document.getElementById('task-empty').hidden = nActive > 0;
     document.getElementById('completed-wrap').hidden = nDone === 0;
     document.getElementById('completed-count').textContent = String(nDone);
+    document.getElementById('archived-wrap').hidden = nArch === 0;
+    document.getElementById('archived-count').textContent = String(nArch);
   }
 
   async function loadCandidates() {
@@ -641,7 +598,7 @@
     }
 
     setupDragDrop();
-    await Promise.all([loadDoc(currentSlug()), loadTasks(), loadCandidates(), loadArchived()]);
+    await Promise.all([loadDoc(currentSlug()), loadTasks(), loadCandidates()]);
     reconnectArchive();
   }
 
@@ -665,7 +622,6 @@
       if (ev.status === 'done') {
         toast('归档完成');
         loadTasks();
-        loadArchived();
       } else if (ev.status === 'error') {
         toast('归档失败: ' + (ev.message || ''));
         removeProgress(card);

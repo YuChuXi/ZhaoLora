@@ -14,7 +14,6 @@ from pydantic import BaseModel, Field
 from routes.deps import jobs, registry
 from services.dataset.runtime import DatasetRuntime
 from services.models import (
-    ArchivedListResponse,
     JobSubmitResponse,
     ScannedImage,
     TaskCard,
@@ -26,13 +25,7 @@ from services.models import (
 )
 from services.core.scanner import scan_images
 from services.core.work_dir import total_image_count
-from services.state.archiver import (
-    PACKED_DIR,
-    archive_task,
-    find_archive,
-    list_archives,
-    restore_task,
-)
+from services.state.archiver import PACKED_DIR, archive_task, restore_task
 from services.state.tasks import TaskStore, validate_task_name
 
 router = APIRouter(prefix="/api/tasks", tags=["tasks"])
@@ -125,10 +118,10 @@ async def list_tasks(
     for entry in store.list_entries():
         name = entry.name
         task_dir = store.root / name
-        image_count = 0
-        previews: list[str] = []
+        image_count = entry.image_count if entry.archived else 0
+        previews = list(entry.preview_hashes) if entry.archived else []
         report_ready = False
-        if (task_dir / "main").is_dir():
+        if not entry.archived and (task_dir / "main").is_dir():
             rt = await reg.ensure(name)
             images = scan_images(rt.main_dir, path_prefix="main")
             previews = await _preview_hashes(rt, images, 4)
@@ -145,6 +138,9 @@ async def list_tasks(
                 trigger_word=entry.trigger_word,
                 created=entry.created,
                 sort_order=entry.sort_order,
+                archived=entry.archived,
+                archive_base=entry.archive_base,
+                archived_at=entry.archived_at,
             )
         )
 
@@ -372,8 +368,6 @@ async def archive_task_route(request: Request, name: str) -> JobSubmitResponse:
     entries = {e.name: e for e in store.list_entries()}
     if name not in entries:
         raise HTTPException(404, f"未知任务: {name}")
-    if not entries[name].completed:
-        raise HTTPException(400, "任务未完成, 无法归档")
     task_dir = store.root / name
     if not (task_dir / "main").is_dir():
         raise HTTPException(400, "任务目录不存在")
@@ -393,7 +387,13 @@ async def archive_task_route(request: Request, name: str) -> JobSubmitResponse:
             - ``services/core/jobs.py:JobManager._execute``
         """
         meta = archive_task(task_dir, name, store.root, rt.thumbnailer, emit)
-        store.remove(name)
+        store.set_archived(
+            name,
+            archived_at=meta.archived_at,
+            archive_base=meta.base,
+            preview_hashes=meta.preview_hashes,
+            image_count=meta.image_count,
+        )
         return meta
 
     job_id = await jobs(request).submit(
@@ -406,26 +406,9 @@ async def archive_task_route(request: Request, name: str) -> JobSubmitResponse:
 archive_router = APIRouter(prefix="/api/archived", tags=["archive"])
 
 
-@archive_router.get("")
-def list_archived(request: Request) -> ArchivedListResponse:
-    """列出所有已归档任务。
-
-    Args:
-        request (Request): FastAPI 请求对象, 由路由参数注入。
-
-    Returns:
-        ArchivedListResponse: 含归档元数据列表。
-
-    Callers:
-        - ``static/js/index.js:loadArchived``
-    """
-    store = _store(request)
-    return ArchivedListResponse(archives=list_archives(store.root))
-
-
 @archive_router.post("/{base}/restore")
 async def restore_task_route(request: Request, base: str) -> JobSubmitResponse:
-    """解压归档恢复任务目录。
+    """解压归档恢复任务目录(把任务从已归档状态还原为当前任务).
 
     须为协程: 内部提交 JobManager 任务, 后者依赖事件循环。
 
@@ -440,10 +423,14 @@ async def restore_task_route(request: Request, base: str) -> JobSubmitResponse:
         - ``static/js/index.js:restoreArchive``
     """
     store = _store(request)
-    meta = find_archive(store.root, base)
-    if meta is None:
+    item = next(
+        ((n, e) for n, e in store.archived_entries() if e.archive_base == base),
+        None,
+    )
+    if item is None:
         raise HTTPException(404, f"归档不存在: {base}")
-    archive_path = store.root / PACKED_DIR / meta.archive_file
+    task_name, entry = item
+    archive_path = store.root / PACKED_DIR / f"{entry.archive_base}.7z"
     if not archive_path.is_file():
         raise HTTPException(404, "归档文件缺失")
 
@@ -460,11 +447,10 @@ async def restore_task_route(request: Request, base: str) -> JobSubmitResponse:
             - ``services/core/jobs.py:JobManager._execute``
         """
         restore_task(archive_path, store.root, emit)
-        info = store.add(meta.name)
-        store.set_completed(info.name, True)
+        store.clear_archived(task_name)
 
     job_id = await jobs(request).submit(
-        kind="archive", group=f"restore_{base}", dataset=meta.name, run=run,
+        kind="archive", group=f"restore_{base}", dataset=task_name, run=run,
     )
     return JobSubmitResponse(ok=True, job_id=job_id)
 

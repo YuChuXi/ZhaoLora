@@ -179,25 +179,23 @@ def archive_task(
         pct=100.0, message="校验通过",
     ))
 
-    # 4. 删除任务目录(含 .thumbnails/ 和 *.npz, 校验通过后一次性清理)
+    # 4. 统计图片总数, 删除任务目录(含 .thumbnails/ 和 *.npz, 校验通过后一次性清理)
     emit(JobSnapshot(
         status="running", kind="archive", dataset=name,
         phase="cleanup", message="清理目录…",
     ))
+    image_count = total_image_count(task_dir)
     shutil.rmtree(task_dir)
 
-    # 6. 写元数据
+    # 5. 返回归档结果
     meta = ArchivedTask(
         base=base,
         name=name,
         archived_at=int(time.time()),
-        archive_file=archive_path.name,
         preview_hashes=preview_hashes,
-        image_count=total_image_count(task_dir),
+        image_count=image_count,
         format="7z",
     )
-    meta_path = packed_dir / f"{base}.json"
-    meta_path.write_text(meta.model_dump_json(indent=2), encoding="utf-8")
 
     emit(JobSnapshot(
         status="done", kind="archive", dataset=name,
@@ -234,47 +232,3 @@ def restore_task(
         status="done", kind="archive", dataset="",
         message="解压完成",
     ))
-
-
-def list_archives(task_root: Path) -> list[ArchivedTask]:
-    """列出所有已归档任务.
-
-    扫描 ``__packed__/`` 下的 ``.json`` 元数据文件.
-
-    Args:
-        task_root: 任务根目录.
-
-    Returns:
-        按归档时间降序排列的归档元数据列表.
-
-    Callers:
-        - ``routes/tasks.py:list_archived``
-    """
-    packed_dir = task_root / PACKED_DIR
-    if not packed_dir.is_dir():
-        return []
-    result: list[ArchivedTask] = []
-    for p in sorted(packed_dir.glob("*.json")):
-        result.append(ArchivedTask.model_validate_json(p.read_text(encoding="utf-8")))
-    result.sort(key=lambda a: a.archived_at, reverse=True)
-    return result
-
-
-def find_archive(task_root: Path, base: str) -> ArchivedTask | None:
-    """按 base 名查找归档元数据.
-
-    Args:
-        task_root: 任务根目录.
-        base: 归档基本名(name-timestamp).
-
-    Returns:
-        ArchivedTask | None: 找到则返回, 否则 None.
-
-    Callers:
-        - ``routes/tasks.py:restore_task_route``
-        - ``routes/tasks.py:serve_archive_preview``
-    """
-    meta_path = task_root / PACKED_DIR / f"{base}.json"
-    if not meta_path.is_file():
-        return None
-    return ArchivedTask.model_validate_json(meta_path.read_text(encoding="utf-8"))

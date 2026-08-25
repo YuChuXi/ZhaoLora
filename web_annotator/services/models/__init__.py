@@ -105,10 +105,7 @@ from services.models.paint import (
     TemplateItem,
     TemplatesPayload,
 )
-from services.models.archive import (
-    ArchivedTask,
-    ArchivedListResponse,
-)
+from services.models.archive import ArchivedTask
 from services.models.pages import (
     ScoringDirsResponse,
     ScoringStartResponse,
@@ -204,7 +201,6 @@ __all__ = [
     'TemplateItem',
     'TemplatesPayload',
     'ArchivedTask',
-    'ArchivedListResponse',
     'ScoringDirsResponse',
     'ScoringStartResponse',
     'TaggingDirsResponse',
