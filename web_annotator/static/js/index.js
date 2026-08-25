@@ -325,7 +325,7 @@
 
     var noteWrap = document.createElement('div');
     noteWrap.className = 'task-note' + (t.note ? '' : ' empty');
-    noteWrap.textContent = t.note || (t.archived ? '' : '双击添加备注…');
+    noteWrap.textContent = t.note || (t.archived ? '无' : '双击添加备注…');
     if (!t.archived) {
       noteWrap.addEventListener('dblclick', function () {
         startEditNote(noteWrap, t.name);
@@ -339,7 +339,7 @@
     triggerLabel.textContent = '触发词';
     var triggerText = document.createElement('div');
     triggerText.className = 'task-trigger-text' + (t.trigger_word ? '' : ' empty');
-    triggerText.textContent = t.trigger_word || (t.archived ? '' : '点击设置触发词…');
+    triggerText.textContent = t.trigger_word || (t.archived ? '无' : '点击设置触发词…');
     if (!t.archived) {
       triggerText.addEventListener('click', function () {
         inlineEdit(triggerRow, triggerText, t.trigger_word || '', '点击设置触发词…', function (v) {
@@ -353,12 +353,11 @@
     triggerCopy.className = 'task-trigger-copy';
     triggerCopy.textContent = '复制';
     triggerCopy.addEventListener('click', function () {
-      var v = triggerText.textContent.trim();
-      if (!v || v === '点击设置触发词…') {
+      if (!t.trigger_word) {
         toast('触发词为空');
         return;
       }
-      navigator.clipboard.writeText(v).then(function () { toast('已复制触发词'); });
+      navigator.clipboard.writeText(t.trigger_word).then(function () { toast('已复制触发词'); });
     });
     triggerRow.appendChild(triggerLabel);
     triggerRow.appendChild(triggerText);

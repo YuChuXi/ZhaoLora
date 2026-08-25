@@ -82,7 +82,10 @@ var Tagging = (function () {
     _jobId = jobId;
     _watch = API.watchJob(jobId, function (s) {
       applyStatus(s);
-      if (s.status === 'done') toast('打标完成');
+      if (s.status === 'done') {
+        toast('打标完成');
+        if (typeof window.onTaggingDone === 'function') window.onTaggingDone();
+      }
       if (s.status === 'cancelled') toast('已取消');
       if (s.status === 'error') toast('打标失败');
     });
@@ -118,17 +121,24 @@ var Tagging = (function () {
       toast('置信度须在 0～1');
       return;
     }
+    var trigger = document.getElementById('artist-tag').value.trim();
     var body = {
       dirs: dirs,
       threshold: threshold,
       disable_orig_tags: document.getElementById('chk-disable-orig').checked,
       force: document.getElementById('chk-force').checked,
-      artist_tag: document.getElementById('artist-tag').value.trim()
+      artist_tag: trigger
     };
     var data = await API.request(API.apiPath('/tagging/start'), {
       method: 'POST',
       body: JSON.stringify(body)
     });
+    if (trigger) {
+      API.request('/api/tasks/' + encodeURIComponent(API.dataset()) + '/trigger-word', {
+        method: 'POST',
+        body: JSON.stringify({ trigger_word: trigger }),
+      }).catch(function (e) { toast('触发词写入失败: ' + (e.message || e)); });
+    }
     applyStatus({ status: 'queued', message: '等待执行' });
     toast('已提交');
     startWatch(data.job_id);

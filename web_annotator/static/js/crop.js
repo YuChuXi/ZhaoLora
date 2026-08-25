@@ -990,7 +990,7 @@
 
   // ---- 加载 ----
   async function loadImages() {
-    var res = await API.request('/api/crop/images');
+    var res = await API.request(API.apiPath('/crop/images'));
     _images = res;
     if (_strip) _strip.refresh();
     if (_images.length > 0) {
@@ -1081,7 +1081,7 @@
       toast('请至少保留一个选区');
       return;
     }
-    var res = await API.request('/api/crop/save', {
+    var res = await API.request(API.apiPath('/crop/save'), {
       method: 'POST',
       body: JSON.stringify(body),
     });
@@ -1153,10 +1153,10 @@
   }
 
   async function init() {
-    var cfg = await API.request('/api/crop/config');
+    var cfg = await API.request(API.apiPath('/crop/config'));
     loadParts(cfg.parts || []);
 
-    var matchCfg = await API.request('/api/crop/candidates');
+    var matchCfg = await API.request(API.apiPath('/crop/candidates'));
     applyMatchConfig(matchCfg);
 
     var globalDefault = document.getElementById('crop-default-global');

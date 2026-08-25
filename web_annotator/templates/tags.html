@@ -32,6 +32,7 @@
   .tag-table .col-count { width: 64px; color: var(--text-dim); font-variant-numeric: tabular-nums; }
   .tag-table .col-en { width: 42%; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
   .tag-table .col-zh { color: #e8d5b7; }
+  .tag-table .col-trigger { width: 100px; }
   .tag-table .zh-miss { color: var(--text-dim); opacity: 0.55; }
   .export-box {
     padding: 8px 14px; border-top: 1px solid var(--border); background: var(--surface);
@@ -93,7 +94,6 @@
   <button class="btn" id="btn-export-en">导出英文</button>
   <button class="btn" id="btn-export-zh">导出中文</button>
   <span class="sep"></span>
-  <button class="btn green" id="btn-set-trigger">设为触发词</button>
 </div>
 
 <div class="tags-main">
@@ -110,10 +110,11 @@
             <th class="col-count">次数</th>
             <th class="col-en">英文</th>
             <th class="col-zh">中文</th>
+            <th class="col-trigger">触发词</th>
           </tr>
         </thead>
         <tbody id="tag-body">
-          <tr><td colspan="5" class="empty-hint">加载中…</td></tr>
+          <tr><td colspan="6" class="empty-hint">加载中…</td></tr>
         </tbody>
       </table>
     </div>
@@ -133,8 +134,8 @@
       <label>置信度
         <input type="number" id="threshold" value="0.1" min="0" max="1" step="0.01">
       </label>
-      <label>画师
-        <input type="text" id="artist-tag" placeholder="@画师名" spellcheck="false">
+      <label>触发词
+        <input type="text" id="artist-tag" placeholder="@画师名或普通标签" spellcheck="false">
       </label>
       <label><input type="checkbox" id="chk-disable-orig" checked> 忽略已有</label>
       <label><input type="checkbox" id="chk-force"> 覆盖</label>

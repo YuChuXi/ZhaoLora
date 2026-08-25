@@ -6,6 +6,7 @@
 
   var _tags = [];
   var _selected = {};
+  var _triggers = {};
 
   /**
    * @returns {Array<object>}
@@ -41,7 +42,7 @@
     var body = document.getElementById('tag-body');
     body.innerHTML = '';
     if (!_tags.length) {
-      body.innerHTML = '<tr><td colspan="5" class="empty-hint">无结果</td></tr>';
+      body.innerHTML = '<tr><td colspan="6" class="empty-hint">无结果</td></tr>';
       updateExport();
       return;
     }
@@ -79,11 +80,26 @@
       tdZh.className = 'col-zh' + (row.zh ? '' : ' zh-miss');
       tdZh.textContent = row.zh || '—';
 
+      var tdTrigger = document.createElement('td');
+      tdTrigger.className = 'col-trigger';
+      var tcb = document.createElement('input');
+      tcb.type = 'checkbox';
+      tcb.title = '勾选后实时保存为任务触发词';
+      tcb.checked = !!_triggers[row.tag];
+      tcb.addEventListener('click', function (e) { e.stopPropagation(); });
+      tcb.addEventListener('change', function () {
+        if (tcb.checked) _triggers[row.tag] = true;
+        else delete _triggers[row.tag];
+        saveTriggers().catch(function (e) { toast('触发词保存失败: ' + (e.message || e)); });
+      });
+      tdTrigger.appendChild(tcb);
+
       tr.appendChild(tdCheck);
       tr.appendChild(tdPct);
       tr.appendChild(tdCount);
       tr.appendChild(tdEn);
       tr.appendChild(tdZh);
+      tr.appendChild(tdTrigger);
       tr.addEventListener('click', function (e) {
         if (e.target === cb) return;
         cb.checked = !cb.checked;
@@ -186,21 +202,34 @@
   }
 
   /**
-   * 将多选标签设为当前任务触发词(逗号分隔, 写入任务清单).
-   * @returns {Promise<void>}
+   * 将表格中勾选为触发词的标签实时写入任务触发词(逗号分隔).
+   * @returns {Promise<*>}
+   * 引用：renderTable 中触发词复选框 change 回调。
    */
-  async function setTrigger() {
-    var sel = selectedTags();
-    if (!sel.length) {
-      toast('请先勾选标签');
-      return;
-    }
-    var word = sel.map(function (t) { return t.tag; }).join(', ');
-    await API.request('/api/tasks/' + encodeURIComponent(API.dataset()) + '/trigger-word', {
+  function saveTriggers() {
+    var word = _tags.filter(function (t) { return _triggers[t.tag]; }).map(function (t) { return t.tag; }).join(', ');
+    return API.request('/api/tasks/' + encodeURIComponent(API.dataset()) + '/trigger-word', {
       method: 'POST',
       body: JSON.stringify({ trigger_word: word }),
     });
-    toast('已设为触发词: ' + word);
+  }
+
+  /**
+   * 加载当前任务触发词, 拆分到勾选状态用于回显.
+   * @returns {Promise<void>}
+   * 引用：init 首次加载；window.onTaggingDone 打标完成后刷新。
+   */
+  function loadTriggers() {
+    return API.request('/api/tasks').then(function (res) {
+      _triggers = {};
+      var task = (res.tasks || []).filter(function (t) { return t.name === API.dataset(); })[0];
+      if (task && task.trigger_word) {
+        task.trigger_word.split(',').forEach(function (s) {
+          var v = String(s).trim();
+          if (v) _triggers[v] = true;
+        });
+      }
+    });
   }
 
   /**
@@ -256,9 +285,6 @@
     });
     document.getElementById('btn-translate-missing').addEventListener('click', function () {
       translateMissing();
-    });
-    document.getElementById('btn-set-trigger').addEventListener('click', function () {
-      setTrigger().catch(function (e) { toast(String(e.message || e)); });
     });
     document.getElementById('chk-head').addEventListener('change', function () {
       var on = document.getElementById('chk-head').checked;
@@ -343,12 +369,23 @@
       runBatchEdit('replace', false).catch(function (e) { toast(String(e.message || e)); });
     });
 
-    setTimeout(function () {
-      refresh().catch(function (e) {
-        document.getElementById('tag-body').innerHTML =
-          '<tr><td colspan="5" class="empty-hint">' + String(e.message || e) + '</td></tr>';
+    // 打标(自动生成)完成后重新加载触发词并刷新标签统计列表
+    window.onTaggingDone = function () {
+      loadTriggers().catch(function (e) { toast(String(e.message || e)); })
+        .then(function () {
+          refresh().catch(function (e) { toast(String(e.message || e)); });
+        });
+    };
+
+    loadTriggers().catch(function (e) { toast('触发词加载失败: ' + (e.message || e)); })
+      .then(function () {
+        setTimeout(function () {
+          refresh().catch(function (e) {
+            document.getElementById('tag-body').innerHTML =
+              '<tr><td colspan="6" class="empty-hint">' + String(e.message || e) + '</td></tr>';
+          });
+        }, 80);
       });
-    }, 80);
   }
 
   /**

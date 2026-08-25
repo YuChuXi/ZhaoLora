@@ -305,7 +305,8 @@ def set_trigger_word(request: Request, name: str, body: SetTriggerWordBody) -> T
 
     Callers:
         - ``static/js/index.js:buildCard``
-        - ``static/js/tags.js:setTrigger``
+        - ``static/js/tagging.js:startJob``
+        - ``static/js/tags.js:saveTriggers``
     """
     store = _store(request)
     try:
