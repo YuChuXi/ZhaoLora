@@ -78,13 +78,13 @@ class TaskOkResponse(BaseModel):
 class SetNoteBody(BaseModel):
     """修改任务备注请求体."""
 
-    note: str = Field(default="", max_length=200)
+    note: str = ""
 
 
 class SetTriggerWordBody(BaseModel):
     """修改任务触发词请求体."""
 
-    trigger_word: str = Field(default="", max_length=100)
+    trigger_word: str = ""
 
 
 class DatasetItem(BaseModel):

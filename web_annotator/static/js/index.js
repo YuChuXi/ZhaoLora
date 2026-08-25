@@ -109,50 +109,77 @@
   }
 
   /**
+   * 内联编辑长文本: 将展示元素切换为 textarea, 失焦/回车保存, Esc 取消.
+   * 备注与触发词共用此实现, 编辑高度随内容自动扩展.
+   *
+   * Args:
+   *   host (HTMLElement): 承载编辑的容器, 用于重入检查.
+   *   display (HTMLElement): 只读展示元素, 编辑时被替换为 textarea.
+   *   old (string): 初始文本.
+   *   placeholder (string): 空值时的占位文案.
+   *   save (function(string): Promise): 保存回调, resolve 后刷新展示; reject 时 toast 并退出编辑.
+   *
+   * Returns:
+   *   void.
+   *
+   * Callers:
+   *   - ``static/js/index.js:startEditNote`` (备注)
+   *   - ``static/js/index.js:buildCard`` (触发词)
+   */
+  function inlineEdit(host, display, old, placeholder, save) {
+    if (host.querySelector('textarea')) return;
+    var ta = document.createElement('textarea');
+    ta.className = 'task-edit-input';
+    ta.value = old;
+    function resize() {
+      ta.style.height = 'auto';
+      ta.style.height = ta.scrollHeight + 'px';
+    }
+    host.replaceChild(ta, display);
+    // 先挂入 DOM 再计算高度, 否则 scrollHeight 不准确.
+    resize();
+    ta.focus();
+    ta.setSelectionRange(ta.value.length, ta.value.length);
+    function exit() {
+      display.textContent = old || placeholder;
+      display.classList.toggle('empty', !old);
+      host.replaceChild(display, ta);
+    }
+    function finish() {
+      var v = ta.value.trim();
+      if (v === old) { exit(); return; }
+      save(v).then(function () {
+        old = v;
+        display.textContent = v || placeholder;
+        display.classList.toggle('empty', !v);
+        host.replaceChild(display, ta);
+      }).catch(function (err) {
+        toast(String(err.message || err));
+        host.replaceChild(display, ta);
+      });
+    }
+    ta.addEventListener('blur', finish);
+    ta.addEventListener('input', resize);
+    ta.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); ta.blur(); }
+      if (e.key === 'Escape') { ta.value = old; ta.blur(); }
+    });
+  }
+
+  /**
    * @param {HTMLElement} noteWrap
    * @param {string} name
    */
   function startEditNote(noteWrap, name) {
-    if (noteWrap.querySelector('textarea')) return;
-    var old = noteWrap.textContent;
-    if (old === '双击添加备注…') old = '';
-    var input = document.createElement('textarea');
-    input.className = 'task-note-input';
-    input.value = old;
-    input.rows = Math.max(1, old.split('\n').length) || 1;
-    noteWrap.textContent = '';
-    noteWrap.appendChild(input);
-    input.focus();
-    input.setSelectionRange(input.value.length, input.value.length);
-    function finish() {
-      var val = input.value.trim();
-      if (val === old) {
-        noteWrap.textContent = old || '双击添加备注…';
-        noteWrap.className = 'task-note' + (val ? '' : ' empty');
-        return;
+    inlineEdit(
+      noteWrap.parentNode,
+      noteWrap,
+      noteWrap.textContent === '双击添加备注…' ? '' : noteWrap.textContent,
+      '双击添加备注…',
+      function (val) {
+        return API.request('/api/tasks/' + encodeURIComponent(name) + '/note', { method: 'POST', body: JSON.stringify({ note: val }) });
       }
-      API.request('/api/tasks/' + encodeURIComponent(name) + '/note', { method: 'POST', body: JSON.stringify({ note: val }) })
-        .then(function () {
-          noteWrap.textContent = val || '双击添加备注…';
-          noteWrap.className = 'task-note' + (val ? '' : ' empty');
-        })
-        .catch(function (err) {
-          noteWrap.textContent = old || '双击添加备注…';
-          noteWrap.className = 'task-note' + (old ? '' : ' empty');
-          toast(String(err.message || err));
-        });
-    }
-    input.addEventListener('blur', finish);
-    input.addEventListener('keydown', function (e) {
-      if (e.key === 'Enter' && !e.shiftKey) {
-        e.preventDefault();
-        input.blur();
-      }
-      if (e.key === 'Escape') {
-        input.value = old;
-        input.blur();
-      }
-    });
+    );
   }
 
   /**
@@ -374,30 +401,29 @@
     var triggerLabel = document.createElement('span');
     triggerLabel.className = 'task-trigger-label';
     triggerLabel.textContent = '触发词';
-    var triggerInput = document.createElement('input');
-    triggerInput.type = 'text';
-    triggerInput.className = 'task-trigger-input';
-    triggerInput.value = t.trigger_word || '';
-    triggerInput.placeholder = '无';
-    triggerInput.maxLength = 100;
-    triggerInput.addEventListener('change', function () {
-      API.request('/api/tasks/' + encodeURIComponent(t.name) + '/trigger-word', { method: 'POST', body: JSON.stringify({ trigger_word: triggerInput.value.trim() }) })
-        .catch(function (err) { toast(String(err.message || err)); });
+    var triggerText = document.createElement('div');
+    triggerText.className = 'task-trigger-text' + (t.trigger_word ? '' : ' empty');
+    triggerText.textContent = t.trigger_word || '点击设置触发词…';
+    triggerText.addEventListener('click', function () {
+      inlineEdit(triggerRow, triggerText, t.trigger_word || '', '点击设置触发词…', function (v) {
+        return API.request('/api/tasks/' + encodeURIComponent(t.name) + '/trigger-word', { method: 'POST', body: JSON.stringify({ trigger_word: v }) })
+          .then(function () { toast('触发词已更新'); });
+      });
     });
     var triggerCopy = document.createElement('button');
     triggerCopy.type = 'button';
     triggerCopy.className = 'task-trigger-copy';
     triggerCopy.textContent = '复制';
     triggerCopy.addEventListener('click', function () {
-      var v = triggerInput.value.trim();
-      if (!v) {
+      var v = triggerText.textContent.trim();
+      if (!v || v === '点击设置触发词…') {
         toast('触发词为空');
         return;
       }
       navigator.clipboard.writeText(v).then(function () { toast('已复制触发词'); });
     });
     triggerRow.appendChild(triggerLabel);
-    triggerRow.appendChild(triggerInput);
+    triggerRow.appendChild(triggerText);
     triggerRow.appendChild(triggerCopy);
 
     var actions = document.createElement('div');
@@ -453,12 +479,6 @@
     card.appendChild(previews);
     card.appendChild(body);
 
-    if (sortable) {
-      var handle = document.createElement('div');
-      handle.className = 'task-drag-handle';
-      handle.textContent = '⠿';
-      card.appendChild(handle);
-    }
     return card;
   }
 
@@ -677,6 +697,13 @@
 
   function setupDragDrop() {
     var activeGrid = document.getElementById('task-active');
+
+    // 按下时按位置动态决定卡片是否可拖: 仅卡片本体(空白/底部区域)可拖排序,
+    // 内部元素按下则临时禁拖, 保留其浏览器默认行为(选中文本/拖拽图片等).
+    activeGrid.addEventListener('mousedown', function (e) {
+      var card = e.target.closest('.task-card.sortable');
+      if (card) card.draggable = (e.target === card);
+    });
 
     activeGrid.addEventListener('dragstart', function (e) {
       var card = e.target.closest('.task-card.sortable');
