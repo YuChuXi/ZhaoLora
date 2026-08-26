@@ -311,6 +311,13 @@
       var sel = selectedTags();
       document.getElementById('batch-add-tags').value = sel.map(function (t) { return t.tag; }).join(', ');
       document.getElementById('batch-add-result').textContent = '';
+      // 有选中标签时默认设置: 位置 ||| 前、插入方式置底、仅当已有匹配标签时才插入
+      if (sel.length) {
+        document.getElementById('batch-add-position').value = 'before';
+        document.getElementById('batch-add-mode').value = 'bottom';
+        document.getElementById('batch-add-conditional').checked = true;
+        syncAddMatchMode();
+      }
       document.getElementById('batch-add-modal').classList.add('open');
     });
     document.getElementById('btn-batch-add-close').addEventListener('click', function () {
