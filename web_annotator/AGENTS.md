@@ -5,8 +5,9 @@
 
 ## 1. 项目定位与目录
 
-网页图片标注工具（FastAPI 后端 + 原生 JS 前端）。任务根由 `--data-dir` 指定，任务须
-手动加入清单（`.annotator_tasks.json`），不会因磁盘子目录自动出现。
+网页图片标注工具（FastAPI 后端 + 原生 JS 前端）。任务根由 `ANNOTATOR_DATA_DIR`
+环境变量指定（配置于 `web_annotator/.env`），任务须手动加入清单
+（`.annotator_tasks.json`），不会因磁盘子目录自动出现。
 
 ```
 server.py                      应用入口，装配全局管理器与中间件
@@ -67,7 +68,7 @@ docs/                          功能说明文档
 - `resolve_path(root, rel)`：在根下安全解析相对路径，失败返回 400。
 - `registry(request)`：取数据集注册表。
 
-全局管理器在 `server.py:main` 装配并注册到 `app.state`（`task_store` / `datasets` / `jobs`）。
+全局管理器在 `server.py:lifespan` 装配并注册到 `app.state`（`task_store` / `datasets` / `jobs`）。
 
 ## 3. 前端统一管理器
 

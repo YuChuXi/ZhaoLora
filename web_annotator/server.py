@@ -2,31 +2,30 @@
 """
 网页图片标注工具. 
 
---data-dir 指向任务根(如 datasets/). 任务须在界面手动加入清单
-(datasets/.annotator_tasks.json), 不会因磁盘子目录自动出现. 
+配置经 ``web_annotator/.env`` 与 ``ANNOTATOR_*`` 环境变量提供, 应用初始化在 FastAPI
+``lifespan`` 中完成; 任务根由 ``ANNOTATOR_DATA_DIR`` 指定(如 datasets/), 任务须在界面
+手动加入清单 (datasets/.annotator_tasks.json), 不会因磁盘子目录自动出现. 
 
-用法:
-  python web_annotator/server.py --data-dir datasets
+用法 (从仓库根目录启动):
+  .venv/bin/uvicorn server:app --app-dir web_annotator --host 0.0.0.0 --port 8765
 """
 
 from __future__ import annotations
 
-import argparse
 import logging
 import os
 import re
-import sys
 import time
 from pathlib import Path
 
 from collections.abc import Awaitable, Callable
+from contextlib import asynccontextmanager
 
 from fastapi import APIRouter, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from dotenv import load_dotenv
 from starlette.middleware.gzip import GZipMiddleware
-import uvicorn
 
 
 
@@ -51,11 +50,75 @@ from services.core.jobs import JobManager
 from services.core.logging import setup_logging
 from services.state.tasks import TaskStore
 
+# 启动前加载 web_annotator/.env (与当前工作目录无关), 供数据源凭据与服务器配置读取.
+load_dotenv(Path(__file__).parent / ".env")
+
 # 访问日志专用 logger, 经根日志器统一格式化输出.
 _ACCESS_LOG = logging.getLogger("web_annotator.access")
 
 
-app = FastAPI(title="Image Annotator", version="3.1.0")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """应用生命周期: 启动时装配日志与运行时依赖, 关闭时释放.
+
+    服务器配置直接经 ``ANNOTATOR_*`` 环境变量读取, 与各数据源模块自读环境变量
+    的方式一致; 任务存储/任务运行时/任务管理器挂载到 ``app.state``, 供各路由经
+    ``request.app.state`` 访问. 经 ``uvicorn server:app`` 命令启动时本生命周期完整执行.
+
+    Args:
+        app: FastAPI 应用实例, 其 ``state`` 用于承载全局依赖.
+
+    Yields:
+        None: 应用运行期间挂起; 关闭时无额外清理.
+
+    Callers:
+        - ``server.py:`` (FastAPI ``lifespan=`` 参数传入, 由 ASGI 服务器调度)
+    """
+    raw_data_dir = os.environ.get("ANNOTATOR_DATA_DIR", "").strip()
+    if not raw_data_dir:
+        raise RuntimeError("缺少环境变量 ANNOTATOR_DATA_DIR")
+    data_dir = Path(raw_data_dir).resolve()
+    if not data_dir.is_dir():
+        raise RuntimeError(f"任务根目录不存在: {data_dir}")
+    thumbnail_size = int(os.environ.get("ANNOTATOR_THUMBNAIL_SIZE", "1280"))
+    log_level = os.environ.get("ANNOTATOR_LOG_LEVEL", "info").strip()
+    log_dir = (
+        Path(os.environ["ANNOTATOR_LOG_DIR"]).resolve()
+        if os.environ.get("ANNOTATOR_LOG_DIR", "").strip()
+        else None
+    )
+    block_chinese_ua = os.environ.get("ANNOTATOR_BLOCK_CHINESE_UA", "").lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+
+    setup_logging(log_level, log_dir or (data_dir / "logs"))
+    log = logging.getLogger("web_annotator")
+
+    store = TaskStore(data_dir)
+    jobs = JobManager()
+    registry = DatasetRegistry(
+        task_root=data_dir,
+        thumbnail_size=thumbnail_size,
+        job_manager=jobs,
+    )
+
+    app.state.task_store = store
+    app.state.datasets = registry
+    app.state.jobs = jobs
+    app.state.paint_default_alpha = 255
+    app.state.block_chinese_ua = block_chinese_ua
+
+    log.info("任务根   : %s", data_dir)
+    log.info("清单任务 : %s", len(store.list_entries()))
+    if block_chinese_ua:
+        log.info("UA 拦截  : 已启用(屏蔽 QQ/微信/国产浏览器)")
+
+    yield
+
+
+app = FastAPI(title="Image Annotator", version="3.1.0", lifespan=lifespan)
 
 _PAGE_TEMPLATES = {
     "filter": "filter.html",
@@ -287,90 +350,3 @@ def dataset_page(dataset: str, page: str) -> HTMLResponse | RedirectResponse:
     if tpl is None:
         raise HTTPException(404, f"未知页面: {page}")
     return _read_template(tpl)
-
-
-def main() -> int:
-    """启动 uvicorn 服务.
-
-    Returns:
-        int: 0 表示正常退出; 1 表示 ``--data-dir`` 目录校验失败.
-
-    Callers:
-        - ``server.py:main`` (命令行 ``python web_annotator/server.py`` 入口)
-    """
-    load_dotenv()
-
-    parser = argparse.ArgumentParser(description="网页图片标注工具")
-    parser.add_argument(
-        "--data-dir",
-        type=str,
-        required=True,
-        help="任务根目录, 例如 datasets/(任务须手动加入清单)",
-    )
-    parser.add_argument("--host", type=str, default="0.0.0.0", help="监听地址")
-    parser.add_argument("--port", type=int, default=8765, help="监听端口")
-    parser.add_argument("--thumbnail-size", type=int, default=1280, help="缩略图长边像素")
-    parser.add_argument(
-        "--log-level",
-        type=str,
-        default="info",
-        choices=["debug", "info", "warning", "error"],
-        help="日志级别 (默认 info)",
-    )
-    parser.add_argument(
-        "--log-dir",
-        type=str,
-        default=None,
-        help="日志输出目录; 默认写入 <data-dir>/logs",
-    )
-    parser.add_argument(
-        "--block-chinese-ua",
-        action="store_true",
-        default=False,
-        help="屏蔽 QQ/微信/国产浏览器(UC/360/搜狗/百度/夸克等)",
-    )
-    args = parser.parse_args()
-
-    task_root = Path(args.data_dir).resolve()
-    # 装配统一日志体系: 默认写入 <data-dir>/logs, 可用 --log-dir 覆盖.
-    log_dir = Path(args.log_dir).resolve() if args.log_dir else (task_root / "logs")
-    setup_logging(args.log_level, log_dir)
-    log = logging.getLogger("web_annotator")
-
-    if not task_root.is_dir():
-        log.error("目录不存在: %s", task_root)
-        return 1
-
-    store = TaskStore(task_root)
-    jobs = JobManager()
-    registry = DatasetRegistry(
-        task_root=task_root,
-        thumbnail_size=args.thumbnail_size,
-        job_manager=jobs,
-    )
-
-    app.state.task_store = store
-    app.state.datasets = registry
-    app.state.jobs = jobs
-    app.state.paint_default_alpha = 255
-    app.state.block_chinese_ua = args.block_chinese_ua
-
-    n = len(store.list_entries())
-    log.info("任务根   : %s", task_root)
-    log.info("清单任务 : %s", n)
-    log.info("服务地址 : http://%s:%s", args.host, args.port)
-    if args.block_chinese_ua:
-        log.info("UA 拦截  : 已启用(屏蔽 QQ/微信/国产浏览器)")
-
-    uvicorn.run(
-        app,
-        host=args.host,
-        port=args.port,
-        log_config=None,
-        access_log=False,
-    )
-    return 0
-
-
-if __name__ == "__main__":
-    sys.exit(main())

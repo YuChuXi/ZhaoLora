@@ -4,11 +4,16 @@
 
 ## 启动
 
+配置统一经 `web_annotator/.env` 与环境变量提供（无 CLI 参数），从仓库根目录启动：
+
 ```bash
-python web_annotator/server.py --data-dir datasets
+.venv/bin/uvicorn server:app --app-dir web_annotator --host 0.0.0.0 --port 8765
 ```
 
-默认监听 `http://0.0.0.0:8765`。`--data-dir` 指向**任务根**（例如 `datasets/`），不是某一个角色子目录。
+默认监听 `http://0.0.0.0:8765`。`ANNOTATOR_DATA_DIR` 指向**任务根**（例如
+`datasets/`，相对启动时工作目录解析），不是某一个角色子目录。首次使用请复制
+`web_annotator/.env.example` 为 `web_annotator/.env` 并填写 `ANNOTATOR_DATA_DIR`
+等配置。
 
 ## 首页
 

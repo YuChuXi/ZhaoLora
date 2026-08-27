@@ -17,6 +17,8 @@ from services.online_sources.framework.http import HttpClient, NetworkError
 from services.online_sources.framework.utils import save_png_bytes
 
 _GELBOORU_BASE = "https://gelbooru.com/index.php"
+# gelbooru 图床需携带该 cookie 才能正常返回原图
+_IMAGE_COOKIE = "fringeBenefits=yup"
 
 
 class GelbooruClient:
@@ -114,7 +116,7 @@ class GelbooruClient:
         Callers:
             - ``services/online_sources/gelbooru/source.py:GelbooruSource.download``
         """
-        async with HttpClient() as client:
+        async with HttpClient(headers={"cookie": _IMAGE_COOKIE}) as client:
             data, _ = await client.get_bytes(file_url, referer=referer)
         await asyncio.to_thread(save_png_bytes, data, Path(path))
 

@@ -34,8 +34,8 @@ DEFAULT_UA = (
 class HttpClient(httpx.AsyncClient):
     """HTTP 客户端, 继承 ``httpx.AsyncClient``, 预置连接池、超时与默认请求头.
 
-    UA 在构造时写入默认请求头, 无需每次调用传入。Referer 可选配置,
-    访问 gelbooru 图床时自动附加 ``fringeBenefits`` cookie。
+    UA 在构造时写入默认请求头, 无需每次调用传入; Referer 可选, 由调用方按需
+    追加到请求头。
 
     每个实例绑定到创建时所在的运行循环, 适合作为异步上下文管理器使用:
 
@@ -56,8 +56,6 @@ class HttpClient(httpx.AsyncClient):
         headers.setdefault("user-agent", DEFAULT_UA)
         if referer:
             headers["referer"] = referer
-            if "gelbooru.com" in referer:
-                headers.setdefault("cookie", "fringeBenefits=yup")
         kwargs["headers"] = headers
         super().__init__(**kwargs)
 
@@ -77,8 +75,6 @@ class HttpClient(httpx.AsyncClient):
         h = dict(self.headers)
         if referer:
             h["referer"] = referer
-            if "gelbooru.com" in referer:
-                h.setdefault("cookie", "fringeBenefits=yup")
         return h
 
     # ------------------------------------------------------------------
