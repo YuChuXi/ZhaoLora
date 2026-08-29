@@ -539,7 +539,10 @@
    */
   function _fetchBlob(apiPath, imgPath) {
     return fetch(API.apiPath(apiPath) + '?path=' + encodeURIComponent(imgPath))
-      .then(function(r) { return r.blob(); });
+      .then(function(r) {
+        if (!r.ok) throw new Error('加载失败: ' + r.status);
+        return r.blob();
+      });
   }
 
   /**

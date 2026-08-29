@@ -267,7 +267,8 @@ def run_birefnet_mask(
             mask = _expand_mask(mask, mask_expand)
             mask = _shrink_mask(mask, mask_shrink)
             mask = _remap_mask(mask, mask_min, mask_max)
-            Image.fromarray(mask).save(out_path)
+            # 蒙板恒以单通道 L 模式保存, 与 mask.py:save_mask 契约一致(读取方不兼容其他颜色模式)
+            Image.fromarray(mask, mode="L").save(out_path, format="PNG")
             if progress is not None:
                 progress.done += 1
         except Exception as e:

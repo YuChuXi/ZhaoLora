@@ -10,8 +10,10 @@ Callers:
 from __future__ import annotations
 
 import asyncio
+import html
 import os
 from pathlib import Path
+from typing import Any
 
 from services.online_sources.framework.http import HttpClient, NetworkError
 from services.online_sources.framework.utils import save_png_bytes
@@ -19,6 +21,38 @@ from services.online_sources.framework.utils import save_png_bytes
 _GELBOORU_BASE = "https://gelbooru.com/index.php"
 # gelbooru 图床需携带该 cookie 才能正常返回原图
 _IMAGE_COOKIE = "fringeBenefits=yup"
+# autocomplete2 返回的分类名 → Gelbooru tag 类型数字 (与 Danbooru tag category 一致)
+_AUTOCOMPLETE_CATEGORY: dict[str, int] = {
+    "general": 0, "tag": 0,
+    "artist": 1,
+    "copyright": 3,
+    "character": 4,
+    "meta": 5,
+}
+
+
+def _unescape(data: Any) -> Any:
+    """递归反转义 Gelbooru API 响应中的 HTML 实体.
+
+    Gelbooru API 会把 tag 中的特殊字符(如单引号)编码为 HTML 实体
+    (如 ``&#039;``), 需在上游还原为字面字符, 避免脏数据进入保存/显示。
+
+    Args:
+        data: API 响应 JSON (dict / list / str / 标量)。
+
+    Returns:
+        反转义后的同构数据。
+
+    Callers:
+        - ``services/online_sources/gelbooru/client.py:GelbooruClient._api``
+    """
+    if isinstance(data, dict):
+        return {k: _unescape(v) for k, v in data.items()}
+    if isinstance(data, list):
+        return [_unescape(x) for x in data]
+    if isinstance(data, str):
+        return html.unescape(data)
+    return data
 
 
 class GelbooruClient:
@@ -28,14 +62,17 @@ class GelbooruClient:
         - ``services/online_sources/gelbooru/source.py:GelbooruSource``
     """
 
-    async def _api(self, params: dict[str, str | int]) -> dict:
-        """调用 Gelbooru JSON API, 自动注入认证参数, 返回解析后的响应.
+    async def _api(self, params: dict[str, str | int]) -> Any:
+        """调用 Gelbooru HTTP 接口, 自动注入认证参数, 返回解析后的响应.
+
+        dapi 查询返回 dict; autocomplete2 返回 list。认证参数仅对需要认证的
+        dapi 查询有意义, 对匿名端点(如 autocomplete2)为多余参数但无害。
 
         Args:
-            params: 查询参数 (含 page=dapi&s=post&q=index&json=1 等).
+            params: 查询参数 (page=autocomplete2 或 page=dapi&s=...&q=index 等).
 
         Returns:
-            dict: API 响应 JSON.
+            Any: 响应 JSON (dict 或 list).
 
         Raises:
             NetworkError: 网络错误.
@@ -73,8 +110,8 @@ class GelbooruClient:
         })
         post = data.get("post")
         if isinstance(post, list):
-            return post[0] if post else {}
-        return post or {}
+            return _unescape(post[0]) if post else {}
+        return _unescape(post) if isinstance(post, dict) else (post or {})
 
     async def search(self, tags: str, pid: int) -> dict:
         """搜索帖子.
@@ -92,10 +129,16 @@ class GelbooruClient:
         Callers:
             - ``services/online_sources/gelbooru/source.py:GelbooruSource.search``
         """
-        return await self._api({
+        data = await self._api({
             "page": "dapi", "s": "post", "q": "index", "json": "1",
             "tags": tags, "pid": str(pid), "limit": "100",
         })
+        post = data.get("post")
+        if isinstance(post, list):
+            data["post"] = [_unescape(x) for x in post]
+        elif isinstance(post, dict):
+            data["post"] = _unescape(post)
+        return data
 
     async def get_image(self, file_url: str, path: str, *, referer: str = "https://gelbooru.com/") -> None:
         """下载原图字节, 校验后转为 PNG 写入磁盘.
@@ -164,21 +207,24 @@ class GelbooruClient:
         result: dict[str, int] = {}
         for tag in data.get("tag", []):
             if isinstance(tag, dict):
-                name = tag.get("name")
+                name = html.unescape(str(tag.get("name")))
                 ttype = tag.get("type")
                 if name and ttype is not None:
                     result[name] = int(ttype)
         return result
 
     async def autocomplete(self, query: str, limit: int = 10) -> list[dict]:
-        """标签自动补全 (tag 索引按前缀匹配, 按使用次数排序).
+        """标签自动补全 (官方 autocomplete2 端点, 支持 * 通配符).
+
+        autocomplete2 返回的 tag 名为字面字符(不含 HTML 实体), 无需反转义;
+        支持 ``*`` 通配符, 行为与 Gelbooru 前端一致。
 
         Args:
-            query: 标签前缀.
+            query: 标签前缀(可含 * 通配符).
             limit: 返回条数上限.
 
         Returns:
-            规范化的建议列表: 每项为 ``{"name", "category", "count"}``。
+            规范化的建议列表: 每项为 ``{"name", "category", "count"}``, 按使用次数降序。
 
         Raises:
             NetworkError: 网络错误.
@@ -187,22 +233,22 @@ class GelbooruClient:
             - ``services/online_sources/gelbooru/source.py:GelbooruSource.autocomplete``
         """
         params: dict[str, str | int] = {
-            "page": "dapi", "s": "tag", "q": "index", "json": "1",
-            "name_pattern": query, "limit": str(limit), "order": "count",
+            "page": "autocomplete2",
+            "term": query,
+            "type": "tag_query",
+            "limit": str(limit),
         }
         data = await self._api(params)
-        raw = data.get("tag")
-        tags = [raw] if isinstance(raw, dict) else (raw if isinstance(raw, list) else [])
         out: list[dict] = []
-        for t in tags:
-            if not isinstance(t, dict):
+        for item in data if isinstance(data, list) else []:
+            if not isinstance(item, dict):
                 continue
-            name = t.get("name")
+            name = item.get("value")
             if not name:
                 continue
             out.append({
                 "name": str(name),
-                "category": int(t.get("type") or 0),
-                "count": int(t.get("count") or 0),
+                "category": _AUTOCOMPLETE_CATEGORY.get(str(item.get("category")), 0),
+                "count": int(item.get("post_count") or 0),
             })
         return out

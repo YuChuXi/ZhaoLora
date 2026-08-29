@@ -439,10 +439,8 @@ def run_sam3_expression_mask(
 
             out_path = mask_dir / Path(rel).with_suffix(".png")
             out_path.parent.mkdir(parents=True, exist_ok=True)
-            white = Image.new("L", (img_size[0], img_size[1]), 255)
-            Image.merge(
-                "RGBA", (white, white, white, Image.fromarray(result, mode="L"))
-            ).save(out_path, format="PNG")
+            # 蒙板恒以单通道 L 模式保存, 与 mask.py:save_mask 契约一致(读取方不兼容其他颜色模式)
+            Image.fromarray(result, mode="L").save(out_path, format="PNG")
             done += 1
         except Exception as e:
             logger.error("SAM3 处理失败 %s: %s", rel, e)
