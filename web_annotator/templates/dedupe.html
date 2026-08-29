@@ -38,6 +38,9 @@
     cursor: pointer;
     position: relative;
     transition: border-color var(--transition), box-shadow var(--transition);
+    /* 离屏卡片跳过渲染; 缩略图经原生 loading=lazy 自动懒加载 */
+    content-visibility: auto;
+    contain-intrinsic-size: auto 200px;
   }
   .dup-card:hover { border-color: #4a6a9a; }
   .dup-card.selected {
