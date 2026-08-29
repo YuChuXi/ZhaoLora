@@ -84,7 +84,7 @@ def export(
 
     LORA_CONFIG_ROOT 由 .env 配置; 相对路径按 web_annotator/ 目录解析.
     数据集 main 段由就绪页参数生成, 固定训练段(含回归数据/模型路径/超参)由代码内置;
-    prompt.txt 触发词取自该数据集的已配置触发词(note 页设置).
+    prompt.txt 写入该数据集触发词(note 页设置, 未设置则省略)与出现次数最多的 10 个标签.
 
     Args:
         request (Request): FastAPI 请求对象, 由路由参数注入.
@@ -111,8 +111,6 @@ def export(
     trigger = next(
         (t.trigger_word for t in store.list_entries() if t.name == root.name), ""
     )
-    if not trigger:
-        raise HTTPException(400, f"请先为数据集 {root.name} 设置触发词")
     config_root = os.environ.get("LORA_CONFIG_ROOT", "").strip()
     if not config_root:
         raise HTTPException(400, "未配置 LORA_CONFIG_ROOT(见 .env.example)")

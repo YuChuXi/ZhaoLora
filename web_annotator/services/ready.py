@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 import tomlkit
@@ -11,6 +10,8 @@ from services.state.mask import has_mask
 from services.models import MaskStats, ReadySubset, ReadyTomlResult
 from services.core.scanner import IMAGE_EXTS, scan_images
 from services.core.work_dir import list_work_dirs
+from services.tagging.clean import tag_key
+from services.tagging.stats import count_tags
 
 
 # ---- Anima-Flux LoRA 固定训练配置(全部由代码构造, 无模板文件) ----
@@ -79,8 +80,8 @@ _LORA_CONFIG = {
     "masked_loss": True,
 }
 
-# prompt.txt 样本提示(触发词由导出时注入)
-_PROMPT_TEMPLATE = "{trigger},  --n worst quality, low quality, score_1, score_2, score_3, artist name, jpeg artifacts  --w 1024 --h 1024 --l 4  --s 30  --d 42"
+# prompt.txt 固定采样参数(触发词与高频标签由导出时拼接)
+_PROMPT_SUFFIX = "--n worst quality, low quality, score_1, score_2, score_3, artist name, jpeg artifacts  --w 1024 --h 1024 --l 4  --s 30  --d 42"
 
 
 def _has_images(d: Path) -> bool:
@@ -194,9 +195,9 @@ def build_ready_toml(
     为 0 时取块数), 保证每个分辨率块 num_repeats >= 1, 再按该子集的分辨率块均分,
     使每个子集重复后图片数 >= 目标图片数折算的份额.
 
-    按 (是否带 conditioning_data_dir, 分辨率列表) 分组, 带蒙版的组在前、其余按首次
-    出现顺序; 每组按其分辨率列表各渲染为一个 [[datasets]] 块, 块内首行 ``resolution = N``
-    (无分辨率块除外).
+    按分辨率归并渲染: 扫描各子集的分辨率列表(保持首次出现顺序), 每个分辨率渲染一个
+    [[datasets]] 块, 块内容纳所有列表含该分辨率的子集, num_repeats 取各子集自身的
+    分配值; 无分辨率的子集(列表为空)合并为单个不带 resolution 行的块.
 
     Args:
         root (Path): 数据集根目录.
@@ -234,10 +235,11 @@ def build_ready_toml(
     res_map: dict[str, list[int | None]] = {}
     repeats_map: dict[str, list[int]] = {}
     for name in valid_names:
-        res_list: list[int | None] = [
+        # 子集内同一分辨率只保留首个, 重复值无独立语义
+        res_list: list[int | None] = list(dict.fromkeys(
             r for r in (subset_resolutions or {}).get(name, [])
             if isinstance(r, int) and r > 0
-        ]
+        ))
         if not res_list:
             res_list = [None]
         res_map[name] = res_list
@@ -259,29 +261,28 @@ def build_ready_toml(
             entry.conditioning_data_dir = str((root / "mask" / name).resolve())
         subsets.append(entry)
 
-    # 按 (是否带 conditioning_data_dir, 分辨率列表) 分组, 组内保持原顺序;
-    # 每组按其分辨率列表渲染 [[datasets]] 块, 块内 num_repeats 取对应分辨率的值
-    groups: dict[tuple[bool, tuple[int | None, ...]], list[ReadySubset]] = {}
-    for s in subsets:
-        groups.setdefault(
-            (bool(s.conditioning_data_dir), tuple(res_map[s.name])), []
-        ).append(s)
+    # 按分辨率归并: 每个出现过的分辨率渲染一个 [[datasets]] 块, 块内容纳所有
+    # 分辨率列表含该值的子集, num_repeats 取各子集自身的分配值;
+    # 无分辨率子集(列表为空)合并为单个不带 resolution 行的块
+    res_order: list[int | None] = []
+    for name in valid_names:
+        res_order.extend(r for r in res_map[name] if r not in res_order)
 
     blocks: list[str] = []
-    for cond, res_tuple in sorted(groups, key=lambda k: not k[0]):
-        group = groups[(cond, res_tuple)]
-        for res_idx, res in enumerate(res_tuple):
-            lines = ["[[datasets]]"]
-            if res is not None:
-                lines.append(f"resolution = {res}")
-            rep = repeats_map[group[0].name][res_idx]
-            for s in group:
-                lines.append("  [[datasets.subsets]]")
-                lines.append(f'  image_dir = "{s.image_dir}"')
-                if s.conditioning_data_dir:
-                    lines.append(f'  conditioning_data_dir = "{s.conditioning_data_dir}"')
-                lines.append(f"  num_repeats = {rep}")
-            blocks.append("\n".join(lines))
+    for res in res_order:
+        lines = ["[[datasets]]"]
+        if res is not None:
+            lines.append(f"resolution = {res}")
+        for s in subsets:
+            s_res = res_map[s.name]
+            if res not in s_res:
+                continue
+            lines.append("  [[datasets.subsets]]")
+            lines.append(f'  image_dir = "{s.image_dir}"')
+            if s.conditioning_data_dir:
+                lines.append(f'  conditioning_data_dir = "{s.conditioning_data_dir}"')
+            lines.append(f"  num_repeats = {repeats_map[s.name][s_res.index(res)]}")
+        blocks.append("\n".join(lines))
 
     toml = "\n\n".join(blocks)
     if toml:
@@ -304,6 +305,34 @@ def build_ready_toml(
     )
 
 
+def _top_caption_tags(root: Path, names: list[str], trigger_word: str) -> list[str]:
+    """统计参与导出子集标注文件中出现次数最多的标签(按样本去重计数).
+
+    标签解析与归一化口径与标签统计页一致(``count_tags``), 触发词自身从结果中
+    排除以免与单独写入的触发词重复.
+
+    Args:
+        root (Path): 数据集根目录, 标注文件位于各子集目录旁路 ``.txt``.
+        names (list[str]): 参与导出的工作目录名.
+        trigger_word (str): 该数据集触发词, 用于排除自身.
+
+    Returns:
+        list[str]: 出现次数最多的标签, 最多 10 个, 按频率降序.
+
+    Raises:
+        无.
+
+    Callers:
+        - ``services/ready.py:build_train_config``
+    """
+    result = count_tags([root / n for n in names], per_sample=True)
+    trigger_key = tag_key(trigger_word) if trigger_word else None
+    return [
+        r.tag for r in result.tags
+        if trigger_key is None or tag_key(r.tag) != trigger_key
+    ][:10]
+
+
 def build_train_config(
     root: Path,
     *,
@@ -319,16 +348,17 @@ def build_train_config(
     dataset.toml = ``[general]`` 固定段 + 就绪页生成的 main 段 + 正则化数据段
     (``use_reg`` 为 True 时附带); lora.toml 由 ``_LORA_CONFIG`` 固定字段构成,
     另覆写 ``output_name`` / ``sample_prompts`` / ``dataset_config``;
-    prompt.txt 将 ``{trigger}`` 占位替换为数据集触发词.
+    prompt.txt = 触发词(未设置则省略) + 出现次数最多的 10 个标签
+    (``_top_caption_tags``) + 固定采样参数.
 
     Args:
-        root (Path): 数据集根目录, 用于取数据集名与生成 main 段.
+        root (Path): 数据集根目录, 用于取数据集名、生成 main 段与统计高频标签.
         out_dir (Path | None): 导出目标目录, 用于写出 prompt.txt / dataset.toml 的引用路径.
         dirs (list[str] | None): 参与导出的工作目录名; None 表示全部(透传 build_ready_toml).
         target_images (int): 目标图片数(透传 build_ready_toml).
         subset_resolutions (dict[str, list[int]] | None): 目录名→分辨率列表(透传 build_ready_toml).
         use_reg (bool): 是否在 dataset.toml 中附带固定正则化数据段.
-        trigger_word (str): 该数据集触发词, 替换 prompt.txt 中的 ``{trigger}`` 占位.
+        trigger_word (str): 该数据集触发词, 写入 prompt.txt 正向段开头; 可为空.
 
     Returns:
         dict[str, str]: 文件名→配置文本(lora.toml / dataset.toml / prompt.txt).
@@ -368,7 +398,8 @@ def build_train_config(
     lora_doc["dataset_config"] = str(out / "dataset.toml")
     lora = tomlkit.dumps(lora_doc)
 
-    prompt = _PROMPT_TEMPLATE
-    if trigger_word:
-        prompt = prompt.replace("{trigger}", trigger_word)
+    names = dirs if dirs is not None else [d.name for d in list_work_dirs(root)]
+    top_tags = _top_caption_tags(root, names, trigger_word)
+    head = ", ".join(t for t in [trigger_word, *top_tags] if t)
+    prompt = f"{head},  {_PROMPT_SUFFIX}" if head else _PROMPT_SUFFIX
     return {"lora.toml": lora, "dataset.toml": dataset_toml, "prompt.txt": prompt}
