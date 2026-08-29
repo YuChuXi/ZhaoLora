@@ -7,30 +7,42 @@
   'use strict';
 
   var _enabled = {};
+  var _resolutions = {};
+  var _sideKey = null;
 
   /**
-   * 刷新侧栏工作目录表格：启用勾选、目录、张数、蒙版状态。引用：init、generate。
+   * 刷新侧栏工作目录列表：每目录一个条目, 首行为启用勾选/目录/张数·蒙版, 次行为全宽分辨率输入。
+   * 目录集合与蒙版统计均未变化时跳过重建, 保留分辨率输入的焦点与未提交编辑。引用：init、generate。
    * @param {object} data
    */
   function renderSide(data) {
-    var tbody = document.getElementById('dir-tbody');
-    tbody.innerHTML = '';
+    var list = document.getElementById('dir-list');
     var dirs = data.dirs || [];
+    var key = JSON.stringify([
+      dirs.map(function (d) { return [d.name, d.image_count]; }),
+      data.mask_stats || []
+    ]);
+    if (key === _sideKey) return;
+    _sideKey = key;
+    list.innerHTML = '';
     if (!dirs.length) {
-      tbody.innerHTML = '<tr><td colspan="4" class="empty">无含图目录</td></tr>';
+      list.innerHTML = '<div class="dir-empty">无含图目录</div>';
       return;
     }
     dirs.forEach(function (d) {
       if (_enabled[d.name] === undefined) _enabled[d.name] = true;
+      if (_resolutions[d.name] === undefined) _resolutions[d.name] = '1536,1024,512';
     });
     var statsByDir = {};
     (data.mask_stats || []).forEach(function (m) { statsByDir[m.name] = m; });
     dirs.forEach(function (d) {
       var m = statsByDir[d.name];
-      var row = document.createElement('tr');
+      var item = document.createElement('div');
+      item.className = 'dir-item';
 
-      var enableCell = document.createElement('td');
-      enableCell.className = 'col-enable';
+      var row = document.createElement('div');
+      row.className = 'dir-row';
+
       var cb = document.createElement('input');
       cb.type = 'checkbox';
       cb.checked = !!_enabled[d.name];
@@ -39,34 +51,84 @@
         _enabled[d.name] = cb.checked;
         generate(true);
       });
-      enableCell.appendChild(cb);
+      row.appendChild(cb);
 
-      var nameCell = document.createElement('td');
-      nameCell.textContent = d.name;
+      var name = document.createElement('span');
+      name.className = 'dir-name';
+      name.textContent = d.name;
+      name.title = d.name;
+      row.appendChild(name);
 
-      var countCell = document.createElement('td');
-      countCell.textContent = (d.image_count != null ? d.image_count : 0) + ' 张';
-
-      var maskCell = document.createElement('td');
-      maskCell.className = 'mask';
+      var meta = document.createElement('span');
+      meta.className = 'dir-meta';
       if (m) {
         var dot = document.createElement('span');
         dot.className = 'status ' + (m.mask_status === '完整' ? 'ok' : 'none');
-        maskCell.appendChild(dot);
-        maskCell.title = '蒙版完成 / 图片总数';
-        maskCell.appendChild(document.createTextNode(
-          m.mask_complete + '/' + (m.mask_complete + m.mask_none)
+        meta.appendChild(dot);
+        meta.title = '蒙版完成 / 图片总数';
+        meta.appendChild(document.createTextNode(
+          m.mask_complete + '/' + (m.mask_complete + m.mask_none) +
+          ' · ' + (d.image_count != null ? d.image_count : 0) + ' 张'
         ));
       } else {
-        maskCell.textContent = '-';
+        meta.textContent = (d.image_count != null ? d.image_count : 0) + ' 张';
       }
+      row.appendChild(meta);
 
-      row.appendChild(enableCell);
-      row.appendChild(nameCell);
-      row.appendChild(countCell);
-      row.appendChild(maskCell);
-      tbody.appendChild(row);
+      var resInput = document.createElement('input');
+      resInput.type = 'text';
+      resInput.className = 'res-input';
+      resInput.value = _resolutions[d.name];
+      resInput.setAttribute('data-name', d.name);
+      resInput.title = '逗号分隔的多个分辨率, 每个分辨率生成一个 [[datasets]] 块; 留空则该子集生成单块无 resolution';
+      resInput.addEventListener('input', function () {
+        _resolutions[d.name] = resInput.value;
+        autoGenerate();
+      });
+
+      item.appendChild(row);
+      item.appendChild(resInput);
+      list.appendChild(item);
     });
+  }
+
+  /**
+   * 读取顶栏与侧栏参数构造请求体; 参数无效时提示并返回 null。引用：generate、doExport。
+   * @param {boolean} silent
+   * @returns {object|null} 含 dirs / target_images / subset_resolutions / use_reg 的请求体。
+   */
+  function collectBody(silent) {
+    var target = parseInt(document.getElementById('target-images').value, 10);
+    if (!(target >= 1)) {
+      if (!silent) toast('目标图片数无效');
+      return null;
+    }
+    var subsetRes = {};
+    var inputs = document.querySelectorAll('#dir-list .res-input');
+    for (var i = 0; i < inputs.length; i++) {
+      var input = inputs[i];
+      var name = input.getAttribute('data-name');
+      var text = input.value.trim();
+      var list = [];
+      if (text) {
+        var parts = text.split(/\s*,\s*/);
+        for (var j = 0; j < parts.length; j++) {
+          var n = parseInt(parts[j], 10);
+          if (!(n > 0)) {
+            if (!silent) toast('目录 ' + name + ' 无效分辨率: ' + parts[j]);
+            return null;
+          }
+          list.push(n);
+        }
+      }
+      subsetRes[name] = list;
+    }
+    return {
+      dirs: Object.keys(_enabled).filter(function (n) { return _enabled[n]; }),
+      target_images: target,
+      subset_resolutions: subsetRes,
+      use_reg: document.getElementById('use-reg').checked
+    };
   }
 
   /**
@@ -74,30 +136,13 @@
    * @param {boolean} [silent]
    */
   async function generate(silent) {
-    var target = parseInt(document.getElementById('target-images').value, 10);
-    if (!(target >= 1)) {
-      if (!silent) toast('目标图片数无效');
-      return;
-    }
-    var resText = document.getElementById('resolutions').value.trim();
-    var resolutions = [];
-    if (resText) {
-      var parts = resText.split(/\s*,\s*/);
-      for (var i = 0; i < parts.length; i++) {
-        var n = parseInt(parts[i], 10);
-        if (!(n > 0)) {
-          if (!silent) toast('无效分辨率: ' + parts[i]);
-          return;
-        }
-        resolutions.push(n);
-      }
-    }
-    var dirs = Object.keys(_enabled).filter(function (n) { return _enabled[n]; });
+    var body = collectBody(silent);
+    if (!body) return;
     var data;
     try {
       data = await API.request(API.apiPath('/ready/toml'), {
         method: 'POST',
-        body: JSON.stringify({ dirs: dirs, target_images: target, resolutions: resolutions })
+        body: JSON.stringify(body)
       });
     } catch (e) {
       document.getElementById('stat-summary').textContent = String(e.message || e);
@@ -106,13 +151,26 @@
     }
     document.getElementById('toml-box').value = data.toml || '';
     var subsets = data.subsets || [];
+    var repeats = data.subset_repeats || {};
     var totalImages = subsets.reduce(function (sum, s) {
       return sum + (s.image_count || 0);
     }, 0);
-    var repeatsList = data.repeats || [];
-    var sumRepeats = repeatsList.reduce(function (a, b) { return a + b; }, 0);
-    var repeated = totalImages * sumRepeats;
-    var repStr = repeatsList.length > 1 ? '(' + repeatsList.join('+') + ')' : (repeatsList[0] || 0);
+    var repeated = subsets.reduce(function (sum, s) {
+      var rs = repeats[s.name] || [];
+      return sum + (s.image_count || 0) * rs.reduce(function (a, b) { return a + b; }, 0);
+    }, 0);
+    var repStr;
+    if (!subsets.length) {
+      repStr = '0';
+    } else {
+      var first = (repeats[subsets[0].name] || []).join('+');
+      var allSame = subsets.every(function (s) {
+        return (repeats[s.name] || []).join('+') === first;
+      });
+      repStr = allSame ? first : subsets.map(function (s) {
+        return s.name + '×' + (repeats[s.name] || []).join('+');
+      }).join(', ');
+    }
     document.getElementById('stat-summary').textContent =
       subsets.length + ' 个 subset · ' + totalImages + ' 张 × ' + repStr + ' = ' + repeated + ' 张';
     renderSide(data);
@@ -151,27 +209,18 @@
     generate(false);
   });
   document.getElementById('target-images').addEventListener('input', autoGenerate);
-  document.getElementById('resolutions').addEventListener('input', autoGenerate);
   document.getElementById('btn-copy').addEventListener('click', function () {
     copyText().catch(function (e) { toast(String(e.message || e)); });
   });
 
   async function doExport(overwrite) {
-    var target = parseInt(document.getElementById('target-images').value, 10);
-    var resText = document.getElementById('resolutions').value.trim();
-    var resolutions = [];
-    if (resText) {
-      resText.split(/\s*,\s*/).forEach(function (n) {
-        var v = parseInt(n, 10);
-        if (v > 0) resolutions.push(v);
-      });
-    }
-    var dirs = Object.keys(_enabled).filter(function (n) { return _enabled[n]; });
+    var body = collectBody(false);
+    if (!body) return;
     var url = API.apiPath('/ready/export');
     if (overwrite) url += '?overwrite=1';
     var data = await API.request(url, {
       method: 'POST',
-      body: JSON.stringify({ dirs: dirs, target_images: target, resolutions: resolutions })
+      body: JSON.stringify(body)
     });
     toast('已导出: ' + data.files.join(', '));
   }

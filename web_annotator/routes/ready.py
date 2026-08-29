@@ -23,11 +23,15 @@ router = APIRouter(prefix="/ready", tags=["ready"])
 
 
 class ReadyBody(BaseModel):
-    """就绪 TOML 生成请求. 引用: ``POST /ready/toml``. """
+    """就绪 TOML 生成请求. 引用: ``POST /ready/toml`` / ``POST /ready/export``. """
 
     dirs: list[str] | None = None
-    target_images: int = Field(default=512, ge=1, description="目标图片数, 据此计算 num_repeats 使重复后图片数 >= 目标")
-    resolutions: list[int] = Field(default_factory=list, description="多分辨率, 如 [512, 1024, 1536]; 为空时生成单块无 resolution")
+    target_images: int = Field(default=512, ge=1, description="目标图片数, 据此计算各子集 num_repeats 使重复后图片数 >= 目标折算份额")
+    subset_resolutions: dict[str, list[int]] = Field(
+        default_factory=dict,
+        description="各子集的分辨率列表(目录名→列表); 未指定或为空的子集生成单块无 resolution",
+    )
+    use_reg: bool = Field(default=True, description="是否在导出的 dataset.toml 中附带固定正则化数据段")
 
 
 @router.get("/dirs")
@@ -62,12 +66,13 @@ def toml(request: Request, body: ReadyBody) -> ReadyTomlResult:
         root,
         dirs=body.dirs,
         target_images=body.target_images,
-        resolutions=body.resolutions,
+        subset_resolutions=body.subset_resolutions,
     )
     if not result.subsets:
         raise HTTPException(400, "没有可导出的图片目录")
-    logger.info("数据集 %s 生成就绪 TOML: %d 个子集, 目标图片数 %d, 分辨率 %s",
-                root.name, len(result.subsets), body.target_images, body.resolutions or "默认")
+    logger.info("数据集 %s 生成就绪 TOML: %d 个子集, 目标图片数 %d, 子集分辨率 %s",
+                root.name, len(result.subsets), body.target_images,
+                body.subset_resolutions or "默认")
     return result
 
 
@@ -83,7 +88,7 @@ def export(
 
     Args:
         request (Request): FastAPI 请求对象, 由路由参数注入.
-        body (ReadyBody): 就绪页导出参数(dirs / target_images / resolutions).
+        body (ReadyBody): 就绪页导出参数(dirs / target_images / subset_resolutions / use_reg).
         overwrite (bool): 目标目录已存在可视化配置时, 需置 True 才覆盖写入, 否则返回 409.
 
     Returns:
@@ -97,7 +102,8 @@ def export(
     """
     root = get_runtime(request).root
     preview = build_ready_toml(
-        root, dirs=body.dirs, target_images=body.target_images, resolutions=body.resolutions
+        root, dirs=body.dirs, target_images=body.target_images,
+        subset_resolutions=body.subset_resolutions,
     )
     if not preview.subsets:
         raise HTTPException(400, "没有可导出的图片目录")
@@ -123,7 +129,8 @@ def export(
         out_dir=out_dir,
         dirs=body.dirs,
         target_images=body.target_images,
-        resolutions=body.resolutions,
+        subset_resolutions=body.subset_resolutions,
+        use_reg=body.use_reg,
         trigger_word=trigger,
     )
     written: list[str] = []

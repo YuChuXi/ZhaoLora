@@ -14,10 +14,10 @@ from services.core.work_dir import list_work_dirs
 
 
 # ---- Anima-Flux LoRA 固定训练配置(全部由代码构造, 无模板文件) ----
-# 回归数据集根目录(独立于当前标注数据集, 为共享回归库)
+# 正则化数据集根目录(独立于当前标注数据集, 共享的正则化图像库)
 _REGL_ROOT = "/home/yuchuxi/Projects/Experiments/Dataset/ZhaoLora/datasets/regL"
 
-# dataset.toml 的回归段: (resolution, 子目录名)
+# dataset.toml 的正则化数据段: (resolution, 子目录名)
 _REGL_DATASETS = [(1536, "256_1"), (1024, "256_2")]
 
 # dataset.toml 的 [general] 段
@@ -138,38 +138,79 @@ def subdir_mask_stats(root: Path, subdir: str = "main") -> MaskStats:
     )
 
 
+def _alloc_repeats(res_list: list[int | None], total_repeats: int) -> list[int]:
+    """把子集级总重复次数均分到该子集的各分辨率块.
+
+    均分规则: base = floor(total_repeats / 块数), remainder 个 +1,
+    优先分配给最靠近 1024 的分辨率(同距则高分辨率优先).
+
+    Args:
+        res_list (list[int | None]): 该子集的分辨率列表, None 表示不带 resolution 行的块.
+        total_repeats (int): 子集级总重复次数, 须 >= len(res_list).
+
+    Returns:
+        list[int]: 各分辨率块的 num_repeats(按 res_list 顺序), 每项 >= 1.
+
+    Callers:
+        - ``services/ready.py:build_ready_toml``
+    """
+    n = len(res_list)
+    base, remainder = divmod(total_repeats, n)
+
+    def _priority(i: int) -> tuple[int, int]:
+        """分辨率块 i 的 +1 优先级: (距 1024 的绝对差, 负分辨率), 越小越优先.
+
+        Args:
+            i (int): 分辨率块索引.
+
+        Returns:
+            tuple[int, int]: ``(距 1024 的绝对差, 负分辨率)``; 无分辨率时为 ``(0, 0)``.
+        """
+        r = res_list[i]
+        return (abs(r - 1024), -r) if r is not None else (0, 0)
+
+    reps = [base] * n
+    for i in sorted(range(n), key=_priority)[:remainder]:
+        reps[i] += 1
+    return reps
+
+
 def build_ready_toml(
     root: Path,
     *,
     dirs: list[str] | None = None,
     target_images: int = 512,
-    resolutions: list[int] | None = None,
+    subset_resolutions: dict[str, list[int]] | None = None,
 ) -> ReadyTomlResult:
     """生成 TOML 文本与 subset 元数据.
 
     ``dirs`` 指定参与导出的工作目录名列表; 为 None 时表示全部目录,
     为空列表时表示一个目录都不导出(返回空 subsets).
-    某子目录蒙版状态为「完整」时, 对应 subset 附带 conditioning_data_dir(指向 mask/子目录);
-    按是否带 conditioning_data_dir 分组, 每组渲染为一个 [[datasets]] 块.
-    传入 ``resolutions`` 时, 按每个分辨率 × 每组各渲染一个 [[datasets]] 块,
-    块内首行 ``resolution = N``; 不传则保持单块且不带 resolution 行.
+    某子目录蒙版状态为「完整」时, 对应 subset 附带 conditioning_data_dir(指向 mask/子目录).
 
-    ``target_images`` 为目标图片数: 据此计算总重复次数 ``total_repeats = max(分辨率块数, ceil(target_images / 启用子集总图片数))``,
-    再按分辨率块数均分: base = floor(total_repeats / block_count), remainder 个 +1
-    优先分配给最靠近 1024 的分辨率(同距则高分辨率优先), 使每个分辨率块 num_repeats >= 1 且重复后总图片数 >= target_images;
-    不传分辨率时块数为 1, num_repeats = total_repeats. 启用子集总图片数为 0 时 total_repeats 取块数.
+    每个子集的分辨率列表取自 ``subset_resolutions[目录名]``, 过滤非法值后为空时
+    生成单块且不带 resolution 行. 子集级总重复次数取
+    ``max(该子集分辨率块数, ceil(target_images / 启用子集总图片数))`` (启用子集总图片数
+    为 0 时取块数), 保证每个分辨率块 num_repeats >= 1, 再按该子集的分辨率块均分,
+    使每个子集重复后图片数 >= 目标图片数折算的份额.
+
+    按 (是否带 conditioning_data_dir, 分辨率列表) 分组, 带蒙版的组在前、其余按首次
+    出现顺序; 每组按其分辨率列表各渲染为一个 [[datasets]] 块, 块内首行 ``resolution = N``
+    (无分辨率块除外).
 
     Args:
         root (Path): 数据集根目录.
         dirs (list[str] | None): 参与导出的工作目录名列表; None 表示全部, 空列表表示不导出.
-        target_images (int): 目标图片数, 据此计算 num_repeats.
-        resolutions (list[int] | None): 多分辨率列表; 为空或 None 时生成单块且不带 resolution 行.
+        target_images (int): 目标图片数, 据此计算各子集的 num_repeats.
+        subset_resolutions (dict[str, list[int]] | None): 目录名→分辨率列表; 未指定的子集生成单块无 resolution 行.
 
     Returns:
-        ReadyTomlResult: 含 toml 文本、subsets、mask_stats、repeats、resolutions 等.
+        ReadyTomlResult: 含 toml 文本、subsets、mask_stats、subset_repeats 等.
 
     Callers:
         - ``routes/ready.py:toml``
+        - ``routes/ready.py:export``
+        - ``services/ready.py:build_train_config``
     """
     root = root.resolve()
     available = {d.name: d for d in list_work_dirs(root)}
@@ -187,36 +228,20 @@ def build_ready_toml(
     valid_names = [n for n in ordered if _has_images((root / n).resolve())]
     total = sum(available[n].image_count for n in valid_names)
 
-    # 过滤非法分辨率(须为正整数), 保留输入顺序
-    res_list = [r for r in (resolutions or []) if isinstance(r, int) and r > 0]
-    if not res_list:
-        res_list = [None]
-
-    # total_repeats: 跨所有分辨率块的总重复次数, 取 ceil(target/total) 且至少为块数,
-    # 保证每个分辨率块 num_repeats >= 1, 不产生 0 重复块
-    # 按 block_count 均分: base = floor(total_repeats/block_count), remainder 个 +1
-    # 优先分配给最靠近 1024 的分辨率, 同距则高分辨率优先
-    block_count = len(res_list)
-    total_repeats = max(block_count, -(-target_images // total)) if total else block_count
-    base = total_repeats // block_count
-    remainder = total_repeats % block_count
-
-    def _res_priority(i: int) -> tuple[int, int]:
-        """分辨率块 i 的 +1 优先级: (距 1024 的绝对差, 负分辨率), 越小越优先.
-
-        Args:
-            i (int): 分辨率块索引.
-
-        Returns:
-            tuple[int, int]: ``(距 1024 的绝对差, 负分辨率)``; 无分辨率时为 ``(0, 0)``.
-        """
-        r = res_list[i]
-        return (abs(r - 1024), -r) if r is not None else (0, 0)
-
-    order = sorted(range(block_count), key=_res_priority)
-    res_repeats = [base] * block_count
-    for i in order[:remainder]:
-        res_repeats[i] += 1
+    # 各子集的分辨率列表与子集级总重复次数: 取 ceil(target/total) 且至少为该子集块数,
+    # 保证每个分辨率块 num_repeats >= 1, 不产生 0 重复块; 再均分到各分辨率块
+    per_target = -(-target_images // total) if total else 1
+    res_map: dict[str, list[int | None]] = {}
+    repeats_map: dict[str, list[int]] = {}
+    for name in valid_names:
+        res_list: list[int | None] = [
+            r for r in (subset_resolutions or {}).get(name, [])
+            if isinstance(r, int) and r > 0
+        ]
+        if not res_list:
+            res_list = [None]
+        res_map[name] = res_list
+        repeats_map[name] = _alloc_repeats(res_list, max(len(res_list), per_target))
 
     subsets: list[ReadySubset] = []
     mask_stats: list[MaskStats] = []
@@ -234,21 +259,22 @@ def build_ready_toml(
             entry.conditioning_data_dir = str((root / "mask" / name).resolve())
         subsets.append(entry)
 
-    # 按是否带 conditioning_data_dir 分组(带蒙版在前), 组内保持原顺序;
-    # 每个组内按分辨率渲染 [[datasets]] 块, 块内 num_repeats 取该分辨率的 res_repeats
-    groups = [
-        [s for s in subsets if s.conditioning_data_dir],
-        [s for s in subsets if not s.conditioning_data_dir],
-    ]
+    # 按 (是否带 conditioning_data_dir, 分辨率列表) 分组, 组内保持原顺序;
+    # 每组按其分辨率列表渲染 [[datasets]] 块, 块内 num_repeats 取对应分辨率的值
+    groups: dict[tuple[bool, tuple[int | None, ...]], list[ReadySubset]] = {}
+    for s in subsets:
+        groups.setdefault(
+            (bool(s.conditioning_data_dir), tuple(res_map[s.name])), []
+        ).append(s)
+
     blocks: list[str] = []
-    for group in groups:
-        if not group:
-            continue
-        for res_idx, res in enumerate(res_list):
+    for cond, res_tuple in sorted(groups, key=lambda k: not k[0]):
+        group = groups[(cond, res_tuple)]
+        for res_idx, res in enumerate(res_tuple):
             lines = ["[[datasets]]"]
             if res is not None:
                 lines.append(f"resolution = {res}")
-            rep = res_repeats[res_idx]
+            rep = repeats_map[group[0].name][res_idx]
             for s in group:
                 lines.append("  [[datasets.subsets]]")
                 lines.append(f'  image_dir = "{s.image_dir}"')
@@ -270,8 +296,7 @@ def build_ready_toml(
         mask_stats=mask_stats,
         mask=str((root / "mask").resolve()) if main_ms.mask_status == "完整" else None,
         target_images=target_images,
-        repeats=res_repeats,
-        resolutions=[r for r in res_list if r is not None],
+        subset_repeats=repeats_map,
         mask_status=main_ms.mask_status,
         mask_complete=main_ms.mask_complete,
         mask_none=main_ms.mask_none,
@@ -285,22 +310,24 @@ def build_train_config(
     out_dir: Path | None = None,
     dirs: list[str] | None = None,
     target_images: int = 512,
-    resolutions: list[int] | None = None,
+    subset_resolutions: dict[str, list[int]] | None = None,
+    use_reg: bool = True,
     trigger_word: str = "",
 ) -> dict[str, str]:
     """为数据集渲染整套训练配置文本(全部由代码构造, 无模板文件).
 
-    dataset.toml = ``[general]`` 固定段 + 就绪页生成的 main 段 + 回归段;
-    lora.toml 由 ``_LORA_CONFIG`` 固定字段构成, 另覆写 ``output_name`` /
-    ``sample_prompts`` / ``dataset_config``; prompt.txt 将 ``{trigger}`` 占位
-    替换为数据集触发词.
+    dataset.toml = ``[general]`` 固定段 + 就绪页生成的 main 段 + 正则化数据段
+    (``use_reg`` 为 True 时附带); lora.toml 由 ``_LORA_CONFIG`` 固定字段构成,
+    另覆写 ``output_name`` / ``sample_prompts`` / ``dataset_config``;
+    prompt.txt 将 ``{trigger}`` 占位替换为数据集触发词.
 
     Args:
         root (Path): 数据集根目录, 用于取数据集名与生成 main 段.
         out_dir (Path | None): 导出目标目录, 用于写出 prompt.txt / dataset.toml 的引用路径.
         dirs (list[str] | None): 参与导出的工作目录名; None 表示全部(透传 build_ready_toml).
         target_images (int): 目标图片数(透传 build_ready_toml).
-        resolutions (list[int] | None): 多分辨率列表(透传 build_ready_toml).
+        subset_resolutions (dict[str, list[int]] | None): 目录名→分辨率列表(透传 build_ready_toml).
+        use_reg (bool): 是否在 dataset.toml 中附带固定正则化数据段.
         trigger_word (str): 该数据集触发词, 替换 prompt.txt 中的 ``{trigger}`` 占位.
 
     Returns:
@@ -310,22 +337,24 @@ def build_train_config(
         - ``routes/ready.py:export``
     """
     main_toml = build_ready_toml(
-        root, dirs=dirs, target_images=target_images, resolutions=resolutions
+        root, dirs=dirs, target_images=target_images,
+        subset_resolutions=subset_resolutions,
     ).toml
     main_doc = tomlkit.parse(main_toml)
 
-    # dataset.toml: 固定 [general] 段 + 生成的主块 + 固定回归段(均为数组表)
+    # dataset.toml: 固定 [general] 段 + 生成的主块 + 固定正则化数据段(均为数组表)
     doc = tomlkit.document()
     doc["general"] = dict(_GENERAL_CONFIG)
     aot = tomlkit.aot()
     aot.extend(main_doc.get("datasets", []))
-    for res, sub in _REGL_DATASETS:
-        seg = tomlkit.table()
-        seg["resolution"] = res
-        subs = tomlkit.aot()
-        subs.append({"image_dir": f"{_REGL_ROOT}/{sub}"})
-        seg["subsets"] = subs
-        aot.append(seg)
+    if use_reg:
+        for res, sub in _REGL_DATASETS:
+            seg = tomlkit.table()
+            seg["resolution"] = res
+            subs = tomlkit.aot()
+            subs.append({"image_dir": f"{_REGL_ROOT}/{sub}"})
+            seg["subsets"] = subs
+            aot.append(seg)
     doc["datasets"] = aot
     dataset_toml = tomlkit.dumps(doc)
 
