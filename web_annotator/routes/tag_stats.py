@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 from routes.deps import get_runtime, jobs, resolve_path
 from services.analysis.scoring import load_score_json
 from services.core.jobs import EmitFn
+from services.core.natural import natural_key
 from services.core.scanner import scan_images
 from services.core.thumbnailer import image_size
 from services.core.work_dir import list_work_dirs
@@ -691,7 +692,7 @@ async def embedding_query(request: Request, body: EmbeddingQueryBody) -> JobSubm
         raise HTTPException(400, "查询文本不能为空")
 
     query_text = body.query.strip()
-    dirs_key = tuple(sorted(p.name if p != root else "." for p in selected))
+    dirs_key = tuple(sorted((p.name if p != root else "." for p in selected), key=natural_key))
     cache = rt.sort_cache
     cached = cache.get(query_text, dirs_key)
 

@@ -179,6 +179,7 @@ class XSource(GalleryDLSource):
             id=f"{username}_{tweet_id}_{num}",
             width=int(kwdict.get("width") or 0),
             height=int(kwdict.get("height") or 0),
+            posted_at=kwdict.get("date") or "",
             file_url=url,
             preview_url=_sized_url(url, "small"),
             sample_url=url,

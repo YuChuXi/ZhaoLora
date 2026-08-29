@@ -6,6 +6,7 @@ from pathlib import Path
 
 import tomlkit
 
+from services.core.natural import natural_key
 from services.state.mask import has_mask
 from services.models import MaskStats, ReadySubset, ReadyTomlResult
 from services.core.scanner import IMAGE_EXTS, scan_images
@@ -223,7 +224,7 @@ def build_ready_toml(
     ordered: list[str] = []
     if "main" in names:
         ordered.append("main")
-    ordered.extend(sorted(n for n in names if n != "main"))
+    ordered.extend(sorted((n for n in names if n != "main"), key=natural_key))
 
     # 先确定有图片的目录并统计启用子集总图片数(与前端 subsets 张数同源)
     valid_names = [n for n in ordered if _has_images((root / n).resolve())]

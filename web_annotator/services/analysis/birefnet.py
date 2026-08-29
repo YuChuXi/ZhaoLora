@@ -16,6 +16,7 @@ from PIL import Image
 from torchvision import transforms
 
 from services.models import JobSnapshot
+from services.core.natural import natural_key
 from services.core.scanner import IMAGE_EXTS
 from services.core.device import register_model
 
@@ -168,7 +169,7 @@ def collect_images(data_dir: Path, subdir: str = "main") -> list[str]:
     if not target.is_dir():
         return []
     paths: list[str] = []
-    for img in sorted(target.iterdir()):
+    for img in sorted(target.iterdir(), key=lambda p: natural_key(p.name)):
         if not img.is_file() or img.suffix.lower() not in IMAGE_EXTS:
             continue
         paths.append(f"{subdir}/{img.name}")

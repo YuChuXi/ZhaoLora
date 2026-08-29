@@ -23,6 +23,7 @@ from services.models import (
     SetNoteBody,
     SetTriggerWordBody,
 )
+from services.core.natural import natural_key
 from services.core.scanner import scan_images
 from services.core.work_dir import total_image_count
 from services.state.archiver import PACKED_DIR, archive_task, restore_task
@@ -146,9 +147,9 @@ async def list_tasks(
 
     reverse = sort_order == "desc"
     if sort_by == "sort_order":
-        items.sort(key=lambda t: t.sort_order, reverse=reverse)
+        items.sort(key=lambda t: (t.sort_order, natural_key(t.name)), reverse=reverse)
     elif sort_by == "name":
-        items.sort(key=lambda t: t.name.lower(), reverse=reverse)
+        items.sort(key=lambda t: natural_key(t.name), reverse=reverse)
     elif sort_by == "image_count":
         items.sort(key=lambda t: t.image_count, reverse=reverse)
     elif sort_by == "created":
@@ -175,7 +176,7 @@ def list_candidates(request: Request) -> TaskCandidatesResponse:
     names: list[str] = []
     if not store.root.is_dir():
         return TaskCandidatesResponse(candidates=names)
-    for child in sorted(store.root.iterdir(), key=lambda p: p.name.lower()):
+    for child in sorted(store.root.iterdir(), key=lambda p: natural_key(p.name)):
         if not child.is_dir() or child.name.startswith("."):
             continue
         if child.name in registered:

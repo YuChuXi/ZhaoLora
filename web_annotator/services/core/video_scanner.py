@@ -17,6 +17,7 @@ import subprocess
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
+from services.core.natural import natural_key
 from services.models import VideoInfo
 
 logger = logging.getLogger(__name__)
@@ -203,7 +204,7 @@ def scan_videos(video_dir: Path, *, path_prefix: str = "", probe: bool = False) 
         return []
     paths: list[Path] = []
     result: list[VideoInfo] = []
-    for p in sorted(video_dir.iterdir()):
+    for p in sorted(video_dir.iterdir(), key=lambda p: natural_key(p.name)):
         if not p.is_file() or p.suffix.lower() not in VIDEO_EXTS:
             continue
         rel = f"{prefix}/{p.name}" if prefix else p.name

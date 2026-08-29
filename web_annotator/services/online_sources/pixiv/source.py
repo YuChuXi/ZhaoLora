@@ -155,6 +155,7 @@ class PixivSource(SourceClient):
                 id=f"{illust_id}_{num}",
                 width=item.get("width", 0),
                 height=item.get("height", 0),
+                posted_at=item.get("createDate", ""),
                 file_url=sample_url,
                 preview_url=sample_url,
                 sample_url=sample_url,
@@ -423,7 +424,10 @@ class PixivSource(SourceClient):
         self._write_meta(
             out_dir,
             pid,
-            BooruPost(source=self.name, id=pid, file_url=target_url, tags=caption),
+            BooruPost(
+                source=self.name, id=pid, file_url=target_url,
+                posted_at=post.posted_at, tags=caption,
+            ),
         )
         return {
             "path": str(image_path),
@@ -447,6 +451,7 @@ class PixivSource(SourceClient):
             source=self.name,
             id=pid,
             file_url=detail.get("urls", {}).get("regular", ""),
+            posted_at=detail.get("createDate", ""),
             tags=self._extract_tags(detail),
         )
         self._write_meta(out_dir, pid, post)

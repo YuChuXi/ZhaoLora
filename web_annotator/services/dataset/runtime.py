@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Callable
 
 from services.dataset.layout import DatasetLayout, resolve_dataset_layout
+from services.core.natural import natural_key
 from services.models import JobSnapshot
 from services.state.annotator import StateManager
 from services.core.thumbnailer import Thumbnailer
@@ -81,7 +82,7 @@ class DatasetRegistry:
     def names(self) -> list[str]:
         """已加载任务名列表. 
         """
-        return sorted(self.by_name.keys())
+        return sorted(self.by_name.keys(), key=natural_key)
 
     async def ensure(self, name: str) -> DatasetRuntime:
         """若尚未加载则解析 ``{task_root}/{name}`` 并缓存, 同时提交缩略图填充任务.

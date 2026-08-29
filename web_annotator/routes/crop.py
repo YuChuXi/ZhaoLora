@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 from PIL import Image
 
 from routes.deps import get_runtime, resolve_path
+from services.core.natural import natural_key
 from services.core.scanner import scan_images
 from services.core.thumbnailer import image_size
 from services.dataset.crop import clamp_target_size, match_config
@@ -172,7 +173,7 @@ def list_crop_images(request: Request) -> list[CropImageItem]:
                 height=h,
             )
         )
-    result.sort(key=lambda x: (1 if x.done else 0, x.path))
+    result.sort(key=lambda x: (1 if x.done else 0, natural_key(x.path)))
     return result
 
 

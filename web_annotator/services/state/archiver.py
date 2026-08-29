@@ -15,6 +15,7 @@ from pathlib import Path
 import py7zr
 from py7zr.callbacks import ExtractCallback
 
+from services.core.natural import natural_key
 from services.core.scanner import scan_images
 from services.core.thumbnailer import Thumbnailer
 from services.core.work_dir import total_image_count
@@ -80,7 +81,10 @@ def _list_files(root: Path) -> list[Path]:
     Callers:
         - ``services/state/archiver.py:archive_task``
     """
-    return sorted(p for p in root.rglob("*") if p.is_file())
+    return sorted(
+        (p for p in root.rglob("*") if p.is_file()),
+        key=lambda p: natural_key(p.relative_to(root).as_posix()),
+    )
 
 
 def _should_exclude(p: Path, task_dir: Path) -> bool:

@@ -40,6 +40,7 @@ from services.models import (
     JobSnapshot,
     JobSubmitResponse,
 )
+from services.core.natural import natural_key
 from services.core.scanner import IMAGE_EXTS
 from services.core.work_dir import resolve_subdir
 from services.online_sources.framework.base import search_session_posts as _search_session_posts
@@ -659,7 +660,7 @@ async def refresh_metadata(request: Request, body: RefreshMetadataBody) -> JobSu
 
         scan_dir = scan_dir.resolve()
         files: list[tuple[str, str]] = []  # (source, pid)
-        for f in sorted(scan_dir.iterdir()):
+        for f in sorted(scan_dir.iterdir(), key=lambda p: natural_key(p.name)):
             if not f.is_file() or f.suffix.lower() not in IMAGE_EXTS:
                 continue
             detected = detect_source(f.stem)

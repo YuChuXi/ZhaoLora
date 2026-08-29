@@ -18,6 +18,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
+from services.core.natural import natural_key
+
 RESERVED_DIR_NAMES = frozenset({
     "main",
     "mask",
@@ -69,7 +71,7 @@ class DatasetLayout:
         if not self.root.is_dir():
             return []
         out = []
-        for p in sorted(self.root.iterdir()):
+        for p in sorted(self.root.iterdir(), key=lambda p: natural_key(p.name)):
             if p.is_dir() and p.name not in RESERVED_DIR_NAMES and not p.name.startswith("."):
                 out.append(p)
         return out

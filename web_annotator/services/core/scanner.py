@@ -8,9 +8,9 @@
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
 
+from services.core.natural import natural_key
 from services.models import ScannedImage
 
 IMAGE_EXTS = frozenset({".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif"})
@@ -35,25 +35,10 @@ def collect_images(dirs: list[Path]) -> list[Path]:
     for d in dirs:
         if not d.is_dir():
             continue
-        for p in sorted(d.iterdir()):
+        for p in sorted(d.iterdir(), key=lambda p: natural_key(p.name)):
             if p.is_file() and p.suffix.lower() in IMAGE_EXTS:
                 items.append(p)
     return items
-
-
-def _natural_key(s: str) -> tuple:
-    """自然排序键: ``img2_abc10`` → ``('img', 2, '_abc', 10)``.
-
-    Args:
-        s: 待解析字符串.
-
-    Returns:
-        tuple: 用于自然排序的键(数字段转为 int).
-    Callers:
-        - ``services/core/scanner.py:scan_images``
-    """
-    parts = re.split(r"(\d+)", s)
-    return tuple(int(p) if p.isdigit() else p.lower() for p in parts)
 
 
 def scan_images(data_dir: Path, *, path_prefix: str = "") -> list[ScannedImage]:
@@ -89,7 +74,7 @@ def scan_images(data_dir: Path, *, path_prefix: str = "") -> list[ScannedImage]:
         stem_map.setdefault(f.stem, []).append(f)
 
     result: list[ScannedImage] = []
-    for stem, files in sorted(stem_map.items(), key=lambda x: _natural_key(x[0])):
+    for stem, files in sorted(stem_map.items(), key=lambda x: natural_key(x[0])):
         img_file = None
         siblings: list[str] = []
         for f in files:
@@ -110,7 +95,7 @@ def scan_images(data_dir: Path, *, path_prefix: str = "") -> list[ScannedImage]:
                 stem=img_file.stem,
                 suffix=img_file.suffix.lower(),
                 size=img_file.stat().st_size,
-                siblings=sorted(siblings),
+                siblings=sorted(siblings, key=natural_key),
             )
         )
 

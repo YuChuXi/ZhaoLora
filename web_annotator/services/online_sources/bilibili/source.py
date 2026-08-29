@@ -141,6 +141,7 @@ class BilibiliSource(SourceClient):
                 id=bvid if is_video else f"{record.id}_{i}",
                 width=w,
                 height=h,
+                posted_at=str(source.pub_ts) if source.pub_ts is not None else "",
                 file_url=url,
                 preview_url=url + "@480w_480h_1e.webp",
                 sample_url=url + "@1280w_1280h_1e.webp",

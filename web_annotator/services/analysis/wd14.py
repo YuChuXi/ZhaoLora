@@ -10,6 +10,7 @@ import numpy as np
 from PIL import Image
 
 from services.models import JobSnapshot, WorkDirInfo
+from services.core.natural import natural_key
 from services.core.scanner import IMAGE_EXTS, collect_images
 from services.online_sources.framework.utils import _GENDER_TAGS
 from services.core.device import register_model
@@ -207,7 +208,7 @@ def list_image_subdirs(root: Path) -> list[WorkDirInfo]:
     if n_root:
         out.append(WorkDirInfo(name=".", label="(根目录)", image_count=n_root))
 
-    for p in sorted(root.iterdir()):
+    for p in sorted(root.iterdir(), key=lambda p: natural_key(p.name)):
         if not p.is_dir() or p.name.startswith(".") or p.name in _SKIP_TAG_DIRS:
             continue
         n = count_images(p)

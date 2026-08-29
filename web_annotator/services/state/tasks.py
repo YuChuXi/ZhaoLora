@@ -16,6 +16,7 @@ import re
 import time
 from pathlib import Path
 
+from services.core.natural import natural_key
 from services.models import TaskEntry, TaskInfo, TaskListFile
 
 TASKS_FILE = ".annotator_tasks.json"
@@ -120,7 +121,7 @@ class TaskStore:
             - ``routes/tasks.py:list_tasks``
             - ``routes/tasks.py:list_candidates``
         """
-        entries = sorted(self.tasks.values(), key=lambda e: (e.sort_order, e.name.lower()))
+        entries = sorted(self.tasks.values(), key=lambda e: (e.sort_order, natural_key(e.name)))
         return [TaskInfo(**e.model_dump()) for e in entries]
 
     def contains(self, name: str) -> bool:
@@ -344,7 +345,7 @@ class TaskStore:
         if unknown:
             raise KeyError(f"未知任务: {', '.join(sorted(unknown))}")
         missing = [
-            kv[0] for kv in sorted(self.tasks.items(), key=lambda kv: (kv[1].sort_order, kv[0].lower()))
+            kv[0] for kv in sorted(self.tasks.items(), key=lambda kv: (kv[1].sort_order, natural_key(kv[0])))
             if kv[0] not in given
         ]
         full_order = ordered_names + missing

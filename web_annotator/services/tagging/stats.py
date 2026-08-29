@@ -9,6 +9,7 @@ from pathlib import Path
 
 import httpx
 
+from services.core.natural import natural_key
 from services.core.work_dir import list_work_dirs
 from services.models import TagStatRow, TagStatsResult
 from services.tagging.clean import make_tag_matcher, tag_key
@@ -203,7 +204,7 @@ def count_tags(
     for d in dirs:
         if not d.is_dir():
             continue
-        files.extend(sorted(d.glob("*.txt")))
+        files.extend(sorted(d.glob("*.txt"), key=lambda p: natural_key(p.name)))
 
     for path in files:
         try:
@@ -255,7 +256,7 @@ def count_tags(
                 pct=round(pct, 4),
             )
         )
-    rows.sort(key=lambda x: (-x.pct, -x.count, x.tag))
+    rows.sort(key=lambda x: (-x.pct, -x.count, natural_key(x.tag)))
 
     return TagStatsResult(
         sample_count=n_files,

@@ -11,6 +11,7 @@ import json
 from pathlib import Path
 from urllib.parse import urlparse
 
+from services.core.natural import natural_key
 from services.core.video_scanner import VIDEO_EXTS
 from services.models import BooruDownloadResult, BooruPost, BooruUndownloadResult
 from services.online_sources.framework.base import (
@@ -244,7 +245,7 @@ async def regenerate_captions(
         if not meta_dir.is_dir():
             continue
 
-        for meta_file in sorted(meta_dir.glob("*.json")):
+        for meta_file in sorted(meta_dir.glob("*.json"), key=lambda p: natural_key(p.name)):
             try:
                 post = json.loads(meta_file.read_text(encoding="utf-8"))
             except (json.JSONDecodeError, OSError):

@@ -9,6 +9,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any, NamedTuple
 
+from services.core.natural import natural_key
 from services.models import TagCleanResult, TagCleanSample
 from services.core.scanner import IMAGE_EXTS
 
@@ -533,7 +534,7 @@ def _collect_txt_files(dirs: list[Path]) -> list[Path]:
     files: list[Path] = []
     for d in dirs:
         if d.is_dir():
-            files.extend(sorted(d.glob("*.txt")))
+            files.extend(sorted(d.glob("*.txt"), key=lambda p: natural_key(p.name)))
     return files
 
 

@@ -9,6 +9,7 @@ from pathlib import Path
 
 from services.dataset.layout import NON_BROWSABLE_DIRS
 from services.models import WorkDirInfo
+from services.core.natural import natural_key
 from services.core.scanner import IMAGE_EXTS
 from services.analysis.wd14 import list_image_subdirs
 
@@ -174,7 +175,7 @@ def pin_main(root: Path, dirs: list[WorkDirInfo]) -> list[WorkDirInfo]:
         out.append(by_name.pop("main"))
     elif main_path.is_dir():
         out.append(WorkDirInfo(name="main", label="main", image_count=_count_images(main_path)))
-    for name in sorted(by_name):
+    for name in sorted(by_name, key=natural_key):
         out.append(by_name[name])
     return out
 

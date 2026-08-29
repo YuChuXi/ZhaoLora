@@ -14,6 +14,7 @@ import cv2
 import numpy as np
 from PIL import Image, ImageFile, UnidentifiedImageError
 
+from services.core.natural import natural_key
 from services.core.scanner import IMAGE_EXTS
 from services.core.device import cuda_device
 
@@ -338,7 +339,7 @@ def collect_paths(data_dir: Path) -> list[Path]:
     """
     data_dir = data_dir.resolve()
     out = []
-    for p in sorted(data_dir.iterdir()):
+    for p in sorted(data_dir.iterdir(), key=lambda p: natural_key(p.name)):
         if p.is_file() and p.suffix.lower() in IMAGE_EXTS:
             out.append(p)
     return out
@@ -368,7 +369,7 @@ def load_records(data_dir: Path, workers: int | None = None) -> list[ImageRecord
             rec = fut.result()
             if rec is not None:
                 records.append(rec)
-    records.sort(key=lambda r: r.rel)
+    records.sort(key=lambda r: natural_key(r.rel))
     return records
 
 
@@ -749,7 +750,7 @@ def find_duplicate_groups(
             continue
         keep = suggest_keep_index(records, [pool[k] for k in idxs], similar_res_ratio)
         members: list[DedupeMember] = []
-        for k in sorted([pool[x] for x in idxs], key=lambda x: records[x].rel):
+        for k in sorted([pool[x] for x in idxs], key=lambda x: natural_key(records[x].rel)):
             r = records[k]
             members.append(
                 DedupeMember(
@@ -773,5 +774,5 @@ def find_duplicate_groups(
             )
         )
 
-    groups.sort(key=lambda g: (-g.size, g.keep))
+    groups.sort(key=lambda g: (-g.size, natural_key(g.keep)))
     return groups, vals
