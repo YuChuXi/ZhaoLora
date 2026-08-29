@@ -12,6 +12,7 @@ Callers:
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import re
 import shutil
@@ -24,6 +25,7 @@ from services.online_sources.bilibili.client import fetch_bili_bytes, fetch_dyna
 from services.online_sources.bilibili.models import DynamicRecord
 from services.online_sources.framework.session import SessionStore
 from services.online_sources.framework.utils import find_downloaded
+
 from services.models import BooruPost
 
 # 动态类型 -> 筛选页展示语义
@@ -141,7 +143,7 @@ class BilibiliSource(SourceClient):
                 id=bvid if is_video else f"{record.id}_{i}",
                 width=w,
                 height=h,
-                posted_at=str(source.pub_ts) if source.pub_ts is not None else "",
+                posted_at=datetime.fromtimestamp(source.pub_ts).astimezone().isoformat(),
                 file_url=url,
                 preview_url=url + "@480w_480h_1e.webp",
                 sample_url=url + "@1280w_1280h_1e.webp",
@@ -237,10 +239,15 @@ class BilibiliSource(SourceClient):
         """
         dynamic_id, index = self._split_pid(pid)
         url, text = await resolve_image(dynamic_id, index)
+        # resolve_image 不返回发布时间, 保留既有 meta 中的 posted_at
+        old_meta = out_dir / self.meta_subdir / f"{pid}.json"
+        posted_at = ""
+        if old_meta.is_file():
+            posted_at = str(json.loads(old_meta.read_text(encoding="utf-8")).get("posted_at", ""))
         self._write_meta(
             out_dir,
             pid,
-            BooruPost(source=self.name, id=pid, file_url=url, tags=text),
+            BooruPost(source=self.name, id=pid, file_url=url, tags=text, posted_at=posted_at),
         )
 
     async def download(

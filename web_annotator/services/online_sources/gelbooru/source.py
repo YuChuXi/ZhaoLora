@@ -6,6 +6,7 @@ Callers:
 
 from __future__ import annotations
 
+from datetime import datetime
 from pathlib import Path
 
 from services.online_sources.framework.base import ProgressFn, SourceClient
@@ -13,6 +14,26 @@ from services.online_sources.framework.media import download_raw_file, post_is_v
 from services.online_sources.framework.utils import find_downloaded
 from services.online_sources.gelbooru.client import GelbooruClient
 from services.models import BooruPost
+
+
+def _to_model_data(raw: dict) -> dict:
+    """将 Gelbooru API 原始响应映射为 ``BooruPost`` 统一字段名.
+
+    Args:
+        raw: Gelbooru API 原始帖子字典 (含大量额外字段, 原样保留进 meta;
+            ``id`` 与 ``created_at`` 为 API 必有字段).
+
+    Returns:
+        dict: id 转文本、``created_at`` 消费为 ISO8601 ``posted_at`` 后的数据.
+
+    Callers:
+        - ``services/online_sources/gelbooru/source.py:GelbooruSource.fetch_meta``
+        - ``services/online_sources/gelbooru/source.py:GelbooruSource.search``
+    """
+    out = {**raw}
+    out["id"] = str(out["id"])
+    out["posted_at"] = datetime.strptime(out.pop("created_at"), "%a %b %d %H:%M:%S %z %Y").isoformat()
+    return out
 
 
 class GelbooruSource(SourceClient):
@@ -77,7 +98,7 @@ class GelbooruSource(SourceClient):
         """
         api = GelbooruClient()
         raw = await api.get_post(int(pid))
-        self._write_meta(out_dir, pid, BooruPost.model_validate(raw))
+        self._write_meta(out_dir, pid, BooruPost.model_validate(_to_model_data(raw)))
 
     async def autocomplete(self, query: str, limit: int = 10) -> list[dict]:
         """标签自动补全.
@@ -121,7 +142,7 @@ class GelbooruSource(SourceClient):
         for raw_post in posts_raw:
             if not isinstance(raw_post, dict):
                 continue
-            n = self.normalize(BooruPost.model_validate(raw_post))
+            n = self.normalize(BooruPost.model_validate(_to_model_data(raw_post)))
             if n is not None:
                 out.append(n)
         return out, has_more

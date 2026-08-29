@@ -23,6 +23,31 @@ if TYPE_CHECKING:
 UNSUPPORTED_FILE_EXT = frozenset({"zip", "mp4", "webm", "swf", "mkv", "avi", "ugoira"})
 
 
+def _to_model_data(raw: dict) -> dict:
+    """将 Danbooru API 原始响应映射为 ``BooruPost`` 统一字段名.
+
+    Args:
+        raw: Danbooru API 原始帖子字典 (含大量额外字段, 原样保留进 meta;
+            ``id`` 与 ``created_at`` 为 API 必有字段, 后者契约即 ISO8601).
+
+    Returns:
+        dict: 补齐 width/height/tags/preview_url 统一字段、id 转文本、
+            ``created_at`` 消费为 ``posted_at`` 后的数据.
+
+    Callers:
+        - ``services/online_sources/danbooru/source.py:DanbooruSource.fetch_meta``
+        - ``services/online_sources/danbooru/source.py:DanbooruSource.search``
+    """
+    out = {**raw}
+    out.setdefault("width", out.get("image_width"))
+    out.setdefault("height", out.get("image_height"))
+    out.setdefault("tags", out.get("tag_string"))
+    out.setdefault("preview_url", out.get("preview_file_url"))
+    out["id"] = str(out["id"])
+    out["posted_at"] = out.pop("created_at")
+    return out
+
+
 def preview_url(post) -> str:
     """Danbooru 帖的预览 URL, 优先 720x720 webp, 回退 file_url.
 
@@ -132,7 +157,7 @@ class DanbooruSource(SourceClient):
         )
         if meta.status_code != 200:
             raise RuntimeError(f"Danbooru HTTP {meta.status_code}")
-        self._write_meta(out_dir, pid, BooruPost.model_validate(meta.json()))
+        self._write_meta(out_dir, pid, BooruPost.model_validate(_to_model_data(meta.json())))
 
     async def autocomplete(self, query: str, limit: int = 10) -> list[dict]:
         """标签自动补全.
@@ -173,7 +198,7 @@ class DanbooruSource(SourceClient):
         for raw_post in data:
             if not isinstance(raw_post, dict):
                 continue
-            n = self.normalize(BooruPost.model_validate(raw_post))
+            n = self.normalize(BooruPost.model_validate(_to_model_data(raw_post)))
             if n is not None:
                 out.append(n)
         return out, has_more

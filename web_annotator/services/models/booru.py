@@ -15,10 +15,10 @@ Callers:
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
-from pydantic import BaseModel, Field, computed_field, model_validator
+from pydantic import BaseModel, Field, computed_field
 
 from services.models.jobs import JobSnapshot
 
@@ -63,53 +63,6 @@ class BooruPost(BaseModel):
     @property
     def key(self) -> str:
         return f"{self.source}:{self.id}"
-
-    @model_validator(mode="before")
-    @classmethod
-    def _normalize_fields(cls, data: Any) -> Any:
-        """统一规范化各来源的原始字段: 宽高/标签/预览 URL 映射、id 转文本、发布时间归一.
-
-        发布时间 ``posted_at`` 接受三类原始输入并统一为 ISO8601 文本:
-        unix 秒整数 (X 的 ``date``、Bilibili 的 ``pub_ts``)、Gelbooru 的
-        ``created_at`` (如 ``Tue Feb 6 00:19:15 -0600 2024``)、以及已是
-        ISO8601 的字符串 (Danbooru 的 ``created_at``、Pixiv 的 ``createDate``).
-
-        Args:
-            data: 待校验的原始字段字典 (或非字典原样返回).
-
-        Returns:
-            Any: 规范化后的字段字典.
-
-        Callers:
-            - pydantic v2 在每次 ``BooruPost`` 构造/校验时自动调用
-        """
-        if not isinstance(data, dict):
-            return data
-        for src, dst in [
-            ("image_width", "width"), ("image_height", "height"),
-            ("tag_string", "tags"), ("preview_file_url", "preview_url"),
-        ]:
-            if src in data and dst not in data:
-                data[dst] = data[src]
-        # id 可能是 int(API 原始)→ str
-        if "id" in data and not isinstance(data["id"], str):
-            data["id"] = str(data["id"])
-        # 发布时间归一: booru API 的 created_at 消费进 posted_at, 避免冗余字段
-        if "created_at" in data:
-            data.setdefault("posted_at", data.pop("created_at"))
-        posted = data.get("posted_at")
-        if posted is None:
-            data["posted_at"] = ""
-        else:
-            if isinstance(posted, str) and posted.isdigit():
-                posted = int(posted)
-            if isinstance(posted, (int, float)):
-                posted = datetime.fromtimestamp(posted).astimezone().isoformat()
-            elif isinstance(posted, str) and posted and posted[4:5] != "-":
-                # 非 ISO8601 (YYYY-MM-DD 前缀) 即 Gelbooru 独有的英文日期格式, 归一为 ISO8601
-                posted = datetime.strptime(posted, "%a %b %d %H:%M:%S %z %Y").isoformat()
-            data["posted_at"] = posted
-        return data
 
 
 class BooruSearchResult(BaseModel):

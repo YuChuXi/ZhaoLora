@@ -313,6 +313,7 @@ class BatchEditBody(BaseModel):
     keep_duplicates: bool = Field(False, description="不删除已有重复标签")
     inject_pony_score: bool = Field(False, description="注入 Pony 美学档位, 永远置于最前")
     inject_quality_tag: bool = Field(False, description="注入质量标签, 永远置于最前")
+    inject_year_tag: bool = Field(False, description="按在线来源 meta JSON 发布时间注入年份标签(如 year 2025), 置于 ||| 之前头部")
     separator_mode: str = Field("keep", description="||| 分隔模式: keep(保留) | add(添加) | remove(删除)")
     dry_run: bool = True
     sample_limit: int = Field(default=40, ge=0, le=200)

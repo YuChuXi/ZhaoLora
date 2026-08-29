@@ -439,6 +439,7 @@
       keep_duplicates: mode === 'add' ? document.getElementById('batch-add-keep-dup').checked : false,
       inject_pony_score: mode === 'add' ? document.getElementById('batch-add-inject-pony').checked : false,
       inject_quality_tag: mode === 'add' ? document.getElementById('batch-add-inject-quality').checked : false,
+      inject_year_tag: mode === 'add' ? document.getElementById('batch-add-inject-year').checked : false,
       separator_mode: mode === 'add' ? document.getElementById('batch-add-separator').value : 'keep',
       dry_run: !!dryRun,
       sample_limit: 40,
@@ -462,6 +463,9 @@
       });
       var lines = [];
       lines.push((dryRun ? '预览完成' : '写入完成') + ' · 已变更 ' + data.changed + ' · 未变更 ' + data.unchanged);
+      if (data.inject_year_tag) {
+        lines.push('年份标签: 已注入 ' + (data.year_injected || 0) + ' · 无发布时间 ' + (data.year_missing || 0));
+      }
       var matched = data.matched_tags || {};
       var matchedKeys = Object.keys(matched).filter(function (k) { return (matched[k] || []).length; });
       if (matchedKeys.length) {

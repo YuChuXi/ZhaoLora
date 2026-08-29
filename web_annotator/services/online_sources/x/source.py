@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import os
 import re
+from datetime import timezone
 from typing import Any
 
 from services.online_sources.framework.gallerydl import GalleryDLSource
@@ -174,12 +175,13 @@ class XSource(GalleryDLSource):
         if not url or not tweet_id or not num:
             return None
         username = key or ""
+        date = kwdict["date"]  # gallery-dl 提取为 naive UTC datetime, 补时区标注
         return BooruPost(
             source=self.name,
             id=f"{username}_{tweet_id}_{num}",
             width=int(kwdict.get("width") or 0),
             height=int(kwdict.get("height") or 0),
-            posted_at=kwdict.get("date") or "",
+            posted_at=(date if date.tzinfo else date.replace(tzinfo=timezone.utc)).isoformat(),
             file_url=url,
             preview_url=_sized_url(url, "small"),
             sample_url=url,

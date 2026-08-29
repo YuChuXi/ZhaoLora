@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import html
+import json
 import random
 import re
 from collections.abc import Callable
@@ -18,6 +19,9 @@ SCORE_TAG_KEYS = frozenset(f"score {i}" for i in range(10))
 
 # 质量标签 tag_key (已是小写无下划线, 与 tag_key() 输出一致)
 QUALITY_TAG_KEYS = frozenset({"masterpiece", "best quality", "good quality", "normal quality", "low quality", "worst quality"})
+
+# 年份标签(如 "year 2025")的匹配模式, 用于注入前清理旧标签
+_YEAR_TAG_RE = re.compile(r"^year \d{4}$")
 
 # 始终置顶的标签 (分数 + 质量)
 PRIORITY_TAG_KEYS: frozenset[str] = SCORE_TAG_KEYS | QUALITY_TAG_KEYS
@@ -581,6 +585,31 @@ def _lookup_pony_quality(path: Path, root: Path | None, *,
     return score_tag, quality_tag_val, pony_injected, pony_missing, quality_injected, quality_missing
 
 
+def _lookup_year_tag(txt: Path) -> str | None:
+    """从同目录在线来源 meta JSON 的发布时间构造年份标签 ``year YYYY``.
+
+    Args:
+        txt (Path): txt 标注文件路径; meta JSON 位于同目录的 ``.{来源}_meta/{同名}.json``.
+
+    Returns:
+        str | None: 年份标签(如 ``year 2025``); 无 meta、无发布时间或文件不可读时为 None.
+
+    Callers:
+        - ``services/tagging/clean.py:_run_batch_edit``
+    """
+    meta_file = next(txt.parent.glob(f".*_meta/{txt.stem}.json"), None)
+    if meta_file is None:
+        return None
+    try:
+        posted_at = json.loads(meta_file.read_text(encoding="utf-8")).get("posted_at", "")
+    except (OSError, json.JSONDecodeError):
+        # meta 损坏视为缺失, 计入 year_missing 统计而非中断批量任务
+        return None
+    if posted_at[:4].isdigit():
+        return f"year {posted_at[:4]}"
+    return None
+
+
 def _record_sample(raw: str, new: str, *, path: Path, root: Path | None, dry_run: bool,
                    samples: list[TagCleanSample], sample_limit: int) -> None:
     """变更时追加前后对比样本并写文件; path 字段存相对数据集根的路径.
@@ -622,6 +651,8 @@ class _BatchStats(NamedTuple):
     pony_missing: int
     quality_injected: int
     quality_missing: int
+    year_injected: int
+    year_missing: int
     samples: list[TagCleanSample]
 
 
@@ -631,8 +662,9 @@ def _run_batch_edit(
     root: Path | None,
     inject_pony_score: bool, scores: dict[str, float],
     inject_quality_tag: bool, q_scores: dict[str, float],
+    inject_year_tag: bool = False,
     dry_run: bool, sample_limit: int,
-    edit: Callable[[str, str | None, str | None], tuple[str, Any]],
+    edit: Callable[[str, str | None, str | None, str | None], tuple[str, Any]],
 ) -> tuple[_BatchStats, list[Any]]:
     """通用批量编辑骨架: 遍历 txt、查分、编辑、统计并记录样本.
 
@@ -643,10 +675,11 @@ def _run_batch_edit(
         scores (dict[str, float]): 相对路径 → 原始美学分 [0,1].
         inject_quality_tag (bool): 质量标签注入开关.
         q_scores (dict[str, float]): 相对路径 → 质量分 [0,1].
+        inject_year_tag (bool): 年份标签注入开关(由 meta JSON 发布时间生成).
         dry_run (bool): True 仅预览, 不写文件.
         sample_limit (int): 返回样本上限.
-        edit (Callable[[str, str | None, str | None], tuple[str, Any]]): 单文件编辑函数
-            ``(raw, score_tag, quality_tag_val) -> (new, extra)``,
+        edit (Callable[[str, str | None, str | None, str | None], tuple[str, Any]]): 单文件编辑函数
+            ``(raw, score_tag, quality_tag_val, year_tag) -> (new, extra)``,
             ``extra`` 为编辑附带数据(无则为 None), 按文件顺序收集返回.
 
     Returns:
@@ -659,6 +692,7 @@ def _run_batch_edit(
     changed = unchanged = failed = 0
     pony_injected = pony_missing = 0
     quality_injected = quality_missing = 0
+    year_injected = year_missing = 0
     samples: list[TagCleanSample] = []
     extras: list[Any] = []
 
@@ -680,7 +714,12 @@ def _run_batch_edit(
         quality_injected += qi
         quality_missing += qm
 
-        new, extra = edit(raw, score_tag, quality_tag_val)
+        year_tag = _lookup_year_tag(path) if inject_year_tag else None
+        if inject_year_tag:
+            year_injected += year_tag is not None
+            year_missing += year_tag is None
+
+        new, extra = edit(raw, score_tag, quality_tag_val, year_tag)
         extras.append(extra)
         if new == raw.strip():
             unchanged += 1
@@ -690,7 +729,8 @@ def _run_batch_edit(
 
     stats = _BatchStats(
         files, changed, unchanged, failed,
-        pony_injected, pony_missing, quality_injected, quality_missing, samples,
+        pony_injected, pony_missing, quality_injected, quality_missing,
+        year_injected, year_missing, samples,
     )
     return stats, extras
 
@@ -744,8 +784,8 @@ def clean_txt_dirs(
     q_scores = quality_scores or {}
     root = dataset_root.resolve() if dataset_root is not None else None
 
-    def _edit(raw: str, score_tag: str | None, quality_tag_val: str | None) -> tuple[str, object]:
-        """单文件清洗闭包, 由 ``_run_batch_edit`` 逐文件调用."""
+    def _edit(raw: str, score_tag: str | None, quality_tag_val: str | None, _year_tag: str | None) -> tuple[str, object]:
+        """单文件清洗闭包, 由 ``_run_batch_edit`` 逐文件调用; 不支持年份注入."""
         return clean_caption(
             raw,
             user_drop_exact=user_drop_exact,
@@ -956,6 +996,7 @@ def batch_edit_tags(
     inject_quality_tag: bool = False,
     quality_scores: dict[str, float] | None = None,
     use_separator: str = "keep",
+    inject_year_tag: bool = False,
     dry_run: bool = True,
     sample_limit: int = 40,
 ) -> TagCleanResult:
@@ -975,6 +1016,8 @@ def batch_edit_tags(
         inject_pony_score (bool): 根据美学分注入 score_0…score_9.
         inject_quality_tag (bool): 根据质量分注入质量标签.
         use_separator (str): ||| 分隔模式: "add"(添加) | "keep"(保留) | "remove"(删除).
+        inject_year_tag (bool): 按在线来源 meta JSON 的发布时间注入年份标签 ``year YYYY``,
+            置于 ``|||`` 之前头部最前(先清理旧年份标签).
         dataset_root (Path | None): 数据集根目录(解析旁路图像路径).
         aesthetic_scores (dict[str, float] | None): 相对路径 → 原始美学分 [0,1].
         quality_scores (dict[str, float] | None): 相对路径 → 质量分 [0,1].
@@ -1009,7 +1052,7 @@ def batch_edit_tags(
     q_scores = quality_scores or {}
     root = dataset_root.resolve() if dataset_root is not None else None
 
-    def _edit(raw: str, score_tag: str | None, quality_tag_val: str | None) -> tuple[str, object]:
+    def _edit(raw: str, score_tag: str | None, quality_tag_val: str | None, year_tag: str | None) -> tuple[str, object]:
         """单文件批量编辑闭包, 由 ``_run_batch_edit`` 逐文件调用.
 
         返回 ``(new, matched_file)``.
@@ -1023,6 +1066,12 @@ def batch_edit_tags(
         if inject_quality_tag:
             header = [t for t in header if tag_key(t) not in QUALITY_TAG_KEYS]
             body = [t for t in body if tag_key(t) not in QUALITY_TAG_KEYS]
+        if inject_year_tag:
+            header = [t for t in header if not _YEAR_TAG_RE.match(tag_key(t))]
+            body = [t for t in body if not _YEAR_TAG_RE.match(tag_key(t))]
+        if year_tag:
+            # 年份标签置于 ||| 之前头部最前(美学/质量优先标签在重组时仍插于其前)
+            header = [year_tag, *header]
         matched_file: dict[str, list[str]] = {}
 
         def _record(pat: str, k: str) -> None:
@@ -1108,6 +1157,7 @@ def batch_edit_tags(
         dirs, root=root,
         inject_pony_score=inject_pony_score, scores=scores,
         inject_quality_tag=inject_quality_tag, q_scores=q_scores,
+        inject_year_tag=inject_year_tag,
         dry_run=dry_run, sample_limit=sample_limit,
         edit=_edit,
     )
@@ -1136,4 +1186,7 @@ def batch_edit_tags(
         inject_quality_tag=inject_quality_tag,
         quality_injected=st.quality_injected,
         quality_missing=st.quality_missing,
+        inject_year_tag=inject_year_tag,
+        year_injected=st.year_injected,
+        year_missing=st.year_missing,
     )

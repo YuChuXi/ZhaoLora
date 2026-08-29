@@ -10,24 +10,26 @@
   来源名按 "." 点分段独立着色以呈现来源层级(访问日志 / 长任务 / 模型设备 / 各业务
   模块), 便于在终端区分是哪个子系统在输出。重定向到文件或管道时不加 ANSI 转义,
   避免污染文本。
-- **日志文件**: 无色, 写入 ``--data-dir/logs`` 下, 超过 ``_FILE_MAX_BYTES``
-  自动按大小滚动归档, 保留最近 ``_FILE_BACKUP_COUNT`` 份。
+- **日志文件**: 无色, 每次启动在 ``--data-dir/__log__`` 新建以启动时间命名的
+  会话日志文件(``web_annotator_YYYYMMDD_HHMMSS.log``), 一个运行周期一个文件;
+  启动时把目录内其余会话日志惰性压缩为 ``.gz``(服务退出无钩子, 归档在下次启动
+  时补做), 保留最近 ``_LOG_KEEP`` 份。
 """
 
 from __future__ import annotations
 
+import gzip
 import logging
 import zlib
-from logging.handlers import RotatingFileHandler
+from datetime import datetime
 from pathlib import Path
 
 # 日志行格式: 时间 | 级别 | logger 名 | 消息 (无色)
 _LOG_FORMAT = "%(asctime)s | %(levelname)-5s | %(name)s | %(message)s"
 _DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
-# 滚动日志文件名与归档策略
-_FILE_NAME = "web_annotator.log"
-_FILE_MAX_BYTES = 10 * 1024 * 1024
-_FILE_BACKUP_COUNT = 5
+# 会话日志文件名前缀与保留份数(含当前会话)
+_FILE_PREFIX = "web_annotator_"
+_LOG_KEEP = 30
 # 级别名的显示宽度(与无色格式 ``-5s`` 对齐)
 _LEVEL_WIDTH = 5
 
@@ -138,20 +140,49 @@ class _ColorFormatter(logging.Formatter):
         return body
 
 
+def _archive_stale_sessions(log_dir: Path) -> None:
+    """把日志目录内上一会话及更早的 ``.log`` 文件惰性压缩为同名 ``.gz``.
+
+    服务退出无钩子(SIGKILL/断电无法感知), 故归档在下次启动时补做: 压缩后删除
+    原文件, 并把目录内会话日志总数(含本会话)裁剪到 ``_LOG_KEEP`` 份, 超出删除最旧.
+
+    Args:
+        log_dir: 日志目录.
+
+    Returns:
+        None.
+
+    Callers:
+        - ``services/core/logging.py:setup_logging``
+    """
+    stale = sorted(log_dir.glob(f"{_FILE_PREFIX}*.log"))
+    for path in stale:
+        with path.open("rb") as f_in, gzip.open(f"{path}.gz", "wb") as f_out:
+            f_out.writelines(f_in)
+        path.unlink()
+    gz_files = sorted(
+        log_dir.glob(f"{_FILE_PREFIX}*.log.gz"),
+        key=lambda p: p.stat().st_mtime,
+    )
+    for path in gz_files[:-(_LOG_KEEP - 1)]:
+        path.unlink()
+
+
 def setup_logging(
     log_level: str,
     log_dir: Path | None = None,
 ) -> None:
     """配置全局根日志器, 统一格式 / 级别 / 处理器.
 
-    为标准输出与(可选)滚动文件安装处理器, 终端按来源着色、文件无色, 并将
-    uvicorn 内部日志器交由根日志器接管。可重复调用; 每次调用会先清理根日志器
-    既有处理器以保证幂等。
+    为标准输出与会话日志文件安装处理器, 终端按来源着色、文件无色, 并将
+    uvicorn 内部日志器交由根日志器接管。可重复调用; 每次调用新建本会话日志
+    文件并压缩其余会话日志。
 
     Args:
         log_level: 日志级别名, 限 ``debug`` / ``info`` / ``warning`` / ``error``.
-        log_dir: 日志目录; 提供时在 ``log_dir/web_annotator.log`` 写入滚动文件,
-            为 ``None`` 时仅输出到标准输出/错误输出.
+        log_dir: 日志目录; 提供时压缩其余会话日志, 并在本会话日志
+            ``web_annotator_YYYYMMDD_HHMMSS.log`` 写入日志, 为 ``None`` 时仅输出
+            到标准输出/错误输出.
 
     Returns:
         None.
@@ -183,13 +214,10 @@ def setup_logging(
 
     if log_dir is not None:
         log_dir.mkdir(parents=True, exist_ok=True)
-        file_handler = RotatingFileHandler(
-            log_dir / _FILE_NAME,
-            maxBytes=_FILE_MAX_BYTES,
-            backupCount=_FILE_BACKUP_COUNT,
-            encoding="utf-8",
-        )
+        _archive_stale_sessions(log_dir)
+        session_file = log_dir / f"{_FILE_PREFIX}{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
         # 日志文件保持无色, 便于用文本工具直接检索.
+        file_handler = logging.FileHandler(session_file, encoding="utf-8")
         file_handler.setFormatter(logging.Formatter(_LOG_FORMAT, _DATE_FORMAT))
         root.addHandler(file_handler)
 

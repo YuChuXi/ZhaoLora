@@ -448,7 +448,8 @@ class GalleryDLSource(SourceClient):
             tags_path.write_text(caption + "\n", encoding="utf-8")
         self._write_meta(
             out_dir, pid,
-            BooruPost(source=self.name, id=pid, file_url=image_url, tags=caption),
+            BooruPost(source=self.name, id=pid, file_url=image_url, tags=caption,
+                      posted_at=post.posted_at),
         )
         return {
             "path": str(image_path),

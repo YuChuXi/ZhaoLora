@@ -93,7 +93,7 @@ async def lifespan(app: FastAPI):
         "yes",
     )
 
-    setup_logging(log_level, log_dir or (data_dir / "logs"))
+    setup_logging(log_level, log_dir or (data_dir / "__log__"))
     log = logging.getLogger("web_annotator")
 
     store = TaskStore(data_dir)
