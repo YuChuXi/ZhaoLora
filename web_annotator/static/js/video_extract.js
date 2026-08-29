@@ -35,7 +35,6 @@ var VideoExtract = (function () {
   };
 
   var _stripItems = []; // 缩略图条 DOM 集合
-  var _stripIo = null;  // 缩略图懒加载观察器
   var _globalCache = null; // 全局图柱状体缓存(逐帧绘制成本高, 仅宽度/帧数变化时重建)
 
   // ---- WebCodecs 帧窗口段: 后端编码为正常 I/P/B H.264, 前端批量 decode + flush,
@@ -569,7 +568,7 @@ var VideoExtract = (function () {
         box.dataset.idx = String(idx);
         var img = document.createElement('img');
         img.loading = 'lazy';
-        img.dataset.src = frameUrl(idx, THUMB_SIZE);
+        img.src = frameUrl(idx, THUMB_SIZE);
         box.appendChild(img);
         var tag = document.createElement('span');
         tag.className = 'tag';
@@ -580,26 +579,7 @@ var VideoExtract = (function () {
         _stripItems.push({ idx: idx, box: box, img: img });
       })(indices[k]);
     }
-    observeStrip(strip);
     syncStrip();
-  }
-
-  /** 为缩略图条绑定懒加载观察器。Callers: buildStrip。 */
-  function observeStrip(container) {
-    if (_stripIo) _stripIo.disconnect();
-    _stripIo = new IntersectionObserver(function (entries) {
-      for (var i = 0; i < entries.length; i++) {
-        if (!entries[i].isIntersecting) continue;
-        var img = entries[i].target;
-        var url = img.dataset.src;
-        if (!url) continue;
-        img.src = url;
-        delete img.dataset.src;
-        _stripIo.unobserve(img);
-      }
-    }, { root: container, rootMargin: '300px 0px', threshold: 0 });
-    var imgs = container.querySelectorAll('img[data-src]');
-    for (var j = 0; j < imgs.length; j++) _stripIo.observe(imgs[j]);
   }
 
   /** 同步缩略图条高亮: 当前帧与已保存帧。

@@ -269,6 +269,11 @@ body {
   border-color: var(--accent);
   opacity: 0.7;
 }
+/* 评分画廊: 离屏卡片跳过渲染, 缩略图经原生 loading=lazy 自动懒加载 */
+#gallery .card {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 280px;
+}
 /* 标签检查页: 绿色边框=位置符合, 红色边框=位置不符（标签存在但位置错误时） */
 .card.tag-ok {
   border-color: var(--green);

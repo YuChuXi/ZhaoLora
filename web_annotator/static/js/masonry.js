@@ -1,14 +1,15 @@
 /**
  * masonry.js -- JS 绝对定位瀑布流，横排不乱 + 无空隙
- * 缩略图用 IntersectionObserver 懒加载（原生 loading=lazy 在快网下预取范围过大）
+ * 离屏渲染跳过与图片懒加载全部交给浏览器自动管理:
+ * 卡片逐张设 content-visibility:auto 与精确占位尺寸, 浏览器自动跳过离屏渲染;
+ * 缩略图用原生 loading=lazy, 浏览器自动按视口距离决定加载与解码时机。
+ * 列高以探针测得的固定附加高度纯计算得出, 不逐卡强制回流。
  */
 var Masonry = (function() {
   'use strict';
 
   var _container = null;
   var _columns = 5;
-  var _io = null;
-  var _LAZY_MARGIN = '400px 0px';
 
   // 可选配置: 非筛选页可通过 init 第二参数注入自定义数据源与交互
   var _config = {
@@ -17,6 +18,10 @@ var Masonry = (function() {
     decorate: null,  // function(card, img); 创建卡片后追加自定义样式/属性
     imageSrc: null,  // function(img) → 缩略图 URL; 省略则用 API.thumbnailUrl
   };
+
+  var _index = {};          // path → {img, x, y, w, h}
+  var _extraH = 0;          // 卡片中图片占位之外的固定高度(info 区 + 边框)
+  var _lastClickedPath = null;
 
   /**
    * 初始化瀑布流容器.
@@ -38,41 +43,36 @@ var Masonry = (function() {
 
   function setColumns(n) { _columns = n; renderAll(); }
 
-  function _stopLazy() {
-    if (_io) {
-      _io.disconnect();
-      _io = null;
-    }
+  /**
+   * 图片的占位高度.
+   * @param {Object} img - 图片元数据, 含 width/height
+   * @param {number} colW - 列宽
+   * @returns {number} 按列宽等比缩放的占位高度
+   */
+  function _placeholderH(img, colW) {
+    return Math.max(1, Math.round(colW * (img.height || 1) / (img.width || 1)));
   }
 
-  function _loadImg(imgEl) {
-    var url = imgEl.dataset.src;
-    if (!url) return;
-    imgEl.src = url;
-    delete imgEl.dataset.src;
-    if (_io) _io.unobserve(imgEl);
+  /**
+   * 用探针卡片测量图片占位之外的固定附加高度(info 区 + 边框).
+   * @param {Object} img - 探针使用的图片元数据
+   * @param {number} colW - 列宽
+   * @returns {number} 卡片总高与图片占位高之差
+   */
+  function _measureExtra(img, colW) {
+    var probe = _createCard(img, colW);
+    // 强制渲染探针: content-visibility:auto 的离屏元素以占位尺寸代替真实内容尺寸
+    probe.style.contentVisibility = 'visible';
+    _container.appendChild(probe);
+    var extra = probe.offsetHeight - _placeholderH(img, colW);
+    _container.removeChild(probe);
+    return extra;
   }
-
-  function _startLazy() {
-    _stopLazy();
-    if (!_container) return;
-    _io = new IntersectionObserver(function (entries) {
-      for (var i = 0; i < entries.length; i++) {
-        if (!entries[i].isIntersecting) continue;
-        _loadImg(entries[i].target);
-      }
-    }, { root: null, rootMargin: _LAZY_MARGIN, threshold: 0 });
-
-    var imgs = _container.querySelectorAll('img[data-src]');
-    for (var j = 0; j < imgs.length; j++) _io.observe(imgs[j]);
-  }
-
-  var _lastClickedPath = null;
 
   function render(images) {
     if (!_container) return;
-    _stopLazy();
     _container.innerHTML = '';
+    _index = {};
     if (images.length === 0) {
       _container.innerHTML =
         '<div style="padding:60px;text-align:center;color:var(--text-dim);">没有图片</div>';
@@ -84,23 +84,29 @@ var Masonry = (function() {
     var avail = Math.max(0, _container.clientWidth - pad * 2);
     var cw = (avail - gap * (cols - 1)) / cols;
     if (!(cw > 0)) cw = 1;
+
+    _extraH = _measureExtra(images[0], cw);
     var heights = new Array(cols).fill(0);
 
     for (var i = 0; i < images.length; i++) {
       var img = images[i];
       var card = _createCard(img, cw);
       var col = _shortestCol(heights);
+      var x = pad + col * (cw + gap);
+      var y = heights[col];
+      var h = _placeholderH(img, cw) + _extraH;
       card.style.position = 'absolute';
-      card.style.left = (pad + col * (cw + gap)) + 'px';
+      card.style.left = x + 'px';
+      card.style.top = y + 'px';
       card.style.width = cw + 'px';
+      // 离屏卡片跳过渲染; 占位尺寸用精确估算值, 避免滚动条跳动
+      card.style.contentVisibility = 'auto';
+      card.style.containIntrinsicSize = 'auto ' + h + 'px';
       _container.appendChild(card);
-      // 用真实渲染高度累加列高, 而非预估, 保证竖直空隙恒定 = gap
-      var rh = card.offsetHeight;
-      card.style.top = heights[col] + 'px';
-      heights[col] += rh + gap;
+      _index[img.path] = { img: img, x: x, y: y, w: cw, h: h };
+      heights[col] += h + gap;
     }
     _container.style.height = Math.max.apply(null, heights) + 'px';
-    _startLazy();
   }
 
   function _shortestCol(h) {
@@ -122,22 +128,16 @@ var Masonry = (function() {
         return;
       }
       if (e.shiftKey && _lastClickedPath) {
-        var lastCard = _container.querySelector('.card[data-path="' + _lastClickedPath.replace(/"/g, '\\"') + '"]');
-        if (lastCard && card !== lastCard) {
-          var yA = parseFloat(lastCard.style.top) || 0;
-          var hA = lastCard.offsetHeight || 0;
-          var yB = parseFloat(card.style.top) || 0;
-          var hB = card.offsetHeight || 0;
-          var yLo = Math.min(yA, yB);
-          var yHi = Math.max(yA + hA, yB + hB);
-          var allCards = _container.querySelectorAll('.card');
+        var itA = _index[_lastClickedPath];
+        var itB = _index[img.path];
+        if (itA && itB && itA !== itB) {
+          // 布局坐标下与 [yLo, yHi] 有交集的卡片即选中
+          var yLo = Math.min(itA.y, itB.y);
+          var yHi = Math.max(itA.y + itA.h, itB.y + itB.h);
           var paths = [];
-          for (var ci = 0; ci < allCards.length; ci++) {
-            var c = allCards[ci];
-            var cy = parseFloat(c.style.top) || 0;
-            var ch = c.offsetHeight || 0;
-            // 卡片与 [yLo, yHi] 有交集即选中
-            if (cy + ch > yLo && cy < yHi) paths.push(c.dataset.path);
+          for (var key in _index) {
+            var it = _index[key];
+            if (it.y + it.h > yLo && it.y < yHi) paths.push(key);
           }
           if (paths.length) Store.selectRange(paths);
         } else {
@@ -152,11 +152,11 @@ var Masonry = (function() {
 
     var imgEl = document.createElement('img');
     imgEl.alt = img.stem;
-    imgEl.dataset.src = _config.imageSrc ? _config.imageSrc(img) : API.thumbnailUrl(img.thumbnail_hash);
+    imgEl.loading = 'lazy';
+    imgEl.src = _config.imageSrc ? _config.imageSrc(img) : API.thumbnailUrl(img.thumbnail_hash);
     imgEl.dataset.full = API.imageUrl(img.path);
     // 占位高度，避免未加载时卡片塌缩导致整页被当成「可见」
-    var ph = Math.max(1, Math.round(colW * (img.height || 1) / (img.width || 1)));
-    imgEl.style.height = ph + 'px';
+    imgEl.style.height = _placeholderH(img, colW) + 'px';
     imgEl.addEventListener('load', function () {
       imgEl.style.height = '';
     });
@@ -210,11 +210,10 @@ var Masonry = (function() {
     return null;
   }
 
+  /** 滚动到指定图片并闪烁 */
   function jumpTo(path) {
     var card = _findCard(path);
     if (!card) return false;
-    var imgEl = card.querySelector('img[data-src]');
-    if (imgEl) _loadImg(imgEl);
     card.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'nearest' });
     card.classList.add('jump-flash');
     setTimeout(function () { card.classList.remove('jump-flash'); }, 1200);

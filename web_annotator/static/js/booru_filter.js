@@ -690,7 +690,6 @@ var BooruFilter = (function () {
   var _selected = {};
   var _status = {};
   var _aborters = {};
-  var _io = null;
   var _pageIo = null;
   var _colLo = null;
   var _colHi = null;
@@ -1332,34 +1331,6 @@ var BooruFilter = (function () {
     if (name && post) name.textContent = cardLabel(post);
   }
 
-  function stopLazy() {
-    if (_io) {
-      _io.disconnect();
-      _io = null;
-    }
-  }
-
-  function ensureLazy(container) {
-    if (_io) return;
-    _io = new IntersectionObserver(function (entries) {
-      for (var i = 0; i < entries.length; i++) {
-        if (!entries[i].isIntersecting) continue;
-        var img = entries[i].target;
-        var url = img.dataset.src;
-        if (!url) continue;
-        img.src = url;
-        delete img.dataset.src;
-        _io.unobserve(img);
-      }
-    }, { root: null, rootMargin: '400px 0px', threshold: 0 });
-  }
-
-  function observeNew(container, root) {
-    ensureLazy(container);
-    var imgs = (root || container).querySelectorAll('img[data-src]');
-    for (var j = 0; j < imgs.length; j++) _io.observe(imgs[j]);
-  }
-
   function resolveCols() {
     var colsSlider = document.getElementById('cols-slider');
     if (colsSlider) {
@@ -1391,7 +1362,8 @@ var BooruFilter = (function () {
 
     var imgEl = document.createElement('img');
     imgEl.alt = post.id;
-    imgEl.dataset.src = thumbUrl(post);
+    imgEl.loading = 'lazy';
+    imgEl.src = thumbUrl(post);
     imgEl.style.width = '100%';
     imgEl.style.height = 'auto';
     // 宽高已知时按真实比例占位, 避免加载前塌缩与加载后拉伸
@@ -1579,7 +1551,6 @@ var BooruFilter = (function () {
       }
       container.style.height = (Math.max.apply(null, _colHi) - _minY) + 'px';
     }
-    observeNew(container);
     paintRemoteCounts();
     syncLoadTrigger();
     syncPageFromScroll();
@@ -1590,7 +1561,6 @@ var BooruFilter = (function () {
     if (!container) return;
 
     if (!_posts.length) {
-      stopLazy();
       container.innerHTML =
         '<div style="padding:60px;text-align:center;color:var(--text-dim);">无结果，输入 tag 后搜索</div>';
       container.style.height = '';
@@ -1607,7 +1577,6 @@ var BooruFilter = (function () {
     _cw = (avail - _gap * (cols - 1)) / cols;
     if (!(_cw > 0)) _cw = 1;
 
-    stopLazy();
     container.innerHTML = '';
     _colLo = new Array(cols).fill(0);
     _colHi = new Array(cols).fill(0);
@@ -1617,7 +1586,6 @@ var BooruFilter = (function () {
       place(createCard(_posts[j], _cw), _posts[j], false);
     }
     container.style.height = (Math.max.apply(null, _colHi) - _minY) + 'px';
-    observeNew(container);
     paintRemoteCounts();
     syncLoadTrigger();
     syncPageFromScroll();
@@ -2263,7 +2231,6 @@ var BooruFilter = (function () {
     _hasMore = false;
     _hasPrev = start > 1;
     resetLayout();
-    stopLazy();
     stopPageObserve();
     render();
     updatePageStatus();
@@ -2276,7 +2243,6 @@ var BooruFilter = (function () {
     stopBatch();
     hidePreview();
     syncToolbar();
-    stopLazy();
     stopPageObserve();
     saveUiState();
   }
