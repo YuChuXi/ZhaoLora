@@ -175,6 +175,8 @@ class GelbooruSource(SourceClient):
             return await download_raw_file(post, out_dir)
 
         if not overwrite and existing is not None and tags_path.is_file():
+            # 补写 meta, 修复历史下载遗留的缺失; anima 分类字段经刷新元数据补全
+            self._write_meta(out_dir, pid, post)
             return {"skipped": True, "path": str(existing), "stem": stem, "id": pid, "tags_path": str(tags_path)}
 
         if not post.file_url:

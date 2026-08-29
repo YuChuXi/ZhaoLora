@@ -259,11 +259,29 @@ def model_ready() -> tuple[bool, str]:
     return False, f"找不到本地 WD14 模型: {rel}"
 
 
-def _load_model() -> _WD14_HANDLE:
-    """加载 WD14 ONNX 会话与标签表.
+def _build_session(providers: list[str]) -> "InferenceSession":
+    """按执行提供程序创建 WD14 ONNX 推理会话.
 
-    读取 ``selected_tags.csv`` 构建 ``(标签名, 是否角色)`` 标签表; 依据 CUDA 可用性
-    选择执行提供程序, 创建 ONNX 推理会话.
+    Args:
+        providers: ONNX 执行提供程序列表, 首位为首选设备.
+
+    Returns:
+        InferenceSession: 已初始化的 ONNX 推理会话.
+
+    Callers:
+        - ``services/analysis/wd14.py:_load_model``
+        - ``services/analysis/wd14.py:_move_model``
+    """
+    import onnxruntime as ort
+
+    return ort.InferenceSession(str(WD14_ONNX_PATH), providers=providers)
+
+
+def _load_model() -> _WD14_HANDLE:
+    """加载 WD14 ONNX 推理会话与标签表 (会话恒以 CPU 提供程序创建).
+
+    转移目标设备由 ``device.Model`` 生命周期统一决定 (``_move_model``),
+    加载侧不做设备判断.
 
     Returns:
         ``(session, labels)`` — ``labels`` 为 ``(标签名, 是否角色)`` 元组列表,
@@ -275,20 +293,40 @@ def _load_model() -> _WD14_HANDLE:
     ok, msg = model_ready()
     if not ok:
         raise RuntimeError(msg)
-    import onnxruntime as ort
     import pandas as pd
-    import torch
 
     df = pd.read_csv(WD14_CSV_PATH)
     is_character = (df["category"].astype(str) == "4").tolist()
     labels: list[tuple[str, bool]] = list(zip(df["name"].tolist(), is_character))
+    return _build_session(["CPUExecutionProvider"]), labels
+
+
+def _move_model(handle: _WD14_HANDLE, device) -> _WD14_HANDLE:
+    """把 WD14 会话转移到目标设备.
+
+    ONNX 会话的执行提供程序创建后不可迁移, 故按目标设备重建会话;
+    会话生效提供程序与目标一致时原样返回 (幂等).
+
+    Args:
+        handle: ``_load_model`` 返回的 ``(session, labels)`` 元组.
+        device: 转移目标设备.
+
+    Returns:
+        完成转移后的 ``(session, labels)`` 元组.
+
+    Callers:
+        - ``services/core/device.py:register_model`` 注册的 move 回调
+    """
+    session, labels = handle
     providers = (
         ["CUDAExecutionProvider", "CPUExecutionProvider"]
-        if torch.cuda.is_available()
+        if device.type == "cuda"
         else ["CPUExecutionProvider"]
     )
-    session = ort.InferenceSession(str(WD14_ONNX_PATH), providers=providers)
-    return session, labels
+    if session.get_providers() == providers:
+        return handle
+    del session
+    return _build_session(providers), labels
 
 
 def _unload_model(handle: object) -> None:
@@ -304,7 +342,7 @@ def _unload_model(handle: object) -> None:
     del session, _labels
 
 
-_MODEL = register_model(_load_model, _unload_model)
+_MODEL = register_model(_load_model, _unload_model, _move_model)
 
 
 def _infer_wd14(

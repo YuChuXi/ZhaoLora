@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -11,6 +12,7 @@ from fastapi.responses import FileResponse
 
 from routes.deps import get_runtime, resolve_path
 from services.core.scanner import scan_images
+from services.online_sources.framework.base import file_stem as source_file_stem
 from services.analysis.similarity import ColorIndex, fingerprint_file
 from services.models import (
     DirsResponse,
@@ -56,6 +58,38 @@ def _resolve_image(root: Path, trash_dir: Path, rel: str) -> Path:
     raise HTTPException(404, "文件不存在")
 
 
+def _posted_at_index(work: Path) -> dict[str, str]:
+    """收集工作目录下各在线来源 meta 目录的发布时间索引.
+
+    meta JSON 按帖子 pid 命名 (``.{来源}_meta/{pid}.json``), 经来源注册的
+    ``file_stem`` 映射换算为下载文件 stem 后建立索引.
+
+    Args:
+        work (Path): 工作目录.
+
+    Returns:
+        dict[str, str]: 下载文件 stem -> ISO8601 发布时间; 无发布时间的帖子不在索引中,
+            个别损坏文件按缺失处理, 不中断列表.
+
+    Callers:
+        - ``routes/images.py:list_images``
+    """
+    index: dict[str, str] = {}
+    for meta_dir in work.glob(".*_meta"):
+        if not meta_dir.is_dir():
+            continue
+        source = meta_dir.name[1:-len("_meta")]
+        for meta_file in meta_dir.glob("*.json"):
+            try:
+                posted_at = json.loads(meta_file.read_text(encoding="utf-8")).get("posted_at", "")
+            except (OSError, json.JSONDecodeError):
+                # meta 损坏视为缺失, 列表接口继续而非中断
+                continue
+            if posted_at:
+                index[source_file_stem(source, meta_file.stem)] = posted_at
+    return index
+
+
 @router.get("/dirs")
 def list_dirs(request: Request) -> DirsResponse:
     """列出工作子目录. 引用: 筛选页 DirPicker. """
@@ -88,6 +122,7 @@ def list_images(
 
     for sub, work in pairs:
         prefix = sub + "/"
+        posted = _posted_at_index(work)
         for img in scan_images(work, path_prefix=sub):
             rel = img.path
             if rel in trashed_state or rel in seen:
@@ -105,6 +140,7 @@ def list_images(
                     dir=sub,
                     aesthetic=scores.get(rel),
                     quality=quality_scores.get(rel),
+                    posted_at=posted.get(Path(rel).stem, ""),
                 )
             )
 
@@ -131,6 +167,7 @@ def list_images(
                         dir=sub,
                         aesthetic=scores.get(img.path),
                         quality=quality_scores.get(img.path),
+                        posted_at=posted.get(Path(img.path).stem, ""),
                     )
                 )
         else:
@@ -157,6 +194,7 @@ def list_images(
                         dir=sub,
                         aesthetic=scores.get(rel),
                         quality=quality_scores.get(rel),
+                        posted_at=posted.get(Path(rel).stem, ""),
                     )
                 )
 

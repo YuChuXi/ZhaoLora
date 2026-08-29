@@ -46,7 +46,15 @@ var Store = (function() {
 
   function _sortList(list) {
     var out = list.slice();
-    if (_sortBy === 'aesthetic') {
+    if (_sortBy === 'posted') {
+      // 按发布时间新→旧（ISO8601 文本可直接比较）；无发布时间的置于末尾按名称排序
+      out.sort(function (a, b) {
+        var ta = a.posted_at || '', tb = b.posted_at || '';
+        if (ta && tb && ta !== tb) return ta < tb ? 1 : -1;
+        if (ta !== tb) return ta ? -1 : 1;
+        return (a.stem || '').localeCompare(b.stem || '', 'en', { numeric: true });
+      });
+    } else if (_sortBy === 'aesthetic') {
       out.sort(function (a, b) {
         var da = (typeof a.aesthetic === 'number') ? a.aesthetic : -1;
         var db = (typeof b.aesthetic === 'number') ? b.aesthetic : -1;

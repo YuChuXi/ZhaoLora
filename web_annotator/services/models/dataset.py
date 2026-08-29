@@ -64,6 +64,7 @@ class FilterImageItem(ImageThumbItem):
     dir: str = ""
     aesthetic: float | None = None
     quality: float | None = None
+    posted_at: str = ""
 
 
 class SimilarItem(BaseModel):

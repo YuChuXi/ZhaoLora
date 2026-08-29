@@ -424,7 +424,17 @@ class GalleryDLSource(SourceClient):
         tags_path = out_dir / f"{stem}.txt"
         existing = find_downloaded(out_dir, post.filename)
 
+        caption = (post.tags or "").strip()
+        if include_meta_tags:
+            caption = (caption + (" " + self.name) if caption else self.name).strip()
+
         if not overwrite and existing is not None and (tags_path.is_file() or not self.writes_caption):
+            # 补写 meta, 修复历史下载遗留的缺失
+            self._write_meta(
+                out_dir, pid,
+                BooruPost(source=self.name, id=pid, file_url=post.file_url or "", tags=caption,
+                          posted_at=post.posted_at),
+            )
             return {
                 "skipped": True,
                 "path": str(existing),
@@ -436,9 +446,6 @@ class GalleryDLSource(SourceClient):
         image_url = (post.file_url or "").strip()
         if not image_url:
             raise ValueError(f"pid {pid} 无媒体 URL")
-        caption = (post.tags or "").strip()
-        if include_meta_tags:
-            caption = (caption + (" " + self.name) if caption else self.name).strip()
         async with HttpClient() as client:
             data, _ = await client.get_bytes(image_url)
 

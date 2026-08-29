@@ -171,6 +171,9 @@ var Masonry = (function() {
     info.className = 'info';
     var name = document.createElement('span');
     name.className = 'name';
+    // 发布时间取 ISO8601 的日期段展示, 悬停可见完整时刻
+    var posted = img.posted_at ? (img.posted_at.slice(0, 10) + ' ') : '';
+    if (img.posted_at) name.title = img.posted_at;
     var res = (img.width && img.height) ? (img.width + '×' + img.height + ' ') : '';
     var aes = (typeof img.aesthetic === 'number')
       ? ('A' + img.aesthetic.toFixed(2) + ' ')
@@ -178,7 +181,7 @@ var Masonry = (function() {
     var qual = (typeof img.quality === 'number')
       ? ('Q' + img.quality.toFixed(2) + ' ')
       : '';
-    name.textContent = aes + qual + res + img.stem;
+    name.textContent = posted + aes + qual + res + img.stem;
     info.appendChild(name);
     card.appendChild(info);
 

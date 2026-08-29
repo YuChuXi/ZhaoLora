@@ -466,7 +466,7 @@ def run_scoring(
 
     模型句柄经上下文管理器获取并自动归还: 按 ``kind`` 分支进入对应模型的
     ``with`` 块, 由 ``Model.__enter__/__exit__`` 完成 acquire/release, 无需手动
-    加载与释放. 模型的设备与生命周期由 ``device`` 模块统一管理(默认加载到 CPU).
+    加载与释放. 模型的设备与生命周期由 ``device`` 模块统一管理.
 
     Args:
         dirs: 要评分的子目录列表. 

@@ -30,9 +30,10 @@ _BATCH_SIZE = 8
 
 
 def _load_model() -> CrossEncoder:
-    """从 HuggingFace 加载重排序模型 (统一加载到 CPU).
+    """从 HuggingFace 加载重排序模型 (恒载入 CPU 内存).
 
     ``huggingface_hub`` 下载模型时遵循 ``HTTP_PROXY`` / ``HTTPS_PROXY`` 环境变量.
+    转移目标设备由 ``device.Model`` 生命周期统一决定, 加载侧不做设备判断.
 
     Returns:
         CrossEncoder 实例.
@@ -45,6 +46,7 @@ def _load_model() -> CrossEncoder:
     return CrossEncoder(
         _MODEL_NAME,
         trust_remote_code=True,
+        device="cpu",
     )
 
 

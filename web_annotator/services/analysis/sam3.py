@@ -53,11 +53,14 @@ _OVERLAY_ALPHA = 150
 _BATCH_SIZE = 4
 
 
-def _load_model() -> tuple[Sam3Model, Sam3Processor, str]:
-    """从本地 ModelScope 缓存加载概念分割模型与处理器 (统一加载到 CPU).
+def _load_model() -> tuple[Sam3Model, Sam3Processor]:
+    """从本地 ModelScope 缓存加载概念分割模型与处理器 (恒载入 CPU 内存).
+
+    转移目标设备由 ``device.Model`` 生命周期统一决定, 推理侧经
+    ``next(model.parameters()).device`` 取模型当前设备.
 
     Returns:
-        ``(model, processor, device)`` 三元组作为句柄; device 恒为 ``"cpu"``.
+        ``(model, processor)`` 二元组作为句柄.
 
     Callers:
         - ``services/core/device.py:register_model`` 注册的 load 回调
@@ -67,19 +70,19 @@ def _load_model() -> tuple[Sam3Model, Sam3Processor, str]:
     model = Sam3Model.from_pretrained(_MODEL_PATH, trust_remote_code=True)
     model.eval()
     processor = Sam3Processor.from_pretrained(_MODEL_PATH, trust_remote_code=True)
-    return model, processor, "cpu"
+    return model, processor
 
 
 def _unload_model(handle: object) -> None:
     """释放概念分割模型与处理器, 归还显存.
 
     Args:
-        handle: ``_load_model`` 返回的 ``(model, processor, device)`` 三元组.
+        handle: ``_load_model`` 返回的 ``(model, processor)`` 句柄.
 
     Callers:
         - ``services/core/device.py:register_model`` 注册的 unload 回调
     """
-    model, processor, _dev = cast("tuple", handle)
+    model, processor = cast("tuple", handle)
     del model, processor
 
 
@@ -104,8 +107,8 @@ def model_ready() -> tuple[bool, str]:
         return False, f"模型不可用: {e}"
 
 
-# 概念分割模型句柄: (model, processor, device), 由 auto_release 注入
-Sam3Handle = tuple["Sam3Model", "Sam3Processor", str]
+# 概念分割模型句柄: (model, processor), 由 auto_release 注入
+Sam3Handle = tuple["Sam3Model", "Sam3Processor"]
 
 
 def _merge_masks(masks) -> np.ndarray | None:
@@ -136,7 +139,7 @@ def segment_concept_mask(handle: Sam3Handle, image: Image.Image, text: str) -> n
     """对单张图片执行文本提示概念分割.
 
     Args:
-        handle: ``_load_model`` 返回的 ``(model, processor, device)`` 句柄.
+        handle: ``_load_model`` 返回的 ``(model, processor)`` 句柄.
         image: 待分割图片 (RGB).
         text: 概念提示词, 如 "cat" / "yellow school bus".
 
@@ -150,12 +153,12 @@ def segment_concept_mask(handle: Sam3Handle, image: Image.Image, text: str) -> n
     Callers:
         - ``services/analysis/sam3.py:run_concept_query``
     """
-    model, processor, device = handle
+    model, processor = handle
     import torch
 
     if image.mode != "RGB":
         image = image.convert("RGB")
-    inputs = processor(images=image, text=text, return_tensors="pt").to(device)
+    inputs = processor(images=image, text=text, return_tensors="pt").to(next(model.parameters()).device)
     with torch.no_grad():
         outputs = model(**inputs)
     orig_sizes = inputs.get("original_sizes")
@@ -175,7 +178,7 @@ def segment_concept_masks_batch(handle: Sam3Handle, images: list[Image.Image], t
     ``original_sizes`` 还原为原尺寸掩码; 适合批量场景以减少推理开销.
 
     Args:
-        handle: ``_load_model`` 返回的 ``(model, processor, device)`` 句柄.
+        handle: SAM3 模型本体, 由 ``run_concept_query`` 经 ``auto_release`` 持有.
         images: 待分割图片列表 (均为 RGB).
         text: 概念提示词.
 
@@ -189,11 +192,11 @@ def segment_concept_masks_batch(handle: Sam3Handle, images: list[Image.Image], t
     Callers:
         - ``services/analysis/sam3.py:run_concept_query``
     """
-    model, processor, device = handle
+    model, processor = handle
     import torch
 
     texts = [text] * len(images)
-    inputs = processor(images=images, text=texts, return_tensors="pt").to(device)
+    inputs = processor(images=images, text=texts, return_tensors="pt").to(next(model.parameters()).device)
     with torch.no_grad():
         outputs = model(**inputs)
     orig_sizes = inputs.get("original_sizes")
@@ -276,7 +279,7 @@ def run_concept_query(
         candidates: ``[(相对路径, 图片绝对路径), ...]``.
         text: 概念提示词.
         on_progress: 进度回调 ``(done, total)``.
-        handle: ``_load_model`` 返回的 ``(model, processor, device)`` 句柄,
+        handle: ``_load_model`` 返回的 ``(model, processor)`` 句柄,
             由 ``auto_release`` 注入, 调用方无需传.
 
     Returns:

@@ -27,8 +27,16 @@ IMAGE_SIZE = (1024, 1024)
 IMAGENET_MEAN = [0.485, 0.456, 0.406]
 IMAGENET_STD = [0.229, 0.224, 0.225]
 
+
 def _load_model() -> tuple:
-    """加载 BiRefNet 模型与预处理变换 (CPU).
+    """加载 BiRefNet 模型与预处理变换 (恒载入 CPU 内存).
+
+    转移目标设备由 ``device.Model`` 生命周期统一决定, 推理侧经
+    ``next(model.parameters()).device`` 取模型当前设备.
+
+    Returns:
+        ``(model, transform)`` 二元组作为句柄; transform 为与设备无关的
+        输入预处理变换.
 
     Callers:
         - ``services/core/device.py:register_model`` 注册的 load 回调
@@ -224,7 +232,7 @@ def run_birefnet_mask(
         image_rel_paths: 相对数据集根的路径列表(含子目录前缀).
         data_dir: 数据集根目录.
         mask_dir: 蒙版输出目录.
-        handle: BiRefNet 模型句柄 ``(model, transform)``, 由 ``auto_release`` 注入.
+        handle: BiRefNet 模型本体, 由 ``auto_release`` 注入.
         mask_expand: 蒙版扩展像素数 (0-200).
         mask_shrink: 蒙版收缩像素数 (0-200).
         mask_min: 蒙版值域下限 (0-255, 默认 96).
