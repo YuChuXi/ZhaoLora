@@ -35,6 +35,7 @@ var BooruFilter = (function () {
         { type: 'hidden', id: 'booru-extra' },
         { type: 'button', role: 'search', label: '搜索', cls: 'green' },
         { type: 'button', role: 'batch', label: '批量下载', title: '按当前搜索结果批量下载' },
+        { type: 'button', role: 'meta', label: '元数据', title: '重生成 Caption / 刷新元数据' },
         { type: 'sep' },
       ],
     },
@@ -1657,12 +1658,21 @@ var BooruFilter = (function () {
     if (!dlg) return;
     dlg.classList.toggle('show', !!show);
     dlg.setAttribute('aria-hidden', show ? 'false' : 'true');
-    // 「重生成 Caption / 刷新元数据」仅对 booru 来源有效, 其余来源隐藏
+    // 标题随模式切换: 远程含下载为「批量下载」, 本地仅元数据操作
+    var title = isRemote() ? '批量下载' : '元数据工具';
+    ['booru-batch-title', 'booru-batch-bar-label'].forEach(function (id) {
+      var el = document.getElementById(id);
+      if (el) el.textContent = title;
+    });
+    // 「重生成 Caption / 刷新元数据」按文件 stem 前缀识别来源, 本地与 booru 来源均可用
     var metaTools = !!cur().metaTools;
     ['booru-batch-regenerate', 'booru-batch-refresh-meta'].forEach(function (id) {
       var b = document.getElementById(id);
       if (b) b.hidden = !metaTools;
     });
+    // 「开始下载」依赖在线来源搜索, 本地模式不适用
+    var startBtn = document.getElementById('booru-batch-start');
+    if (startBtn) startBtn.hidden = !isRemote();
     if (!show && !_batchRunning) setBatchProgress(null);
     syncBatchCloseBtn();
     syncBatchStopBtn();
@@ -1804,6 +1814,9 @@ var BooruFilter = (function () {
     syncBatchStartBtn();
     setBatchProgress(null);
     updatePageStatus();
+    // 元数据工具对话框若处于打开状态, 恢复其操作按钮
+    var metaDlg = document.getElementById('booru-meta-dlg');
+    if (metaDlg && metaDlg.classList.contains('show')) setMetaDlg(true);
   }
 
   async function stopBatch() {
@@ -1920,15 +1933,15 @@ var BooruFilter = (function () {
   }
 
   /**
-   * 从 .danbooru_meta 批量重生成当前目录所有旁路 .txt。
-   * 引用：批量下载对话框「重生成 Caption」按钮。
+   * 从在线来源 meta 批量重生成当前目录所有旁路 .txt。
+   * 引用：元数据工具对话框「重生成 Caption」按钮。
    */
   async function regenerateCaptions() {
     var body = {
       dir: destDir(),
-      anima_format: !!document.getElementById('booru-batch-anima')?.checked,
-      include_meta_tags: !!document.getElementById('booru-batch-meta-tags')?.checked,
-      keep_underscores: !!document.getElementById('booru-batch-keep-underscores')?.checked,
+      anima_format: !!document.getElementById('booru-meta-anima')?.checked,
+      include_meta_tags: !!document.getElementById('booru-meta-meta-tags')?.checked,
+      keep_underscores: !!document.getElementById('booru-meta-keep-underscores')?.checked,
     };
     var data = await API.request(API.apiPath('/online-sources/regenerate-captions'), {
       method: 'POST',
@@ -1939,16 +1952,13 @@ var BooruFilter = (function () {
 
   /**
    * 根据文件 ID 重新拉取 booru 元数据（长任务，SSE 进度）。
-   * 引用：批量下载对话框「刷新元数据」按钮。
+   * 引用：元数据工具对话框「刷新元数据」按钮。
    */
   async function refreshMetadata() {
     var body = { dir: destDir() };
-    setBatchDlg(true);
     setBatchProgress(0, 0, '提交中…');
     _batchRunning = true;
-    syncBatchCloseBtn();
-    syncBatchStopBtn();
-    syncBatchStartBtn();
+    setMetaDlg(true);
     var submitted = await API.request(API.apiPath('/online-sources/refresh-metadata'), {
       method: 'POST',
       body: JSON.stringify(body),
@@ -2299,7 +2309,6 @@ var BooruFilter = (function () {
         if (role === 'search') {
           search(true, true).catch(function (err) { toast(String(err.message || err)); });
         } else if (role === 'batch') {
-          if (!isRemote()) { toast('请先切换到图站模式'); return; }
           if (cur().batchDialog) setBatchDlg(true);
           else runBatch().catch(function (err) { toast(String(err.message || err)); });
         } else if (role === 'extra') {
@@ -2342,15 +2351,29 @@ var BooruFilter = (function () {
         stopBatch().catch(function (e) { toast(String(e.message || e)); });
       });
     }
-    var batchRegen = document.getElementById('booru-batch-regenerate');
-    if (batchRegen) {
-      batchRegen.addEventListener('click', function () {
+    var metaDlg = document.getElementById('booru-meta-dlg');
+    if (metaDlg) {
+      metaDlg.addEventListener('click', function (e) {
+        if (e.target === metaDlg) setMetaDlg(false);
+      });
+    }
+    var metaEntry = document.getElementById('btn-meta-dlg');
+    if (metaEntry) {
+      metaEntry.addEventListener('click', function () { setMetaDlg(true); });
+    }
+    var metaClose = document.getElementById('booru-meta-close');
+    if (metaClose) {
+      metaClose.addEventListener('click', function () { setMetaDlg(false); });
+    }
+    var metaRegen = document.getElementById('booru-meta-regenerate');
+    if (metaRegen) {
+      metaRegen.addEventListener('click', function () {
         regenerateCaptions().catch(function (e) { toast(String(e.message || e)); });
       });
     }
-    var batchRefreshMeta = document.getElementById('booru-batch-refresh-meta');
-    if (batchRefreshMeta) {
-      batchRefreshMeta.addEventListener('click', function () {
+    var metaRefresh = document.getElementById('booru-meta-refresh');
+    if (metaRefresh) {
+      metaRefresh.addEventListener('click', function () {
         refreshMetadata().catch(function (e) { toast(String(e.message || e)); });
       });
     }

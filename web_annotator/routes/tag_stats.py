@@ -340,7 +340,10 @@ async def batch_edit(request: Request, body: BatchEditBody) -> JobSubmitResponse
     selected = resolve_selected_dirs(root, body.dirs)
     if not selected:
         raise HTTPException(400, "请选择目录")
-    if not body.delete_tags and not body.add_tags and not body.replace_pairs:
+    if (
+        not body.delete_tags and not body.add_tags and not body.replace_pairs
+        and not (body.inject_pony_score or body.inject_quality_tag or body.inject_year_tag)
+    ):
         raise HTTPException(400, "请指定要删除、添加或替换的标签")
 
     if body.position not in ("before", "after"):

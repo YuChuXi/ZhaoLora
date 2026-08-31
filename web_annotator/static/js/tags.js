@@ -415,7 +415,11 @@
       tagsInput = document.getElementById('batch-replace-from');
     }
     var tags = parseTagList(tagsInput.value);
-    if (!tags.length) { toast('请指定标签'); return; }
+    var metaInject = mode === 'add' && (
+      document.getElementById('batch-add-inject-pony').checked ||
+      document.getElementById('batch-add-inject-quality').checked ||
+      document.getElementById('batch-add-inject-year').checked);
+    if (!tags.length && !metaInject) { toast('请指定标签'); return; }
     var replacePairs = [];
     if (mode === 'replace') {
       var toTags = parseTagList(document.getElementById('batch-replace-to').value);
