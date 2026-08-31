@@ -216,6 +216,18 @@ class BilibiliSource(SourceClient):
                 ]
         return page_posts, has_more, sess.token
 
+    def split(self, stem: str) -> str:
+        """从 stem 拆出本来源 pid, 非本来源格式抛 ValueError.
+
+        pid 为 ``{动态ID}_{序号}`` 文本, 经 ``_split_pid`` 校验.
+
+        Callers:
+            - ``services/online_sources/framework/base.py:detect_source``
+        """
+        rest = stem[len(self.prefix):] if stem.startswith(self.prefix) else ""
+        self._split_pid(rest)
+        return rest
+
     def _split_pid(self, pid: str) -> tuple[str, int]:
         """将 ``{动态ID}_{图片序号}`` 拆为 (动态ID, 序号).
 
@@ -231,8 +243,7 @@ class BilibiliSource(SourceClient):
     async def fetch_meta(self, out_dir: Path, pid: str) -> None:
         """按 pid 重新解析并写入帖元数据.
 
-        实现 ``base.SourceClient.fetch_meta``。当前 ``detect_source`` 不会
-        匹配 bilibili 文件名 (pid 含 `_`), 故仅在手动调用时生效。
+        实现 ``base.SourceClient.fetch_meta``。
 
         Callers:
             - ``routes/online_sources.py:_run_refresh``

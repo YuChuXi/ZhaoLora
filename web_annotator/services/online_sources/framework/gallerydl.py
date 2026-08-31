@@ -70,6 +70,18 @@ class GalleryDLSource(SourceClient):
         """初始化来源级的会话存储。"""
         self._sessions = SessionStore()
 
+    def split(self, stem: str) -> str:
+        """从 stem 拆出本来源 pid, 非本来源格式抛 ValueError.
+
+        pid 为前缀后的结构化文本, 经 ``_split_pid`` 校验.
+
+        Callers:
+            - ``services/online_sources/framework/base.py:detect_source``
+        """
+        rest = stem[len(self.prefix):] if stem.startswith(self.prefix) else ""
+        self._split_pid(rest)
+        return rest
+
     # ---- 子类必须实现的钩子 ----
 
     def _search_key(self, tags: str, extra: str) -> Any | None:

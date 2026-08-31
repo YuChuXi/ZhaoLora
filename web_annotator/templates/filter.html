@@ -237,6 +237,7 @@
       </select>
     </label>
     <button class="btn" id="btn-search-dlg" type="button" hidden title="语义搜索排序（Qwen3-VL-Reranker-2B）">搜索</button>
+    <button class="btn" id="btn-meta-dlg" type="button" title="重生成 Caption / 刷新元数据">元数据工具</button>
     <span class="sep"></span>
     <button class="btn" id="btn-select-all" title="Ctrl+A">全选</button>
     <button class="btn" id="btn-deselect-all" title="Ctrl+Shift+A">取消全选</button>
@@ -248,8 +249,6 @@
     <label style="font-size:12px;color:var(--text-dim);cursor:pointer;user-select:none;display:flex;align-items:center;gap:4px;">
       <input type="checkbox" id="chk-show-trash"> 显示回收站
     </label>
-    <span class="sep"></span>
-    <button class="btn" id="btn-meta-dlg" title="重生成 Caption / 刷新元数据">元数据工具</button>
   </div>
 
   <label style="font-size:12px;color:var(--text-dim);display:flex;align-items:center;gap:4px;">
@@ -350,11 +349,40 @@
     </div>
     </div>
     <div class="modal-foot">
-      <button type="button" class="btn" id="booru-batch-regenerate" title="从 .danbooru_meta 重生成当前目录所有 txt">重生成 Caption</button>
-      <button type="button" class="btn" id="booru-batch-refresh-meta" title="根据文件 ID 重新拉取 booru 元数据">刷新元数据</button>
       <button type="button" class="btn danger" id="booru-batch-stop" hidden>停止</button>
       <button type="button" class="btn green" id="booru-batch-start">开始</button>
       <button type="button" class="btn" id="booru-batch-close">关闭</button>
+    </div>
+  </div>
+</div>
+
+<!-- 元数据工具对话框: 重生成 Caption / 刷新元数据, 本地与 booru 来源可用 -->
+<div class="modal" id="booru-meta-dlg" aria-hidden="true">
+  <div class="modal-panel" role="dialog" aria-labelledby="booru-meta-title" style="width:min(440px,94vw);height:auto;">
+    <div class="modal-head">
+      <span class="modal-title" id="booru-meta-title">元数据工具</span>
+    </div>
+    <div class="modal-body" style="padding:14px 16px;display:flex;flex-direction:column;gap:12px;">
+    <div class="booru-extra-row">
+      <label style="font-size:12px;color:var(--text-dim);cursor:pointer;user-select:none;display:flex;align-items:center;gap:6px;">
+        <input type="checkbox" id="booru-meta-anima" checked> Anima 格式
+      </label>
+    </div>
+    <div class="booru-extra-row">
+      <label style="font-size:12px;color:var(--text-dim);cursor:pointer;user-select:none;display:flex;align-items:center;gap:6px;">
+        <input type="checkbox" id="booru-meta-meta-tags"> 下载元数据标签
+      </label>
+    </div>
+    <div class="booru-extra-row">
+      <label style="font-size:12px;color:var(--text-dim);cursor:pointer;user-select:none;display:flex;align-items:center;gap:6px;">
+        <input type="checkbox" id="booru-meta-keep-underscores"> 保留下划线
+      </label>
+    </div>
+    </div>
+    <div class="modal-foot">
+      <button type="button" class="btn" id="booru-meta-regenerate" title="从在线来源 meta 重生成当前目录所有 txt">重生成 Caption</button>
+      <button type="button" class="btn" id="booru-meta-refresh" title="根据文件 ID 重新拉取 booru 元数据">刷新元数据</button>
+      <button type="button" class="btn" id="booru-meta-close">关闭</button>
     </div>
   </div>
 </div>

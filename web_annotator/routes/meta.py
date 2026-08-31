@@ -81,7 +81,7 @@ async def job_events(request: Request, job_id: str) -> StreamingResponse:
 
     return StreamingResponse(
         mgr.event_stream(job_id),
-        media_type="text/event-stream",
+        media_type="text/event-stream; charset=utf-8",
         headers={
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",

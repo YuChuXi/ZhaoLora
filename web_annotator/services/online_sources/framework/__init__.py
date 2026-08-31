@@ -19,16 +19,13 @@ Callers:
 """
 
 from services.online_sources.framework.base import (
-    META_SUBDIR,
     SourceClient,
-    build_caption_from_meta,
-    build_search_query,
+    build_caption,
     detect_source,
     file_stem,
     get_source,
     list_source_names,
     register_source,
-    search_posts,
 )
 from services.online_sources.framework.gallerydl import GalleryDLSource
 from services.online_sources.framework.media import (
@@ -40,10 +37,8 @@ from services.online_sources.framework.media import (
 
 __all__ = [
     "GalleryDLSource",
-    "META_SUBDIR",
     "SourceClient",
-    "build_caption_from_meta",
-    "build_search_query",
+    "build_caption",
     "detect_source",
     "download_post",
     "file_stem",
@@ -53,5 +48,4 @@ __all__ = [
     "regenerate_captions",
     "register_source",
     "remove_download",
-    "search_posts",
 ]

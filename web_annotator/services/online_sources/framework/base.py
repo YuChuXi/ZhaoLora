@@ -27,7 +27,7 @@ from services.online_sources.framework.utils import (
 from services.models.booru import BooruPost
 
 
-_SOURCES: dict[str, SourceClient] = {}
+SOURCES: dict[str, SourceClient] = {}
 
 # 下载进度回调: (当前进度, 总量), 数值为整数(如 20, 100). 仅视频帖有意义.
 ProgressFn = Callable[[int, int], None]
@@ -319,60 +319,23 @@ class SourceClient(ABC):
                 if p.is_file() and p.resolve() != keep.resolve():
                     p.unlink()
 
-    def _build_caption(self, post: BooruPost, *, anima_format: bool = False,
-                       include_meta_tags: bool = False, keep_underscores: bool = False) -> str:
-        def _norm(t: str) -> str:
-            return t if keep_underscores else t.replace("_", " ")
-        if not anima_format and include_meta_tags:
-            return _norm(_tags_to_caption(post.tags))
-        meta_set: set[str] = set()
-        if not include_meta_tags:
-            for t in post.tag_string_meta.split():
-                t = t.strip().lower()
-                if t: meta_set.add(t)
-        if not anima_format:
-            return ", ".join(_norm(t) for t in post.tags.replace(",", " ").split()
-                             if t.strip() and t.lower() not in meta_set)
+def build_caption(post: BooruPost, *, anima_format: bool = False,
+                  include_meta_tags: bool = False,
+                  keep_underscores: bool = False) -> str:
+    """按 BooruPost 元数据构建旁路标签文本.
 
-        def _split(raw: str) -> list[str]:
-            return [t.strip() for t in raw.replace(",", " ").split() if t.strip()]
-        general = _split(post.tag_string_general or post.tags)
-        gender, rest = [], []
-        for t in general:
-            if t.lower() in _GENDER_TAGS: gender.append(t)
-            elif t.lower() not in meta_set: rest.append(t)
-        used = {g.lower() for g in gender}
-        captions = [_norm(g) for g in gender]
-        for group in [_split(post.tag_string_character),
-                      _split(post.tag_string_copyright)]:
-            for t in group:
-                low = t.lower()
-                if low not in used and low not in meta_set:
-                    used.add(low); captions.append(_norm(t))
-        for t in _split(post.tag_string_artist):
-            low = t.lower()
-            if low not in used and low not in meta_set:
-                used.add(low); captions.append(f"@{_norm(t)}")
-        tail = [_norm(t) for t in rest if t.lower() not in used]
-        return ", ".join(captions) + " ||| " + ", ".join(tail)
+    Args:
+        post: 帖子 (含 tag_string_* 分组标签).
+        anima_format: Anima 格式 (性别/角色/版权/画师重排 + ``|||`` 分段).
+        include_meta_tags: 是否保留元数据标签.
+        keep_underscores: 是否保留下划线.
 
-
-# 元数据子目录映射, 供外部(如 media.regenerate_captions)使用. 
-
-META_SUBDIR: dict[str, str] = {
-    "gelbooru": ".gelbooru_meta",
-    "danbooru": ".danbooru_meta",
-}
-
-
-def build_caption_from_meta(post: BooruPost, *, anima_format: bool = False,
-                            include_meta_tags: bool = False,
-                            keep_underscores: bool = False) -> str:
-    """从元数据构建标签文本(独立函数版). 
-
-    与 ``SourceClient._build_caption`` 逻辑一致但无需实例. 
+    Returns:
+        str: 标签文本.
 
     Callers:
+        - ``services/online_sources/danbooru/source.py:DanbooruSource.download``
+        - ``services/online_sources/gelbooru/source.py:GelbooruSource.download``
         - ``services/online_sources/framework/media.py:regenerate_captions``
     """
     def _norm(t: str) -> str:
@@ -417,7 +380,7 @@ def register_source(client: SourceClient) -> None:
     Callers:
         - ``services/online_sources/__init__.py:`` 模块初始化
     """
-    _SOURCES[client.name] = client
+    SOURCES[client.name] = client
 
 def get_source(name: str) -> SourceClient:
     """获取来源客户端. 
@@ -431,7 +394,7 @@ def get_source(name: str) -> SourceClient:
         - ``services/online_sources/framework/media.py:remove_download``
         - ``services/online_sources/batch.py:``
     """
-    src = _SOURCES.get(name)
+    src = SOURCES.get(name)
     if src is None:
         raise ValueError(f"未知来源: {name}")
     return src
@@ -442,80 +405,41 @@ def list_source_names() -> list[str]:
     Callers:
         - ``routes/online_sources.py:list_sources``
     """
-    return sorted(_SOURCES.keys())
+    return sorted(SOURCES.keys())
 
 def detect_source(stem: str) -> tuple[str, str] | None:
-    """从文件名 stem 检测来源与 ID. 
+    """从文件名 stem 检测来源与 ID.
+
+    按各来源注册的 ``prefix`` 判定归属, 再由该来源的 ``split`` 拆出 pid;
+    stem 不属于任何来源或格式非法时返回 None.
 
     Returns:
-        ``(source, post_id)`` 或 None. 
+        ``(source, post_id)`` 或 None.
 
     Callers:
         - ``routes/online_sources.py:_run_refresh``
     """
-    for src in _SOURCES.values():
-        if stem.startswith(src.prefix) and stem[len(src.prefix):].isdigit():
-            return src.name, stem[len(src.prefix):]
+    for src in SOURCES.values():
+        if stem.startswith(src.prefix):
+            try:
+                return src.name, src.split(stem)
+            except ValueError:
+                return None
     return None
 
+
 def file_stem(source: str, post_id: str) -> str:
-    """规范文件名, 委托给 SourceClient. 
+    """规范文件名, 委托给来源注册的 ``file_stem``.
 
-    Callers:
-        - ``services/online_sources/framework/media.py:download_post``
-        - ``services/online_sources/framework/media.py:regenerate_captions``
-    """
-    return get_source(source).file_stem(post_id)
-
-def build_search_query(source: str, tags: str, *, order: str = "", extra: str = "") -> str:
-    """拼接搜索查询, 委托给 SourceClient. 
-
-    Callers:
-        - ``routes/online_sources.py:search``
-    """
-    return get_source(source).build_search_query(tags, order=order, extra=extra)
-
-async def search_posts(
-    source: str, tags: str, *, page: int = 1, order: str = "",
-    extra: str = "",
-) -> tuple[list[BooruPost], bool]:
-    """搜索帖子, 委托给 SourceClient；返回值中每帖为 ``BooruPost`` 模型. 
-
-    Callers:
-        - ``services/online_sources/batch.py:_run_async``
-    """
-    src = get_source(source)
-    posts, has_more = await src.search(
-        tags, page=page, order=order, extra=extra,
-    )
-    for post in posts:
-        post.stem = src.file_stem(post.id)
-        post.filename = f"{post.stem}.png"
-    return posts, has_more
-
-
-async def search_session_posts(
-    source: str, tags: str, session: str, *, order: str = "",
-    extra: str = "",
-) -> tuple[list[BooruPost], bool, str]:
-    """按会话续拉搜索结果, 并补全每帖 ``stem``/``filename``.
-
-    与会话式来源的 ``search_session`` 相比, 本函数额外补全文件名 (与
-    ``search_posts`` 对页码式来源的补全一致), 供搜索路由与批量下载统一复用,
-    避免各调用方重复补全。仅限 ``session_based`` 来源调用。
+    Args:
+        source: 来源名.
+        post_id: 帖子 pid.
 
     Returns:
-        ``(posts, has_more, session_token)``.
+        str: 下载文件 stem (不含扩展名).
 
     Callers:
-        - ``routes/online_sources.py:search``
-        - ``services/online_sources/batch.py:_run_async``
+        - ``services/online_sources/framework/media.py:regenerate_captions``
+        - ``routes/images.py:_posted_at_index``
     """
-    src = get_source(source)
-    posts, has_more, token = await src.search_session(
-        tags, session, order, extra,
-    )
-    for post in posts:
-        post.stem = src.file_stem(post.id)
-        post.filename = f"{post.stem}.png"
-    return posts, has_more, token
+    return get_source(source).file_stem(post_id)

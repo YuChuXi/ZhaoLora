@@ -9,7 +9,7 @@ from __future__ import annotations
 from datetime import datetime
 from pathlib import Path
 
-from services.online_sources.framework.base import ProgressFn, SourceClient
+from services.online_sources.framework.base import ProgressFn, SourceClient, build_caption
 from services.online_sources.framework.media import download_raw_file, post_is_video
 from services.online_sources.framework.utils import find_downloaded
 from services.online_sources.gelbooru.client import GelbooruClient
@@ -87,6 +87,19 @@ class GelbooruSource(SourceClient):
         post.sample_url = post.sample_url or post.preview_url
         post.is_video = post_is_video(post)
         return post
+
+    def split(self, stem: str) -> str:
+        """从 stem 拆出本来源 pid, 非本来源格式抛 ValueError.
+
+        pid 为前缀后纯数字文本.
+
+        Callers:
+            - ``services/online_sources/framework/base.py:detect_source``
+        """
+        rest = stem[len(self.prefix):] if stem.startswith(self.prefix) else ""
+        if not rest.isdigit():
+            raise ValueError(f"非法 stem: {stem}")
+        return rest
 
     async def fetch_meta(self, out_dir: Path, pid: str) -> None:
         """拉取 Gelbooru 帖元数据并写入磁盘.
@@ -190,7 +203,7 @@ class GelbooruSource(SourceClient):
         if anima_format:
             raw = await _categorize_gelbooru_tags(api_post.model_dump(), api)
             api_post = BooruPost.model_validate(raw)
-        caption = self._build_caption(api_post, anima_format=anima_format, include_meta_tags=include_meta_tags, keep_underscores=keep_underscores)
+        caption = build_caption(api_post, anima_format=anima_format, include_meta_tags=include_meta_tags, keep_underscores=keep_underscores)
         tags_path.write_text(caption + "\n", encoding="utf-8")
         self._write_meta(out_dir, pid, api_post)
         return {"path": str(image_path), "stem": stem, "id": pid, "tags_path": str(tags_path)}

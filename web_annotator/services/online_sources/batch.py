@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from services.online_sources.framework.base import get_source, search_posts, search_session_posts as _search_session_posts
+from services.online_sources.framework.base import get_source
 from services.online_sources.framework.media import download_post, local_rel_path
 from services.online_sources.framework.utils import is_downloaded
 from services.models import JobSnapshot
@@ -331,18 +331,17 @@ async def _run_async(
         src = get_source(source)
         if src.session_based:
             # 会话式来源: 从已持有会话续拉; 首轮 token 为空即从头拉取
-            posts, has_more, session_token = await _search_session_posts(
-                source, tags, session_token, order=order, extra=extra,
+            posts, has_more, session_token = await src.search_session(
+                tags, session_token, order, extra=extra,
             )
         else:
-            posts, has_more = await search_posts(
-                source,
-                tags,
-                page=page,
-                order=order,
-                extra=extra,
+            posts, has_more = await src.search(
+                tags, page, order, extra=extra,
             )
             page += 1
+        for p in posts:
+            p.stem = src.file_stem(p.id)
+            p.filename = f"{p.stem}.png"
         if posts:
             empty_streak = 0
             if not has_more:

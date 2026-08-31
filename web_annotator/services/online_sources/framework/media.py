@@ -15,12 +15,10 @@ from services.core.natural import natural_key
 from services.core.video_scanner import VIDEO_EXTS
 from services.models import BooruDownloadResult, BooruPost, BooruUndownloadResult
 from services.online_sources.framework.base import (
-    META_SUBDIR,
     ProgressFn,
-    _SOURCES as SOURCES,
-    build_caption_from_meta,
+    SOURCES,
+    build_caption,
     file_stem,
-    get_source,
 )
 from services.online_sources.framework.http import HttpClient
 
@@ -48,7 +46,7 @@ def remove_download(
     source = source.strip().lower()
     if source not in SOURCES:
         raise ValueError(f"不支持的源: {source}")
-    src = get_source(source)
+    src = SOURCES[source]
     prefix = src.prefix
 
     img = out_dir / filename
@@ -189,7 +187,7 @@ async def download_post(
         raise ValueError(f"不支持的源: {source}")
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    result = await get_source(source).download(
+    result = await SOURCES[source].download(
         post, out_dir,
         overwrite=overwrite,
         anima_format=anima_format,
@@ -225,7 +223,7 @@ async def regenerate_captions(
     include_meta_tags: bool = False,
     keep_underscores: bool = False,
 ) -> int:
-    """从 .danbooru_meta / .gelbooru_meta 批量重生成旁路 .txt.
+    """从各来源 meta 目录批量重生成旁路 .txt.
 
     Args:
         out_dir: 图片与元数据所在目录.
@@ -240,8 +238,10 @@ async def regenerate_captions(
         - ``routes/online_sources.py:regenerate_captions``
     """
     count = 0
-    for source in ("danbooru", "gelbooru"):
-        meta_dir = out_dir / META_SUBDIR.get(source, "")
+    for src in SOURCES.values():
+        if not src.writes_caption:
+            continue  # 不产出标注的来源(如 pixiv/bilibili/x)无 txt 可重生成
+        meta_dir = out_dir / src.meta_subdir
         if not meta_dir.is_dir():
             continue
 
@@ -252,10 +252,10 @@ async def regenerate_captions(
                 continue
 
             pid = str(post.get("id") or meta_file.stem)
-            stem = file_stem(source, pid)
+            stem = file_stem(src.name, pid)
             txt_path = out_dir / f"{stem}.txt"
 
-            caption = build_caption_from_meta(
+            caption = build_caption(
                 post, anima_format=anima_format,
                 include_meta_tags=include_meta_tags,
                 keep_underscores=keep_underscores,

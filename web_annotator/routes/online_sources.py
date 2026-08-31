@@ -24,7 +24,6 @@ from services.online_sources import (
     local_rel_path,
     regenerate_captions as _regenerate_captions,
     remove_download,
-    search_posts,
 )
 from services.online_sources.framework.http import HttpClient, NetworkError as _NetworkError
 from routes.deps import get_runtime, jobs
@@ -43,7 +42,6 @@ from services.models import (
 from services.core.natural import natural_key
 from services.core.scanner import IMAGE_EXTS
 from services.core.work_dir import resolve_subdir
-from services.online_sources.framework.base import search_session_posts as _search_session_posts
 
 logger = logging.getLogger(__name__)
 
@@ -147,15 +145,17 @@ async def search(request: Request, body: SearchBody) -> BooruSearchResult:
 
     try:
         if src.session_based:
-            raw_posts, has_more, session = await _search_session_posts(
-                source, body.tags, body.session or "", order=order, extra=body.extra or "",
+            raw_posts, has_more, session = await src.search_session(
+                body.tags, body.session or "", order, extra=body.extra or "",
             )
         else:
-            raw_posts, has_more = await search_posts(
-                source, body.tags, page=body.page,
-                order=order, extra=body.extra or "",
+            raw_posts, has_more = await src.search(
+                body.tags, body.page, order, extra=body.extra or "",
             )
             session = ""
+        for post in raw_posts:
+            post.stem = src.file_stem(post.id)
+            post.filename = f"{post.stem}.png"
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
     except _NETWORK_ERRORS as e:
@@ -273,7 +273,9 @@ async def download(
         - ``static/js/booru_filter.js:downloadOne``
     """
     source = body.source.strip().lower()
-    if source not in list_source_names():
+    try:
+        get_source(source)
+    except ValueError:
         raise HTTPException(400, f"不支持的源: {body.source}")
     root = get_runtime(request).root
     if not body.post:
@@ -425,7 +427,9 @@ def undownload(request: Request, body: DownloadBody) -> BooruUndownloadResult:
         - ``static/js/booru_filter.js:undownloadOne``
     """
     source = body.source.strip().lower()
-    if source not in list_source_names():
+    try:
+        get_source(source)
+    except ValueError:
         raise HTTPException(400, f"不支持的源: {body.source}")
     root = get_runtime(request).root
     try:
@@ -670,6 +674,10 @@ async def refresh_metadata(request: Request, body: RefreshMetadataBody) -> JobSu
         total = len(files)
         stats: dict[str, int] = {}
         errors: list[str] = []
+        if not total:
+            emit(JobSnapshot(status="done", phase="done", total=0, done=0, pct=100,
+                             message="未识别到在线来源文件(文件名无来源前缀)"))
+            return
         emit(JobSnapshot(status="running", phase="running", total=total, done=0, pct=0,
                          message=f"共 {total} 个文件"))
 
@@ -684,9 +692,10 @@ async def refresh_metadata(request: Request, body: RefreshMetadataBody) -> JobSu
             except Exception as e:
                 errors.append(f"{source}:{pid} {e}")
 
-        summary = ", ".join(f"{s}: {c}" for s, c in sorted(stats.items()))
+        parts = [f"{s}: {c}" for s, c in sorted(stats.items())]
+        parts.append(f"错误 {len(errors)}")
         emit(JobSnapshot(status="done", phase="done", total=total, done=total, pct=100,
-                         message=f"{summary}, 错误 {len(errors)}"))
+                         message=", ".join(parts)))
 
     job_id = await jobs(request).submit(kind="refresh_meta", group="compute", dataset=rt.name, run=run)
     logger.info("数据集 %s 刷新元数据: job=%s 目录=%s", request.state.runtime.root.name, job_id, body.dir)

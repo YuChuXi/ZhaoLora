@@ -9,16 +9,13 @@ Callers:
 """
 
 from services.online_sources.framework.base import (
-    META_SUBDIR,
     SourceClient,
-    build_caption_from_meta,
-    build_search_query,
+    build_caption,
     detect_source,
     file_stem,
     get_source,
     list_source_names,
     register_source,
-    search_posts,
 )
 from services.online_sources.framework.media import (
     download_post,
@@ -41,10 +38,8 @@ register_source(XSource())
 register_source(PixivSource())
 
 __all__ = [
-    "META_SUBDIR",
     "SourceClient",
-    "build_caption_from_meta",
-    "build_search_query",
+    "build_caption",
     "detect_source",
     "download_post",
     "fetch_pixiv_bytes",
@@ -56,5 +51,4 @@ __all__ = [
     "regenerate_captions",
     "register_source",
     "remove_download",
-    "search_posts",
 ]

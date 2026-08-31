@@ -457,6 +457,18 @@ class PixivSource(SourceClient):
         )
         self._write_meta(out_dir, pid, post)
 
+    def split(self, stem: str) -> str:
+        """从 stem 拆出本来源 pid, 非本来源格式抛 ValueError.
+
+        pid 为 ``{作品ID}_{页序号}`` 文本, 经 ``_split_pid`` 校验.
+
+        Callers:
+            - ``services/online_sources/framework/base.py:detect_source``
+        """
+        rest = stem[len(self.prefix):] if stem.startswith(self.prefix) else ""
+        self._split_pid(rest)
+        return rest
+
     @staticmethod
     def _split_pid(pid: str) -> tuple[str, int]:
         """将 ``{illust_id}_{num}`` 拆为 (作品ID, 页序号).
