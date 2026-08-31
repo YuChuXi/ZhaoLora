@@ -16,13 +16,19 @@ from services.models.dataset import WorkDirInfo
 
 
 class MaskStats(BaseModel):
-    """单目录蒙版统计."""
+    """单目录就绪统计: 图片 / 标注 / 蒙版计数与就绪状态.
+
+    ``text_count`` 与 ``mask_complete`` 仅统计有对应图片的条目;
+    ``ready`` 表示标注全部存在, 且蒙版全部存在或全无.
+    """
 
     name: str = "main"
     mask_status: Literal["完整", "无"]
+    main_count: int = 0
+    text_count: int = 0
     mask_complete: int = 0
     mask_none: int = 0
-    main_count: int = 0
+    ready: bool = False
 
 
 class ReadyDirsResponse(BaseModel):

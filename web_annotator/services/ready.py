@@ -102,16 +102,18 @@ def _has_images(d: Path) -> bool:
 
 
 def subdir_mask_stats(root: Path, subdir: str = "main") -> MaskStats:
-    """统计指定子目录的蒙版状态: 每张图仅「无」或「完整」.
+    """统计指定子目录的就绪状态: 图片 / 标注 / 蒙版计数与就绪判定.
 
-    整体 status: 全部有蒙版 →「完整」；否则 →「无」.
+    标注与蒙版均按图片逐张判定, 仅统计有对应图片的条目;
+    整体 mask_status: 全部有蒙版 →「完整」；否则 →「无」;
+    ready: 标注全部存在, 且蒙版全部存在或全无.
 
     Args:
         root (Path): 数据集根目录.
         subdir (str): 子目录名, 默认 ``main``.
 
     Returns:
-        MaskStats: 含 mask_status / mask_complete / mask_none / main_count 的统计.
+        MaskStats: 含 main_count / text_count / mask_complete / mask_none / ready 的统计.
 
     Callers:
         - ``routes/ready.py:dirs``
@@ -124,7 +126,10 @@ def subdir_mask_stats(root: Path, subdir: str = "main") -> MaskStats:
     images = scan_images(image_dir, path_prefix=subdir) if image_dir.is_dir() else []
     complete = 0
     none = 0
+    text_count = 0
     for img in images:
+        if any(s.endswith(".txt") for s in img.siblings):
+            text_count += 1
         if has_mask(mask_dir, img.path):
             complete += 1
         else:
@@ -134,9 +139,11 @@ def subdir_mask_stats(root: Path, subdir: str = "main") -> MaskStats:
     return MaskStats(
         name=subdir,
         mask_status=status,
+        main_count=total,
+        text_count=text_count,
         mask_complete=complete,
         mask_none=none,
-        main_count=total,
+        ready=total > 0 and text_count == total and (complete == total or complete == 0),
     )
 
 

@@ -61,17 +61,17 @@
 
       var meta = document.createElement('span');
       meta.className = 'dir-meta';
+      meta.title = '图片 | 标注 | 蒙版 (标注与蒙版仅统计有对应图片的)';
       if (m) {
         var dot = document.createElement('span');
-        dot.className = 'status ' + (m.mask_status === '完整' ? 'ok' : 'none');
+        dot.className = 'status ' + (m.ready ? 'ok' : 'none');
+        dot.title = m.ready ? '就绪: 标注齐全, 蒙版齐全或全无' : '未就绪: 标注未齐全或蒙版部分存在';
         meta.appendChild(dot);
-        meta.title = '蒙版完成 / 图片总数';
         meta.appendChild(document.createTextNode(
-          m.mask_complete + '/' + (m.mask_complete + m.mask_none) +
-          ' · ' + (d.image_count != null ? d.image_count : 0) + ' 张'
+          (d.image_count != null ? d.image_count : 0) + ' | ' + (m.text_count || 0) + ' | ' + m.mask_complete
         ));
       } else {
-        meta.textContent = (d.image_count != null ? d.image_count : 0) + ' 张';
+        meta.textContent = (d.image_count != null ? d.image_count : 0) + ' | 0 | 0';
       }
       row.appendChild(meta);
 
