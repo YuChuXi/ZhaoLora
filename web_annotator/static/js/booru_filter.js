@@ -48,6 +48,7 @@ var BooruFilter = (function () {
         { type: 'hidden', id: 'bilibili-extra' },
         { type: 'button', role: 'search', label: '搜索', cls: 'green' },
         { type: 'button', role: 'batch', label: '批量下载', title: '按当前筛选批量下载' },
+        { type: 'button', role: 'meta', label: '元数据', title: '重生成 Caption / 刷新元数据' },
         { type: 'sep' },
       ],
     },
@@ -57,6 +58,7 @@ var BooruFilter = (function () {
         { type: 'text', id: 'x-user', placeholder: 'X 用户名（不含 @）' },
         { type: 'button', role: 'search', label: '搜索', cls: 'green' },
         { type: 'button', role: 'batch', label: '批量下载', title: '按当前搜索结果批量下载' },
+        { type: 'button', role: 'meta', label: '元数据', title: '重生成 Caption / 刷新元数据' },
         { type: 'sep' },
       ],
     },
@@ -68,6 +70,7 @@ var BooruFilter = (function () {
           options: [['user', '画师'], ['tag', '标签']] },
         { type: 'button', role: 'search', label: '搜索', cls: 'green' },
         { type: 'button', role: 'batch', label: '批量下载', title: '按当前搜索结果批量下载' },
+        { type: 'button', role: 'meta', label: '元数据', title: '重生成 Caption / 刷新元数据' },
         { type: 'sep' },
       ],
     },
@@ -188,8 +191,6 @@ var BooruFilter = (function () {
     gelbooru: {
       remote: true,
       bar: 'booru',
-      batchDialog: true,
-      metaTools: true, // 对话框内显示「重生成 Caption / 刷新元数据」booru 专用按钮
       stemPrefix: 'g',
       nameLabel: 'Gelbooru',
       buildRequest: _booruRequest,
@@ -210,8 +211,6 @@ var BooruFilter = (function () {
     danbooru: {
       remote: true,
       bar: 'booru',
-      batchDialog: true,
-      metaTools: true, // 对话框内显示「重生成 Caption / 刷新元数据」booru 专用按钮
       stemPrefix: 'd',
       nameLabel: 'Danbooru',
       buildRequest: _booruRequest,
@@ -222,7 +221,6 @@ var BooruFilter = (function () {
     bilibili: {
       remote: true,
       bar: 'bilibili',
-      batchDialog: true,
       stemPrefix: 'bi',
       nameLabel: 'Bilibili',
       noJump: true, // 游标式分页: 仅能顺序翻页, 禁用跳页
@@ -251,7 +249,6 @@ var BooruFilter = (function () {
     x: {
       remote: true,
       bar: 'x',
-      batchDialog: true,
       stemPrefix: 'x',
       nameLabel: 'X',
       noJump: true, // 游标式分页: 仅能顺序翻页, 禁用跳页
@@ -280,7 +277,6 @@ var BooruFilter = (function () {
     pixiv: {
       remote: true,
       bar: 'pixiv',
-      batchDialog: true,
       stemPrefix: 'p',
       nameLabel: 'Pixiv',
       requireTags: true,
@@ -1658,24 +1654,23 @@ var BooruFilter = (function () {
     if (!dlg) return;
     dlg.classList.toggle('show', !!show);
     dlg.setAttribute('aria-hidden', show ? 'false' : 'true');
-    // 标题随模式切换: 远程含下载为「批量下载」, 本地仅元数据操作
-    var title = isRemote() ? '批量下载' : '元数据工具';
-    ['booru-batch-title', 'booru-batch-bar-label'].forEach(function (id) {
-      var el = document.getElementById(id);
-      if (el) el.textContent = title;
-    });
-    // 「重生成 Caption / 刷新元数据」按文件 stem 前缀识别来源, 本地与 booru 来源均可用
-    var metaTools = !!cur().metaTools;
-    ['booru-batch-regenerate', 'booru-batch-refresh-meta'].forEach(function (id) {
-      var b = document.getElementById(id);
-      if (b) b.hidden = !metaTools;
-    });
-    // 「开始下载」依赖在线来源搜索, 本地模式不适用
-    var startBtn = document.getElementById('booru-batch-start');
-    if (startBtn) startBtn.hidden = !isRemote();
     if (!show && !_batchRunning) setBatchProgress(null);
     syncBatchCloseBtn();
     syncBatchStopBtn();
+  }
+
+  /** 显隐元数据工具对话框。引用：srcBar click(role=meta)、btn-meta-dlg、booru-meta-close。 */
+  function setMetaDlg(show) {
+    var dlg = document.getElementById('booru-meta-dlg');
+    if (!dlg) return;
+    dlg.classList.toggle('show', !!show);
+    dlg.setAttribute('aria-hidden', show ? 'false' : 'true');
+    // 运行中禁用操作按钮, 避免重复提交长任务
+    var busy = _batchRunning;
+    ['booru-meta-regenerate', 'booru-meta-refresh'].forEach(function (id) {
+      var b = document.getElementById(id);
+      if (b) b.disabled = busy;
+    });
   }
 
   /** 空闲显示「关闭」，运行中显示「隐藏」。引用：setBatchDlg、applyBatchSnapshot。 */
@@ -2309,8 +2304,10 @@ var BooruFilter = (function () {
         if (role === 'search') {
           search(true, true).catch(function (err) { toast(String(err.message || err)); });
         } else if (role === 'batch') {
-          if (cur().batchDialog) setBatchDlg(true);
-          else runBatch().catch(function (err) { toast(String(err.message || err)); });
+          if (!isRemote()) { toast('请先切换到图站模式'); return; }
+          setBatchDlg(true);
+        } else if (role === 'meta') {
+          setMetaDlg(true);
         } else if (role === 'extra') {
           setExtraDlg(true);
         }
