@@ -143,7 +143,7 @@ class BilibiliSource(SourceClient):
                 id=bvid if is_video else f"{record.id}_{i}",
                 width=w,
                 height=h,
-                posted_at=datetime.fromtimestamp(source.pub_ts).astimezone().isoformat(),
+                posted_at=datetime.fromtimestamp(int(source.pub_ts)).astimezone().isoformat(),
                 file_url=url,
                 preview_url=url + "@480w_480h_1e.webp",
                 sample_url=url + "@1280w_1280h_1e.webp",
@@ -199,12 +199,18 @@ class BilibiliSource(SourceClient):
                 st.update(offsets=[""])
             page_posts: list[BooruPost] = []
             has_more = False
+            retries = 0
             while not page_posts:
                 records, next_offset, has_more = await fetch_dynamics(
                     uid, offset=st["offsets"][-1]
                 )
                 if not records and not next_offset:
-                    # 空心响应(风控或末页): 不推进游标, 交由上层连续确认
+                    if retries < 3:
+                        # 风控空心响应: 短暂等待后重试, 最多 3 次
+                        retries += 1
+                        await asyncio.sleep(1.5)
+                        continue
+                    # 连续 3 次空心: 交由上层判定
                     return [], False, sess.token
                 if next_offset and next_offset != st["offsets"][-1]:
                     st["offsets"].append(next_offset)

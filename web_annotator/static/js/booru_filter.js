@@ -2024,7 +2024,9 @@ var BooruFilter = (function () {
     }
     _selected[post.key] = true;
     updateCard(post.key);
-    downloadOne(post).then(function (data) {
+    // 视频帖卡片点击下载封面(文件URL换为预览图), 视频文件由显式下载按钮处理
+    var dlPost = post.is_video ? Object.assign({}, post, {file_url: post.sample_url, is_video: false}) : post;
+    downloadOne(dlPost).then(function (data) {
       if (data) toast(data.skipped ? ('已存在 ' + (data.stem || post.id)) : ('已保存 ' + (data.stem || post.id) + '.png'));
     }).catch(function (e) {
       delete _selected[post.key];
