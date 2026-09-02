@@ -280,10 +280,7 @@ class Signtool:
         target = self._heap_get(o)
         if target is None:
             return self._js_exn(TypeError(f"Reflect.get on null, key={self._heap_get(k)!r}"))
-        try:
-            v = target.get(self._heap_get(k)) if isinstance(target, JsObj) else None
-        except Exception as exc:  # noqa: BLE001 - 模拟 JS 属性访问器异常传导
-            return self._js_exn(exc)
+        v = target.get(self._heap_get(k)) if isinstance(target, JsObj) else None
         return 0 if v is None else self._push(v)
 
     def _w_set(self, o: int, k: int, v: int) -> int:
@@ -311,9 +308,21 @@ class Signtool:
         return self._push(self._heap[fn].fn(self._heap[this], self._heap[arg]))
 
     def _w_get_random_values(self, fn: int, arr: int) -> None:
-        """crypto.getRandomValues: 以 os.urandom 填充视图."""
+        """crypto.getRandomValues 的 WASM 导入路径: 以 os.urandom 填充视图."""
         u8 = self._heap[arr]
         u8.buf.data[u8.off:u8.off + u8.length] = os.urandom(u8.length)
+
+    def _fn_get_random_values(self, u8: JsU8) -> JsU8:
+        """crypto.getRandomValues 的 JS 函数路径: 填充随机字节并返回视图.
+
+        Args:
+            u8 (JsU8): 目标 Uint8Array 视图.
+
+        Returns:
+            JsU8: 原视图(glue 语义返回 arr).
+        """
+        u8.buf.data[u8.off:u8.off + u8.length] = os.urandom(u8.length)
+        return u8
 
     def _w_get_attribute(self, retptr: int, elem: int, np: int, nl: int) -> None:
         """Element.getAttribute: 仅实现 favicon href 的读取."""
@@ -376,7 +385,7 @@ class Signtool:
         Returns:
             JsObj: globalThis 对象(含 crypto/document/navigator).
         """
-        crypto_obj = JsObj({"getRandomValues": JsFn(lambda arr: self._w_get_random_values(0, 0))})
+        crypto_obj = JsObj({"getRandomValues": JsFn(self._fn_get_random_values)})
         navigator_obj = JsObj({"webdriver": False}, readonly=("webdriver",))
         global_obj = JsObj({
             "crypto": crypto_obj,
@@ -507,15 +516,18 @@ class Signtool:
         """
         with self._lock:
             retptr = self._exports["__wbindgen_add_to_stack_pointer"](self._store, -16)
-            ptr, ln = self._pass_str(url)
-            self._exports["signtool_sign"](self._store, retptr, self._tool, ptr, ln, ts)
-            vals = bytes(self._memory.read(self._store, retptr, retptr + 16))
+            try:
+                ptr, ln = self._pass_str(url)
+                self._exports["signtool_sign"](self._store, retptr, self._tool, ptr, ln, ts)
+                vals = bytes(self._memory.read(self._store, retptr, retptr + 16))
+            finally:
+                # 无论成败都恢复栈指针, 避免异常路径导致 WASM 栈慢性漂移
+                self._exports["__wbindgen_add_to_stack_pointer"](self._store, 16)
             out_ptr = int.from_bytes(vals[0:4], "little", signed=True)
             out_len = int.from_bytes(vals[4:8], "little", signed=True)
             flag = int.from_bytes(vals[12:16], "little", signed=True)
             result = self._read_str(out_ptr, out_len) if not flag else None
             self._exports["__wbindgen_export_3"](self._store, out_ptr, out_len, 1)
-            self._exports["__wbindgen_add_to_stack_pointer"](self._store, 16)
         if result is None:
             raise RuntimeError("signtool_sign 未返回签名(站点 ABI 可能已变更)")
         return result
