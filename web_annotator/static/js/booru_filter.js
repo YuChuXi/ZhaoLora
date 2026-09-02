@@ -74,6 +74,18 @@ var BooruFilter = (function () {
         { type: 'sep' },
       ],
     },
+    mihuashi: {
+      extra: null,
+      fields: [
+        { type: 'text', id: 'mihuashi-uid', placeholder: '画师 UID' },
+        { type: 'select', id: 'mihuashi-mode', label: '板块',
+          options: [['artworks', '精选作品'], ['stalls', '上架橱窗'], ['draw_types', '价目表']] },
+        { type: 'button', role: 'search', label: '搜索', cls: 'green' },
+        { type: 'button', role: 'batch', label: '批量下载', title: '按当前搜索结果批量下载' },
+        { type: 'button', role: 'meta', label: '元数据', title: '重生成 Caption / 刷新元数据' },
+        { type: 'sep' },
+      ],
+    },
   };
 
   /**
@@ -293,6 +305,38 @@ var BooruFilter = (function () {
       pageUrl: function (post) {
         var i = post.id.indexOf('_');
         return 'https://www.pixiv.net/artworks/' + (i > 0 ? post.id.slice(0, i) : post.id);
+      },
+      renderPreviewTags: function (el, post) {
+        var para = document.createElement('div');
+        para.className = 'bili-preview-text';
+        para.textContent = post.tags || '(无标签)';
+        el.appendChild(para);
+      },
+    },
+    mihuashi: {
+      remote: true,
+      bar: 'mihuashi',
+      stemPrefix: 'm',
+      nameLabel: '米画师',
+      requireTags: true,
+      hintText: '输入画师 UID 搜索 · 左键写入目录 · 右键大图',
+      buildRequest: function () {
+        return { tags: _val('mihuashi-uid').trim(), extra: 'mode:' + _val('mihuashi-mode'), order: '' };
+      },
+      thumb: function (post) {
+        // 瀑布流缩略图走图床 !artwork.large 样式(宽 600, 服务端缩放), 降低代理流量
+        var u = post.preview_url || post.sample_url || '';
+        return API.apiPath('/online-sources/mihuashi-image') + '?url=' + encodeURIComponent(u ? u + '!artwork.large' : '');
+      },
+      sample: function (post) {
+        return API.apiPath('/online-sources/mihuashi-image') + '?url=' + encodeURIComponent(post.sample_url || post.file_url || post.preview_url || '');
+      },
+      pageUrl: function (post) {
+        // 作品跳原站作品页; 橱窗/价目表条目无独立页面, 跳画师主页
+        if (post.id.charAt(0) === 'a') {
+          return 'https://www.mihuashi.com/artworks/' + post.id.slice(1);
+        }
+        return 'https://www.mihuashi.com/profiles/' + _val('mihuashi-uid').trim();
       },
       renderPreviewTags: function (el, post) {
         var para = document.createElement('div');

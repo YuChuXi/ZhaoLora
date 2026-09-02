@@ -21,3 +21,5 @@ Untitled*.ini
 # 敏感配置: 认证 cookies / API Key
 web_annotator/.env
 *.env.local
+web_annotator/services/online_sources/*/_research
+web_annotator/services/online_sources/*/DEVLOG.md
