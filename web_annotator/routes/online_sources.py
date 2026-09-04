@@ -113,6 +113,7 @@ async def tag_suggest(
     try:
         tags = await src.autocomplete(q, limit)
     except _NETWORK_ERRORS as e:
+        logger.warning("标签补全上游异常: %s: %s", type(e).__name__, e)
         raise HTTPException(502, f"补全失败: {e}") from e
     return {"tags": tags}
 
@@ -159,6 +160,7 @@ async def search(request: Request, body: SearchBody) -> BooruSearchResult:
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
     except _NETWORK_ERRORS as e:
+        logger.warning("搜索上游异常: %s: %s", type(e).__name__, e)
         raise HTTPException(502, f"搜索失败: {e}") from e
 
     posts: list[BooruPost] = []
@@ -222,6 +224,7 @@ async def proxy_image(
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
     except _NetworkError as e:
+        logger.warning("图片代理上游异常: %s: %s", type(e).__name__, e)
         raise HTTPException(502, f"图片拉取失败: {e}") from e
     return StreamingResponse(
         chunks, media_type=ctype,
@@ -311,6 +314,7 @@ async def download(
         code = 429 if "429" in msg else 502
         raise HTTPException(code, f"下载失败: {e}") from e
     except (OSError, _NetworkError, CffiError) as e:
+        logger.warning("下载上游异常: %s: %s", type(e).__name__, e)
         raise HTTPException(502, f"下载失败: {e}") from e
     rel = local_rel_path(root, result.path)
     thumb = get_runtime(request).thumbnailer
