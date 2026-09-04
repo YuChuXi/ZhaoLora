@@ -5,7 +5,7 @@
  *   - 主预览区显示当前帧；左键存帧、右键删帧、滚轮调帧
  *   - 底部缩略图条按采样间隔提供快速跳转
  *   - 帧类型柱状图(Canvas)展示每帧编码类型(I/P/B)与包大小，点击柱状跳帧
- *   - 帧类型经由后端长任务(ffprobe 分析 + SSE 进度)，完成后回读并重绘柱状图
+ *   - 帧类型经由后端长任务(逐帧解码分析 + SSE 进度)，完成后回读并重绘柱状图
  *   - 键盘：A/D 切换视频、Q/E 单帧、←/→ 十帧、S/空格 存帧、X/Delete 删帧
  *
  * 引用：templates/video_extract.html。
@@ -31,14 +31,15 @@ var VideoExtract = (function () {
     vidIdx: -1,    // 当前视频在列表中的位置
     jobWatch: null,
     analyzing: false,
-    hideB: true, // 隐藏 B 帧: 柱状图不绘制 B 帧柱(紧凑排列), 所有切帧操作(滚轮/键盘/按钮)跳过 B 帧, 只落在 I/P 帧
+    hideB: true, // 隐藏 B 帧: 仅显示层——柱状图不绘制 B 帧柱(紧凑排列), 所有切帧操作(滚轮/键盘/按钮)跳过 B 帧, 只落在 I/P 帧; 段始终含 B 帧, 不影响请求
   };
 
   var _stripItems = []; // 缩略图条 DOM 集合
   var _globalCache = null; // 全局图柱状体缓存(逐帧绘制成本高, 仅宽度/帧数变化时重建)
 
-  // ---- WebCodecs 帧窗口段: 后端编码为正常 I/P/B H.264, 前端批量 decode + flush,
-  //      按 output 顺序(显示顺序)匹配目标帧 ----
+  // ---- WebCodecs 帧窗口段: 后端从 start 前最近关键帧流复制源压缩包(不重编码),
+  //      前端批量 decode + flush, 按 output 顺序(显示顺序)匹配目标帧; 段首对齐
+  //      关键帧产生的前导帧与段尾 B 帧参考帧均由前端解码时自然消化 ----
   var _canvas = null;   // 主预览 canvas
   var _cctx = null;     // canvas 2D 上下文
   var _decoder = null;  // VideoDecoder 实例
@@ -62,12 +63,11 @@ var VideoExtract = (function () {
     return url;
   }
 
-  /** 构造帧窗口段 URL(后端返回 H.264 Annex-B + X-Frame-Count 头)。Callers: ensureSegment。 */
+  /** 构造帧窗口段 URL(后端流复制返回 H.264 Annex-B + X-Segment-Start/X-Frame-Count 头)。Callers: ensureSegment。 */
   function segmentUrl(start, end) {
     return API.apiPath('/video/segment')
       + '?path=' + encodeURIComponent(state.path)
-      + '&start=' + start + '&end=' + end
-      + (state.hideB ? '&hide_b=true' : '');
+      + '&start=' + start + '&end=' + end;
   }
 
   /** 构造封面 URL(用于视频切换时顶部信息)。Callers: 无(仅信息)。 */
@@ -191,8 +191,9 @@ var VideoExtract = (function () {
   }
 
   /**
-   * 拉取覆盖目标帧的窗口段并重建解码器。实际帧数由后端 ``X-Frame-Count``
-   * 响应头告知(视频末尾可能少于请求数), 前端不猜测。Callers: showFrame。
+   * 拉取覆盖目标帧的窗口段并重建解码器。段首为 start 前最近关键帧, 其帧号经
+   * ``X-Segment-Start`` 响应头告知; 实际帧数由 ``X-Frame-Count`` 告知(含段尾
+   * B 帧参考帧), 前端不猜测。Callers: showFrame。
    */
   function ensureSegment(idx) {
     if (_seg && idx >= _seg.start && idx <= _seg.end) return Promise.resolve();
@@ -206,7 +207,8 @@ var VideoExtract = (function () {
       .then(function (r) {
         if (!r.ok) throw new Error('段获取失败 ' + r.status);
         var count = parseInt(r.headers.get('X-Frame-Count'), 10) || 0;
-        return r.arrayBuffer().then(function (buf) { return { buf: buf, count: count }; });
+        var segStart = parseInt(r.headers.get('X-Segment-Start'), 10);
+        return r.arrayBuffer().then(function (buf) { return { buf: buf, count: count, segStart: segStart }; });
       })
       .then(function (result) {
         if (seq !== _segSeq) return; // 期间已切换目标, 丢弃该段
@@ -220,22 +222,21 @@ var VideoExtract = (function () {
           codec: buildCodecString(parsed.sps),
           description: buildAvcConfig(parsed.sps, parsed.pps),
         });
-        _seg = { start: start, end: start + result.count - 1, chunks: parsed.chunks };
+        _seg = { start: result.segStart, end: result.segStart + result.count - 1, chunks: parsed.chunks };
       });
   }
 
   /**
-   * 从最近关键帧批量 decode 到目标(无 B 帧)或段尾(有 B 帧), flush 强制输出。
-   * 解码器内部处理 B 帧重排序, output 按显示顺序输出, 用 output 序号匹配目标帧。
-   * ``hide_b`` 为真时后端 ``-bf 0`` 禁用 B 帧, 解码顺序 = 显示顺序, 只需 decode
-   * 到目标位置即可; 否则需 decode 到段尾以确保 B 帧参考帧就绪。
+   * 从最近关键帧批量 decode 到段尾, flush 强制输出。段为源流复制, 段首 GOP
+   * 对齐的前导帧与段尾 B 帧参考帧均需解码消化; 解码器内部处理 B 帧重排序,
+   * output 按显示顺序输出, 用 output 序号匹配目标帧。
    * @param {number} pos 窗口内目标位置(显示顺序)。
    * @param {number} idx 全局帧索引(用于中途抛弃过期目标)。
    * Callers: showFrame。
    */
   function navigateTo(pos, idx) {
     var keyPos = lastKeyAtOrBefore(pos);
-    var end = state.hideB ? pos : _seg.chunks.length - 1;
+    var end = _seg.chunks.length - 1;
     for (var p = keyPos; p <= end; p++) {
       var chunk = _seg.chunks[p];
       _decoder.decode(new EncodedVideoChunk({
@@ -995,23 +996,20 @@ var VideoExtract = (function () {
     });
   }
 
-  /** 绑定"隐藏B帧"开关: 切换后重置解码器(段编码方式变了)、重绘柱状图并落到非 B 帧。Callers: init。 */
+  /** 绑定"隐藏B帧"开关: 纯显示层切换, 重绘柱状图并落到非 B 帧(段与 B 帧无关, 无需重新请求)。Callers: init。 */
   function bindHideB() {
     var box = $('ve-hide-b');
     if (!box) return;
     state.hideB = box.checked;
     box.addEventListener('change', function () {
       state.hideB = box.checked;
-      // 段编码方式变了(B 帧开关), 必须重置解码器并重新请求段
-      resetDecoder();
       drawChart();
       paintStatus();
       // 开启隐藏 B 帧时, 若当前帧是 B 帧则跳到最近的 I/P 帧(stepFrame 内部调 showFrame)
       if (state.hideB) {
         var ft = state.types[state.idx];
-        if (ft && ft.type === 'B') { stepFrame(1); return; }
+        if (ft && ft.type === 'B') stepFrame(1);
       }
-      showFrame(state.idx);
     });
   }
 

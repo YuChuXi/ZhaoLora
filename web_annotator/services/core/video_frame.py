@@ -1,22 +1,32 @@
 """视频抽帧与位流帧类型分析服务.
 
-抽帧用 OpenCV 按帧索引精确定位; 帧类型分析用 ffprobe 提取每帧的
-编码类型(I/P/B 帧)与包大小, 写入数据集 ``.video_cache/<hash>/bitstream.json``
-持久化, 刷新后仍可复用。保存帧写入 ``out_dir``(通常是数据集 ``main``), 命名
-``{video_stem}_frame_{index:06d}.png``。
+全部视频操作经 PyAV(FFmpeg 库绑定)在进程内完成: 抽帧按帧号定位、帧类型分析
+逐包解码提取 ``pict_type`` 与包大小、帧窗口段直接流复制(不经重编码)并经
+``h264_mp4toannexb`` 位流滤波器输出 Annex-B 裸流。帧类型分析结果写入数据集
+``.video_cache/<hash>/bitstream.json`` 持久化, 刷新后仍可复用。保存帧写入
+``out_dir``(通常是数据集 ``main``), 命名 ``{video_stem}_frame_{index:06d}.png``。
+
+帧号语义: 全模块统一为显示顺序帧号, 由 pts 几何换算
+``frame_no = round((pts - min_pts) / frame_dur)``, 其中 ``min_pts`` 为首帧 pts,
+``frame_dur = 1 / average_rate``(以流 time_base 计)。恒定帧率视频(OBS 录播等)
+的 frame.pts 严格等差, 换算结果与解码输出序一致且无累积误差。
 """
 
 from __future__ import annotations
 
-import cv2
+import dataclasses
 import json
-import subprocess
-import threading
+from fractions import Fraction
 from pathlib import Path
 
+import av
+import cv2
 import numpy as np
+from av.bitstream import BitStreamFilterContext
+from av.codec.context import ThreadType
+from av.video.frame import PictureType
 
-from services.core.video_scanner import FFMPEG, FFPROBE, cover_hash
+from services.core.video_scanner import cover_hash
 from services.core.work_dir import resolve_under
 from services.models.video import BitstreamTypes
 
@@ -24,12 +34,22 @@ from services.models.video import BitstreamTypes
 CACHE_DIRNAME = ".video_cache"
 # 保存帧文件名模板
 FRAME_NAME_TPL = "{stem}_frame_{idx:06d}.png"
-# 帧窗口段最大边长(像素), 等比缩略以控制传输体积
-SEGMENT_MAX_EDGE = 1280
 # 包大小量化档位: 字节 / 1024 = KB
 _SIZE_KB = 1024
-# ffprobe 单次分析的超时上限(秒), 大视频较长
-_FFPROBE_TIMEOUT = 300
+# 解码线程模式: FRAME 与 SLICE 组合, 单 slice 流也能并行解码
+_THREAD_TYPE = ThreadType.FRAME | ThreadType.SLICE
+# 解码 AVOption: 跳过环滤波。帧类型在 slice 头解析阶段即已确定、抽帧与帧号
+# 换算不依赖滤波结果, 跳过环滤波可将解码速度提升约 17%。
+_DECODE_OPTIONS = {"skip_loop_filter": "all"}
+# B 帧显示重排深度上限(H.264 规范约束)。流复制段的末尾须多复制这些帧,
+# 保证窗口内最后帧(B 帧)的后向参考包完整, 否则前端解码会丢帧并使输出序号错位。
+_B_REORDER_MARGIN = 16
+# ``pict_type`` 枚举到帧类型字符的映射(其余类型一律记 "?")
+_PICT_TYPE_CHARS = {
+    PictureType.I: "I",
+    PictureType.P: "P",
+    PictureType.B: "B",
+}
 
 
 class VideoFrameError(RuntimeError):
@@ -38,6 +58,35 @@ class VideoFrameError(RuntimeError):
     Callers:
         - ``routes/video.py:``
     """
+
+
+@dataclasses.dataclass(frozen=True)
+class _StreamLayout:
+    """视频流帧号几何: 帧号 = round((pts - min_pts) / frame_dur).
+
+    Callers:
+        - ``services/core/video_frame.py:VideoFrameStore._stream_layout``
+    """
+
+    min_pts: int          # 首帧 pts(流 time_base 计)
+    frame_dur: Fraction   # 帧间隔(流 time_base 计), 即 1 / average_rate
+
+
+def _frame_no(pts: int, layout: _StreamLayout) -> int:
+    """把包/帧的 pts 换算为显示顺序帧号.
+
+    Args:
+        pts: 包或帧的 pts(流 time_base 计).
+        layout: 流帧号几何.
+
+    Returns:
+        int: 显示顺序帧号(0 基).
+
+    Callers:
+        - ``services/core/video_frame.py:VideoFrameStore.extract_frame``
+        - ``services/core/video_frame.py:VideoFrameStore.segment_bytes``
+    """
+    return round((pts - layout.min_pts) / layout.frame_dur)
 
 
 class VideoFrameStore:
@@ -63,6 +112,8 @@ class VideoFrameStore:
         self.data_dir = data_dir
         self.out_dir = out_dir
         self._cache_root = data_dir / CACHE_DIRNAME
+        # 流帧号几何缓存: (路径, mtime, size) -> _StreamLayout, 避免每次请求重扫首包
+        self._layouts: dict[tuple, _StreamLayout] = {}
 
     # ---- 路径与缓存 ----
 
@@ -168,71 +219,129 @@ class VideoFrameStore:
         tmp.write_text(json.dumps(bits.model_dump()), encoding="utf-8")
         tmp.replace(self._bitstream_path(video_rel))
 
+    def _stream_layout(self, path: Path, container, stream) -> _StreamLayout:
+        """读取(带缓存)视频流的帧号几何.
+
+        帧率取自容器 ``average_rate``; 首帧 pts 经首视频包扫描确定。
+        缓存键计入文件 mtime 与 size, 视频被替换后自动失效。
+
+        Args:
+            path: 视频绝对路径.
+            container: 已打开的 ``av.container.Container``(用于扫描首包).
+            stream: ``av.video.stream.VideoStream`` 视频流.
+
+        Returns:
+            _StreamLayout: 帧号几何.
+
+        Raises:
+            VideoFrameError: 视频缺少有效帧率或无视频帧数据.
+
+        Callers:
+            - ``services/core/video_frame.py:VideoFrameStore.extract_frame``
+            - ``services/core/video_frame.py:VideoFrameStore.segment_bytes``
+        """
+        st = path.stat()
+        key = (str(path), st.st_mtime_ns, st.st_size)
+        layout = self._layouts.get(key)
+        if layout is not None:
+            return layout
+        rate = stream.average_rate
+        if not rate or rate <= 0:
+            raise VideoFrameError("视频缺少有效帧率")
+        min_pts = None
+        for pkt in container.demux(stream):
+            if pkt.dts is None or pkt.pts is None:
+                continue
+            min_pts = pkt.pts
+            break
+        if min_pts is None:
+            raise VideoFrameError("视频无视频帧数据")
+        # 帧间隔以流 time_base 计: 1 帧(秒) / time_base(秒/tick) = 1/(rate·time_base) tick
+        layout = _StreamLayout(min_pts, Fraction(1) / (rate * stream.time_base))
+        self._layouts[key] = layout
+        return layout
+
+    def _configure_decode(self, stream) -> None:
+        """配置视频流的解码线程模式与 AVOption.
+
+        Args:
+            stream: ``av.video.stream.VideoStream`` 视频流.
+
+        Returns:
+            None
+
+        Callers:
+            - ``services/core/video_frame.py:VideoFrameStore.extract_frame``
+            - ``services/core/video_frame.py:VideoFrameStore.analyze_bitstream``
+        """
+        stream.thread_type = _THREAD_TYPE
+        stream.thread_count = 0  # 按核数自动
+        stream.codec_context.options = _DECODE_OPTIONS
+
     def segment_bytes(
         self,
         video_rel: str,
         start: int,
         end: int,
-        max_edge: int = SEGMENT_MAX_EDGE,
-        hide_b: bool = False,
-    ) -> tuple[bytes, int]:
-        """把 ``[start, end]`` 帧窗口编码为 H.264 Annex-B 字节流.
+    ) -> tuple[bytes, int, int]:
+        """把 ``[start, end]`` 帧窗口流复制为 H.264 Annex-B 字节流(不重编码).
 
-        用 OpenCV 精确指定起始帧并顺序读取, 保证窗口帧序列与源帧号一一对应;
-        逐帧等比缩略到 ``max_edge`` 后经 ffmpeg 编码(首帧为关键帧, 段自包含
-        可从头解码)。``hide_b`` 为真时用 ``-bf 0`` 禁用 B 帧使解码顺序 = 显示
-        顺序, 前端无需处理重排序。纯内存管道, 不写临时文件。实际编码帧数可能
-        少于请求数(视频末尾帧不足), 通过返回值 ``count`` 告知调用方。
+        从 ``start`` 前最近的关键帧起按解码顺序复制压缩包(GOP 对齐), 前端解码
+        时跳过未请求的前导帧; 段尾额外复制 ``_B_REORDER_MARGIN`` 帧, 保证窗口
+        末帧(B 帧)的后向参考包完整。包经 ``h264_mp4toannexb`` 位流滤波器转为
+        Annex-B 格式(WebCodecs 解码所需的 NAL 起始码形式), 段自包含可从头解码。
+        实际复制帧数可能少于请求数(视频末尾), 通过返回值告知调用方。
 
         Args:
             video_rel: 相对数据集根的视频路径.
             start: 窗口起始帧索引.
             end: 窗口结束帧索引.
-            max_edge: 输出帧最长边像素上限, 用于控制传输体积.
 
         Returns:
-            ``(data, count)``: H.264 Annex-B 裸流与实际编码帧数.
+            ``(data, seg_start, count)``: Annex-B 裸流、段首帧的全局帧号与实际
+            复制帧数(含段尾参考帧)。
 
         Raises:
-            VideoFrameError: 视频无法打开或窗口内无可用帧.
+            VideoFrameError: 视频无法打开或窗口内无关键帧.
 
         Callers:
             - ``routes/video.py:video_segment``
         """
         path = self._video_path(video_rel)
-        cap = cv2.VideoCapture(str(path))
-        try:
-            if not cap.isOpened():
-                raise VideoFrameError("无法打开视频")
-            cap.set(cv2.CAP_PROP_POS_FRAMES, int(start))
-            fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
-            frames: list[np.ndarray] = []
-            for _ in range(int(start), int(end) + 1):
-                ok, frame = cap.read()
-                if not ok or frame is None:
+        with av.open(str(path)) as container:
+            stream = container.streams.video[0]
+            layout = self._stream_layout(path, container, stream)
+            container.seek(
+                int(layout.min_pts + start * layout.frame_dur),
+                stream=stream, backward=True,
+            )
+            bsf = BitStreamFilterContext("h264_mp4toannexb", stream)
+            out = bytearray()
+            seg_start: int | None = None
+            copied = 0
+            margin_fno = end + _B_REORDER_MARGIN
+            for pkt in container.demux(stream):
+                if pkt.dts is None:
+                    continue
+                if seg_start is None and not pkt.is_keyframe:
+                    # seek 定位点之后、首个关键帧之前的残余包不可解码, 跳过
+                    continue
+                if pkt.pts is None:
+                    raise VideoFrameError("视频包缺失 pts, 无法换算帧号")
+                # BSF 接管并清空原包(pts 归 None), 帧号须在 filter 前换算
+                fno = _frame_no(pkt.pts, layout)
+                if seg_start is None:
+                    seg_start = fno
+                for annex in bsf.filter(pkt):
+                    out += bytes(annex)
+                copied += 1
+                if fno >= margin_fno:
                     break
-                frames.append(frame)
-        finally:
-            cap.release()
-        if not frames:
-            raise VideoFrameError(f"帧 {int(start)}..{int(end)} 无可用帧")
-        if max_edge:
-            h, w = frames[0].shape[:2]
-            longest = max(w, h)
-            if longest > max_edge:
-                scale = max_edge / longest
-                w, h = int(w * scale), int(h * scale)
-            # libx264 的 yuv420p 要求宽高为偶数, 等比缩放取整或源帧本身为奇数时
-            # 需向下取偶, 否则编码报错
-            w -= w % 2
-            h -= h % 2
-            w, h = max(w, 2), max(h, 2)
-            if frames[0].shape[1] != w or frames[0].shape[0] != h:
-                frames = [
-                    cv2.resize(f, (w, h), interpolation=cv2.INTER_AREA)
-                    for f in frames
-                ]
-        return _encode_h264_annexb(frames, fps, hide_b), len(frames)
+            for annex in bsf.filter(None):
+                out += bytes(annex)
+        if seg_start is None or copied == 0:
+            raise VideoFrameError(f"帧窗口 {start}..{end} 内无关键帧, 无法流复制")
+        return bytes(out), seg_start, copied
 
     # ---- 帧读取与编码 ----
 
@@ -254,6 +363,7 @@ class VideoFrameStore:
 
         Callers:
             - ``services/core/video_frame.py:VideoFrameStore.extract_frame``
+            - ``services/core/video_frame.py:VideoFrameStore.segment_bytes``
             - ``services/core/video_frame.py:VideoFrameStore.analyze_bitstream``
         """
         try:
@@ -263,6 +373,9 @@ class VideoFrameStore:
 
     def extract_frame(self, video_rel: str, index: int) -> np.ndarray:
         """按帧索引读取一帧 BGR 图像.
+
+        先 seek 到目标帧时刻之前最近的关键帧, 再顺序解码至帧号匹配的帧;
+        解码输出按显示顺序, 与帧号语义一致。
 
         Args:
             video_rel: 相对数据集根的视频路径.
@@ -279,17 +392,23 @@ class VideoFrameStore:
             - ``services/core/video_frame.py:VideoFrameStore.save_frame``
         """
         path = self._video_path(video_rel)
-        cap = cv2.VideoCapture(str(path))
-        try:
-            if not cap.isOpened():
-                raise VideoFrameError("无法打开视频")
-            cap.set(cv2.CAP_PROP_POS_FRAMES, int(index))
-            ok, frame = cap.read()
-            if not ok or frame is None:
-                raise VideoFrameError(f"帧 {index} 不存在")
-            return frame
-        finally:
-            cap.release()
+        with av.open(str(path)) as container:
+            stream = container.streams.video[0]
+            layout = self._stream_layout(path, container, stream)
+            self._configure_decode(stream)
+            container.seek(
+                int(layout.min_pts + index * layout.frame_dur),
+                stream=stream, backward=True,
+            )
+            for frame in container.decode(stream):
+                if frame.pts is None:
+                    raise VideoFrameError("解码输出帧缺失 pts, 无法换算帧号")
+                fno = _frame_no(frame.pts, layout)
+                if fno == index:
+                    return frame.to_ndarray(format="bgr24")
+                if fno > index:
+                    break
+        raise VideoFrameError(f"帧 {index} 不存在")
 
     def frame_bytes(
         self,
@@ -440,10 +559,12 @@ class VideoFrameStore:
         cancel_fn=None,
         emit=None,
     ) -> BitstreamTypes:
-        """用 ffprobe 提取每帧的编码类型(I/P/B)与包大小, 已分析的帧跳过.
+        """逐包解码视频, 提取每帧的编码类型(I/P/B)与包大小; 已分析的帧跳过.
 
-        一次性运行 ffprobe 输出全部帧的 ``pict_type`` 与 ``pkt_size``; 若缓存已
-        存在则直接复用, 不重复扫描。包大小在持久化前量化到 KB, 与紧凑存储格式一致。
+        帧级 ``pict_type`` 仅存在于解码输出帧, 包级 flags 只有关键帧 K 标记,
+        故须手动 demux 收集 ``{pts: 包大小}`` 后逐包解码, 经 pts 把解码帧与
+        包大小配对(两者一一对应)。若缓存已存在则直接复用, 不重复扫描。包
+        大小在持久化前量化到 KB, 与紧凑存储格式一致。
 
         Args:
             video_rel: 相对数据集根的视频路径.
@@ -455,7 +576,7 @@ class VideoFrameStore:
             BitstreamTypes: 紧凑位流(``s`` 为量化到 KB 的大小).
 
         Raises:
-            VideoFrameError: 视频无法打开或 ffprobe 失败.
+            VideoFrameError: 视频无法打开、包大小配对失败或分析被取消.
 
         Callers:
             - ``routes/video.py:start_analysis``
@@ -467,24 +588,16 @@ class VideoFrameStore:
                 emit(total, total)
             return cached
 
-        cmd = [
-            FFPROBE, "-v", "error",
-            "-select_streams", "v:0",
-            "-show_entries", "frame=pict_type,pkt_size",
-            "-of", "csv=p=0",
-            str(path),
-        ]
-        try:
-            proc: subprocess.Popen[bytes] = subprocess.Popen(
-                cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            )
-        except OSError as e:
-            raise VideoFrameError(f"位流分析失败: {e}") from e
+        t_chars: list[str] = []
+        sizes: list[int] = []
+        pkt_sizes: dict[int, int] = {}  # pts -> 包大小(字节); 经 pts 与解码帧配对
+        cancelled = False
 
-        err_lines: list[str] = []
+        def handle(frame) -> None:
+            """收集解码帧的帧类型与配对的包大小, 并按需回报进度.
 
-        def drain_stderr() -> None:
-            """后台线程收集 ffprobe stderr 输出(``-v error`` 下仅错误信息).
+            Args:
+                frame: ``av.video.frame.VideoFrame`` 解码输出帧(显示顺序).
 
             Returns:
                 None
@@ -492,96 +605,45 @@ class VideoFrameStore:
             Callers:
                 - ``services/core/video_frame.py:VideoFrameStore.analyze_bitstream``
             """
-            for raw in proc.stderr or ():
-                err_lines.append(raw.decode("utf-8", "replace").strip())
+            try:
+                size = pkt_sizes.pop(frame.pts)
+            except KeyError as e:
+                raise VideoFrameError(f"包大小与解码帧配对失败(pts={frame.pts})") from e
+            t_chars.append(_PICT_TYPE_CHARS.get(frame.pict_type, "?"))
+            sizes.append(size // _SIZE_KB)
+            if emit and total and len(sizes) % 50 == 0:
+                emit(len(sizes), max(total, len(sizes)))
 
-        err_thread = threading.Thread(target=drain_stderr, daemon=True)
-        err_thread.start()
-
-        t_chars: list[str] = []
-        sizes: list[int] = []
-        cancelled = False
-        try:
-            for raw in getattr(proc, "stdout") or ():
-                line = raw.decode("utf-8", "replace").strip()
-                if not line:
+        with av.open(str(path)) as container:
+            stream = container.streams.video[0]
+            self._configure_decode(stream)
+            codec = stream.codec_context
+            for pkt in container.demux(stream):
+                if pkt.dts is None:
                     continue
-                parts = line.split(",")
-                if len(parts) < 2:
-                    continue
-                if cancel_fn and cancel_fn():
-                    cancelled = True
+                if pkt.pts is None:
+                    raise VideoFrameError("视频包含缺失 pts 的包, 无法配对帧大小")
+                pkt_sizes[pkt.pts] = pkt.size
+                for frame in codec.decode(pkt):
+                    if cancel_fn and cancel_fn():
+                        cancelled = True
+                        break
+                    handle(frame)
+                if cancelled:
                     break
-                # ffprobe `frame=pict_type,pkt_size -of csv=p=0` 输出字段顺序为
-                # pkt_size,pict_type, 需按此顺序解析
-                t_chars.append((parts[1] or "?")[:1])
-                sizes.append((int(parts[0]) if parts[0] else 0) // _SIZE_KB)
-                # ffprobe 逐帧流式输出, 每 50 帧回报一次进度
-                if emit and total and len(sizes) % 50 == 0:
-                    emit(len(sizes), max(total, len(sizes)))
-            if cancelled:
-                # 取消时终止 ffprobe, 否则 stdout 管道写满后 wait 会空等至超时
-                proc.terminate()
-            proc.wait(timeout=_FFPROBE_TIMEOUT)
-        finally:
-            err_thread.join()
+            if not cancelled:
+                # flush 解码器缓冲的末尾重排帧
+                for frame in codec.decode(None):
+                    if cancel_fn and cancel_fn():
+                        cancelled = True
+                        break
+                    handle(frame)
+
         if cancelled:
             # 取消不持久化部分缓存, 以免下次复用残缺位流
             raise VideoFrameError("位流分析已取消")
-        if proc.returncode != 0:
-            detail = " ".join(err_lines).strip() or str(proc.returncode)
-            raise VideoFrameError(f"位流分析失败: {detail}")
         if emit and total:
             emit(max(total, len(sizes)), total)
         bits = BitstreamTypes(t="".join(t_chars), s=sizes)
         self.save_bitstream(video_rel, bits)
         return bits
-
-
-def _encode_h264_annexb(frames: list[np.ndarray], fps: float, hide_b: bool = False) -> bytes:
-    """把同尺寸 BGR 帧序列编码为 H.264 Annex-B 字节流.
-
-    关键帧间隔 ``-g`` 设为帧序列长度, 使首帧为关键帧、段自包含可从头解码。
-    ``hide_b`` 为真时加 ``-bf 0`` 禁用 B 帧, 解码顺序 = 显示顺序, 前端无需
-    处理重排序; 为假时正常 I/P/B 编码, 前端按 output 顺序匹配目标帧。
-
-    帧序列拼为单个 bytes 经 stdin 一次性传入、编码结果从 stdout 收集, 全程内存、
-    不写临时文件。用 ``subprocess.run`` 的 ``capture_output`` 让标准库同时排空
-    stdout/stderr, 避免任何单向管道缓冲占满导致死锁。
-
-    Args:
-        frames: 同尺寸 BGR 帧序列.
-        fps: 输入帧率(用于 ffmpeg 时间基准).
-        hide_b: 为真时 ``-bf 0`` 禁用 B 帧.
-
-    Returns:
-        bytes: H.264 Annex-B 裸流.
-
-    Raises:
-        VideoFrameError: ffmpeg 编码失败.
-
-    Callers:
-        - ``services/core/video_frame.py:VideoFrameStore.segment_bytes``
-    """
-    h, w = frames[0].shape[:2]
-    keyint = len(frames)
-    cmd = [
-        FFMPEG, "-y",
-        "-f", "rawvideo", "-pix_fmt", "bgr24",
-        "-s", f"{w}x{h}", "-r", str(fps or 30.0),
-        "-i", "-",
-        "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
-        "-g", str(keyint), "-pix_fmt", "yuv420p",
-    ] + (["-bf", "0"] if hide_b else []) + [
-        "-f", "h264", "-",
-    ]
-    proc = subprocess.run(
-        cmd,
-        input=b"".join(f.tobytes() for f in frames),
-        capture_output=True,
-        timeout=120,
-    )
-    if proc.returncode != 0:
-        detail = proc.stderr.decode(errors="replace")[:300]
-        raise VideoFrameError(f"帧窗口编码失败: {detail}")
-    return proc.stdout

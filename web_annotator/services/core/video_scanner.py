@@ -3,19 +3,18 @@
 约束:
   - 目录内扁平扫描(不递归), 与图片扫描一致
   - 识别 ``VIDEO_EXTS``
-  - 封面由 ffmpeg 抽取视频中间帧生成, 缓存到数据集根 ``.video_covers/``
+  - 封面由 PyAV 抽取视频中间帧生成, 缓存到数据集根 ``.video_covers/``
 """
 
 from __future__ import annotations
 
-import functools
 import hashlib
-import json
 import logging
-import os
-import subprocess
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
+
+import av
+import cv2
 
 from services.core.natural import natural_key
 from services.models import VideoInfo
@@ -28,6 +27,8 @@ VIDEO_DIRNAME = "video"
 COVER_DIRNAME = ".video_covers"
 # 封面长边像素
 COVER_MAX_SIDE = 480
+# 封面 JPEG 编码质量(0-100)
+COVER_JPEG_QUALITY = 90
 
 VIDEO_EXTS = frozenset(
     {".mp4", ".avi", ".mov", ".mkv", ".webm", ".flv", ".wmv", ".m4v", ".mpg", ".mpeg", ".ts"}
@@ -43,77 +44,11 @@ class VideoScanError(RuntimeError):
     """
 
 
-def _ffmpeg_supports_rawvideo(path: str) -> bool:
-    """检测 ffmpeg 是否具备 rawvideo demuxer(窗口帧编码的前提).
-
-    受限静态构建(如随 IDE 分发的 ffmpeg)可能缺少 rawvideo demuxer, 无法从原始帧
-    编码; 返回 True 表示可正常用于 ``_encode_h264_annexb``。
-
-    Args:
-        path: ffmpeg 可执行路径.
-
-    Returns:
-        bool: 是否支持 rawvideo demuxer.
-
-    Callers:
-        - ``services/core/video_scanner.py:resolve_ffmpeg``
-    """
-    try:
-        out = subprocess.run(
-            [path, "-hide_banner", "-demuxers"],
-            capture_output=True, text=True, timeout=10,
-        )
-    except (OSError, subprocess.TimeoutExpired):
-        return False
-    return "rawvideo" in out.stdout
-
-
-@functools.lru_cache(maxsize=1)
-def resolve_ffmpeg() -> str:
-    """解析一个支持 rawvideo demuxer 的 ffmpeg 可执行路径.
-
-    PATH 中受限静态构建可能优先于系统完整版, 故遍历 PATH 候选并补充常见完整版
-    路径, 返回首个支持 rawvideo 的; 均不支持时抛出 ``VideoScanError``。
-
-    Returns:
-        str: ffmpeg 可执行路径.
-
-    Raises:
-        VideoScanError: 未找到支持 rawvideo 的 ffmpeg.
-
-    Callers:
-        - ``services/core/video_scanner.py:`` : 模块级常量 ``FFMPEG`` / ``FFPROBE`` 的初始化.
-    """
-    seen: set[str] = set()
-    candidates: list[str] = []
-    for d in os.environ.get("PATH", "").split(os.pathsep):
-        if not d:
-            continue
-        p = os.path.join(d, "ffmpeg")
-        rp = os.path.realpath(p)
-        if os.path.isfile(p) and rp not in seen:
-            seen.add(rp)
-            candidates.append(p)
-    for extra in ("/usr/bin/ffmpeg", "/bin/ffmpeg"):
-        if extra not in seen and os.path.isfile(extra):
-            candidates.append(extra)
-    for c in candidates:
-        if _ffmpeg_supports_rawvideo(c):
-            return c
-    raise VideoScanError("未找到支持 rawvideo 的 ffmpeg")
-
-
-# 集中解析的 ffmpeg/ffprobe 路径, 供视频扫描与抽帧复用, 避免 PATH 中受限构建干扰
-FFMPEG = resolve_ffmpeg()
-FFPROBE = os.path.join(os.path.dirname(FFMPEG), "ffprobe")
-
-
 def _probe(path: Path) -> tuple[int, int, float, int]:
-    """用 ffprobe 读取视频宽高、时长与总帧数.
+    """用 PyAV 读取视频宽高、时长与总帧数.
 
-    帧数优先取 ``nb_frames`` 元数据(MP4/MKV 可靠); 缺失时(FLV 等)用
-    ``duration × r_frame_rate`` 估算。两种方式均比 OpenCV 的
-    ``CAP_PROP_FRAME_COUNT`` 更可靠(后者对 FLV 常偏高)。
+    总帧数由 ``时长 × 平均帧率`` 估算: FLV 等容器没有帧数元数据, PyAV 亦不
+    暴露 ``nb_frames``, 该估算对 OBS 录播等恒定帧率视频精确。
 
     Args:
         path: 视频绝对路径.
@@ -123,48 +58,21 @@ def _probe(path: Path) -> tuple[int, int, float, int]:
 
     Callers:
         - ``services/core/video_scanner.py:probe_video``
+        - ``services/core/video_scanner.py:ensure_cover``
     """
-    cmd = [
-        FFPROBE, "-v", "error",
-        "-select_streams", "v:0",
-        "-show_entries", "stream=width,height,nb_frames,r_frame_rate",
-        "-show_entries", "format=duration",
-        "-of", "json", str(path),
-    ]
     try:
-        out = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
-    except (OSError, subprocess.TimeoutExpired):
+        with av.open(str(path)) as container:
+            if not container.streams.video:
+                return 0, 0, 0.0, 0
+            stream = container.streams.video[0]
+            width = stream.width or 0
+            height = stream.height or 0
+            duration = (container.duration or 0) / av.time_base
+            rate = stream.average_rate
+            total = round(duration * float(rate)) if (duration > 0 and rate and rate > 0) else 0
+        return width, height, duration, total
+    except av.FFmpegError:
         return 0, 0, 0.0, 0
-    if out.returncode != 0 or not out.stdout.strip():
-        return 0, 0, 0.0, 0
-    try:
-        data = json.loads(out.stdout)
-    except ValueError:
-        return 0, 0, 0.0, 0
-    streams = data.get("streams") or []
-    stream = streams[0] if streams else {}
-    width = int(stream.get("width", 0) or 0)
-    height = int(stream.get("height", 0) or 0)
-    duration = 0.0
-    try:
-        duration = float(data.get("format", {}).get("duration") or 0.0)
-    except (TypeError, ValueError):
-        duration = 0.0
-    # 帧数: 优先 nb_frames 元数据; 缺失则用 duration × fps 估算
-    total = 0
-    nb = stream.get("nb_frames")
-    if nb and str(nb).isdigit():
-        total = int(nb)
-    elif duration > 0:
-        rfr = stream.get("r_frame_rate", "0/1")
-        try:
-            num, den = rfr.split("/")
-            fps = float(num) / float(den) if float(den) else 0.0
-            if fps > 0:
-                total = round(duration * fps)
-        except (ValueError, ZeroDivisionError):
-            pass
-    return width, height, duration, total
 
 
 def probe_video(path: Path) -> tuple[int, int, float, int]:
@@ -186,12 +94,12 @@ def probe_video(path: Path) -> tuple[int, int, float, int]:
 def scan_videos(video_dir: Path, *, path_prefix: str = "", probe: bool = False) -> list[VideoInfo]:
     """扫描 ``video_dir`` 下视频并按文件名排序.
 
-    ``probe=False`` 时仅列文件(快); ``probe=True`` 时并行 ffprobe 探测宽高/时长。
+    ``probe=False`` 时仅列文件(快); ``probe=True`` 时并行探测宽高/时长。
 
     Args:
         video_dir: 视频目录绝对路径.
         path_prefix: 非空时加在 ``path`` 前(相对数据集根), 通常为目录名 ``video``.
-        probe: 是否并行 ffprobe 探测宽高/时长.
+        probe: 是否并行探测宽高/时长.
 
     Returns:
         按文件名排序的 ``VideoInfo`` 列表.
@@ -270,7 +178,7 @@ def cover_path(cover_dir: Path, video_rel_path: str) -> Path:
 
 
 def ensure_cover(video_path: Path, cover_dir: Path, video_rel_path: str) -> Path:
-    """确保视频封面存在, 缺失则用 ffmpeg 抽中间帧生成.
+    """确保视频封面存在, 缺失则用 PyAV 抽中间帧生成.
 
     抽取视频中间时刻的一帧并缩放到 ``COVER_MAX_SIDE`` 长边, 存为 JPEG;
     若视频存在但无法抽取, 抛 ``VideoScanError``。
@@ -284,7 +192,7 @@ def ensure_cover(video_path: Path, cover_dir: Path, video_rel_path: str) -> Path
         Path: 封面文件绝对路径.
 
     Raises:
-        VideoScanError: ffmpeg 抽取失败.
+        VideoScanError: 视频解码或封面编码失败.
 
     Callers:
         - ``routes/video.py:list_videos``
@@ -294,19 +202,29 @@ def ensure_cover(video_path: Path, cover_dir: Path, video_rel_path: str) -> Path
     if out.is_file():
         return out
     cover_dir.mkdir(parents=True, exist_ok=True)
-    w, h, dur, _total = _probe(video_path)
+    _w, _h, dur, _total = _probe(video_path)
     mid = max(0.0, dur / 2.0) if dur > 0 else 0.0
-    vm = f"scale={COVER_MAX_SIDE}:-2" if w else "scale=-2:240"
-    cmd = [
-        FFMPEG, "-y", "-v", "error",
-        "-ss", f"{mid:g}", "-i", str(video_path),
-        "-frames:v", "1", "-vf", vm, "-q:v", "3",
-        str(out),
-    ]
     try:
-        res = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
-    except (OSError, subprocess.TimeoutExpired) as e:
+        with av.open(str(video_path)) as container:
+            stream = container.streams.video[0]
+            if mid > 0:
+                # seek offset 以流 time_base 计(秒 / time_base)
+                container.seek(int(mid / float(stream.time_base)), stream=stream, backward=True)
+            frame = next(container.decode(stream), None)
+    except av.FFmpegError as e:
         raise VideoScanError(f"封面生成失败: {e}") from e
-    if res.returncode != 0 or not out.is_file():
-        raise VideoScanError(f"封面生成失败: {res.stderr.strip() or res.returncode}")
+    if frame is None:
+        raise VideoScanError(f"封面生成失败: {video_path.name} 无可解码帧")
+    img = frame.to_ndarray(format="bgr24")
+    h, w = img.shape[:2]
+    longest = max(w, h)
+    if longest > COVER_MAX_SIDE:
+        scale = COVER_MAX_SIDE / longest
+        img = cv2.resize(img, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_AREA)
+    ok, buf = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, COVER_JPEG_QUALITY])
+    if not ok:
+        raise VideoScanError("封面生成失败: JPEG 编码失败")
+    tmp = out.with_suffix(".tmp.jpg")
+    tmp.write_bytes(buf.tobytes())
+    tmp.replace(out)
     return out

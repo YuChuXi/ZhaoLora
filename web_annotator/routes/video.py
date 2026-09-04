@@ -83,11 +83,11 @@ def _stores(request: Request):
 @router.get("/videos")
 async def list_videos(
     request: Request,
-    probe: bool = Query(False, description="是否并行 ffprobe 探测宽高/时长"),
+    probe: bool = Query(False, description="是否并行探测宽高/时长"),
 ) -> list[VideoInfo]:
     """列出 ``video`` 目录下视频并返回封面 hash.
 
-    ``probe=False`` 时仅列文件(快); ``probe=True`` 时并行 ffprobe 探测宽高/时长。
+    ``probe=False`` 时仅列文件(快); ``probe=True`` 时并行探测宽高/时长。
     封面不在此处批量生成; 前端经 ``/video/cover`` 按需请求。
 
     Callers:
@@ -189,13 +189,12 @@ async def video_segment(
     path: str = Query(...),
     start: int = Query(..., ge=0),
     end: int = Query(..., ge=0),
-    hide_b: bool = Query(False),
 ) -> Response:
-    """返回 ``[start, end]`` 帧窗口的 H.264 Annex-B 裸流.
+    """返回覆盖 ``[start, end]`` 帧窗口的 H.264 Annex-B 裸流(流复制, 不重编码).
 
-    ``hide_b`` 为真时 ``-bf 0`` 禁用 B 帧(解码顺序 = 显示顺序); 否则正常
-    I/P/B 编码。首帧为关键帧, 段自包含可从头解码。实际帧数通过
-    ``X-Frame-Count`` 响应头告知前端(视频末尾可能少于请求数).
+    段从 ``start`` 前最近的关键帧起复制(GOP 对齐), 段首帧号经 ``X-Segment-Start``
+    响应头告知前端, 前端解码后跳过未请求的前导帧; 段尾额外附带 B 帧后向参考。
+    实际复制帧数(含段尾参考帧)经 ``X-Frame-Count`` 响应头告知前端.
 
     Callers:
         - ``static/js/video_extract.js:`` 主预览 WebCodecs 解码
@@ -206,13 +205,17 @@ async def video_segment(
     if end < start:
         raise HTTPException(400, "end 不能小于 start")
     try:
-        data, count = await asyncio.to_thread(store.segment_bytes, path, start, end, hide_b=hide_b)
+        data, seg_start, count = await asyncio.to_thread(store.segment_bytes, path, start, end)
     except VideoFrameError as e:
         raise HTTPException(400, str(e)) from e
     return Response(
         content=data,
         media_type="video/h264",
-        headers={"Cache-Control": "no-store", "X-Frame-Count": str(count)},
+        headers={
+            "Cache-Control": "no-store",
+            "X-Frame-Count": str(count),
+            "X-Segment-Start": str(seg_start),
+        },
     )
 
 
@@ -259,7 +262,7 @@ async def delete_frame(request: Request, body: FrameSaveBody) -> FrameSaveRespon
 
 @router.post("/video/analysis/start")
 async def start_analysis(request: Request, path: str = Query(...)) -> JobSubmitResponse:
-    """启动视频位流帧类型分析长任务(ffprobe 提取每帧 I/P/B 类型与包大小).
+    """启动视频位流帧类型分析长任务(逐帧解码提取每帧 I/P/B 类型与包大小).
 
     进度见 GET /api/jobs/{id}/events。
 
