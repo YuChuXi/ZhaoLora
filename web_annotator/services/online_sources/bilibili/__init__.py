@@ -11,7 +11,7 @@ Callers:
 from services.online_sources.bilibili.client import (
     fetch_bili_bytes,
     fetch_dynamics,
-    resolve_image,
+    resolve_record,
 )
 from services.online_sources.bilibili.models import DynamicRecord
 from services.online_sources.bilibili.source import BilibiliSource
@@ -21,5 +21,5 @@ __all__ = [
     "DynamicRecord",
     "fetch_bili_bytes",
     "fetch_dynamics",
-    "resolve_image",
+    "resolve_record",
 ]

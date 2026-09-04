@@ -12,7 +12,6 @@ Callers:
 from __future__ import annotations
 
 import asyncio
-import json
 import os
 import re
 import shutil
@@ -21,7 +20,12 @@ from datetime import date, datetime
 from pathlib import Path
 
 from services.online_sources.framework.base import SourceClient
-from services.online_sources.bilibili.client import fetch_bili_bytes, fetch_dynamics, resolve_image
+from services.online_sources.bilibili.client import (
+    fetch_bili_bytes,
+    fetch_dynamics,
+    resolve_record,
+    video_pubdate,
+)
 from services.online_sources.bilibili.models import DynamicRecord
 from services.online_sources.framework.session import SessionStore
 from services.online_sources.framework.utils import find_downloaded
@@ -35,6 +39,24 @@ _TYPE_MAP = {
     "DYNAMIC_TYPE_AV": "video",
     "DYNAMIC_TYPE_FORWARD": "forward",
 }
+
+
+def _pub_iso(pub_ts: int | str | None) -> str:
+    """把 B 站动态发布时间戳转为本地时区 ISO8601 文本.
+
+    Args:
+        pub_ts (int | str | None): 动态发布时间戳 (desktop 接口为 int,
+            v1 接口为字符串), 缺失时返回空串。
+
+    Returns:
+        str: ISO8601 本地时区时间文本, 无时间戳时为空串。
+
+    Callers:
+        - ``services/online_sources/bilibili/source.py:BilibiliSource._expand``
+    """
+    if not pub_ts:
+        return ""
+    return datetime.fromtimestamp(int(pub_ts)).astimezone().isoformat()
 
 
 class BilibiliSource(SourceClient):
@@ -143,7 +165,7 @@ class BilibiliSource(SourceClient):
                 id=bvid if is_video else f"{record.id}_{i}",
                 width=w,
                 height=h,
-                posted_at=datetime.fromtimestamp(int(source.pub_ts)).astimezone().isoformat(),
+                posted_at=_pub_iso(source.pub_ts),
                 file_url=url,
                 preview_url=url + "@480w_480h_1e.webp",
                 sample_url=url + "@1280w_1280h_1e.webp",
@@ -249,23 +271,23 @@ class BilibiliSource(SourceClient):
     async def fetch_meta(self, out_dir: Path, pid: str) -> None:
         """按 pid 重新解析并写入帖元数据.
 
-        实现 ``base.SourceClient.fetch_meta``。
+        图片帖复用 ``_expand`` 展开逻辑, 以与搜索阶段同源的完整字段 (发布
+        时间 / 宽高 / 缩略图派生 URL) 重写 meta; 视频帖 (bvid) 经视频信息
+        接口补齐发布时间, 其余字段沿用既有 meta。实现
+        ``base.SourceClient.fetch_meta``。
 
         Callers:
             - ``routes/online_sources.py:_run_refresh``
         """
+        meta_path = out_dir / self.meta_subdir / f"{pid}.json"
+        if pid.startswith("BV"):
+            old = BooruPost.model_validate_json(meta_path.read_text(encoding="utf-8"))
+            pubdate = await video_pubdate(pid)
+            self._write_meta(out_dir, pid, old.model_copy(update={"posted_at": _pub_iso(pubdate)}))
+            return
         dynamic_id, index = self._split_pid(pid)
-        url, text = await resolve_image(dynamic_id, index)
-        # resolve_image 不返回发布时间, 保留既有 meta 中的 posted_at
-        old_meta = out_dir / self.meta_subdir / f"{pid}.json"
-        posted_at = ""
-        if old_meta.is_file():
-            posted_at = str(json.loads(old_meta.read_text(encoding="utf-8")).get("posted_at", ""))
-        self._write_meta(
-            out_dir,
-            pid,
-            BooruPost(source=self.name, id=pid, file_url=url, tags=text, posted_at=posted_at),
-        )
+        record = await resolve_record(dynamic_id)
+        self._write_meta(out_dir, pid, self._expand(record)[index])
 
     async def download(
         self,

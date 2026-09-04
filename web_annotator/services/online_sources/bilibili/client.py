@@ -54,6 +54,10 @@ FILTER_TYPES = {"DYNAMIC_TYPE_LIVE_RCMD"}
 # 桌面版详情接口: 免登录稳定可用; 库的 ``Dynamic.get_info`` 所用的 v1 detail
 # 接口在未登录会话下会被 412 风控拦截, 故单条详情改用此接口
 _DESKTOP_DETAIL_API = "https://api.bilibili.com/x/polymer/web-dynamic/desktop/v1/detail"
+
+# 视频信息接口: 免登录可用, 供视频帖补齐发布时间
+_VIDEO_VIEW_API = "https://api.bilibili.com/x/web-interface/view"
+
 _BILI_HEADERS = {
     "user-agent": DEFAULT_UA,
     "referer": "https://www.bilibili.com/",
@@ -83,7 +87,7 @@ async def _desktop_detail(
         RuntimeError: 重试耗尽或接口返回其他非 0 code。
 
     Callers:
-        - ``services/online_sources/bilibili/client.py:resolve_image``
+        - ``services/online_sources/bilibili/client.py:resolve_record``
     """
     last_exc: Exception | None = None
     for attempt in range(1, retries + 1):
@@ -413,7 +417,7 @@ def _parse_item(item: dict[str, Any], depth: int = 0) -> DynamicRecord | None:
     Callers:
         - ``services/online_sources/bilibili/client.py:_parse_item``
         - ``services/online_sources/bilibili/client.py:fetch_dynamics``
-        - ``services/online_sources/bilibili/client.py:resolve_image``
+        - ``services/online_sources/bilibili/client.py:resolve_record``
     """
     if not isinstance(item, dict) or depth > MAX_FORWARD_DEPTH:
         return None
@@ -499,23 +503,20 @@ async def fetch_dynamics(
     return records, next_offset, has_more
 
 
-async def resolve_image(dynamic_id: str, index: int) -> tuple[str, str]:
-    """按动态 ID 与图片序号解析出原图 URL 与正文文本.
-
-    优先使用已缓存的动态记录; 未命中时重新请求桌面版详情并解析, 结果写入缓存。
+async def resolve_record(dynamic_id: str) -> DynamicRecord:
+    """按动态 ID 取解析后的动态记录 (优先进程内缓存).
 
     Args:
         dynamic_id (str): 动态 ID。
-        index (int): 图片序号 (0 起)。
 
     Returns:
-        tuple[str, str]: ``(原图 URL, 正文文本)``。
+        DynamicRecord: 含发布时间 / 图片 / 视频信息的动态记录。
 
     Raises:
-        ValueError: 动态无详情、无可用图片或序号越界。
+        ValueError: 动态无详情或解析失败。
 
     Callers:
-        - ``services/online_sources/bilibili/source.py:fetch_meta``
+        - ``services/online_sources/bilibili/source.py:BilibiliSource.fetch_meta``
     """
     record = _dynamic_cache.get(dynamic_id)
     if record is None:
@@ -526,18 +527,37 @@ async def resolve_image(dynamic_id: str, index: int) -> tuple[str, str]:
         if record is None:
             raise ValueError(f"动态 {dynamic_id} 解析失败")
         _dynamic_cache[dynamic_id] = record
+    return record
 
-    source = record.forwarded if record.forwarded is not None else record
-    if source.images:
-        if not (0 <= index < len(source.images)):
-            raise ValueError(f"动态 {dynamic_id} 无第 {index} 张图")
-        img = source.images[index]
-        return img.url, source.text or record.text
-    if source.video and source.video.cover:
-        if index != 0:
-            raise ValueError(f"动态 {dynamic_id} 无第 {index} 张图")
-        return source.video.cover, source.text or record.text
-    raise ValueError(f"动态 {dynamic_id} 无可用图片")
+
+async def video_pubdate(bvid: str) -> int:
+    """免登录获取视频发布时间戳.
+
+    Args:
+        bvid (str): 视频 BV 号。
+
+    Returns:
+        int: 视频发布时间 (Unix 秒)。
+
+    Raises:
+        RuntimeError: 接口返回非 0 code。
+
+    Callers:
+        - ``services/online_sources/bilibili/source.py:BilibiliSource.fetch_meta``
+    """
+    async with HttpClient() as client:
+        resp = await client.get(
+            _VIDEO_VIEW_API,
+            headers=_BILI_HEADERS,
+            params={"bvid": bvid},
+            timeout=30.0,
+            follow_redirects=True,
+        )
+    resp.raise_for_status()
+    data = resp.json()
+    if data.get("code") != 0:
+        raise RuntimeError(f"code={data.get('code')} message={data.get('message')}")
+    return int(data["data"]["pubdate"])
 
 
 async def fetch_bili_bytes(

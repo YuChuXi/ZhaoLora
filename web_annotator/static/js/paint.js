@@ -1341,10 +1341,15 @@
         if (!expression) { toast('请输入蒙板表达式'); return; }
         body.expression = expression;
       } else {
-        body.mask_expand = parseInt(document.getElementById('birefnet-expand').value) || 32;
-        body.mask_shrink = parseInt(document.getElementById('birefnet-shrink').value) || 0;
-        body.mask_min = parseInt(document.getElementById('birefnet-min').value) || 96;
-        body.mask_max = parseInt(document.getElementById('birefnet-max').value) || 255;
+        // 0 是合法取值(如不扩展), 不可用 `|| 默认值` 吞掉, 仅对非法输入回退默认
+        var intOr = function (val, dflt) {
+          var n = parseInt(val, 10);
+          return Number.isNaN(n) ? dflt : n;
+        };
+        body.mask_expand = intOr(document.getElementById('birefnet-expand').value, 32);
+        body.mask_shrink = intOr(document.getElementById('birefnet-shrink').value, 0);
+        body.mask_min = intOr(document.getElementById('birefnet-min').value, 96);
+        body.mask_max = intOr(document.getElementById('birefnet-max').value, 255);
       }
       // 默认单图: 仅重新生成当前图片; 勾选「批量」处理整个目录
       if (!batch) {
