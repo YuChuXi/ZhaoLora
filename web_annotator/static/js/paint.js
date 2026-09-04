@@ -25,9 +25,8 @@
   var _templates = [];         // 模板槽位(≤10): {data:Uint8ClampedArray, w, h}
   var _captureMode = false;    // 框选当前图区域保存模板进行中
   var _captureStart = null;    // 框选起点(orig 坐标)
-  var _floating = null;        // 未确认模板实例: {rx,ry,rw,rh,data,w,h,anchors} (anchors 为 0-1 分数坐标, ≤2 个)
-  var _floatDrag = null;       // 模板拖动状态: {mode, sx, sy, rx, ry, rw, rh}
-  var _floatingDrawn = { ref: null, w: 0, h: 0 }; // 已绘制的图案 shape 尺寸, 避免拖动时重复重绘
+  var _floating = null;        // 未确认实例: {capture,slot,rx,ry,rw,rh,url,data,w,h,anchors} (capture=框选待确认, url/data 尚未就绪; anchors 为 0-1 分数坐标, ≤2 个)
+  var _floatDrag = null;       // 模板拖动状态: {mode, anchor, sx, sy, x0, y0, w0, h0, h, v}
 
   // ---- WebGL 渲染层: RGB 纹理 + alpha 纹理 shader 合成, 无 2D 中间画布 ----
   var AlphaGL = (function () {
@@ -46,12 +45,16 @@
       'vec2 px=vec2(v_uv.x,1.0-v_uv.y)*u_res;' +
       'if(distance(px,u_center)<=u_radius){gl_FragColor=vec4(1.0,1.0,1.0,u_alpha);}else{discard;}}';
     var FS_SHOW = 'precision mediump float;' +
-      'uniform sampler2D u_rgb;uniform sampler2D u_alpha;' +
+      'uniform sampler2D u_rgb;uniform sampler2D u_alpha;uniform float u_red;' +
       'varying vec2 v_uv;' +
       'void main(){' +
       'vec4 rgb=texture2D(u_rgb,v_uv);' +
       'float a=texture2D(u_alpha,v_uv).a;' +
-      'gl_FragColor=vec4(rgb.rgb,a);}';
+      // 红色模式(框选模板期间): 红色浓度随蒙板 alpha 反转——不透明处保持原图(透明红),
+      // 透明处叠加半透明红, 画布像素全不透明, 避免 alpha=0 处透出棋盘格背景;
+      // 正常模式: 蒙板 alpha 即画布 alpha.
+      'if(u_red>0.5){gl_FragColor=vec4(mix(rgb.rgb,vec3(1.0,0.0,0.0),(1.0-a)*0.5),1.0);}' +
+      'else{gl_FragColor=vec4(rgb.rgb,a);}}';
     // 蒙板合并(模板贴回当前蒙板): u_cur 为拷贝后的当前蒙板副本, u_tpl 为模板图案,
     // u_rect 为模板矩形(画布顶部坐标), 片段按 min/max 合成. 配合 scissor 只写交集矩形.
     var FS_COPY = 'precision mediump float;' +
@@ -140,6 +143,7 @@
       DLOC.alpha = gl.getUniformLocation(progDraw, 'u_alpha');
       SLOC.rgb = gl.getUniformLocation(progShow, 'u_rgb');
       SLOC.alpha = gl.getUniformLocation(progShow, 'u_alpha');
+      SLOC.red = gl.getUniformLocation(progShow, 'u_red');
       CLOC.src = gl.getUniformLocation(progCopy, 'u_src');
       MLOC.cur = gl.getUniformLocation(progMerge, 'u_cur');
       MLOC.tpl = gl.getUniformLocation(progMerge, 'u_tpl');
@@ -326,13 +330,17 @@
     }
 
     /**
-     * 合成 RGB 纹理与 alpha 纹理到 canvas. 引用: _doRender.
+     * 合成 RGB 纹理与 alpha 纹理到 canvas. 红色模式下红色浓度随蒙板 alpha 反转(不透明处
+     * 保持原图, 透明处叠加半透明红)且画布像素全不透明(框选模板期间用, 详见 FS_SHOW).
+     * 引用: _doRender.
+     * @param {boolean} redMode 是否红色模式.
      */
-    function render() {
+    function render(redMode) {
       gl.bindFramebuffer(gl.FRAMEBUFFER, null);
       gl.viewport(0, 0, W, H);
       gl.disable(gl.BLEND);
       _bindQuad(progShow);
+      gl.uniform1f(SLOC.red, redMode ? 1.0 : 0.0);
       gl.activeTexture(gl.TEXTURE0);
       gl.bindTexture(gl.TEXTURE_2D, texRGB);
       gl.uniform1i(SLOC.rgb, 0);
@@ -618,7 +626,8 @@
   function _doRender() {
     var cur = _cur;
     if (!cur || !cur.rgbImg || !cur.alpha) return;
-    AlphaGL.render();
+    // 红色模式: 框选进行中或框选待确认实例存在期间, 整图蒙板以红色半透明渲染
+    AlphaGL.render(_captureMode || !!(_floating && _floating.capture));
     _updateLinePreview();
   }
 
@@ -732,7 +741,8 @@
   function _slotKey(i) { return i === 9 ? '0' : String(i + 1); }
 
   /**
-   * 从模板管理对话框进入框选模式: 隐藏对话框开启 _captureMode, 随后在画布拖框选区域保存模板.
+   * 从模板管理对话框进入框选模式: 隐藏对话框开启 _captureMode, 随后在画布拖框选区域,
+   * 抬笔生成待确认模板实例(确认后存槽位).
    * Callers: 模板管理对话框「框选当前图区域」点击.
    */
   function beginTemplateCapture() {
@@ -740,13 +750,15 @@
     _templateDlg.hidden = true;
     _captureMode = true;
     _templateInst.style.display = 'none';
-    toast('在图上拖拽框选区域保存为模板 (Esc 取消)');
+    _scheduleRender();
+    toast('在图上拖拽框选区域 (Esc 取消)');
   }
 
   /** 取消框选模式并隐藏选区矩形. Callers: keydown Esc. */
   function cancelTemplateCapture() {
     _captureMode = false; _captureStart = null;
     if (_captureRectEl) _captureRectEl.style.display = 'none';
+    _scheduleRender();
   }
 
   /**
@@ -766,14 +778,15 @@
   }
 
   /**
-   * 把框选区域作为新模板存入首个空闲槽位(上限 10). 图案保留捕获时区域内各像素的实际 alpha.
+   * 框选结束: 生成待确认模板实例(红框), 可继续拖动/缩放调整捕获范围, 单击加锚点(≤2),
+   * Enter/空格确认时按最终几何抠图存入预定槽位(首个空闲), Esc 取消; 区域过小或槽位已满则丢弃.
    * Callers: _finishTemplateCapture.
    * @param {number} x0 框选左上 orig x
    * @param {number} y0 框选左上 orig y
    * @param {number} x1 框选右下 orig x
    * @param {number} y1 框选右下 orig y
    */
-  function _captureToSlot(x0, y0, x1, y1) {
+  function _beginCaptureConfirm(x0, y0, x1, y1) {
     if (!_cur || !_cur.alpha) return;
     var px0 = Math.max(0, Math.floor(Math.min(x0, x1)));
     var py0 = Math.max(0, Math.floor(Math.min(y0, y1)));
@@ -784,7 +797,24 @@
     var slot = -1;
     for (var i = 0; i < 10; i++) { if (!_templates[i]) { slot = i; break; } }
     if (slot === -1) { toast('模板已满 (最多 10 个)'); return; }
-    // 仅读取框选区域蒙板, 避免整幅画布 readPixels 的带宽与打包开销
+    _floating = { capture: true, slot: slot, rx: px0, ry: py0, rw: pw, rh: ph,
+      url: null, data: null, w: 0, h: 0, anchors: [] };
+    _updateFloatingHTML();
+    _renderFloatingAnchors();
+    toast('单击加锚点(≤2), 拖动/缩放调整区域, Enter 确认保存到槽位 ' + (slot + 1));
+  }
+
+  /**
+   * 确认待确认模板: 按实例最终几何(拖出画布部分裁剪)抠取蒙板图案, 连同锚点存入预定槽位
+   * 并持久化. Callers: keydown Enter/空格.
+   */
+  function _confirmCapture() {
+    var f = _floating;
+    var px0 = Math.max(0, Math.floor(f.rx)), py0 = Math.max(0, Math.floor(f.ry));
+    var px1 = Math.min(_cur.w, Math.ceil(f.rx + f.rw)), py1 = Math.min(_cur.h, Math.ceil(f.ry + f.rh));
+    var pw = px1 - px0, ph = py1 - py0;
+    if (pw < 2 || ph < 2) { toast('模板区域过小, 请调整后重试'); return; }
+    // 仅读取最终区域蒙板, 避免整幅画布 readPixels 的带宽与打包开销
     var local = AlphaGL.readAlphaRegion(px0, py0, pw, ph);
     var data = new Uint8ClampedArray(pw * ph * 4);
     for (var y = 0; y < ph; y++) {
@@ -794,10 +824,14 @@
         data[j + 3] = local[y * pw + x];
       }
     }
-    _templates[slot] = { data: data, w: pw, h: ph };
+    var tpl = { data: data, w: pw, h: ph, anchors: f.anchors };
+    // url 为图案 dataURL, 呼出实例的 CSS 蒙版渲染直接复用, 避免逐像素重绘
+    tpl.url = 'data:image/png;base64,' + _templateToB64(tpl);
+    _templates[f.slot] = tpl;
     _renderTemplateCards();
-    toast('已保存模板到槽位 ' + (slot + 1) + ' (按 ' + _slotKey(slot) + ' 放置)');
+    toast('已保存模板到槽位 ' + (f.slot + 1) + ' (按 ' + _slotKey(f.slot) + ' 放置)');
     _saveTemplates().catch(function (e) { toast('模板保存失败: ' + String(e.message || e)); });
+    _discardFloating();
   }
 
   /**
@@ -844,10 +878,11 @@
   function _discardFloating() {
     _floating = null; _floatDrag = null;
     _templateInst.style.display = 'none';
+    _scheduleRender();
   }
 
   /**
-   * 将指定槽位模板作为未确认实例放到画布中心(红色矩形, 可拖动/缩放), 自定义锚点清空.
+   * 将指定槽位模板作为未确认实例放到画布中心(红色矩形, 可拖动/缩放), 锚点从模板槽位载入.
    * 引用: keydown 1-9/0.
    * @param {number} slot 模板槽位索引 0-9.
    */
@@ -856,17 +891,19 @@
     if (!t || !_cur || !_cur.alpha) return;
     _discardFloating();
     var rw = Math.min(t.w, _cur.w), rh = Math.min(t.h, _cur.h);
-    _floating = { rx: Math.round((_cur.w - rw) / 2), ry: Math.round((_cur.h - rh) / 2), rw: rw, rh: rh,
-      data: t.data, w: t.w, h: t.h, anchors: [] };
+    _floating = { slot: slot, rx: Math.round((_cur.w - rw) / 2), ry: Math.round((_cur.h - rh) / 2), rw: rw, rh: rh,
+      url: t.url, data: t.data, w: t.w, h: t.h, anchors: t.anchors.slice() };
     _updateFloatingHTML();
     _renderFloatingAnchors();
   }
 
   /**
-   * 依据未确认实例(orig 坐标)渲染未确认模板: 定位容器并更新位置, 仅当实例或尺寸变化时重绘
-   * 图案. 每个像素红色 alpha = abs(图案alpha - 默认alpha)/2: 与默认填充一致处透明,
-   * 差异越大越红(量化应用该模板对蒙板的改动程度).
-   * 引用: placeTemplate/拖动/缩放.
+   * 依据未确认实例(orig 坐标)渲染未确认模板: 定位容器并更新几何. 图案的红色渲染由
+   * .tmpl-red 的 CSS 蒙版合成完成(恒定半透明红底 + 白层 XOR 图案 alpha 的反转蒙版:
+   * 不透明处透明红, 透明处半透明红, 与框选期间画布的红色渲染同式见 FS_SHOW), 图案
+   * dataURL 在模板载入/捕获确认时生成一次, 拖动缩放零 JS 逐像素开销.
+   * Callers: placeTemplate/_beginCaptureConfirm/_floatMove/_resizeFloating/
+   *          default-alpha change(视图缩放变化重定位).
    */
   function _updateFloatingHTML() {
     if (!_floating || !_cur) { _templateInst.style.display = 'none'; return; }
@@ -876,47 +913,22 @@
     _templateInst.style.display = 'block';
     _templateInst.style.left = (rect.left + _floating.rx * sx - wrapRect.left) + 'px';
     _templateInst.style.top = (rect.top + _floating.ry * sy - wrapRect.top) + 'px';
-    var w = Math.max(1, Math.round(_floating.rw * sx)), h = Math.max(1, Math.round(_floating.rh * sy));
-    _templateInst.style.width = w + 'px';
-    _templateInst.style.height = h + 'px';
-    if (!_floatingDrawn.ref || _floatingDrawn.ref !== _floating || _floatingDrawn.w !== w || _floatingDrawn.h !== h) {
-      _redrawFloatingShape(w, h);
-      _floatingDrawn = { ref: _floating, w: w, h: h };
+    _templateInst.style.width = Math.max(1, Math.round(_floating.rw * sx)) + 'px';
+    _templateInst.style.height = Math.max(1, Math.round(_floating.rh * sy)) + 'px';
+    var red = _templateInst.querySelector('.tmpl-red');
+    if (_floating.url) {
+      red.style.display = 'block';
+      red.style.setProperty('--img', 'url("' + _floating.url + '")');
+    } else {
+      // 框选待确认实例: 图案尚未抠取(确认时按最终几何读取), 仅显示边框
+      red.style.display = 'none';
     }
   }
 
   /**
-   * 把未确认模板的图案以红色形式绘制到容器内 canvas(最近邻缩放).
-   * 每个像素 alpha = abs(图案alpha - 默认alpha)/2, 量化该处被模板改动的程度.
-   * 引用: _updateFloatingHTML.
-   * @param {number} w 容器可视宽(px).
-   * @param {number} h 容器可视高(px).
-   */
-  function _redrawFloatingShape(w, h) {
-    var cv = _templateInst.querySelector('canvas');
-    if (cv.width !== w) cv.width = w;
-    if (cv.height !== h) cv.height = h;
-    var id = cv.getContext('2d').createImageData(w, h);
-    var f = _floating, data = f.data;
-    for (var y = 0; y < h; y++) {
-      var sy2 = Math.min(f.h - 1, Math.max(0, Math.floor(y / h * f.h)));
-      for (var x = 0; x < w; x++) {
-        var sx2 = Math.min(f.w - 1, Math.max(0, Math.floor(x / w * f.w)));
-        var pv = data[(sy2 * f.w + sx2) * 4 + 3];
-        var j = (y * w + x) * 4;
-        id.data[j] = 255;
-        id.data[j + 1] = 0;
-        id.data[j + 2] = 0;
-        id.data[j + 3] = pv > 0 ? Math.round(Math.max(0, Math.min(1, (_defaultAlpha + 255 - pv) / 510)) * 255) : 0;
-      }
-    }
-    cv.getContext('2d').putImageData(id, 0, 0);
-  }
-
-  /**
-   * 依据 _floating.anchors 重建自定义锚点标记(≤2 个). 锚点为容器内百分比定位的圆点,
+   * 依据 _floating.anchors 重建锚点标记(≤2 个). 锚点为容器内百分比定位的圆点,
    * 实例平移/缩放时随容器自动保持图案上的相对位置, 仅在增删后调用.
-   * Callers: placeTemplate/_toggleAnchor.
+   * Callers: placeTemplate/_beginCaptureConfirm/_addAnchor/_removeAnchor.
    */
   function _renderFloatingAnchors() {
     var olds = _templateInst.querySelectorAll('.tmpl-anchor');
@@ -927,7 +939,7 @@
       var el = document.createElement('span');
       el.className = 'tmpl-anchor';
       el.setAttribute('data-anchor', String(j));
-      el.title = '自定义锚点 ' + (j + 1) + ': 拖动移动蒙板, Alt+点击移除';
+      el.title = '锚点 ' + (j + 1) + ': 拖动对齐(实例随之平移缩放), 单击移除';
       el.style.left = 'calc(' + (a.x * 100) + '% - 6px)';
       el.style.top = 'calc(' + (a.y * 100) + '% - 6px)';
       _templateInst.appendChild(el);
@@ -935,55 +947,79 @@
   }
 
   /**
-   * Alt+点击增删自定义锚点: 点击落在既有锚点 10px 命中半径内则移除该锚点,
-   * 否则在点击处添加(上限 2). 锚点以 0-1 分数坐标记录, 拖动锚点即整体移动实例.
-   * Callers: _floatPointerDown(按住 Alt 点击实例).
+   * 把实例锚点同步回所属模板槽位并持久化; 框选待确认实例跳过(确认保存时随模板一并写入).
+   * Callers: _addAnchor/_removeAnchor.
+   */
+  function _syncAnchors() {
+    if (_floating.capture) return;
+    _templates[_floating.slot].anchors = _floating.anchors;
+    _saveTemplates().catch(function (e) { toast('锚点保存失败: ' + String(e.message || e)); });
+  }
+
+  /**
+   * 在实例上 e 处添加锚点(0-1 分数坐标, ≤2): 落点距既有锚点 10px 内则改为移除该锚点;
+   * 增删后即时同步所属模板槽位.
+   * Callers: _floatUp(实例主体上无位移单击).
    * @param {PointerEvent} e 指针事件(clientX/clientY 为视口坐标).
    */
-  function _toggleAnchor(e) {
+  function _addAnchor(e) {
     var rect = canvas.getBoundingClientRect();
     var sx = rect.width / _cur.w, sy = rect.height / _cur.h;
     var fx = ((e.clientX - rect.left) / sx - _floating.rx) / _floating.rw;
     var fy = ((e.clientY - rect.top) / sy - _floating.ry) / _floating.rh;
-    for (var i = 0; i < _floating.anchors.length; i++) {
-      var a = _floating.anchors[i];
+    var list = _floating.anchors;
+    for (var i = 0; i < list.length; i++) {
+      var a = list[i];
       if (Math.hypot((a.x - fx) * _floating.rw * sx, (a.y - fy) * _floating.rh * sy) <= 10) {
-        _floating.anchors.splice(i, 1);
-        _renderFloatingAnchors();
+        list.splice(i, 1);
+        _renderFloatingAnchors(); _syncAnchors();
         return;
       }
     }
-    if (_floating.anchors.length >= 2) { toast('自定义锚点已满 (最多 2 个)'); return; }
-    _floating.anchors.push({ x: fx, y: fy });
+    if (list.length >= 2) { toast('锚点已满 (最多 2 个)'); return; }
+    list.push({ x: fx, y: fy });
+    _renderFloatingAnchors(); _syncAnchors();
+  }
+
+  /**
+   * 移除指定索引的锚点并同步所属模板槽位. Callers: _floatUp(锚点上无位移单击).
+   * @param {number} idx 锚点索引.
+   */
+  function _removeAnchor(idx) {
+    _floating.anchors.splice(idx, 1);
     _renderFloatingAnchors();
+    _syncAnchors();
   }
 
   /** 缩放手柄映射: 每个手柄对应一个可动的水平边(l=左/r=右/null=不动)与垂直边(t=上/b=下/null=不动). 引用: _floatPointerDown. */
   var _RESIZE_HV = { nw: { h: 'l', v: 't' }, n: { h: null, v: 't' }, ne: { h: 'r', v: 't' },
     w: { h: 'l', v: null }, e: { h: 'r', v: null }, sw: { h: 'l', v: 'b' }, s: { h: null, v: 'b' }, se: { h: 'r', v: 'b' } };
 
-  /** 未确认模板按下: 按住 Alt 点击为增删自定义锚点; 命中缩放柄(data-resize)则缩放,
-   *  命中锚点(data-anchor)或实例主体则平移(拖锚点即拖实例); 记录起点并挂 doc 级跟踪.
-   *  Callers: template-inst pointerdown. */
+  /** 未确认模板按下: 命中缩放柄(data-resize)则缩放, 命中锚点(data-anchor)则对齐拖动
+   *  (见 _floatMove anchor 分支), 实例主体则平移; 抬笔时无位移单击增删锚点(见 _floatUp);
+   *  记录起点并挂 doc 级跟踪. Callers: template-inst pointerdown. */
   function _floatPointerDown(e) {
     e.preventDefault(); e.stopPropagation();
     if (!_floating || !_cur) return;
     var t = e.target;
-    if (e.altKey && t && t.getAttribute) { _toggleAnchor(e); return; }
+    var ak = t && t.getAttribute ? t.getAttribute('data-anchor') : null;
     var hv = null;
-    if (t && t.getAttribute) {
+    if (ak === null && t && t.getAttribute) {
       var rk = t.getAttribute('data-resize');
       if (rk && _RESIZE_HV[rk]) hv = _RESIZE_HV[rk];
     }
-    _floatDrag = { mode: hv ? 'resize' : 'move', sx: e.clientX, sy: e.clientY,
+    _floatDrag = { mode: ak !== null ? 'anchor' : hv ? 'resize' : 'move',
+      anchor: ak !== null ? parseInt(ak, 10) : -1,
+      sx: e.clientX, sy: e.clientY,
       x0: _floating.rx, y0: _floating.ry, w0: _floating.rw, h0: _floating.rh,
       h: hv ? hv.h : null, v: hv ? hv.v : null };
     document.addEventListener('pointermove', _floatMove);
     document.addEventListener('pointerup', _floatUp);
   }
 
-  /** 未确认模板拖动中: move 平移(可超出画布) / resize 按手柄锚定对边缩放,
-   *  按住 Shift 改以实例中心为锚点缩放(角柄等比例, 边柄沿自身轴对称伸缩),
+  /** 未确认模板拖动中: move 平移(可超出画布) / anchor 对齐拖动(实例平移缩放使被拖锚点
+   *  跟随指针, 另一锚点保持画布位置不动; 锚点的图案分数坐标不变) / resize 按手柄锚定对边
+   *  缩放, 按住 Shift 改以实例中心为锚点缩放(角柄等比例, 边柄沿自身轴对称伸缩),
    *  均在 orig 域运算避免缩放的像素累积误差. Callers: document pointermove. */
   function _floatMove(e) {
     var d = _floatDrag;
@@ -991,6 +1027,32 @@
     var rect = canvas.getBoundingClientRect();
     var sx = rect.width / _cur.w, sy = rect.height / _cur.h;
     var ox = (e.clientX - d.sx) / sx, oy = (e.clientY - d.sy) / sy;
+    if (d.mode === 'anchor') {
+      // 两点对齐: 以另一锚点为固定点, x/y 独立缩放+平移实例使被拖锚点精确到达指针
+      // (模板应用本就允许非等比拉伸); 某轴两锚点重合时该轴退化为纯平移.
+      var list = _floating.anchors, fixed = list[d.anchor === 0 ? 1 : 0];
+      var px = (e.clientX - rect.left) / sx, py = (e.clientY - rect.top) / sy;
+      var ax = _floating.rx + list[d.anchor].x * _floating.rw;
+      var ay = _floating.ry + list[d.anchor].y * _floating.rh;
+      if (fixed) {
+        var fx = _floating.rx + fixed.x * _floating.rw;
+        var fy = _floating.ry + fixed.y * _floating.rh;
+        var sxx = ax !== fx ? (px - fx) / (ax - fx) : 1;
+        var syy = ay !== fy ? (py - fy) / (ay - fy) : 1;
+        sxx = Math.max(4 / _floating.rw, sxx);
+        syy = Math.max(4 / _floating.rh, syy);
+        _floating.rx = fx + (_floating.rx - fx) * sxx;
+        _floating.ry = fy + (_floating.ry - fy) * syy;
+        _floating.rw *= sxx;
+        _floating.rh *= syy;
+      } else {
+        // 单锚点: 无固定参照, 实例平移使锚点跟随指针
+        _floating.rx += px - ax;
+        _floating.ry += py - ay;
+      }
+      _updateFloatingHTML();
+      return;
+    }
     if (d.mode === 'move') {
       _floating.rx = d.x0 + ox;
       _floating.ry = d.y0 + oy;
@@ -1036,16 +1098,25 @@
     return { rx: cx - w / 2, ry: cy - h / 2, rw: w, rh: h };
   }
 
-  /** 未确认模板拖动结束: 卸载 doc 级跟踪. Callers: document pointerup. */
-  function _floatUp() {
+  /**
+   * 未确认模板抬笔: 卸载 doc 级跟踪; 无位移(<4px)单击判定 — 锚点上单击移除该锚点,
+   * 实例主体上单击加锚点(≤2), 拖动/缩放(≥4px)不受影响; 锚点变更即时同步模板槽位.
+   * Callers: document pointerup.
+   */
+  function _floatUp(e) {
+    var d = _floatDrag;
     document.removeEventListener('pointermove', _floatMove);
     document.removeEventListener('pointerup', _floatUp);
     _floatDrag = null;
+    if (!d || d.mode === 'resize') return;
+    if (Math.hypot(e.clientX - d.sx, e.clientY - d.sy) >= 4) return;
+    if (d.mode === 'anchor') _removeAnchor(d.anchor);
+    else _addAnchor(e);
   }
 
   /**
    * 应用未确认模板: 读当前蒙板, 将模板图案(最近邻缩放)按 _mergeMode(min/max) 合并到目标矩形,
-   * 重建 alpha 纹理并重绘. 引用: 模板实例双击.
+   * 重建 alpha 纹理并重绘. 引用: keydown Enter/空格.
    */
   function _applyTemplate() {
     if (!_floating || !_cur || !_cur.alpha) return;
@@ -1083,9 +1154,11 @@
   }
 
   /**
-   * 解码服务端返回的 base64 PNG 模板项为本地图案数据. 引用: _loadTemplates.
-   * @param {object} item 服务端模板项 {slot, w, h, image_b64}.
-   * @returns {Promise<object>} 本地模板 {data, w, h}.
+   * 解码服务端返回的 base64 PNG 模板项为本地图案数据. url 为图案 dataURL(零成本复用
+   * image_b64), 供呼出实例的 CSS 蒙版渲染; data 供模板应用与卡片预览.
+   * 引用: _loadTemplates.
+   * @param {object} item 服务端模板项 {slot, w, h, image_b64, anchors}.
+   * @returns {Promise<object>} 本地模板 {url, data, w, h, anchors}.
    */
   async function _b64ToTemplate(item) {
     var c = document.createElement('canvas');
@@ -1094,19 +1167,20 @@
     img.src = 'data:image/png;base64,' + item.image_b64;
     await img.decode();
     c.getContext('2d').drawImage(img, 0, 0);
-    return { data: c.getContext('2d').getImageData(0, 0, item.w, item.h).data,
-      w: item.w, h: item.h };
+    return { url: img.src,
+      data: c.getContext('2d').getImageData(0, 0, item.w, item.h).data,
+      w: item.w, h: item.h, anchors: item.anchors };
   }
 
   /**
-   * 把全部非空槽位模板持久化到服务端(按数据集全量覆盖). 引用: _captureToSlot/deleteTemplate.
+   * 把全部非空槽位模板持久化到服务端(按数据集全量覆盖). 引用: _confirmCapture/deleteTemplate/_syncAnchors.
    */
   async function _saveTemplates() {
     var list = [];
     for (var i = 0; i < 10; i++) {
       var t = _templates[i];
       if (!t) continue;
-      list.push({ slot: i, w: t.w, h: t.h, image_b64: _templateToB64(t) });
+      list.push({ slot: i, w: t.w, h: t.h, image_b64: _templateToB64(t), anchors: t.anchors });
     }
     await API.request(API.apiPath('/paint/templates'), {
       method: 'PUT',
@@ -1128,12 +1202,12 @@
     _renderTemplateCards();
   }
 
-  /** 框选结束: 保存模板至槽位并退出框选模式. Callers: _docMouseUp. */
+  /** 框选结束: 生成待确认模板实例并退出框选模式. Callers: _docMouseUp. */
   function _finishTemplateCapture() {
     var s = _captureStart, e = _mouseOrig;
     _captureMode = false; _captureStart = null;
     if (_captureRectEl) _captureRectEl.style.display = 'none';
-    if (s && e) _captureToSlot(s[0], s[1], e[0], e[1]);
+    if (s && e) _beginCaptureConfirm(s[0], s[1], e[0], e[1]);
   }
 
   // ---- 触屏 ----
@@ -1331,12 +1405,8 @@
   });
 
   // ---- 蒙板模板绑定 ----
-  // 未确认模板实例: 拖动/缩放 + 双击应用
+  // 未确认模板实例: 拖动/缩放/无位移单击增删锚点(确定键 Enter/空格 见 keydown)
   _templateInst.addEventListener('pointerdown', _floatPointerDown);
-  _templateInst.addEventListener('dblclick', function(e) {
-    e.preventDefault(); e.stopPropagation();
-    if (_floating && _cur) _applyTemplate();
-  });
   // 工具栏「模板」按钮打开管理对话框
   document.getElementById('btn-template').addEventListener('click', function() {
     if (_templateDlg.hidden) { _renderTemplateCards(); _templateDlg.hidden = false; }
@@ -1350,20 +1420,29 @@
 
   document.addEventListener('keydown', function(e) {
     if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || e.target.tagName === 'TEXTAREA') return;
-    // Esc: 先取消模板框选, 再取消未确认模板实例
+    // Esc: 先取消模板框选, 再取消未确认模板实例(框选待确认/已放置)
     if (e.key === 'Escape') {
       if (_captureMode) { cancelTemplateCapture(); toast('已取消框选'); }
-      else if (_floating) { _discardFloating(); toast('已取消模板'); }
+      else if (_floating) {
+        var wasCapture = _floating.capture;
+        _discardFloating();
+        toast(wasCapture ? '已取消框选' : '已取消模板');
+      }
       return;
     }
-    // 空格: 应用未确认模板实例(与双击等效); 阻止页面滚动与焦点按钮误触发
-    if (e.key === ' ') { e.preventDefault(); _applyTemplate(); return; }
-    // 快捷键 1-9 / 0 放置对应槽位模板到画布
+    // Enter/空格(确定键): 框选待确认 → 确认保存模板; 放置实例 → 应用蒙板
+    if (e.key === ' ' || e.key === 'Enter') {
+      e.preventDefault();
+      if (_floating && _floating.capture) _confirmCapture(); else _applyTemplate();
+      return;
+    }
+    // 快捷键 1-9 / 0: 框选待确认时切换目标槽位, 否则放置对应槽位模板到画布
     var slot = null;
     if (e.key.length === 1 && e.key >= '1' && e.key <= '9') slot = parseInt(e.key, 10) - 1;
     else if (e.key === '0') slot = 9;
     if (slot !== null) {
-      if (!_captureMode && _templates[slot]) placeTemplate(slot);
+      if (_floating && _floating.capture) { _floating.slot = slot; toast('确认后将保存到槽位 ' + (slot + 1)); }
+      else if (!_captureMode && _templates[slot]) placeTemplate(slot);
       e.preventDefault();
       return;
     }

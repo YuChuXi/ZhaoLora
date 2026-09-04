@@ -32,7 +32,13 @@
   /* 未确认模板实例(红色矩形, 可拖动/缩放) */
   .template-inst { position: absolute; box-sizing: border-box; border: 1.5px solid #f33; cursor: move;
     z-index: 12; display: none; user-select: none; background: transparent; }
-  .template-inst canvas { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 0; pointer-events: none; }
+  /* 图案红色渲染(CSS 蒙版合成): 恒定半透明红底, 以"白层 XOR 图案 alpha"的反转蒙版裁剪,
+     不透明处透明红(露出画布), 透明处半透明红(不露棋盘格), 与画布红色模式同式(FS_SHOW) */
+  .template-inst .tmpl-red { position: absolute; inset: 0; z-index: 0; pointer-events: none;
+    background: rgba(255, 0, 0, .5); image-rendering: pixelated;
+    -webkit-mask-image: linear-gradient(#000, #000), var(--img); -webkit-mask-composite: xor;
+    mask-image: linear-gradient(#000, #000), var(--img); mask-composite: exclude;
+    mask-size: 100% 100%, 100% 100%; mask-mode: alpha; }
   /* 缩放手柄: 4 角(双向)+ 4 边(单向), 均内嵌可见, 不依赖越界命中 */
   .template-inst [data-resize] { position: absolute; z-index: 3; }
   .template-inst [data-resize="nw"], .template-inst [data-resize="ne"],
@@ -48,6 +54,9 @@
   .template-inst [data-resize="s"] { left: 50%; transform: translateX(-50%); bottom: 0; cursor: ns-resize; }
   .template-inst [data-resize="w"] { top: 50%; transform: translateY(-50%); left: 0; cursor: ew-resize; }
   .template-inst [data-resize="e"] { top: 50%; transform: translateY(-50%); right: 0; cursor: ew-resize; }
+  /* 自定义锚点: 拖动对齐(实例随之平移缩放), 单击 添加/移除(≤2) */
+  .template-inst .tmpl-anchor { position: absolute; z-index: 4; width: 12px; height: 12px; box-sizing: border-box;
+    border-radius: 50%; background: #fa0; border: 1.5px solid #fff; box-shadow: 0 0 0 1px rgba(0,0,0,.6); cursor: move; }
   /* 框选模板捕获选区(红色虚线) */
   .capture-rect { position: absolute; box-sizing: border-box; border: 1.5px dashed #f33;
     background: rgba(255,0,0,0.15); pointer-events: none; z-index: 12; display: none; }
@@ -74,7 +83,7 @@
   <span class="sep"></span>
   <button class="btn" id="btn-birefnet-mask" title="生成蒙版(BiRefNet / SAM3)到 mask/">生成蒙版</button>
   <span class="sep"></span>
-  <button class="btn" id="btn-template" title="蒙板模板管理: 框选当前图区域存模板, 1-9/0 放置, 双击应用">模板</button>
+  <button class="btn" id="btn-template" title="蒙板模板管理: 框选当前图区域, Enter 确认存模板, 1-9/0 放置, 空格/Enter 应用, Esc 取消">模板</button>
   <span class="sep"></span>
   <button class="btn" id="btn-clear">全透明</button>
   <button class="btn" id="btn-fill">全不透明</button>
@@ -127,7 +136,7 @@
   <canvas id="paint-canvas"></canvas>
   <div class="brush-preview" id="brush-preview"></div>
   <div class="template-inst" id="template-inst">
-    <canvas></canvas>
+    <div class="tmpl-red"></div>
     <span data-resize="nw"></span><span data-resize="n"></span><span data-resize="ne"></span>
     <span data-resize="w"></span><span data-resize="e"></span>
     <span data-resize="sw"></span><span data-resize="s"></span><span data-resize="se"></span>
@@ -187,8 +196,8 @@
       <span class="tmpl-hint">与当前蒙板按 min(默认) / max 合并</span>
     </div>
     <div class="modal-row">
-      <button type="button" class="btn green" id="tmpl-capture">框选当前图区域保存为模板</button>
-      <span class="tmpl-hint">快捷键 1-9/0 放置, 拖动/缩放, Shift 以中心为锚点缩放, Alt+点击加锚点(≤2)并可拖动, 双击或空格应用, Esc 取消</span>
+      <button type="button" class="btn green" id="tmpl-capture" title="框选当前图区域: 拖框 → 单击加锚点(≤2) → Enter/空格确认保存, Esc 取消">框选当前图区域保存为模板</button>
+      <span class="tmpl-hint">放置: 1-9/0, 拖动/缩放(Shift 以中心为锚点), 单击加锚点(≤2), 拖锚点移动, 空格/Enter 应用, Esc 取消</span>
     </div>
     <div class="tmpl-cards" id="tmpl-cards"></div>
     <div class="modal-actions">

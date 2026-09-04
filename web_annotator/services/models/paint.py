@@ -34,10 +34,22 @@ class PaintImageItem(ImageThumbItem):
     has_mask: bool
 
 
+class TemplateAnchor(BaseModel):
+    """模板锚点: 图案上的相对位置(0-1 分数坐标), 随模板持久化, 放置时随实例载入.
+
+    Callers:
+        - ``services/models/paint.py:TemplateItem``: 模板项的锚点列表.
+    """
+
+    x: float = Field(ge=0, le=1)
+    y: float = Field(ge=0, le=1)
+
+
 class TemplateItem(BaseModel):
     """单个蒙板模板项.
 
-    图案以 base64 PNG 编码无损传输(保留捕获时区域内各像素 alpha), 服务端按数据集持久化.
+    图案以 base64 PNG 编码无损传输(保留捕获时区域内各像素 alpha), 服务端按数据集持久化;
+    ``anchors`` 为图案上的自定义锚点(≤2 个), 供放置后拖动对齐.
 
     Callers:
         - ``routes/alpha_paint.py:get_templates``
@@ -48,6 +60,7 @@ class TemplateItem(BaseModel):
     w: int = Field(ge=1)
     h: int = Field(ge=1)
     image_b64: str
+    anchors: list[TemplateAnchor] = Field(default_factory=list, max_length=2)
 
 
 class TemplatesPayload(BaseModel):
