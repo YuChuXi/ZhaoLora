@@ -234,7 +234,12 @@ class StateManager:
         return restored
 
     def _move_sidecar_files(self, parent: Path, rel_path: str, dest_root: Path) -> None:
-        """移动与图片同 stem、非图像后缀的旁路文件.
+        """移动与图片同 stem 的旁路文件及来源元数据.
+
+        旁路文件指同目录下同 stem、非图像后缀的文件 (``.txt`` 标签、
+        ``.npz`` 蒙板嵌入等); 来源元数据指数据源注册表判定的
+        ``.{来源}_meta/{pid}.json``。两者随图片同进同出回收站, 保证
+        永久删除时不残留孤儿元数据、恢复时元数据完整。
 
         Args:
             parent (Path): 源文件所在目录.
@@ -263,3 +268,33 @@ class StateManager:
             sib_dst = resolve_under(dest_root, sib_rel)
             sib_dst.parent.mkdir(parents=True, exist_ok=True)
             shutil.move(str(sib), str(sib_dst))
+        self._move_source_meta(parent, stem, rel_parent, dest_root)
+
+    def _move_source_meta(self, parent: Path, stem: str, rel_parent: str, dest_root: Path) -> None:
+        """移动图片对应的来源元数据文件 (``.{来源}_meta/{pid}.json``).
+
+        Args:
+            parent (Path): 源图片所在目录.
+            stem (str): 图片文件名 stem, 经来源注册表拆出 pid.
+            rel_parent (str): 图片相对父目录 ("" 表示数据集根).
+            dest_root (Path): 目标根目录(数据集根或回收站根).
+
+        Returns:
+            None
+
+        Callers:
+            - ``services/state/annotator.py:StateManager._move_sidecar_files``
+        """
+        from services.online_sources import detect_source
+
+        result = detect_source(stem)
+        if result is None:
+            return
+        src_name, pid = result
+        meta_src = parent / f".{src_name}_meta" / f"{pid}.json"
+        if not meta_src.is_file():
+            return
+        meta_rel = f"{rel_parent}/.{src_name}_meta/{pid}.json" if rel_parent not in ("", ".") else f".{src_name}_meta/{pid}.json"
+        meta_dst = resolve_under(dest_root, meta_rel)
+        meta_dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(meta_src), str(meta_dst))

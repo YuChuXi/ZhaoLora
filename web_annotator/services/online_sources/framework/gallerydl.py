@@ -441,12 +441,6 @@ class GalleryDLSource(SourceClient):
             caption = (caption + (" " + self.name) if caption else self.name).strip()
 
         if not overwrite and existing is not None and (tags_path.is_file() or not self.writes_caption):
-            # 补写 meta, 修复历史下载遗留的缺失
-            self._write_meta(
-                out_dir, pid,
-                BooruPost(source=self.name, id=pid, file_url=post.file_url or "", tags=caption,
-                          posted_at=post.posted_at),
-            )
             return {
                 "skipped": True,
                 "path": str(existing),

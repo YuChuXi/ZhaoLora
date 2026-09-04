@@ -245,7 +245,6 @@ class DanbooruSource(SourceClient):
             raise ValueError(f"不支持的类型: .{post.file_ext}")
 
         if not overwrite and existing is not None and tags_path.is_file():
-            self._write_meta(out_dir, pid, post)
             return {"skipped": True, "path": str(existing), "stem": stem, "id": pid, "tags_path": str(tags_path)}
 
         data = await _fetch_image_bytes(post)

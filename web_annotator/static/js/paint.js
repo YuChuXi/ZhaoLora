@@ -25,7 +25,7 @@
   var _templates = [];         // 模板槽位(≤10): {data:Uint8ClampedArray, w, h}
   var _captureMode = false;    // 框选当前图区域保存模板进行中
   var _captureStart = null;    // 框选起点(orig 坐标)
-  var _floating = null;        // 未确认模板实例: {rx,ry,rw,rh,data,w,h}
+  var _floating = null;        // 未确认模板实例: {rx,ry,rw,rh,data,w,h,anchors} (anchors 为 0-1 分数坐标, ≤2 个)
   var _floatDrag = null;       // 模板拖动状态: {mode, sx, sy, rx, ry, rw, rh}
   var _floatingDrawn = { ref: null, w: 0, h: 0 }; // 已绘制的图案 shape 尺寸, 避免拖动时重复重绘
 
@@ -440,9 +440,14 @@
       document.removeEventListener('mouseup', _docMouseUp);
     }
     _rectStart = null; _lineMode = false; _lineStart = null; _mouseOrig = null;
-    // 切图终断模板实例/框选状态, 防止未确认模板或选区残留到新图
-    _floating = null; _floatDrag = null; _captureMode = false; _captureStart = null;
-    if (_floatDrag) { document.removeEventListener('pointermove', _floatMove); document.removeEventListener('pointerup', _floatUp); _floatDrag = null; }
+    // 切图终断模板实例/框选状态, 防止未确认模板或选区残留到新图;
+    // 拖动进行中须先卸载 doc 级跟踪再清状态, 顺序不可颠倒
+    if (_floatDrag) {
+      document.removeEventListener('pointermove', _floatMove);
+      document.removeEventListener('pointerup', _floatUp);
+      _floatDrag = null;
+    }
+    _floating = null; _captureMode = false; _captureStart = null;
     _templateInst.style.display = 'none'; _captureRectEl.style.display = 'none';
     var img = _images[idx];
     var token = ++_loadToken;
@@ -833,21 +838,28 @@
   }
 
   /**
-   * 将指定槽位模板作为未确认实例放到画布中心(红色矩形, 可拖动/缩放). 引用: keydown 1-9/0.
+   * 丢弃未确认模板实例并隐藏容器: 应用 / 取消 / 换放置共用的唯一清理入口.
+   * Callers: placeTemplate/_applyTemplate/keydown Esc.
+   */
+  function _discardFloating() {
+    _floating = null; _floatDrag = null;
+    _templateInst.style.display = 'none';
+  }
+
+  /**
+   * 将指定槽位模板作为未确认实例放到画布中心(红色矩形, 可拖动/缩放), 自定义锚点清空.
+   * 引用: keydown 1-9/0.
    * @param {number} slot 模板槽位索引 0-9.
    */
   function placeTemplate(slot) {
     var t = _templates[slot];
     if (!t || !_cur || !_cur.alpha) return;
-    if (_floatDrag) {
-      document.removeEventListener('pointermove', _floatMove);
-      document.removeEventListener('pointerup', _floatUp);
-      _floatDrag = null;
-    }
+    _discardFloating();
     var rw = Math.min(t.w, _cur.w), rh = Math.min(t.h, _cur.h);
     _floating = { rx: Math.round((_cur.w - rw) / 2), ry: Math.round((_cur.h - rh) / 2), rw: rw, rh: rh,
-      data: t.data, w: t.w, h: t.h };
+      data: t.data, w: t.w, h: t.h, anchors: [] };
     _updateFloatingHTML();
+    _renderFloatingAnchors();
   }
 
   /**
@@ -901,16 +913,64 @@
     cv.getContext('2d').putImageData(id, 0, 0);
   }
 
-  /** 未确认模板按下: 命中缩放柄(data-resize)则缩放, 否则平移; 记录起点并挂 doc 级跟踪. Callers: template-inst pointerdown. */
+  /**
+   * 依据 _floating.anchors 重建自定义锚点标记(≤2 个). 锚点为容器内百分比定位的圆点,
+   * 实例平移/缩放时随容器自动保持图案上的相对位置, 仅在增删后调用.
+   * Callers: placeTemplate/_toggleAnchor.
+   */
+  function _renderFloatingAnchors() {
+    var olds = _templateInst.querySelectorAll('.tmpl-anchor');
+    for (var i = 0; i < olds.length; i++) olds[i].remove();
+    if (!_floating) return;
+    for (var j = 0; j < _floating.anchors.length; j++) {
+      var a = _floating.anchors[j];
+      var el = document.createElement('span');
+      el.className = 'tmpl-anchor';
+      el.setAttribute('data-anchor', String(j));
+      el.title = '自定义锚点 ' + (j + 1) + ': 拖动移动蒙板, Alt+点击移除';
+      el.style.left = 'calc(' + (a.x * 100) + '% - 6px)';
+      el.style.top = 'calc(' + (a.y * 100) + '% - 6px)';
+      _templateInst.appendChild(el);
+    }
+  }
+
+  /**
+   * Alt+点击增删自定义锚点: 点击落在既有锚点 10px 命中半径内则移除该锚点,
+   * 否则在点击处添加(上限 2). 锚点以 0-1 分数坐标记录, 拖动锚点即整体移动实例.
+   * Callers: _floatPointerDown(按住 Alt 点击实例).
+   * @param {PointerEvent} e 指针事件(clientX/clientY 为视口坐标).
+   */
+  function _toggleAnchor(e) {
+    var rect = canvas.getBoundingClientRect();
+    var sx = rect.width / _cur.w, sy = rect.height / _cur.h;
+    var fx = ((e.clientX - rect.left) / sx - _floating.rx) / _floating.rw;
+    var fy = ((e.clientY - rect.top) / sy - _floating.ry) / _floating.rh;
+    for (var i = 0; i < _floating.anchors.length; i++) {
+      var a = _floating.anchors[i];
+      if (Math.hypot((a.x - fx) * _floating.rw * sx, (a.y - fy) * _floating.rh * sy) <= 10) {
+        _floating.anchors.splice(i, 1);
+        _renderFloatingAnchors();
+        return;
+      }
+    }
+    if (_floating.anchors.length >= 2) { toast('自定义锚点已满 (最多 2 个)'); return; }
+    _floating.anchors.push({ x: fx, y: fy });
+    _renderFloatingAnchors();
+  }
+
   /** 缩放手柄映射: 每个手柄对应一个可动的水平边(l=左/r=右/null=不动)与垂直边(t=上/b=下/null=不动). 引用: _floatPointerDown. */
   var _RESIZE_HV = { nw: { h: 'l', v: 't' }, n: { h: null, v: 't' }, ne: { h: 'r', v: 't' },
     w: { h: 'l', v: null }, e: { h: 'r', v: null }, sw: { h: 'l', v: 'b' }, s: { h: null, v: 'b' }, se: { h: 'r', v: 'b' } };
 
+  /** 未确认模板按下: 按住 Alt 点击为增删自定义锚点; 命中缩放柄(data-resize)则缩放,
+   *  命中锚点(data-anchor)或实例主体则平移(拖锚点即拖实例); 记录起点并挂 doc 级跟踪.
+   *  Callers: template-inst pointerdown. */
   function _floatPointerDown(e) {
     e.preventDefault(); e.stopPropagation();
     if (!_floating || !_cur) return;
-    var hv = null;
     var t = e.target;
+    if (e.altKey && t && t.getAttribute) { _toggleAnchor(e); return; }
+    var hv = null;
     if (t && t.getAttribute) {
       var rk = t.getAttribute('data-resize');
       if (rk && _RESIZE_HV[rk]) hv = _RESIZE_HV[rk];
@@ -922,7 +982,9 @@
     document.addEventListener('pointerup', _floatUp);
   }
 
-  /** 未确认模板拖动中: move 平移(可超出画布) / resize 按手柄锚定对边缩放(按住 Shift 等比例), 均在 orig 域运算避免缩放的像素累积误差. Callers: document pointermove. */
+  /** 未确认模板拖动中: move 平移(可超出画布) / resize 按手柄锚定对边缩放,
+   *  按住 Shift 改以实例中心为锚点缩放(角柄等比例, 边柄沿自身轴对称伸缩),
+   *  均在 orig 域运算避免缩放的像素累积误差. Callers: document pointermove. */
   function _floatMove(e) {
     var d = _floatDrag;
     if (!d || !_cur) return;
@@ -948,7 +1010,8 @@
   }
 
   /**
-   * Shift 等比例缩放: 以对边(或对边中心)为锚点, 按指针距锚点的主导轴距离推算宽高比不变的尺寸.
+   * Shift 中心锚点缩放: 以拖拽起始几何的中心为锚点, 被拖边跟随指针、对边镜像跟随,
+   * 尺寸取指针到中心距离的两倍; 角柄按主导轴取等比例宽高, 边柄仅沿自身轴伸缩.
    * 引用: _floatMove.
    * @param {object} d 拖拽状态(d.h/d.v 为该手柄可动水平/垂直边).
    * @param {number} ox orig 域水平位移.
@@ -957,23 +1020,20 @@
    */
   function _floatShiftResize(d, ox, oy) {
     var ratio = d.w0 / d.h0;
-    var right = d.x0 + d.w0, bottom = d.y0 + d.h0;
-    var ax, ay, mx, my;
-    if (d.h === 'l') { ax = right; mx = d.x0 + ox; }
-    else if (d.h === 'r') { ax = d.x0; mx = right + ox; }
-    else { ax = d.x0 + d.w0 / 2; mx = null; }
-    if (d.v === 't') { ay = bottom; my = d.y0 + oy; }
-    else if (d.v === 'b') { ay = d.y0; my = bottom + oy; }
-    else { ay = d.y0 + d.h0 / 2; my = null; }
+    var cx = d.x0 + d.w0 / 2, cy = d.y0 + d.h0 / 2;
+    var mx = null, my = null;
+    if (d.h === 'l') mx = d.x0 + ox;
+    else if (d.h === 'r') mx = d.x0 + d.w0 + ox;
+    if (d.v === 't') my = d.y0 + oy;
+    else if (d.v === 'b') my = d.y0 + d.h0 + oy;
     var w, h;
     if (mx !== null && my !== null) {
-      if (Math.abs(mx - ax) * ratio > Math.abs(my - ay)) { w = Math.max(4, Math.abs(mx - ax)); h = w / ratio; }
-      else { h = Math.max(4, Math.abs(my - ay)); w = h * ratio; }
-    } else if (my !== null) { h = Math.max(4, Math.abs(my - ay)); w = h * ratio; }
-    else { w = Math.max(4, Math.abs(mx - ax)); h = w / ratio; }
-    var rx = d.h === 'l' ? right - w : d.h === 'r' ? d.x0 : d.x0 + d.w0 / 2 - w / 2;
-    var ry = d.v === 't' ? bottom - h : d.v === 'b' ? d.y0 : d.y0 + d.h0 / 2 - h / 2;
-    return { rx: rx, ry: ry, rw: w, rh: h };
+      var dx = Math.abs(mx - cx), dy = Math.abs(my - cy);
+      if (dx * ratio > dy) { w = Math.max(4, 2 * dx); h = w / ratio; }
+      else { h = Math.max(4, 2 * dy); w = h * ratio; }
+    } else if (my !== null) { h = Math.max(4, 2 * Math.abs(my - cy)); w = d.w0; }
+    else { w = Math.max(4, 2 * Math.abs(mx - cx)); h = d.h0; }
+    return { rx: cx - w / 2, ry: cy - h / 2, rw: w, rh: h };
   }
 
   /** 未确认模板拖动结束: 卸载 doc 级跟踪. Callers: document pointerup. */
@@ -1290,8 +1350,14 @@
 
   document.addEventListener('keydown', function(e) {
     if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || e.target.tagName === 'TEXTAREA') return;
-    // Esc 取消模板框选
-    if (e.key === 'Escape' && _captureMode) { cancelTemplateCapture(); toast('已取消框选'); return; }
+    // Esc: 先取消模板框选, 再取消未确认模板实例
+    if (e.key === 'Escape') {
+      if (_captureMode) { cancelTemplateCapture(); toast('已取消框选'); }
+      else if (_floating) { _discardFloating(); toast('已取消模板'); }
+      return;
+    }
+    // 空格: 应用未确认模板实例(与双击等效); 阻止页面滚动与焦点按钮误触发
+    if (e.key === ' ') { e.preventDefault(); _applyTemplate(); return; }
     // 快捷键 1-9 / 0 放置对应槽位模板到画布
     var slot = null;
     if (e.key.length === 1 && e.key >= '1' && e.key <= '9') slot = parseInt(e.key, 10) - 1;

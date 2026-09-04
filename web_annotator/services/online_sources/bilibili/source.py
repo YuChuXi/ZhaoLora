@@ -320,7 +320,6 @@ class BilibiliSource(SourceClient):
         existing = find_downloaded(out_dir, post.filename)
 
         if not overwrite and existing is not None and (tags_path.is_file() or not self.writes_caption):
-            self._write_meta(out_dir, pid, post)  # 补写 meta, 修复历史下载遗留的缺失
             return {
                 "skipped": True,
                 "path": str(existing),

@@ -355,7 +355,6 @@ class MihuashiSource(SourceClient):
         tags_path = out_dir / f"{stem}.txt"
         existing = find_downloaded(out_dir, post.filename)
         if not overwrite and existing is not None:
-            self._write_meta(out_dir, pid, post)  # 补写 meta, 修复历史下载遗留的缺失
             return {
                 "skipped": True,
                 "path": str(existing),
