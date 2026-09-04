@@ -319,11 +319,8 @@ class BilibiliSource(SourceClient):
         self._clean_old_files(out_dir, pid, image_path)
         if self.writes_caption:
             tags_path.write_text(caption + "\n", encoding="utf-8")
-        self._write_meta(
-            out_dir,
-            pid,
-            BooruPost(source=self.name, id=pid, file_url=url, tags=caption),
-        )
+        # 保留搜索阶段携带的 posted_at / 宽高等字段, 仅以标签说明刷新 tags
+        self._write_meta(out_dir, pid, post.model_copy(update={"tags": caption}))
         return {
             "path": str(image_path),
             "stem": stem,
