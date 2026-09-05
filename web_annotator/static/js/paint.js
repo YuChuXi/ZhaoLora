@@ -1452,6 +1452,259 @@
     else if (e.key === 'x' || e.key === 'X') { goSkip(); }
   });
 
+  // ── 蒙板表达式编辑辅助 ──────────────────────────────────────────
+  /**
+   * 词法切分蒙板表达式. 全角引号先归一为 ASCII 引号(与后端 mask_expression._normalize
+   * 一致); 字符串("...")为原子 token 且剥离引号, 其余切分为二元/比较运算符、括号、
+   * 逗号、分号(含全角 ；)与裸词/数字. 空白丢弃; 未闭合引号时剩余内容并入字符串 token.
+   * Callers:
+   *   - paint.js:expandSemicolons
+   *   - paint.js:formatExpression
+   */
+  var tokenizeExpression = function (text) {
+    var src = text.replace(/\u201c/g, '"').replace(/\u201d/g, '"');
+    var toks = [];
+    var i = 0;
+    while (i < src.length) {
+      var ch = src[i];
+      if (ch === ' ' || ch === '\t' || ch === '\n' || ch === '\r') { i++; continue; }
+      if (ch === '"') {
+        var end = src.indexOf('"', i + 1);
+        if (end < 0) { toks.push({ k: 'str', v: src.slice(i + 1) }); break; }
+        toks.push({ k: 'str', v: src.slice(i + 1, end) });
+        i = end + 1;
+        continue;
+      }
+      var two = src.slice(i, i + 2);
+      if (two === '>=' || two === '<=' || two === '==' || two === '!=') {
+        toks.push({ k: 'op', v: two });
+        i += 2;
+        continue;
+      }
+      if ('+-*<>'.indexOf(ch) >= 0) { toks.push({ k: 'op', v: ch }); i++; continue; }
+      if (ch === '(' || ch === ')' || ch === ',') { toks.push({ k: 'pun', v: ch }); i++; continue; }
+      if (ch === ';' || ch === '\uff1b') { toks.push({ k: 'semi', v: ';' }); i++; continue; }
+      var j = i;
+      while (j < src.length && ' \t\n\r"+-*<>(),;\uff1b'.indexOf(src[j]) < 0) j++;
+      toks.push({ k: 'atom', v: src.slice(i, j) });
+      i = j;
+    }
+    return toks;
+  };
+
+  /**
+   * 将 token 列表序列化为表达式文本: 字符串加回引号, 逗号后补一个空格, 其余紧连.
+   * Callers:
+   *   - paint.js:expandSemicolons
+   */
+  var serializeTokens = function (toks) {
+    var out = '';
+    for (var i = 0; i < toks.length; i++) {
+      var t = toks[i];
+      out += t.k === 'str' ? '"' + t.v + '"' : (t.k === 'pun' && t.v === ',' ? ', ' : t.v);
+    }
+    return out;
+  };
+
+  /**
+   * 将表达式中的分号列表展开为字符串相加, 三种形态均识别:
+   *   1. 引号内分号: "角色主体;耳朵" → ("角色主体"+"耳朵");
+   *      紧邻左括号时省略包裹括号(该括号已提供分组, 如 blur("a;b") → blur("a"+"b"));
+   *   2. 既有括号内的分号: ("白色背景";"对话气泡") → ("白色背景"+"对话气泡"),
+   *      仅替换为 + 不重复包裹; 相邻裸词概念自动加引号(当前蒙板与数值除外);
+   *   3. 顶层分号: 白色背景;对话气泡 → ("白色背景"+"对话气泡"), 整体包裹一层括号.
+   * 空片段丢弃; 全角分号 ；与 ASCII 分号同样识别; 无分号时返回 null.
+   *
+   * Args:
+   *   text (string): 原始表达式.
+   *
+   * Returns:
+   *   string | null: 展开后的表达式; 无分号时为 null.
+   *
+   * Callers:
+   *   - paint.js:sam3-expand 点击处理
+   */
+  var expandSemicolons = function (text) {
+    var toks = tokenizeExpression(text);
+    var hasSemi = toks.some(function (t) {
+      return t.k === 'semi' || (t.k === 'str' && /[;；]/.test(t.v));
+    });
+    if (!hasSemi) return null;
+    // 第一遍: 引号内分号 → 相加组
+    var pass1 = [];
+    for (var i = 0; i < toks.length; i++) {
+      var t = toks[i];
+      if (t.k !== 'str' || !/[;；]/.test(t.v)) { pass1.push(t); continue; }
+      var parts = t.v.split(/[;；]/).map(function (s) { return s.trim(); })
+                     .filter(function (s) { return s; });
+      if (parts.length === 1) { pass1.push({ k: 'str', v: parts[0] }); continue; }
+      if (parts.length >= 2) {
+        var prev = pass1[pass1.length - 1];
+        var wrapped = !(prev && prev.k === 'pun' && prev.v === '(');
+        if (wrapped) pass1.push({ k: 'pun', v: '(' });
+        pass1.push({ k: 'str', v: parts[0] });
+        for (var p = 1; p < parts.length; p++) {
+          pass1.push({ k: 'op', v: '+' });
+          pass1.push({ k: 'str', v: parts[p] });
+        }
+        if (wrapped) pass1.push({ k: 'pun', v: ')' });
+        continue;
+      }
+      pass1.push(t); // 纯分号空串: 原样保留
+    }
+    if (!pass1.some(function (t) { return t.k === 'atom' || t.k === 'str'; })) return text;
+    // 第二遍: 与分号相邻的裸词概念加引号(当前蒙板与数值除外), 使 SAM3 收到概念提示
+    for (var s = 0; s < pass1.length; s++) {
+      if (pass1[s].k !== 'semi') continue;
+      for (var d = s - 1; d <= s + 1; d += 2) {
+        var n = pass1[d];
+        if (n && n.k === 'atom' && n.v !== '当前蒙板' && !/^-?\d+(\.\d+)?$/.test(n.v)) {
+          pass1[d] = { k: 'str', v: n.v };
+        }
+      }
+    }
+    // 第三遍: 按分号切分为片段, 序列化后以 + 连接, 空片段丢弃;
+    // 存在括号外的顶层分号时整体包裹一层括号
+    var depth = 0;
+    var topLevelSemi = false;
+    var runs = [[]];
+    for (var i2 = 0; i2 < pass1.length; i2++) {
+      var t2 = pass1[i2];
+      if (t2.k === 'semi') {
+        if (depth === 0) topLevelSemi = true;
+        runs.push([]);
+        continue;
+      }
+      if (t2.k === 'pun' && t2.v === '(') depth++;
+      else if (t2.k === 'pun' && t2.v === ')') depth--;
+      runs[runs.length - 1].push(t2);
+    }
+    var items = runs.map(function (r) { return serializeTokens(r).trim(); })
+                    .filter(function (seg) { return seg; });
+    if (!items.length) return text;
+    var out = items.join('+');
+    return topLevelSemi ? '(' + out + ')' : out;
+  };
+
+  /**
+   * 按括号缩进重排表达式:
+   *   - 分组括号: 左括号留在当前行尾(如 "a + ("), 内容换行并按嵌套深度缩进
+   *     (每层 4 空格), 右括号独立成行, 其后内容紧随其后(如 ") * xx.xx");
+   *   - 函数调用括号(紧随裸词, 如 blur(...)/min(...)): 左右括号均不独立成行;
+   *   - 二元/比较运算符尾随在左操作数之后(如 "" +), 右操作数在括号内换行起行;
+   *     顶层(无括号)不换行, 如 blur("角色主体") > 0.4 保持单行;
+   *   - 字符串内容原样保留, 一元符号紧贴操作数, 运算符两侧留一个空格.
+   * 重排仅调整空白, 语义不变; 空表达式返回 null.
+   *
+   * Args:
+   *   text (string): 原始表达式(可含任意空白排版).
+   *
+   * Returns:
+   *   string | null: 重排后的多行表达式; 空表达式为 null.
+   *
+   * Callers:
+   *   - paint.js:sam3-format 点击处理
+   */
+  var formatExpression = function (text) {
+    var toks = tokenizeExpression(text);
+    if (!toks.length) return null;
+    var INDENT = '    ';
+    var lines = [];
+    var line = '';
+    var depth = 0;
+    var calls = [];      // 括号栈: true 为函数调用括号(不独立成行), false 为分组括号
+    var prev = null;
+    var afterOp = false; // 刚输出二元运算符: 括号内右操作数换行起行
+    var pushLine = function () {
+      var trimmed = line.replace(/\s+$/, '');
+      if (trimmed) lines.push(trimmed);
+      line = '';
+    };
+    var newLine = function () { pushLine(); line = INDENT.repeat(depth); };
+    for (var i = 0; i < toks.length; i++) {
+      var t = toks[i];
+      if (t.k === 'pun' && t.v === '(') {
+        line += '(';
+        depth++;
+        calls.push(prev !== null && prev.k === 'atom');
+        if (!calls[calls.length - 1]) newLine();
+        prev = t;
+        afterOp = false;
+        continue;
+      }
+      if (t.k === 'pun' && t.v === ')') {
+        depth--;
+        var isCall = calls.pop();
+        if (!isCall) newLine();
+        line += ')';
+        prev = t;
+        afterOp = false;
+        continue;
+      }
+      if (t.k === 'pun' && t.v === ',') {
+        line += ', ';
+        prev = t;
+        afterOp = false;
+        continue;
+      }
+      var isBinary = t.k === 'op' && prev !== null &&
+        !(prev.k === 'op' || (prev.k === 'pun' && (prev.v === '(' || prev.v === ',')));
+      if (isBinary) {
+        line += ' ' + t.v + ' ';
+        prev = t;
+        afterOp = true;
+        continue;
+      }
+      // 操作数 / 字符串 / 一元符号
+      if (afterOp && depth > 0) newLine();
+      line += t.k === 'str' ? '"' + t.v + '"' : t.v;
+      prev = t;
+      afterOp = false;
+    }
+    pushLine();
+    return lines.join('\n');
+  };
+
+  /**
+   * 折叠引号外空白(含换行与缩进)为单空格并去首尾空白, 使多行排版可作为单行
+   * 表达式提交后端 ast.parse(括号外换行会语法错误); 引号内内容保持原样.
+   * 全角引号与 ASCII 引号同样界定字符串, 与后端 _normalize 语义一致.
+   *
+   * Args:
+   *   text (string): 输入框中的表达式(可能多行).
+   *
+   * Returns:
+   *   string: 折叠后的单行表达式(可能为空串).
+   *
+   * Callers:
+   *   - paint.js:birefnet-start 点击处理(SAM3 分支)
+   */
+  var flattenExpression = function (text) {
+    var out = '';
+    var inStr = false;
+    var spaced = false;
+    for (var i = 0; i < text.length; i++) {
+      var ch = text[i];
+      if (inStr) {
+        out += ch;
+        if (ch === '"' || ch === '\u201c' || ch === '\u201d') inStr = false;
+        continue;
+      }
+      if (ch === '"' || ch === '\u201c' || ch === '\u201d') {
+        inStr = true;
+        out += ch;
+        continue;
+      }
+      if (ch === ' ' || ch === '\t' || ch === '\n' || ch === '\r') {
+        if (out && !spaced) { out += ' '; spaced = true; }
+        continue;
+      }
+      out += ch;
+      spaced = false;
+    }
+    return out.trim();
+  };
+
   // 蒙版生成 (BiRefNet / SAM3)
   var birefnetBtn = document.getElementById('btn-birefnet-mask');
   var birefnetDlg = document.getElementById('birefnet-dlg');
@@ -1459,6 +1712,18 @@
     var maskModeEl = document.getElementById('mask-mode');
     var birefnetParamsEl = document.getElementById('birefnet-params');
     var sam3ParamsEl = document.getElementById('sam3-params');
+    var sam3ExprEl = document.getElementById('sam3-expression');
+    // 表达式编辑按钮: 分号转相加 / 按缩进格式化, 结果直接回写输入框
+    document.getElementById('sam3-expand').addEventListener('click', function () {
+      var expanded = expandSemicolons(sam3ExprEl.value);
+      if (expanded === null) { toast('表达式中没有分号'); return; }
+      sam3ExprEl.value = expanded;
+    });
+    document.getElementById('sam3-format').addEventListener('click', function () {
+      var formatted = formatExpression(sam3ExprEl.value);
+      if (formatted === null) { toast('表达式为空'); return; }
+      sam3ExprEl.value = formatted;
+    });
     // 按生成方式切换参数区: BiRefNet 显示扩展/收缩/值域, SAM3 显示蒙板表达式
     var syncMaskMode = function () {
       var isSam3 = maskModeEl.value === 'sam3';
@@ -1482,7 +1747,7 @@
       var skipExisting = batch ? document.getElementById('birefnet-skip').checked : false;
       var body = { dir: API.getDir(), mode: mode, skip_existing: skipExisting };
       if (mode === 'sam3') {
-        var expression = document.getElementById('sam3-expression').value.trim();
+        var expression = flattenExpression(sam3ExprEl.value);
         if (!expression) { toast('请输入蒙板表达式'); return; }
         body.expression = expression;
       } else {

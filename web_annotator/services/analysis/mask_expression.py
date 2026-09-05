@@ -38,8 +38,9 @@ SAM 概念分割产生的生硬边缘; 掩码参数可为任意子表达式.
 --------
 解析复用标准库 ``ast`` (Python 表达式语法子集, 自动获得标准运算优先级),
 仅接受受支持的节点 (``Constant`` / ``Name`` / ``UnaryOp`` / ``BinOp`` /
-``Compare`` / ``Call``), 由自定义求值器 ``evaluate`` 实现逐像素掩码语义,
-不执行任意代码.
+``Compare`` / ``Call``), 不执行任意代码. ``parse`` 解析后经 ``validate``
+静态校验节点/运算符/函数形态 (不依赖掩码数据, 表达式错误在请求阶段即可向
+前端抛出), ``evaluate`` 只负责依赖掩码数据的逐像素求值.
 
 Callers:
     - ``routes/birefnet.py:mask_generate``
@@ -49,6 +50,7 @@ Callers:
 from __future__ import annotations
 
 import ast
+from typing import cast
 
 import cv2
 import numpy as np
@@ -305,10 +307,11 @@ def _normalize(expression: str) -> str:
 
 
 def parse(expression: str) -> ast.AST:
-    """解析蒙板表达式为 AST (基于标准库 ``ast``).
+    """解析蒙板表达式为 AST (基于标准库 ``ast``) 并静态校验.
 
     复用 Python 表达式语法, 自动获得标准运算优先级; 引号支持 ASCII ``"`` 与
-    中文全角 ``""``.
+    中文全角 ``""``. 解析后经 ``validate`` 校验节点/运算符/函数形态, 使表达式
+    错误在请求阶段即可向前端抛出, 而非延后到任务工作线程.
 
     Args:
         expression: 原始表达式字符串.
@@ -317,7 +320,7 @@ def parse(expression: str) -> ast.AST:
         ast.AST: Python 表达式 AST (仅含受支持节点).
 
     Raises:
-        ExpressionError: 表达式为空或语法错误.
+        ExpressionError: 表达式为空、语法错误或含不受支持的静态形态.
 
     Callers:
         - ``routes/birefnet.py:mask_generate``
@@ -327,9 +330,70 @@ def parse(expression: str) -> ast.AST:
     if not text:
         raise ExpressionError("表达式为空")
     try:
-        return ast.parse(_normalize(text), mode="eval").body
+        tree = ast.parse(_normalize(text), mode="eval").body
     except SyntaxError as e:
         raise ExpressionError(f"语法错误: {e.msg}")
+    validate(tree)
+    return tree
+
+
+def validate(node: ast.AST) -> None:
+    """静态校验表达式 AST 仅含受支持的节点/运算符/函数及正确参数个数.
+
+    全部检查不依赖掩码数据, 在 ``parse`` 内即可完成; 校验通过后 ``evaluate``
+    不再重复这些检查, 只负责依赖掩码数据的逐像素求值.
+
+    Args:
+        node: ``parse`` 返回的表达式 AST.
+
+    Raises:
+        ExpressionError: 含不受支持的节点/运算符/函数/参数形态.
+
+    Callers:
+        - ``services/analysis/mask_expression.py:parse``
+    """
+    if isinstance(node, ast.Constant):
+        if isinstance(node.value, bool):
+            raise ExpressionError("不支持布尔字面量")
+        if not isinstance(node.value, (int, float, str)):
+            raise ExpressionError("不支持的常量类型")
+        return
+    if isinstance(node, ast.Name):
+        return
+    if isinstance(node, ast.UnaryOp):
+        if not isinstance(node.op, (ast.USub, ast.UAdd)):
+            raise ExpressionError("不支持的一元运算符")
+        validate(node.operand)
+        return
+    if isinstance(node, ast.BinOp):
+        if type(node.op) not in _BIN_OPS:
+            raise ExpressionError(f"不支持的运算符: {type(node.op).__name__}")
+        validate(node.left)
+        validate(node.right)
+        return
+    if isinstance(node, ast.Compare):
+        if len(node.ops) != 1:
+            raise ExpressionError("不支持链式比较")
+        if type(node.ops[0]) not in _CMP_OPS:
+            raise ExpressionError("不支持的比较运算符")
+        validate(node.left)
+        validate(node.comparators[0])
+        return
+    if isinstance(node, ast.Call):
+        if not isinstance(node.func, ast.Name) or node.func.id not in _FUNC_OPS:
+            raise ExpressionError("只支持 min / max / blur 函数")
+        if len(node.args) != 2:
+            raise ExpressionError(f"{node.func.id} 需要两个参数")
+        radius = node.args[1]
+        if node.func.id == "blur" and (
+            not isinstance(radius, ast.Constant)
+            or not isinstance(radius.value, (int, float))
+        ):
+            raise ExpressionError("blur 的半径必须是数值")
+        for arg in node.args:
+            validate(arg)
+        return
+    raise ExpressionError(f"不支持的表达式节点: {type(node).__name__}")
 
 
 def extract_concepts(node: ast.AST) -> list[str]:
@@ -416,14 +480,15 @@ def evaluate(
     concepts: dict[str, np.ndarray | None],
     default: np.ndarray,
 ) -> np.ndarray:
-    """对 AST 求值, 得到 0-1 域浮点掩码 (最终转换见 ``to_uint8``).
+    """对已通过 ``validate`` 的 AST 求值, 得到 0-1 域浮点掩码.
 
     全程在 0-1 域计算: 当前蒙板与概念掩码求值前除以 255 归一化; 数值字面量
     为任意实数直接参与 (一元负号取负, 越界由 ``to_uint8`` 收敛). 缺失的概念
-    (值为 ``None``) 视为全零掩码. 结果尺寸与 ``default`` 一致.
+    (值为 ``None``) 视为全零掩码. 结果尺寸与 ``default`` 一致. 节点/运算符/
+    参数形态等静态约束由 ``parse`` → ``validate`` 保证, 此处不再重复检查.
 
     Args:
-        node: ``parse`` 返回的表达式 AST.
+        node: ``parse`` 返回且已校验的表达式 AST.
         concepts: 概念名 → 二值掩码 (H, W) 或 ``None``(未命中).
         default: 当前蒙板 (H, W), 0-255 uint8, 作为 ``当前蒙板`` 操作数的值.
 
@@ -431,18 +496,16 @@ def evaluate(
         np.ndarray: 中间掩码 (H, W), float64, 值域通常钳位到 [0, 1].
 
     Raises:
-        ExpressionError: 不支持的节点/运算符/链式比较/掩码尺寸不一致.
+        ExpressionError: 掩码尺寸不一致.
 
     Callers:
         - ``services/analysis/sam3.py:run_sam3_expression_mask``
     """
     if isinstance(node, ast.Constant):
-        if isinstance(node.value, bool):
-            raise ExpressionError("不支持布尔字面量")
-        if isinstance(node.value, (int, float)):
-            return np.full(default.shape, float(node.value), dtype=np.float64)
         if isinstance(node.value, str):
             return _concept_mask(concepts, node.value, default)
+        if isinstance(node.value, (int, float)):
+            return np.full(default.shape, float(node.value), dtype=np.float64)
         raise ExpressionError("不支持的常量类型")
     if isinstance(node, ast.Name):
         if node.id == _CURRENT_WORD:
@@ -450,44 +513,34 @@ def evaluate(
         return _concept_mask(concepts, node.id, default)
     if isinstance(node, ast.UnaryOp):
         operand = evaluate(node.operand, concepts, default)
-        if isinstance(node.op, ast.USub):
-            return -operand
-        if isinstance(node.op, ast.UAdd):
-            return operand
-        raise ExpressionError("不支持的一元运算符")
+        return -operand if isinstance(node.op, ast.USub) else operand
     if isinstance(node, ast.BinOp):
-        op = _BIN_OPS.get(type(node.op))
-        if op is None:
-            raise ExpressionError(f"不支持的运算符: {type(node.op).__name__}")
-        left = evaluate(node.left, concepts, default)
-        right = evaluate(node.right, concepts, default)
-        return _apply(op, left, right)
+        return _apply(
+            _BIN_OPS[type(node.op)],
+            evaluate(node.left, concepts, default),
+            evaluate(node.right, concepts, default),
+        )
     if isinstance(node, ast.Compare):
-        if len(node.ops) != 1:
-            raise ExpressionError("不支持链式比较")
-        op = _CMP_OPS.get(type(node.ops[0]))
-        if op is None:
-            raise ExpressionError("不支持的比较运算符")
-        left = evaluate(node.left, concepts, default)
-        right = evaluate(node.comparators[0], concepts, default)
-        return _apply(op, left, right)
+        return _apply(
+            _CMP_OPS[type(node.ops[0])],
+            evaluate(node.left, concepts, default),
+            evaluate(node.comparators[0], concepts, default),
+        )
     if isinstance(node, ast.Call):
-        if not isinstance(node.func, ast.Name) or node.func.id not in _FUNC_OPS:
-            raise ExpressionError("只支持 min / max / blur 函数")
-        if len(node.args) != 2:
-            raise ExpressionError(f"{node.func.id} 需要两个参数")
-        if node.func.id == "blur":
-            # 第二参数为数值字面量 (模糊半径), 第一参数可为任意掩码子表达式
-            radius = node.args[1]
-            if not isinstance(radius, ast.Constant) or not isinstance(
-                radius.value, (int, float)
-            ):
-                raise ExpressionError("blur 的半径必须是数值")
-            return _blur(evaluate(node.args[0], concepts, default), float(radius.value))
-        left = evaluate(node.args[0], concepts, default)
-        right = evaluate(node.args[1], concepts, default)
-        op = _min if node.func.id == "min" else _max
-        return _apply(op, left, right)
+        # 节点/运算符/参数形态已由 validate 静态保证, cast 仅作类型收窄
+        func = cast(ast.Name, node.func)
+        if func.id == "blur":
+            radius = cast(ast.Constant, node.args[1])
+            return _blur(
+                evaluate(node.args[0], concepts, default),
+                float(cast(float, radius.value)),
+            )
+        op = _min if func.id == "min" else _max
+        return _apply(
+            op,
+            evaluate(node.args[0], concepts, default),
+            evaluate(node.args[1], concepts, default),
+        )
     raise ExpressionError(f"不支持的表达式节点: {type(node).__name__}")
 
 

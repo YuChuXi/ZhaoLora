@@ -27,6 +27,8 @@
   .modal-row input[type="checkbox"] { width: auto; margin: 0; }
   .modal-row input[type="radio"] { width: auto; margin: 0; }
   .modal-row select { background: var(--input-bg, #333); color: var(--text, #ddd); border: 1px solid var(--border, #555); border-radius: 4px; padding: 4px 8px; font-size: 13px; }
+  /* 表达式 textarea: 等宽字体保证缩进对齐可读 */
+  .modal-row textarea { background: var(--input-bg, #333); color: var(--text, #ddd); border: 1px solid var(--border, #555); border-radius: 4px; padding: 4px 8px; font-size: 13px; font-family: ui-monospace, Consolas, monospace; line-height: 1.5; resize: vertical; }
   .modal-row #sam3-expression { width: 100%; min-width: 280px; box-sizing: border-box; }
   .modal-actions { display: flex; gap: 8px; justify-content: flex-end; }
   /* 未确认模板实例(红色矩形, 可拖动/缩放) */
@@ -171,11 +173,15 @@
     <div id="sam3-params" hidden>
       <div class="modal-row">
         <label>蒙板表达式<br>
-          <input type="text" id="sam3-expression" value='(当前蒙板-("白色背景"+"对话气泡"))' placeholder='(当前蒙板-("白色背景"+"对话气泡"))' title='表达式在 0-1 域运算: 数值按 0-1 书写(×255 为蒙板值, 支持任意实数, 如 0.5 半透明); 运算符 + 相加 / - 相减 / * 相乘 / min(a,b) / max(a,b) / blur(掩码,半径) 高斯模糊(平滑概念边缘) / 比较 > < >= <= == !=; 优先级 * 高于 + - 高于比较, 括号最高; 当前蒙板 为已保存蒙板, "概念文本" 为 SAM3 分割提示'>
+          <textarea id="sam3-expression" rows="5" spellcheck="false" placeholder='(当前蒙板-("白色背景"+"对话气泡"))' title='表达式在 0-1 域运算: 数值按 0-1 书写(×255 为蒙板值, 支持任意实数, 如 0.5 半透明); 运算符 + 相加 / - 相减 / * 相乘 / min(a,b) / max(a,b) / blur(掩码,半径) 高斯模糊(平滑概念边缘) / 比较 > < >= <= == !=; 优先级 * 高于 + - 高于比较, 括号最高; 当前蒙板 为已保存蒙板, "概念文本" 为 SAM3 分割提示; 支持多行书写, 提交时引号外空白自动折叠'>(当前蒙板-("白色背景"+"对话气泡"))</textarea>
         </label>
         <span style="font-size:12px;color:var(--text-dim);align-self:flex-end;padding-bottom:6px;">数值 ×255</span>
       </div>
-      <p style="margin:0 0 12px;font-size:12px;color:var(--text-dim);">运算符 + - * / min / max / blur / 比较; 优先级 * &gt; + - &gt; 比较。悬停输入框查看完整说明。</p>
+      <div class="modal-row">
+        <button type="button" class="btn" id="sam3-expand" title='分号列表展开为字符串相加: 引号内 "角色主体;耳朵" → ("角色主体"+"耳朵"); 顶层 白色背景;对话气泡 → ("白色背景"+"对话气泡"); 既有括号内 ("白色背景";"对话气泡") 直接替换不重复包裹; 裸词概念自动加引号; 全角分号同样识别'>分号转相加</button>
+        <button type="button" class="btn" id="sam3-format" title='按括号缩进重排表达式: 分组括号左括号留在行尾、内容换行缩进(每层 4 空格)、右括号独立成行; 运算符尾随在左操作数后; 函数调用括号(如 blur(...))不独立成行; 字符串内容保持原样'>缩进格式化</button>
+      </div>
+      <p style="margin:0 0 12px;font-size:12px;color:var(--text-dim);">运算符 + - * / min / max / blur / 比较; 优先级 * &gt; + - &gt; 比较。支持多行, 「分号转相加」展开概念列表, 「缩进格式化」重排排版。</p>
     </div>
     <div class="modal-row">
       <label class="inline"><input type="checkbox" id="birefnet-batch"> 批量处理整个目录</label>
