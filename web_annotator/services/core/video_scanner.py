@@ -21,8 +21,6 @@ from services.models import VideoInfo
 
 logger = logging.getLogger(__name__)
 
-# 视频目录名(数据集根下)
-VIDEO_DIRNAME = "video"
 # 封面缓存目录名(数据集根下)
 COVER_DIRNAME = ".video_covers"
 # 封面长边像素

@@ -6,6 +6,7 @@
   datasets/xxx/
     main/     # 源图(筛选 / 绘制 / 裁剪输入)
     mask/     # alpha mask
+    video/    # 视频存放(切帧来源, 保存帧写入 main)
     head/     # 部位裁剪输出(文件名与 main 同 stem)
     foot/
     ...       # 其它部位目录按选区名称自动创建
@@ -31,6 +32,9 @@ RESERVED_DIR_NAMES = frozenset({
     "__pycache__",
     "__packed__",         # 归档压缩包存放目录
 })
+
+# 视频目录名(数据集根下, 可为指向外部存储的符号链接)
+VIDEO_DIRNAME = "video"
 
 # 保留目录中不含可浏览图片的(蒙版/报告/缓存/回收站); 派生自 RESERVED_DIR_NAMES
 NON_BROWSABLE_DIRS = RESERVED_DIR_NAMES - {"main", "crops"}
@@ -61,6 +65,8 @@ class DatasetLayout:
     def list_part_dirs(self) -> list[Path]:
         """列出部位输出目录.
 
+        video 目录是切帧来源的工作目录而非部位输出目录, 不在列.
+
         Returns:
             list[Path]: 部位目录绝对路径列表(按名称排序).
 
@@ -72,15 +78,17 @@ class DatasetLayout:
             return []
         out = []
         for p in sorted(self.root.iterdir(), key=lambda p: natural_key(p.name)):
-            if p.is_dir() and p.name not in RESERVED_DIR_NAMES and not p.name.startswith("."):
+            if p.is_dir() and p.name not in RESERVED_DIR_NAMES and p.name != VIDEO_DIRNAME and not p.name.startswith("."):
                 out.append(p)
         return out
 
-    def stem_has_part_output(self, stem: str) -> bool:
+    def stem_has_part_output(self, stem: str, exclude_dir: str = "") -> bool:
         """任一部位目录或 crops 中已有同 stem 输出.
 
         Args:
             stem (str): 图片 stem.
+            exclude_dir (str): 需排除的目录名(当前源目录自身不会成为输出目标,
+                其内同 stem 文件不构成完成依据).
 
         Returns:
             bool: 已有同 stem 输出则为 True.
@@ -89,7 +97,10 @@ class DatasetLayout:
             - ``routes/crop.py:list_crop_images``
         """
         candidates = [*self.list_part_dirs(), self.crops_dir]
+        exclude = (exclude_dir or "").lower()
         for d in candidates:
+            if exclude and d.name.lower() == exclude:
+                continue
             if not d.is_dir():
                 continue
             if (d / f"{stem}.png").is_file():

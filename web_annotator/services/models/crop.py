@@ -24,7 +24,7 @@ class CropMatchConfig(BaseModel):
 
 
 class CropImageItem(ImageThumbItem):
-    """裁剪页图片列表项."""
+    """裁剪页图片列表项. ``path`` 为数据集根相对路径(如 ``main/foo.png``)."""
 
     done: bool
 
@@ -32,7 +32,7 @@ class CropImageItem(ImageThumbItem):
 class CropPageConfig(BaseModel):
     """裁剪页配置."""
 
-    parts: list[str]
+    parts: list[str] = Field(default_factory=list, description="已存在的部位目录名列表")
 
 
 class CropSavedItem(BaseModel):

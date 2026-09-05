@@ -25,6 +25,7 @@
   var _selected = -1;
   var _autoParts = []; // 已添加的部位名，后续每张图自动生成选区
   var _deniedParts = []; // 永久删除的部位，刷新后也不再自动纳入
+  var _serverParts = []; // 服务器返回的已存在部位目录名, 供源目录切换后重建候选
   var _noCrop = false;
   var _dragMode = null;
   var _dragStart = null;
@@ -321,6 +322,7 @@
   }
 
   function loadParts(serverParts) {
+    _serverParts = Array.isArray(serverParts) ? serverParts : [];
     var saved = null;
     var denied = null;
     try { saved = JSON.parse(localStorage.getItem(partsStorageKey()) || 'null'); } catch (e) { saved = null; }
@@ -333,6 +335,8 @@
     }
     function pushName(name) {
       if (!name || seen[name] || isDenied(name)) return;
+      // 当前源目录不得兼作部位: 输出目录与源目录相同会被后端拒绝
+      if (name === API.getDir()) return;
       seen[name] = true;
       _autoParts.push(name);
     }
@@ -990,7 +994,7 @@
 
   // ---- 加载 ----
   async function loadImages() {
-    var res = await API.request(API.apiPath('/crop/images'));
+    var res = await API.request(API.apiPath('/crop/images') + '?dir=' + encodeURIComponent(API.getDir()));
     _images = res;
     if (_strip) _strip.refresh();
     if (_images.length > 0) {
@@ -1254,6 +1258,15 @@
     });
 
     await loadImages();
+  }
+
+  if (typeof DirPicker !== 'undefined') {
+    // 裁剪页为单目录工作流: 一次只从一个目录取源图
+    if (DirPicker.setSingle) DirPicker.setSingle(true);
+    DirPicker.onChange(function () {
+      loadParts(_serverParts);
+      loadImages().catch(function (e) { toast(String(e.message || e)); });
+    });
   }
 
   if (document.readyState === 'loading') {

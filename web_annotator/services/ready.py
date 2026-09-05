@@ -203,9 +203,11 @@ def build_ready_toml(
     为 0 时取块数), 保证每个分辨率块 num_repeats >= 1, 再按该子集的分辨率块均分,
     使每个子集重复后图片数 >= 目标图片数折算的份额.
 
-    按分辨率归并渲染: 扫描各子集的分辨率列表(保持首次出现顺序), 每个分辨率渲染一个
+    按分辨率归并渲染: 扫描各子集的分辨率列表(保持首次出现顺序), 每个分辨率渲染
     [[datasets]] 块, 块内容纳所有列表含该分辨率的子集, num_repeats 取各子集自身的
-    分配值; 无分辨率的子集(列表为空)合并为单个不带 resolution 行的块.
+    分配值; 无分辨率的子集(列表为空)合并为单个不带 resolution 行的块. sd-scripts
+    要求块内全部 subset 均携带 conditioning_data_dir 时才按蒙版数据集校验, 因此同一
+    分辨率下携带蒙版目录的子集独占一个数据集块, 其余子集归入另一块, 蒙版块在前.
 
     Args:
         root (Path): 数据集根目录.
@@ -269,28 +271,32 @@ def build_ready_toml(
             entry.conditioning_data_dir = str((root / "mask" / name).resolve())
         subsets.append(entry)
 
-    # 按分辨率归并: 每个出现过的分辨率渲染一个 [[datasets]] 块, 块内容纳所有
-    # 分辨率列表含该值的子集, num_repeats 取各子集自身的分配值;
-    # 无分辨率子集(列表为空)合并为单个不带 resolution 行的块
+    # 按分辨率归并: 每个出现过的分辨率渲染 [[datasets]] 块, 块内容纳分辨率列表
+    # 含该值的子集, num_repeats 取各子集自身的分配值; 无分辨率子集(列表为空)合并为
+    # 单个不带 resolution 行的块. sd-scripts 仅当块内全部 subset 均携带
+    # conditioning_data_dir 时才按蒙版数据集校验, 因此每档按是否携带蒙版目录拆分为
+    # 蒙版块与普通块, 蒙版块在前
     res_order: list[int | None] = []
     for name in valid_names:
         res_order.extend(r for r in res_map[name] if r not in res_order)
 
     blocks: list[str] = []
     for res in res_order:
-        lines = ["[[datasets]]"]
-        if res is not None:
-            lines.append(f"resolution = {res}")
-        for s in subsets:
-            s_res = res_map[s.name]
-            if res not in s_res:
-                continue
-            lines.append("  [[datasets.subsets]]")
-            lines.append(f'  image_dir = "{s.image_dir}"')
-            if s.conditioning_data_dir:
-                lines.append(f'  conditioning_data_dir = "{s.conditioning_data_dir}"')
-            lines.append(f"  num_repeats = {repeats_map[s.name][s_res.index(res)]}")
-        blocks.append("\n".join(lines))
+        for with_cond in (True, False):
+            lines = ["[[datasets]]"]
+            if res is not None:
+                lines.append(f"resolution = {res}")
+            for s in subsets:
+                s_res = res_map[s.name]
+                if bool(s.conditioning_data_dir) != with_cond or res not in s_res:
+                    continue
+                lines.append("  [[datasets.subsets]]")
+                lines.append(f'  image_dir = "{s.image_dir}"')
+                if s.conditioning_data_dir:
+                    lines.append(f'  conditioning_data_dir = "{s.conditioning_data_dir}"')
+                lines.append(f"  num_repeats = {repeats_map[s.name][s_res.index(res)]}")
+            if len(lines) > 1:
+                blocks.append("\n".join(lines))
 
     toml = "\n\n".join(blocks)
     if toml:

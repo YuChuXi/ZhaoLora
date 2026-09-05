@@ -10,16 +10,16 @@
 
 ## 多分辨率
 
-`resolution` 输入多个分辨率（如 `1536,1024,512`）时，按 **每个分辨率 × 每组** 各渲染一个 `[[datasets]]` 块，块内首行为 `resolution = N`，其下为相同子集（带蒙版的子集附带 `conditioning_data_dir`）。留空则保持单块且不带 `resolution` 行。
+`resolution` 输入多个分辨率（如 `1536,1024,512`）时，按分辨率渲染 `[[datasets]]` 块，块内首行为 `resolution = N`；同一分辨率下再按子集是否携带蒙版目录拆分为蒙版块与普通块，蒙版块在前。留空则保持单块且不带 `resolution` 行。
 
 ## 蒙版状态（仅两种）
 
 | 状态 | 含义 |
 |------|------|
-| 完整 | `main/` 中每张图在 `mask/` 下都有对应蒙版 |
+| 完整 | 该目录中每张图在 `mask/` 下都有对应蒙版 |
 | 无 | 尚有缺蒙版的图（含一张都没有） |
 
-仅当整体为 **完整** 时，main subset 才附带 `conditioning_data_dir`。其它部位目录只有 `image_dir` 与 `num_repeats`。
+蒙版状态为 **完整** 的目录，其 subset 附带 `conditioning_data_dir`（指向 `mask/` 下同名目录）；其余 subset 只有 `image_dir` 与 `num_repeats`。携带 `conditioning_data_dir` 的子集独占 `[[datasets]]` 块（训练器要求块内全部子集均携带该键才按蒙版数据集校验）。
 
 ## 生成规则
 

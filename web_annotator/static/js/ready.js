@@ -80,7 +80,7 @@
       resInput.className = 'res-input';
       resInput.value = _resolutions[d.name];
       resInput.setAttribute('data-name', d.name);
-      resInput.title = '逗号分隔的多个分辨率, 每个分辨率生成一个 [[datasets]] 块; 留空则该子集生成单块无 resolution';
+      resInput.title = '逗号分隔的多个分辨率, 每个分辨率按子集是否携带蒙版目录拆分为蒙版块与普通块; 留空则该子集生成单块无 resolution';
       resInput.addEventListener('input', function () {
         _resolutions[d.name] = resInput.value;
         autoGenerate();

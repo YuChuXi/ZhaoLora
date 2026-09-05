@@ -7,7 +7,7 @@ import logging
 import os
 from pathlib import Path
 
-from services.core.video_scanner import VIDEO_DIRNAME
+from services.dataset.layout import VIDEO_DIRNAME
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse

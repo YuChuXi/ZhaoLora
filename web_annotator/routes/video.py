@@ -21,13 +21,13 @@ from services.core.video_frame import (
 )
 from services.core.video_scanner import (
     COVER_DIRNAME,
-    VIDEO_DIRNAME,
     VideoScanError,
     cover_hash,
     ensure_cover,
     probe_video,
     scan_videos,
 )
+from services.dataset.layout import VIDEO_DIRNAME
 from services.models import (
     FrameSaveBody,
     FrameSaveResponse,
