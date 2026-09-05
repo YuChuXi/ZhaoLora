@@ -134,7 +134,8 @@ var Tagging = (function () {
       body: JSON.stringify(body)
     });
     if (trigger) {
-      API.request('/api/tasks/' + encodeURIComponent(API.dataset()) + '/trigger-word', {
+      // 并入而非整串覆盖: 保留标签页已勾选的触发词, 与 tags.js:saveTriggers 的设置语义互补
+      API.request('/api/tasks/' + encodeURIComponent(API.dataset()) + '/trigger-word/add', {
         method: 'POST',
         body: JSON.stringify({ trigger_word: trigger }),
       }).catch(function (e) { toast('触发词写入失败: ' + (e.message || e)); });

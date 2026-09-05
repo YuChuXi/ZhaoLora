@@ -306,7 +306,6 @@ def set_trigger_word(request: Request, name: str, body: SetTriggerWordBody) -> T
 
     Callers:
         - ``static/js/index.js:buildCard``
-        - ``static/js/tagging.js:startJob``
         - ``static/js/tags.js:saveTriggers``
     """
     store = _store(request)
@@ -315,6 +314,33 @@ def set_trigger_word(request: Request, name: str, body: SetTriggerWordBody) -> T
     except KeyError:
         raise HTTPException(404, f"未知任务: {name}") from None
     logger.info("任务触发词更新 name=%s, 触发词=%s", name, body.trigger_word)
+    return TaskOkResponse(ok=True, name=info.name, completed=info.completed, note=info.note, trigger_word=info.trigger_word)
+
+
+@router.post("/{name}/trigger-word/add")
+def add_trigger_word(request: Request, name: str, body: SetTriggerWordBody) -> TaskOkResponse:
+    """向任务触发词集合添加一个词, 不覆盖已有触发词。
+
+    批量打标提交时把画师词并入触发词集合; 与 ``set_trigger_word`` 的整串
+    设置语义互补, 避免覆盖标签页勾选的触发词。
+
+    Args:
+        request (Request): FastAPI 请求对象, 由路由参数注入。
+        name (str): 任务名。
+        body (SetTriggerWordBody): 含待添加的触发词。
+
+    Returns:
+        TaskOkResponse: 含任务名与添加后的最新触发词。
+
+    Callers:
+        - ``static/js/tagging.js:startJob``
+    """
+    store = _store(request)
+    try:
+        info = store.add_trigger_word(name, body.trigger_word)
+    except KeyError:
+        raise HTTPException(404, f"未知任务: {name}") from None
+    logger.info("任务触发词添加 name=%s, 词=%r", name, body.trigger_word)
     return TaskOkResponse(ok=True, name=info.name, completed=info.completed, note=info.note, trigger_word=info.trigger_word)
 
 

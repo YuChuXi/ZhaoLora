@@ -99,6 +99,7 @@ class TaskStore:
 
         Callers:
             - ``services/state/tasks.py:TaskStore.add``
+            - ``services/state/tasks.py:TaskStore.add_trigger_word``
             - ``services/state/tasks.py:TaskStore.clear_archived``
             - ``services/state/tasks.py:TaskStore.reorder``
             - ``services/state/tasks.py:TaskStore.set_archived``
@@ -321,6 +322,38 @@ class TaskStore:
         self.tasks[name] = updated
         self._write()
         return TaskInfo(name=name, completed=updated.completed, note=updated.note, trigger_word=updated.trigger_word)
+
+    def add_trigger_word(self, name: str, word: str) -> TaskInfo:
+        """向任务触发词集合添加一个词, 不覆盖已有触发词.
+
+        触发词以逗号分隔存储; 新词插入最前(批量打标的画师词为数据集主体,
+        应居 class_tokens 首位), 已存在的词保留原位, 空词为无操作. 整串设置
+        (标签页以勾选集合为准的覆盖语义)请使用 ``set_trigger_word``.
+
+        Args:
+            name (str): 任务名.
+            word (str): 待添加的触发词, 写入前去空白.
+
+        Returns:
+            TaskInfo: 任务信息 (触发词为添加后的最新值).
+
+        Raises:
+            KeyError: 任务名不在清单中.
+
+        Callers:
+            - ``routes/tasks.py:add_trigger_word``
+        """
+        if name not in self.tasks:
+            raise KeyError(name)
+        entry = self.tasks[name]
+        word = word.strip()
+        words = [s for s in (t.strip() for t in entry.trigger_word.split(",")) if s]
+        if word and word not in words:
+            words.insert(0, word)
+            entry = entry.model_copy(update={"trigger_word": ", ".join(words)})
+            self.tasks[name] = entry
+            self._write()
+        return TaskInfo(name=name, completed=entry.completed, note=entry.note, trigger_word=entry.trigger_word)
 
     def reorder(self, ordered_names: list[str]) -> None:
         """按给定名称列表重排所有任务的 sort_order.
