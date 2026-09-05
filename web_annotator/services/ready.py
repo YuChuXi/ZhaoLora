@@ -203,11 +203,10 @@ def build_ready_toml(
     为 0 时取块数), 保证每个分辨率块 num_repeats >= 1, 再按该子集的分辨率块均分,
     使每个子集重复后图片数 >= 目标图片数折算的份额.
 
-    按分辨率归并渲染: 扫描各子集的分辨率列表(保持首次出现顺序), 每个分辨率渲染
-    [[datasets]] 块, 块内容纳所有列表含该分辨率的子集, num_repeats 取各子集自身的
-    分配值; 无分辨率的子集(列表为空)合并为单个不带 resolution 行的块. sd-scripts
-    要求块内全部 subset 均携带 conditioning_data_dir 时才按蒙版数据集校验, 因此同一
-    分辨率下携带蒙版目录的子集独占一个数据集块, 其余子集归入另一块, 蒙版块在前.
+    以 (分辨率, 是否携带蒙版目录) 为键对子集分组, 每组渲染一个 [[datasets]] 块:
+    分辨率按首次出现顺序, 同一分辨率下蒙版块在前; 无分辨率的子集(列表为空)归入
+    不带 resolution 行的块. sd-scripts 仅当块内全部 subset 均携带
+    conditioning_data_dir 时才按蒙版数据集校验, 因此两类子集不得混入同一块.
 
     Args:
         root (Path): 数据集根目录.
@@ -239,31 +238,28 @@ def build_ready_toml(
     valid_names = [n for n in ordered if _has_images((root / n).resolve())]
     total = sum(available[n].image_count for n in valid_names)
 
-    # 各子集的分辨率列表与子集级总重复次数: 取 ceil(target/total) 且至少为该子集块数,
-    # 保证每个分辨率块 num_repeats >= 1, 不产生 0 重复块; 再均分到各分辨率块
+    # 各子集的分辨率块规格: 目录名 → [(分辨率, num_repeats)], None 表示不带
+    # resolution 行的块. 子集级总重复次数取 ceil(target/total) 且至少为该子集块数
+    # (启用子集总图片数为 0 时取块数), 保证每块 num_repeats >= 1, 再均分到各分辨率块
     per_target = -(-target_images // total) if total else 1
-    res_map: dict[str, list[int | None]] = {}
-    repeats_map: dict[str, list[int]] = {}
+    block_specs: dict[str, list[tuple[int | None, int]]] = {}
     for name in valid_names:
         # 子集内同一分辨率只保留首个, 重复值无独立语义
         res_list: list[int | None] = list(dict.fromkeys(
             r for r in (subset_resolutions or {}).get(name, [])
             if isinstance(r, int) and r > 0
-        ))
-        if not res_list:
-            res_list = [None]
-        res_map[name] = res_list
-        repeats_map[name] = _alloc_repeats(res_list, max(len(res_list), per_target))
+        )) or [None]
+        reps = _alloc_repeats(res_list, max(len(res_list), per_target))
+        block_specs[name] = list(zip(res_list, reps))
 
     subsets: list[ReadySubset] = []
     mask_stats: list[MaskStats] = []
     for name in valid_names:
         image_dir = (root / name).resolve()
-        info = available[name]
         entry = ReadySubset(
             name=name,
             image_dir=str(image_dir),
-            image_count=info.image_count,
+            image_count=available[name].image_count,
         )
         mstats = subdir_mask_stats(root, name)
         mask_stats.append(mstats)
@@ -271,32 +267,34 @@ def build_ready_toml(
             entry.conditioning_data_dir = str((root / "mask" / name).resolve())
         subsets.append(entry)
 
-    # 按分辨率归并: 每个出现过的分辨率渲染 [[datasets]] 块, 块内容纳分辨率列表
-    # 含该值的子集, num_repeats 取各子集自身的分配值; 无分辨率子集(列表为空)合并为
-    # 单个不带 resolution 行的块. sd-scripts 仅当块内全部 subset 均携带
-    # conditioning_data_dir 时才按蒙版数据集校验, 因此每档按是否携带蒙版目录拆分为
-    # 蒙版块与普通块, 蒙版块在前
-    res_order: list[int | None] = []
-    for name in valid_names:
-        res_order.extend(r for r in res_map[name] if r not in res_order)
+    # 分组: (分辨率, 是否携带蒙版目录) → [(subset, num_repeats)], 组由成员产生,
+    # 不存在空块. sd-scripts 仅当块内全部 subset 均携带 conditioning_data_dir 时才按
+    # 蒙版数据集校验, 因此携带与不携带的子集分属不同组; 无分辨率子集归入
+    # 不带 resolution 行的组
+    grouped: dict[tuple[int | None, bool], list[tuple[ReadySubset, int]]] = {}
+    for s in subsets:
+        for res, repeats in block_specs[s.name]:
+            grouped.setdefault((res, bool(s.conditioning_data_dir)), []).append((s, repeats))
+
+    # 块顺序: 分辨率按首次出现顺序, 同一分辨率蒙版块在前
+    res_rank: dict[int | None, int] = {}
+    for res, _ in grouped:
+        res_rank.setdefault(res, len(res_rank))
+    keys = sorted(grouped, key=lambda k: (res_rank[k[0]], not k[1]))
 
     blocks: list[str] = []
-    for res in res_order:
-        for with_cond in (True, False):
-            lines = ["[[datasets]]"]
-            if res is not None:
-                lines.append(f"resolution = {res}")
-            for s in subsets:
-                s_res = res_map[s.name]
-                if bool(s.conditioning_data_dir) != with_cond or res not in s_res:
-                    continue
-                lines.append("  [[datasets.subsets]]")
-                lines.append(f'  image_dir = "{s.image_dir}"')
-                if s.conditioning_data_dir:
-                    lines.append(f'  conditioning_data_dir = "{s.conditioning_data_dir}"')
-                lines.append(f"  num_repeats = {repeats_map[s.name][s_res.index(res)]}")
-            if len(lines) > 1:
-                blocks.append("\n".join(lines))
+    for key in keys:
+        res = key[0]
+        lines = ["[[datasets]]"]
+        if res is not None:
+            lines.append(f"resolution = {res}")
+        for s, repeats in grouped[key]:
+            lines.append("  [[datasets.subsets]]")
+            lines.append(f'  image_dir = "{s.image_dir}"')
+            if s.conditioning_data_dir:
+                lines.append(f'  conditioning_data_dir = "{s.conditioning_data_dir}"')
+            lines.append(f"  num_repeats = {repeats}")
+        blocks.append("\n".join(lines))
 
     toml = "\n\n".join(blocks)
     if toml:
@@ -311,7 +309,7 @@ def build_ready_toml(
         mask_stats=mask_stats,
         mask=str((root / "mask").resolve()) if main_ms.mask_status == "完整" else None,
         target_images=target_images,
-        subset_repeats=repeats_map,
+        subset_repeats={name: [r for _, r in spec] for name, spec in block_specs.items()},
         mask_status=main_ms.mask_status,
         mask_complete=main_ms.mask_complete,
         mask_none=main_ms.mask_none,
