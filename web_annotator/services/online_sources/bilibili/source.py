@@ -24,7 +24,7 @@ from services.online_sources.bilibili.client import (
     fetch_bili_bytes,
     fetch_dynamics,
     resolve_record,
-    video_pubdate,
+    fetch_video_record,
 )
 from services.online_sources.bilibili.models import DynamicRecord
 from services.online_sources.framework.session import SessionStore
@@ -274,17 +274,37 @@ class BilibiliSource(SourceClient):
 
         图片帖复用 ``_expand`` 展开逻辑, 以与搜索阶段同源的完整字段 (发布
         时间 / 宽高 / 缩略图派生 URL) 重写 meta; 视频帖 (bvid) 经视频信息
-        接口补齐发布时间, 其余字段沿用既有 meta。实现
+        接口全量重建, 字段语义与 ``_expand`` 的视频分支一致 (封面 1920x1080
+        平台规范尺寸 / 简介作标签 / 发布时间)。实现
         ``base.SourceClient.fetch_meta``。
+
+        Args:
+            out_dir (Path): 数据集工作目录。
+            pid (str): ``{动态ID}_{序号}`` (图片帖) 或 BV 号 (视频帖)。
+
+        Raises:
+            ValueError: pid 不合法或视频无封面。
 
         Callers:
             - ``routes/online_sources.py:_run_refresh``
         """
-        meta_path = out_dir / self.meta_subdir / f"{pid}.json"
         if pid.startswith("BV"):
-            old = BooruPost.model_validate_json(meta_path.read_text(encoding="utf-8"))
-            pubdate = await video_pubdate(pid)
-            self._write_meta(out_dir, pid, old.model_copy(update={"posted_at": _pub_iso(pubdate)}))
+            video = await fetch_video_record(pid)
+            cover = video.cover or ""
+            if not cover:
+                raise ValueError(f"视频 {pid} 无封面")
+            self._write_meta(out_dir, pid, BooruPost(
+                source=self.name,
+                id=pid,
+                width=1920,
+                height=1080,
+                posted_at=_pub_iso(video.pub_ts or 0),
+                file_url=cover,
+                preview_url=cover + "@480w_480h_1e.webp",
+                sample_url=cover + "@1280w_1280h_1e.webp",
+                tags=video.desc or video.title or "",
+                is_video=True,
+            ))
             return
         dynamic_id, index = self._split_pid(pid)
         record = await resolve_record(dynamic_id)

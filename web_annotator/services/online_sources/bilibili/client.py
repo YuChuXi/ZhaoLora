@@ -530,14 +530,14 @@ async def resolve_record(dynamic_id: str) -> DynamicRecord:
     return record
 
 
-async def video_pubdate(bvid: str) -> int:
-    """免登录获取视频发布时间戳.
+async def fetch_video_record(bvid: str) -> VideoInfo:
+    """免登录获取视频稿件信息 (标题 / 简介 / 发布时间 / 封面).
 
     Args:
         bvid (str): 视频 BV 号。
 
     Returns:
-        int: 视频发布时间 (Unix 秒)。
+        VideoInfo: 含 desc 与 pub_ts 的视频稿件记录。
 
     Raises:
         RuntimeError: 接口返回非 0 code。
@@ -557,7 +557,16 @@ async def video_pubdate(bvid: str) -> int:
     data = resp.json()
     if data.get("code") != 0:
         raise RuntimeError(f"code={data.get('code')} message={data.get('message')}")
-    return int(data["data"]["pubdate"])
+    v = data["data"]
+    return VideoInfo(
+        bvid=v.get("bvid"),
+        title=v.get("title"),
+        cover=v.get("pic"),
+        duration_text=None,
+        play=None,
+        desc=v.get("desc"),
+        pub_ts=int(v["pubdate"]),
+    )
 
 
 async def fetch_bili_bytes(
