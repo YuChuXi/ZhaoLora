@@ -1360,9 +1360,27 @@
     });
   }
 
-  async function goPrev() { if (_cur && _cur.index > 0) { await doSave(false); loadIndex(_cur.index - 1); } }
-  async function goNext() { if (_cur && _cur.index < _images.length - 1) { await doSave(false); loadIndex(_cur.index + 1); } }
-  function goSkip() { if (_cur && _cur.index < _images.length - 1) loadIndex(_cur.index + 1); }
+  /**
+   * 切帧的唯一链路: 需要保存时先保存当前帧(doSave 自带脏检查), 再跳到目标帧;
+   * 目标越界(已在尽头)时仅保存不切帧.
+   * Callers:
+   *   - paint.js:goPrev
+   *   - paint.js:goNext
+   *   - paint.js:goSkip
+   * @param {number} index 目标帧下标.
+   * @param {boolean} save 是否在切帧前保存当前帧.
+   */
+  async function _goto(index, save) {
+    if (!_cur) return;
+    if (save) await doSave(false);
+    if (index >= 0 && index < _images.length) loadIndex(index);
+  }
+  /** 保存当前帧后前切一帧; 已在第一张时仅保存. Callers: keydown ←/a, btn-prev. */
+  function goPrev() { if (_cur) _goto(_cur.index - 1, true); }
+  /** 保存当前帧后后切一帧; 已在最后一张时仅保存. Callers: keydown →/d, btn-next. */
+  function goNext() { if (_cur) _goto(_cur.index + 1, true); }
+  /** 不保存当前帧直接跳下一帧(跳过=放弃修改); 已在最后一张时无动作. Callers: keydown x/X, btn-skip. */
+  function goSkip() { if (_cur) _goto(_cur.index + 1, false); }
 
   // ---- 工具栏 ----
   document.getElementById('btn-prev').addEventListener('click', goPrev);
