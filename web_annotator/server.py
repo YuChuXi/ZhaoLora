@@ -48,6 +48,7 @@ from routes.video import router as video_router
 from services.dataset.runtime import DatasetRegistry
 from services.core.jobs import JobManager
 from services.core.logging import setup_logging
+from services.dataset.layout import LOG_DIRNAME
 from services.state.tasks import TaskStore
 
 # 启动前加载 web_annotator/.env (与当前工作目录无关), 供数据源凭据与服务器配置读取.
@@ -93,7 +94,7 @@ async def lifespan(app: FastAPI):
         "yes",
     )
 
-    setup_logging(log_level, log_dir or (data_dir / "__log__"))
+    setup_logging(log_level, log_dir or (data_dir / LOG_DIRNAME))
     log = logging.getLogger("web_annotator")
 
     store = TaskStore(data_dir)

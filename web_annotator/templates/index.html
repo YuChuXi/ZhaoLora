@@ -169,7 +169,8 @@
       <form class="task-add" id="task-add-form" autocomplete="off">
         <div class="task-input-wrap">
           <input type="text" id="task-name" placeholder="任务目录名" required
-            pattern="[A-Za-z0-9][A-Za-z0-9_-]{0,63}" title="字母、数字、下划线或连字符"
+            pattern='(?!\.)(?:[^\\/:*?"<>|\x00-\x1f\x7f]){1,255}'
+            title="不得以点开头, 不得包含 \ / : * ? &quot; &lt; &gt; | 等特殊符号"
             aria-autocomplete="list" aria-controls="task-suggest">
           <div class="task-suggest" id="task-suggest" role="listbox"></div>
         </div>

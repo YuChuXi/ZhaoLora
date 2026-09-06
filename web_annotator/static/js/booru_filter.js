@@ -45,7 +45,7 @@ var BooruFilter = (function () {
         { type: 'text', id: 'bilibili-uid', placeholder: 'B站 UID' },
         { type: 'button', role: 'extra', id: 'btn-bilibili-extra', label: '条件',
           title: '类型、关键词、时间等', badge: true },
-        { type: 'hidden', id: 'bilibili-extra' },
+        { type: 'hidden', id: 'bilibili-extra', value: 'type:image' },
         { type: 'button', role: 'search', label: '搜索', cls: 'green' },
         { type: 'button', role: 'batch', label: '批量下载', title: '按当前筛选批量下载' },
         { type: 'button', role: 'meta', label: '元数据', title: '重生成 Caption / 刷新元数据' },

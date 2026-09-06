@@ -21,6 +21,13 @@ from pathlib import Path
 
 from services.core.natural import natural_key
 
+# 任务根(ANNOTATOR_DATA_DIR, 如 datasets/)层的系统保留目录名; 任务名即任务根下
+# 的一级目录名, 不得与之冲突
+PACKED_DIR = "__packed__"   # 归档压缩包与预览(services/state/archiver)
+LOG_DIRNAME = "__log__"     # 运行日志(server)
+TASK_ROOT_RESERVED = frozenset({PACKED_DIR, LOG_DIRNAME})
+
+# 数据集根(datasets/xxx)内部的保留目录名, 不会被当成部位输出目录
 RESERVED_DIR_NAMES = frozenset({
     "main",
     "mask",
@@ -30,7 +37,6 @@ RESERVED_DIR_NAMES = frozenset({
     ".thumbs",
     ".thumbnails",
     "__pycache__",
-    "__packed__",         # 归档压缩包存放目录
 })
 
 # 视频目录名(数据集根下, 可为指向外部存储的符号链接)

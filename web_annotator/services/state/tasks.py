@@ -12,19 +12,26 @@ Callers:
 from __future__ import annotations
 
 import json
-import re
 import time
 from pathlib import Path
 
 from services.core.natural import natural_key
+from services.dataset.layout import TASK_ROOT_RESERVED
 from services.models import TaskEntry, TaskInfo, TaskListFile
 
 TASKS_FILE = ".annotator_tasks.json"
-_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_\-()\[\]]{0,63}$")
+# 任务名即任务根目录名, 仅限制文件系统保留符号与控制字符; 中文、空格、括号、
+# 连字符等其余字符放行. 前端 URL 统一 encodeURIComponent, TOML 以引号字符串
+# 写出, 均不受字符集影响
+_NAME_FORBIDDEN = set('\\/:*?"<>|')
 
 
 def validate_task_name(name: str) -> str:
-    """校验并规范化任务目录名.
+    """校验任务名(即任务根目录名), 仅限制文件系统特殊符号.
+
+    规则: 不可为空; 不得以点开头(隐藏目录语义); 不得包含 ``_NAME_FORBIDDEN``
+    保留符号或控制字符; 不得与任务根层系统保留目录名(``TASK_ROOT_RESERVED``)
+    冲突; UTF-8 编码不超过 255 字节(文件系统单个文件名上限).
 
     Args:
         name (str): 待校验的任务目录名原文.
@@ -40,10 +47,16 @@ def validate_task_name(name: str) -> str:
         - ``services/state/tasks.py:TaskStore.add``
     """
     name = (name or "").strip()
-    if not name or not _NAME_RE.match(name):
-        raise ValueError("任务名须为字母、数字、下划线、连字符或括号, 且不以符号开头")
-    if name in (".", ".."):
-        raise ValueError("非法任务名")
+    if not name:
+        raise ValueError("任务名不能为空")
+    if name.startswith("."):
+        raise ValueError("任务名不得以点开头")
+    if name in TASK_ROOT_RESERVED:
+        raise ValueError(f"任务名与系统保留目录名冲突: {name}")
+    if _NAME_FORBIDDEN.intersection(name) or any(ord(c) < 32 or ord(c) == 127 for c in name):
+        raise ValueError(f"任务名不得包含特殊符号: {''.join(sorted(_NAME_FORBIDDEN))}")
+    if len(name.encode("utf-8")) > 255:
+        raise ValueError("任务名过长(UTF-8 编码超过 255 字节)")
     return name
 
 

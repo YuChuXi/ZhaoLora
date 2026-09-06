@@ -19,10 +19,9 @@ from services.core.natural import natural_key
 from services.core.scanner import scan_images
 from services.core.thumbnailer import Thumbnailer
 from services.core.work_dir import total_image_count
+from services.dataset.layout import PACKED_DIR
 from services.models import JobSnapshot
 from services.models.archive import ArchivedTask
-
-PACKED_DIR = "__packed__"
 
 # LZMA2 极限压缩 (preset 9 = ultra), 固实归档
 _FILTERS = [{"id": py7zr.FILTER_LZMA2, "preset": 9}]

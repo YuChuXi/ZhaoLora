@@ -26,7 +26,8 @@ from services.models import (
 from services.core.natural import natural_key
 from services.core.scanner import scan_images
 from services.core.work_dir import total_image_count
-from services.state.archiver import PACKED_DIR, archive_task, restore_task
+from services.dataset.layout import PACKED_DIR
+from services.state.archiver import archive_task, restore_task
 from services.state.tasks import TaskStore, validate_task_name
 
 router = APIRouter(prefix="/api/tasks", tags=["tasks"])
