@@ -190,8 +190,9 @@ def build_ready_toml(
     dirs: list[str] | None = None,
     target_images: int = 512,
     subset_resolutions: dict[str, list[int]] | None = None,
+    use_reg: bool = True,
 ) -> ReadyTomlResult:
-    """生成 TOML 文本与 subset 元数据.
+    """生成完整 dataset.toml 文本与 subset 元数据.
 
     ``dirs`` 指定参与导出的工作目录名列表; 为 None 时表示全部目录,
     为空列表时表示一个目录都不导出(返回空 subsets).
@@ -208,11 +209,15 @@ def build_ready_toml(
     不带 resolution 行的块. sd-scripts 仅当块内全部 subset 均携带
     conditioning_data_dir 时才按蒙版数据集校验, 因此两类子集不得混入同一块.
 
+    dataset.toml = ``[general]`` 固定段 + 数据集块 + 正则化数据段(``use_reg`` 为
+    True 时附带), 预览与导出共用本渲染.
+
     Args:
         root (Path): 数据集根目录.
         dirs (list[str] | None): 参与导出的工作目录名列表; None 表示全部, 空列表表示不导出.
         target_images (int): 目标图片数, 据此计算各子集的 num_repeats.
         subset_resolutions (dict[str, list[int]] | None): 目录名→分辨率列表; 未指定的子集生成单块无 resolution 行.
+        use_reg (bool): 是否附带固定正则化数据段(datasets/regL).
 
     Returns:
         ReadyTomlResult: 含 toml 文本、subsets、mask_stats、subset_repeats 等.
@@ -296,9 +301,22 @@ def build_ready_toml(
             lines.append(f"  num_repeats = {repeats}")
         blocks.append("\n".join(lines))
 
-    toml = "\n\n".join(blocks)
-    if toml:
-        toml += "\n"
+    # dataset.toml 完整文档: [general] 固定段 + 数据集块 + 可选正则化数据段,
+    # 预览与导出共用同一渲染
+    doc = tomlkit.document()
+    doc["general"] = dict(_GENERAL_CONFIG)
+    aot = tomlkit.aot()
+    aot.extend(tomlkit.parse("\n\n".join(blocks)).get("datasets", []))
+    if use_reg:
+        for res, sub in _REGL_DATASETS:
+            seg = tomlkit.table()
+            seg["resolution"] = res
+            subs = tomlkit.aot()
+            subs.append({"image_dir": f"{_REGL_ROOT}/{sub}"})
+            seg["subsets"] = subs
+            aot.append(seg)
+    doc["datasets"] = aot
+    toml = tomlkit.dumps(doc)
     main_ms = next((m for m in mask_stats if m.name == "main"),
                    MaskStats(name="main", mask_status="无"))
     return ReadyTomlResult(
@@ -357,8 +375,9 @@ def build_train_config(
 ) -> dict[str, str]:
     """为数据集渲染整套训练配置文本(全部由代码构造, 无模板文件).
 
-    dataset.toml = ``[general]`` 固定段 + 就绪页生成的 main 段 + 正则化数据段
-    (``use_reg`` 为 True 时附带); lora.toml 由 ``_LORA_CONFIG`` 固定字段构成,
+    dataset.toml 由 ``build_ready_toml`` 完整渲染(``[general]`` 固定段 + 数据集块 +
+    ``use_reg`` 为 True 时附带的正则化数据段), 与就绪页预览同源;
+    lora.toml 由 ``_LORA_CONFIG`` 固定字段构成,
     另覆写 ``output_name`` / ``sample_prompts`` / ``dataset_config``;
     prompt.txt = 触发词(未设置则省略) + 出现次数最多的 10 个标签
     (``_top_caption_tags``) + 固定采样参数.
@@ -369,7 +388,7 @@ def build_train_config(
         dirs (list[str] | None): 参与导出的工作目录名; None 表示全部(透传 build_ready_toml).
         target_images (int): 目标图片数(透传 build_ready_toml).
         subset_resolutions (dict[str, list[int]] | None): 目录名→分辨率列表(透传 build_ready_toml).
-        use_reg (bool): 是否在 dataset.toml 中附带固定正则化数据段.
+        use_reg (bool): 是否在 dataset.toml 中附带固定正则化数据段(透传 build_ready_toml).
         trigger_word (str): 该数据集触发词, 写入 prompt.txt 正向段开头; 可为空.
 
     Returns:
@@ -378,27 +397,10 @@ def build_train_config(
     Callers:
         - ``routes/ready.py:export``
     """
-    main_toml = build_ready_toml(
+    dataset_toml = build_ready_toml(
         root, dirs=dirs, target_images=target_images,
-        subset_resolutions=subset_resolutions,
+        subset_resolutions=subset_resolutions, use_reg=use_reg,
     ).toml
-    main_doc = tomlkit.parse(main_toml)
-
-    # dataset.toml: 固定 [general] 段 + 生成的主块 + 固定正则化数据段(均为数组表)
-    doc = tomlkit.document()
-    doc["general"] = dict(_GENERAL_CONFIG)
-    aot = tomlkit.aot()
-    aot.extend(main_doc.get("datasets", []))
-    if use_reg:
-        for res, sub in _REGL_DATASETS:
-            seg = tomlkit.table()
-            seg["resolution"] = res
-            subs = tomlkit.aot()
-            subs.append({"image_dir": f"{_REGL_ROOT}/{sub}"})
-            seg["subsets"] = subs
-            aot.append(seg)
-    doc["datasets"] = aot
-    dataset_toml = tomlkit.dumps(doc)
 
     # lora.toml: 固定字段 + 导出时覆写的三项
     out = out_dir or root

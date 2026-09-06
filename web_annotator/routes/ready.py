@@ -67,6 +67,7 @@ def toml(request: Request, body: ReadyBody) -> ReadyTomlResult:
         dirs=body.dirs,
         target_images=body.target_images,
         subset_resolutions=body.subset_resolutions,
+        use_reg=body.use_reg,
     )
     if not result.subsets:
         raise HTTPException(400, "没有可导出的图片目录")
