@@ -1330,7 +1330,7 @@ var BooruFilter = (function () {
       : st === 'done' ? '已保存'
       : st === 'error' ? '失败'
       : '未保存';
-    var tag = post.is_video ? '视频' : stLabel;
+    var tag = post.is_video ? '视频' : (post.is_forward ? '转发' : stLabel);
     var rs = resText(post);
     var stem = post.stem || (((_SOURCES[post.source] || {}).stemPrefix || 'g') + post.id);
     return tag + ' · ' + (rs ? rs + ' ' : '') + stem;

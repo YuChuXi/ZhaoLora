@@ -171,6 +171,7 @@ class BilibiliSource(SourceClient):
                 sample_url=url + "@1280w_1280h_1e.webp",
                 tags=text,
                 is_video=is_video,
+                is_forward=record.forwarded is not None,
             )
             for i, (url, w, h) in enumerate(items)
         ]

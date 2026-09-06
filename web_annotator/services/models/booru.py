@@ -58,6 +58,8 @@ class BooruPost(BaseModel):
     filename: str = ""
     # 视频帖标记: 下载时落入数据集 video 目录
     is_video: bool = False
+    # 转发动态标记: 卡片标注「转发」(配图来自原动态)
+    is_forward: bool = False
 
     @computed_field
     @property
