@@ -25,11 +25,6 @@ from typing import Any
 from services.online_sources.framework.gallerydl import GalleryDLSource
 from services.models import BooruPost
 
-# 单批增量拉取的图片数 (超出请求页时按此粒度续拉)
-_INCR_BATCH = 200
-# 仅保留的媒体类型
-_IMAGE_TYPES = frozenset({"photo"})
-
 
 def _sized_url(url: str, size: str) -> str:
     """将 X 图片 URL 的尺寸参数替换为指定档位.
@@ -65,9 +60,10 @@ class XSource(GalleryDLSource):
 
     name = "x"
     prefix = "x"
-    order_tags: dict[str, str] = {}
-    valid_orders: tuple[str, ...] = ()
-    _INCR_BATCH = _INCR_BATCH
+    # 单批增量拉取的图片数 (超出请求页时按此粒度续拉)
+    _INCR_BATCH = 200
+    # 仅保留的媒体类型
+    _IMAGE_TYPES = frozenset({"photo"})
 
     def _auth_overrides(self) -> list[tuple[tuple[str, ...], str, Any]]:
         """构造登录 cookies 的临时配置项, 供 ``config.apply`` 使用.
@@ -168,7 +164,7 @@ class XSource(GalleryDLSource):
             - ``services/online_sources/framework/gallerydl.py:GalleryDLSource._ensure_cached``
             - ``services/online_sources/framework/gallerydl.py:GalleryDLSource.fetch_meta``
         """
-        if kwdict.get("type") not in _IMAGE_TYPES:
+        if kwdict.get("type") not in self._IMAGE_TYPES:
             return None
         tweet_id = kwdict.get("tweet_id")
         num = kwdict.get("num")

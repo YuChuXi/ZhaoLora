@@ -377,11 +377,11 @@ class PixivSource(SourceClient):
         keep_underscores: bool = False,
         emit: ProgressFn | None = None,
     ) -> dict:
-        """下载指定媒体为 PNG, 并写旁路标签与 meta.
+        """下载指定媒体为 PNG, 并写 meta.
 
-        标签直接取自 search 阶段已持有的 ``post.tags``; 原图 URL 需按作品
-        分页拉取 ``original`` (搜索仅返回 regular 缩略图)。pixiv 为纯图片源,
-        ``emit`` 透传但不起作用。实现 ``base.SourceClient.download``。
+        原图 URL 需按作品分页拉取 ``original`` (搜索仅返回 regular 缩略图),
+        元数据以入参 ``post`` 原样写入 meta。pixiv 为纯图片源, ``emit``
+        透传但不起作用。实现 ``base.SourceClient.download``。
 
         Args:
             emit: 下载进度回调, 图片来源忽略 (透传签名统一).
@@ -415,20 +415,7 @@ class PixivSource(SourceClient):
 
         await self._save_png(data, image_path)
         self._clean_old_files(out_dir, pid, image_path)
-
-        caption = (post.tags or "").strip()
-        if include_meta_tags:
-            caption = (caption + (" " + self.name) if caption else self.name).strip()
-        if self.writes_caption:
-            tags_path.write_text(caption + "\n", encoding="utf-8")
-        self._write_meta(
-            out_dir,
-            pid,
-            BooruPost(
-                source=self.name, id=pid, file_url=target_url,
-                posted_at=post.posted_at, tags=caption,
-            ),
-        )
+        self._write_meta(out_dir, pid, post)
         return {
             "path": str(image_path),
             "stem": stem,

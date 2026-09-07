@@ -26,7 +26,7 @@ from services.online_sources.bilibili.client import (
     resolve_record,
     fetch_video_record,
 )
-from services.online_sources.bilibili.models import DynamicRecord
+from services.online_sources.bilibili.models import DynamicRecord, SessionState
 from services.online_sources.framework.session import SessionStore
 from services.online_sources.framework.utils import find_downloaded
 
@@ -218,14 +218,15 @@ class BilibiliSource(SourceClient):
         sess = await self._sessions.acquire(session, self.name, query_key)
         async with sess.lock:
             st = sess.state
-            if not st:
-                st.update(offsets=[""])
+            if st is None:
+                st = SessionState()
+                sess.state = st
             page_posts: list[BooruPost] = []
             has_more = False
             retries = 0
             while not page_posts:
                 records, next_offset, has_more = await fetch_dynamics(
-                    uid, offset=st["offsets"][-1]
+                    uid, offset=st.offsets[-1]
                 )
                 if not records and not next_offset:
                     if retries < 3:
@@ -235,8 +236,8 @@ class BilibiliSource(SourceClient):
                         continue
                     # 连续 3 次空心: 交由上层判定
                     return [], False, sess.token
-                if next_offset and next_offset != st["offsets"][-1]:
-                    st["offsets"].append(next_offset)
+                if next_offset and next_offset != st.offsets[-1]:
+                    st.offsets.append(next_offset)
                 page_posts = [
                     post
                     for record in records
@@ -323,10 +324,10 @@ class BilibiliSource(SourceClient):
     ) -> dict:
         """下载帖子到 ``out_dir`` (图片帖) 或 ``video`` 目录 (视频帖).
 
-        图片帖按 ``post.file_url`` 转 PNG 写入磁盘并写旁路标签与 meta; 视频帖
-        (``post.is_video``) 直接经 ``_download_video`` 用 BBDown 写入 ``out_dir``
-        (即数据集 ``video`` 目录), 并把 BBDown 进度透传给 ``emit``。实现
-        ``base.SourceClient.download``。
+        图片帖按 ``post.file_url`` 转 PNG 写入磁盘, 元数据以入参 ``post`` 原样
+        写入 meta; 视频帖 (``post.is_video``) 直接经 ``_download_video`` 用
+        BBDown 写入 ``out_dir`` (即数据集 ``video`` 目录), 并把 BBDown 进度
+        透传给 ``emit``。实现 ``base.SourceClient.download``。
 
         Callers:
             - ``services/online_sources/framework/base.py:SourceClient.download`` (经 ``media.download_post`` 委托)
@@ -352,17 +353,10 @@ class BilibiliSource(SourceClient):
         url = (post.file_url or "").strip()
         if not url:
             raise ValueError(f"pid {pid} 无媒体 URL")
-        caption = (post.tags or "").strip()
-        if include_meta_tags:
-            caption = (caption + (" " + self.name) if caption else self.name).strip()
-
         data, _ = await fetch_bili_bytes(url)
         await self._save_png(data, image_path)
         self._clean_old_files(out_dir, pid, image_path)
-        if self.writes_caption:
-            tags_path.write_text(caption + "\n", encoding="utf-8")
-        # 保留搜索阶段携带的 posted_at / 宽高等字段, 仅以标签说明刷新 tags
-        self._write_meta(out_dir, pid, post.model_copy(update={"tags": caption}))
+        self._write_meta(out_dir, pid, post)
         return {
             "path": str(image_path),
             "stem": stem,

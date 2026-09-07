@@ -20,16 +20,13 @@ from typing import Any
 from gallery_dl import config
 from gallery_dl.extractor import find as gallery_find
 from gallery_dl.extractor.message import Message
+from pydantic import BaseModel, Field
 
 from services.online_sources.framework.http import HttpClient
 from services.online_sources.framework.base import ProgressFn, SourceClient
 from services.online_sources.framework.session import SessionStore
 from services.online_sources.framework.utils import find_downloaded
 from services.models import BooruPost
-
-
-# 会话游标的"未开始"哨兵 (区别于已拉取完毕的 None)
-_NOT_STARTED: Any = object()
 
 
 @dataclass
@@ -42,6 +39,22 @@ class _Cache:
     """
     posts: list[BooruPost]
     cursor: str | None
+
+
+class _SessionState(BaseModel):
+    """gallery-dl 来源的会话续拉状态.
+
+    Attributes:
+        posts: 已展开的图片卡片列表 (按拉取序排列).
+        cursor: 续拉游标; None 表示已拉取完毕或来源不支持续拉.
+        returned: 已返回给前端的卡片数.
+        started: 是否完成首次全量拉取.
+    """
+
+    posts: list[BooruPost] = Field(default_factory=list)
+    cursor: str | None = None
+    returned: int = 0
+    started: bool = False
 
 
 class GalleryDLSource(SourceClient):
@@ -370,7 +383,7 @@ class GalleryDLSource(SourceClient):
 
         会话持有已拉缓存与续拉游标, 每次调用从游标续拉一批并返回该批新增
         卡片 (``_INCR_BATCH`` 条; None 时全量拉取一次返回全部)。末端页仅向下:
-        已返回的卡片由前端累计, 不再重发。发起新搜索 (session 为空或查询键
+        服务端仅下发新增卡片, 已返回卡片由前端累计。发起新搜索 (session 为空或查询键
         变化) 或会话超过一天无翻页时由 ``SessionStore`` 重建会话。
 
         Callers:
@@ -382,29 +395,31 @@ class GalleryDLSource(SourceClient):
         sess = await self._sessions.acquire(session, self.name, key)
         async with sess.lock:
             st = sess.state
-            if not st:
-                st.update(posts=[], cursor=_NOT_STARTED, returned=0)
-            if st["cursor"] is _NOT_STARTED:
+            if st is None:
+                st = _SessionState()
+                sess.state = st
+            if not st.started:
                 cache = await asyncio.to_thread(self._ensure_cached, key, None)
-                st["posts"] = cache.posts
-                st["cursor"] = cache.cursor
-            elif st["cursor"] is not None:
+                st.posts = cache.posts
+                st.cursor = cache.cursor
+                st.started = True
+            elif st.cursor is not None:
                 cache = await asyncio.to_thread(
                     self._ensure_cached,
                     key,
-                    _Cache(posts=st["posts"], cursor=st["cursor"]),
+                    _Cache(posts=st.posts, cursor=st.cursor),
                 )
-                st["posts"] = cache.posts
-                st["cursor"] = cache.cursor
+                st.posts = cache.posts
+                st.cursor = cache.cursor
 
             batch = self._INCR_BATCH
             if batch:
-                new_posts = st["posts"][st["returned"] : st["returned"] + batch]
-                st["returned"] += len(new_posts)
+                new_posts = st.posts[st.returned : st.returned + batch]
+                st.returned += len(new_posts)
             else:
-                new_posts = st["posts"][st["returned"]:]
-                st["returned"] = len(st["posts"])
-        has_more = st["cursor"] is not None or st["returned"] < len(st["posts"])
+                new_posts = st.posts[st.returned:]
+                st.returned = len(st.posts)
+        has_more = st.cursor is not None or st.returned < len(st.posts)
         return new_posts, has_more, sess.token
 
     async def download(
@@ -418,11 +433,11 @@ class GalleryDLSource(SourceClient):
         keep_underscores: bool = False,
         emit: ProgressFn | None = None,
     ) -> dict:
-        """下载指定媒体为 PNG, 并写旁路标签与 meta.
+        """下载指定媒体为 PNG, 并写 meta.
 
-        直接使用 search 阶段已持有的 ``post.file_url`` (原图 URL) 与
-        ``post.tags`` 写入磁盘, 不再重新请求帖文元数据。gallery-dl 来源为
-        纯图片, ``emit`` 透传但不起作用。
+        使用 search 阶段已持有的 ``post.file_url`` (原图 URL) 下载, 帖文元数据
+        以入参 ``post`` 原样写入 meta。gallery-dl 来源为纯图片, ``emit`` 透传
+        但不起作用。
 
         Args:
             emit: 下载进度回调, 图片来源忽略 (透传签名统一).
@@ -435,10 +450,6 @@ class GalleryDLSource(SourceClient):
         image_path = out_dir / post.filename
         tags_path = out_dir / f"{stem}.txt"
         existing = find_downloaded(out_dir, post.filename)
-
-        caption = (post.tags or "").strip()
-        if include_meta_tags:
-            caption = (caption + (" " + self.name) if caption else self.name).strip()
 
         if not overwrite and existing is not None and (tags_path.is_file() or not self.writes_caption):
             return {
@@ -457,13 +468,7 @@ class GalleryDLSource(SourceClient):
 
         await self._save_png(data, image_path)
         self._clean_old_files(out_dir, pid, image_path)
-        if self.writes_caption:
-            tags_path.write_text(caption + "\n", encoding="utf-8")
-        self._write_meta(
-            out_dir, pid,
-            BooruPost(source=self.name, id=pid, file_url=image_url, tags=caption,
-                      posted_at=post.posted_at),
-        )
+        self._write_meta(out_dir, pid, post)
         return {
             "path": str(image_path),
             "stem": stem,

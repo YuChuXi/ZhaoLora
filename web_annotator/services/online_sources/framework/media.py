@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -21,6 +22,8 @@ from services.online_sources.framework.base import (
     file_stem,
 )
 from services.online_sources.framework.http import HttpClient
+
+logger = logging.getLogger(__name__)
 
 
 def remove_download(
@@ -248,7 +251,8 @@ async def regenerate_captions(
         for meta_file in sorted(meta_dir.glob("*.json"), key=lambda p: natural_key(p.name)):
             try:
                 post = json.loads(meta_file.read_text(encoding="utf-8"))
-            except (json.JSONDecodeError, OSError):
+            except (json.JSONDecodeError, OSError) as exc:
+                logger.warning("元数据文件不可读, 跳过: %s (%s)", meta_file, exc)
                 continue
 
             pid = str(post.get("id") or meta_file.stem)
@@ -261,10 +265,6 @@ async def regenerate_captions(
                 keep_underscores=keep_underscores,
             )
             txt_path.write_text(caption + "\n", encoding="utf-8")
-
-            legacy_txt = out_dir / f"{pid}.txt"
-            if legacy_txt.is_file() and legacy_txt.resolve() != txt_path.resolve():
-                legacy_txt.unlink()
 
             count += 1
 

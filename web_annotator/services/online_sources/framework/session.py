@@ -15,6 +15,8 @@ import asyncio
 import time
 import uuid
 
+from pydantic import BaseModel
+
 # 会话空闲存活时长: 一天无翻页则销毁
 _SESSION_TTL = 24 * 3600.0
 
@@ -35,8 +37,8 @@ class Session:
         self.created = time.time()
         self.last_active = self.created
         self.lock = asyncio.Lock()
-        # 由来源填充的续拉状态 (bilibili: 动态游标; gallerydl: 缓存+游标)
-        self.state: dict = {}
+        # 由来源填充的续拉状态模型 (bilibili: 动态游标栈; gallerydl: 缓存+游标)
+        self.state: BaseModel | None = None
 
 
 class SessionStore:

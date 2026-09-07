@@ -26,8 +26,6 @@ from typing import Any
 from bilibili_api import user
 from bilibili_api.exceptions import NetworkException, ResponseCodeException
 
-logger = logging.getLogger(__name__)
-
 from services.online_sources.bilibili.models import (
     Author,
     DynamicRecord,
@@ -37,6 +35,8 @@ from services.online_sources.bilibili.models import (
     VideoInfo,
 )
 from services.online_sources.framework.http import DEFAULT_UA, HttpClient, NetworkError
+
+logger = logging.getLogger(__name__)
 
 # 转发链递归解析的最大深度, 防止异常深链造成栈溢出
 MAX_FORWARD_DEPTH = 8
@@ -89,40 +89,39 @@ async def _desktop_detail(
     Callers:
         - ``services/online_sources/bilibili/client.py:resolve_record``
     """
-    last_exc: Exception | None = None
-    for attempt in range(1, retries + 1):
-        try:
-            async with HttpClient() as client:
-                resp = await client.get(
-                    _DESKTOP_DETAIL_API,
-                    headers=_BILI_HEADERS,
-                    params={"id": dynamic_id, "timezone_offset": str(-480)},
-                    timeout=30.0,
-                    follow_redirects=True,
-                )
-            resp.raise_for_status()
-            data = resp.json()
-            code = data.get("code")
-            if code == -1024:
-                return None
-            if code != 0:
-                raise RuntimeError(f"code={code} message={data.get('message')}")
-            return (data.get("data") or {}).get("item") or {}
-        except Exception as exc:
-            last_exc = exc
-            if attempt < retries:
-                wait = base_sleep * (2 ** (attempt - 1))
-                logger.warning(
-                    "详情 %s 请求失败 (%s), %.0f 秒后重试...", dynamic_id, exc, wait
-                )
-                await asyncio.sleep(wait)
-    raise last_exc or RuntimeError(f"详情 {dynamic_id} 请求失败")
+    async def fetch() -> dict | None:
+        """单次请求桌面版动态详情: ``data.item`` 条目, code=-1024 时为 None."""
+        async with HttpClient() as client:
+            resp = await client.get(
+                _DESKTOP_DETAIL_API,
+                headers=_BILI_HEADERS,
+                params={"id": dynamic_id, "timezone_offset": str(-480)},
+                timeout=30.0,
+                follow_redirects=True,
+            )
+        resp.raise_for_status()
+        data = resp.json()
+        code = data.get("code")
+        if code == -1024:
+            return None
+        if code != 0:
+            raise RuntimeError(f"code={code} message={data.get('message')}")
+        return (data.get("data") or {}).get("item") or {}
+
+    return await _retry_coro(
+        fetch,
+        what=f"详情 {dynamic_id}",
+        retries=retries,
+        base_sleep=base_sleep,
+        is_transient=lambda _exc: True,
+    )
 
 
 async def _retry_coro(
-    factory: Any, *, what: str, retries: int = 3, base_sleep: float = 3.0,
+    factory: Callable[[], Awaitable[Any]], *, what: str, retries: int = 3,
+    base_sleep: float = 3.0,
     is_transient: Callable[[Exception], bool] | None = None,
-) -> dict:
+) -> Any:
     """对间歇性网络/风控异常退避重试接口调用.
 
     未登录会话存在间歇性风控: 请求偶发被 412 拒绝 (库抛 ``NetworkException``),
@@ -131,19 +130,20 @@ async def _retry_coro(
     把风控业务码视为瞬时异常), 重试耗尽后抛出最后一次异常, 不吞没错误。
 
     Args:
-        factory: 无参异步可调用, 返回接口结果 (dict)。
+        factory: 无参异步可调用, 返回接口结果。
         what (str): 请求描述, 用于提示信息。
         retries (int): 最大尝试次数 (含首次), 默认 3。
         base_sleep (float): 首次退避秒数, 之后指数递增, 默认 3.0。
         is_transient: 额外判定异常是否为瞬时可重试的可调用对象, 默认 None。
 
     Returns:
-        dict: 接口结果。
+        Any: ``factory`` 的返回值。
 
     Raises:
         NetworkException: 重试耗尽后最后一次网络异常。
     Callers:
         - ``services/online_sources/bilibili/client.py:fetch_dynamics``
+        - ``services/online_sources/bilibili/client.py:_desktop_detail``
     """
     last_exc: Exception | None = None
     for attempt in range(1, retries + 1):

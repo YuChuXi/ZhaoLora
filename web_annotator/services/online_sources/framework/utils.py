@@ -13,10 +13,21 @@ from pathlib import Path
 
 from PIL import Image
 
-from services.core.scanner import IMAGE_EXTS
-
 
 def sniff_image_kind(data: bytes) -> str:
+    """按魔数判定字节流的文件类型.
+
+    Args:
+        data: 文件头部字节 (建议至少 80 字节).
+
+    Returns:
+        str: 类型标识, 取值 ``jpeg``/``png``/``gif``/``webp``/``avif``/
+        ``video``/``zip``/``webm``/``html``/``empty``/``unknown``.
+
+    Callers:
+        - ``services/online_sources/framework/utils.py:save_png_bytes``
+        - ``services/online_sources/danbooru/source.py:DanbooruSource._fetch_image_bytes``
+    """
     if not data: return "empty"
     if data[:3] == b"\xff\xd8\xff": return "jpeg"
     if data[:8] == b"\x89PNG\r\n\x1a\n": return "png"
@@ -34,6 +45,18 @@ def sniff_image_kind(data: bytes) -> str:
 
 
 def pil_can_open(data: bytes) -> bool:
+    """探测字节流能否被 PIL 完整解码为图片.
+
+    Args:
+        data: 完整文件字节.
+
+    Returns:
+        bool: 可解码为 ``True``; PIL 无法识别 (``UnidentifiedImageError``)
+        为 ``False``. 其他异常 (如截断的 OSError) 原样抛出.
+
+    Callers:
+        - ``services/online_sources/danbooru/source.py:DanbooruSource._fetch_image_bytes``
+    """
     from PIL import UnidentifiedImageError
     try:
         im = Image.open(io.BytesIO(data)); im.load()
@@ -130,5 +153,16 @@ _GENDER_TAGS: frozenset[str] = frozenset({
 
 
 def _tags_to_caption(tags: str) -> str:
+    """把空格/逗号分隔的标签串转为逗号+空格分隔的标注文本.
+
+    Args:
+        tags: 空格/逗号分隔的标签串.
+
+    Returns:
+        str: ``, `` 连接的标注文本.
+
+    Callers:
+        - ``services/online_sources/framework/base.py:build_caption``
+    """
     parts = [t.strip() for t in tags.replace(",", " ").split() if t.strip()]
     return ", ".join(parts)

@@ -18,7 +18,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
-from pydantic import BaseModel, Field, computed_field
+from pydantic import BaseModel, Field, computed_field, model_validator
 
 from services.models.jobs import JobSnapshot
 
@@ -60,6 +60,19 @@ class BooruPost(BaseModel):
     is_video: bool = False
     # 转发动态标记: 卡片标注「转发」(配图来自原动态)
     is_forward: bool = False
+
+    @model_validator(mode="after")
+    def _fallback_urls(self) -> "BooruPost":
+        """预览/样图 URL 空缺时按 样图→原图 与 预览→原图 回退补齐.
+
+        Returns:
+            BooruPost: 补齐后的实例.
+        """
+        if not self.preview_url:
+            self.preview_url = self.sample_url or self.file_url
+        if not self.sample_url:
+            self.sample_url = self.preview_url or self.file_url
+        return self
 
     @computed_field
     @property

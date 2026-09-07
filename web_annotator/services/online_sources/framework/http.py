@@ -50,6 +50,13 @@ class HttpClient(httpx.AsyncClient):
     """
 
     def __init__(self, *, referer: str | None = None, **kwargs: Any) -> None:
+        """构造客户端: 预置连接池、超时、默认 UA 与可选 Referer.
+
+        Args:
+            referer: 防盗链 Referer, 写入默认请求头; 空值不追加.
+            **kwargs: 透传给 ``httpx.AsyncClient`` 的参数 (``limits``/``timeout``/
+                ``headers`` 未显式传入时使用预置默认值).
+        """
         kwargs.setdefault("limits", httpx.Limits(max_connections=32, max_keepalive_connections=16))
         kwargs.setdefault("timeout", httpx.Timeout(30.0, connect=10.0))
         headers = dict(kwargs.pop("headers", {}))
@@ -174,4 +181,17 @@ def ext_from_url(url: str, fallback: str = ".jpg") -> str:
 
 
 def _ctype(resp: httpx.Response) -> str:
+    """提取响应的媒体类型主值, 去除参数与空白.
+
+    Args:
+        resp: httpx 响应对象.
+
+    Returns:
+        str: Content-Type 主值 (如 ``image/jpeg``); 缺失时为
+        ``application/octet-stream``.
+
+    Callers:
+        - ``services/online_sources/framework/http.py:HttpClient.get_bytes``
+        - ``services/online_sources/framework/http.py:HttpClient.stream_response``
+    """
     return (resp.headers.get("content-type") or "application/octet-stream").split(";")[0].strip()

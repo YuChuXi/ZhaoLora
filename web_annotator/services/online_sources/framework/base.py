@@ -23,6 +23,7 @@ from services.online_sources.framework.utils import (
     _GENDER_TAGS,
     save_png_bytes,
     _tags_to_caption,
+    stem_candidates,
 )
 from services.models.booru import BooruPost
 
@@ -49,10 +50,7 @@ class SourceClient(ABC):
 
     @abstractmethod
     async def fetch_meta(self, out_dir: Path, pid: str) -> None:
-        """拉取帖子元数据并写入磁盘. 
-
-        Callers:
-            - ``services/online_sources/framework/base.py:SourceClient.fetch_meta``
+        """拉取帖子元数据并写入磁盘.
 
         Callers:
             - ``routes/online_sources.py:_run_refresh``
@@ -65,9 +63,6 @@ class SourceClient(ABC):
         每页条数由来源自行决定 (上游 API 语义), 调用方只传页码. 
 
         实现类应将 API 原始帖转为 ``BooruPost`` 后返回. 
-
-        Callers:
-            - ``services/online_sources/framework/base.py:SourceClient.search``
 
         Callers:
             - ``routes/online_sources.py:search``
@@ -102,7 +97,7 @@ class SourceClient(ABC):
         """下载帖子并写旁路标签与 meta.
 
         入参直接吃 search 阶段已返回的 ``BooruPost`` (含原图 URL 与标签),
-        各实现据此下载, 不再凭 id 重新请求帖文元数据。视频帖 (``post.is_video``)
+        各实现据此下载, 帖文元数据一律以入参为准。视频帖 (``post.is_video``)
         同样经此方法写入 ``out_dir`` (即数据集 ``video`` 目录)。``emit`` 为
         下载进度回调 ``(当前进度, 总量)``, 仅视频帖 (如 B 站 BBDown) 有意义,
         图片来源可忽略。
@@ -124,6 +119,19 @@ class SourceClient(ABC):
             - ``services/online_sources/framework/media.py:download_post``
         """
 
+    @abstractmethod
+    def split(self, stem: str) -> str:
+        """从文件名 stem 拆出本来源 pid, stem 非本来源格式时抛 ValueError.
+
+        Returns:
+            str: 帖子 pid.
+
+        Raises:
+            ValueError: stem 不属于本来源或格式非法.
+
+        Callers:
+            - ``services/online_sources/framework/base.py:detect_source``
+        """
     async def autocomplete(self, query: str, limit: int = 10) -> list[dict]:
         """标签自动补全. 默认不支持, 返回空列表.
 
@@ -146,41 +154,20 @@ class SourceClient(ABC):
         把 ``tags`` 作 UID、``extra`` 作筛选串) 覆盖此方法自行解析。
 
         Callers:
-            - ``services/online_sources/framework/base.py:SourceClient.search``
+            - ``services/online_sources/bilibili/source.py:BilibiliSource.search_session``
+            - ``services/online_sources/pixiv/source.py:PixivSource.search``
+            - ``services/online_sources/mihuashi/source.py:MihuashiSource.search``
         """
         return {"tags": tags, "extra": extra}
 
-    def preview_url(self, post: BooruPost) -> str:
-        """从已规范化的帖模型提取缩略图 URL. 
-
-        Callers:
-            - ``services/online_sources/framework/base.py:SourceClient.sample_url``
-        """
-        return post.preview_url or post.file_url
-
-    def sample_url(self, post: BooruPost) -> str:
-        """从已规范化的帖模型提取大图 URL. 
-        """
-        return post.sample_url or self.preview_url(post)
-
-    def is_media_url(self, url: str) -> bool:
-        """判断 URL 是否为本来源图床. 
-        """
-        return True
-
     # ---- 图片代理: 子类用以下属性描述图床差异, 继承统一的 `proxy_image` ----
 
+    # 允许代理的图床 host (精确或子域后缀), 空元组表示不限定
     image_hosts: tuple[str, ...] = ()
-    """允许代理的图床 host (精确或子域后缀), 空元组表示不限定. 
-    """
-
+    # 防盗链 Referer, 空串表示无需防盗链
     image_referer: str = ""
-    """防盗链 Referer, 空串表示无需防盗链. 
-    """
-
+    # 图片代理默认超时(秒)
     image_timeout: float = 30.0
-    """图片代理默认超时(秒). 
-    """
 
     def image_timeout_for(self, kind: str) -> float:
         """按 kind 返回代理超时, 默认沿用 ``image_timeout``. 
@@ -223,33 +210,28 @@ class SourceClient(ABC):
         """元数据子目录名, 如 .gelbooru_meta. 
 
         Callers:
-            - ``services/online_sources/framework/base.py:SourceClient.meta_subdir``
-
-        Callers:
             - ``services/online_sources/framework/base.py:SourceClient._write_meta``
+            - ``services/online_sources/framework/media.py:remove_download``
+            - ``services/online_sources/framework/media.py:regenerate_captions``
         """
         return f".{self.name}_meta"
 
     def file_stem(self, pid: str) -> str:
-        """文件名 stem, 如 g12345. 
+        """文件名 stem, 如 g12345.
 
         Callers:
-            - ``services/online_sources/framework/base.py:SourceClient.file_stem``
-
-        Callers:
-            - ``services/online_sources/framework/media.py:download_post``
-            - ``services/online_sources/framework/utils.py:find_downloaded``
+            - ``routes/online_sources.py:search``
+            - ``services/online_sources/batch.py:download_one``
+            - ``services/online_sources/framework/base.py:SourceClient._clean_old_files`` (经 ``stem_candidates`` 传参)
         """
         return f"{self.prefix}{pid}"
 
     def build_search_query(self, tags: str, *, order: str = "", extra: str = "") -> str:
-        """拼接标签、额外元标签与排序. 
-
-        Callers:
-            - ``services/online_sources/framework/base.py:SourceClient.build_search_query``
+        """拼接标签、额外元标签与排序.
 
         Callers:
             - ``routes/online_sources.py:search``
+            - ``services/online_sources/danbooru/source.py:DanbooruSource.search``
             - ``services/online_sources/gelbooru/source.py:GelbooruSource.search``
         """
         parts = [tags.strip()] if tags.strip() else []
@@ -270,10 +252,30 @@ class SourceClient(ABC):
         return extra.strip()
 
     def _write_meta(self, out_dir: Path, pid: str, post: BooruPost) -> None:
+        """将帖子元数据 JSON 写入来源 meta 子目录.
+
+        Args:
+            out_dir: 输出目录 (meta 子目录不存在时自动创建).
+            pid: 帖子 ID, 作为 JSON 文件名 (如 ``g12345.json``).
+            post: 待写入的帖子元数据.
+
+        Callers:
+            - ``services/online_sources/danbooru/source.py:DanbooruSource.fetch_meta``
+            - ``services/online_sources/danbooru/source.py:DanbooruSource.download``
+            - ``services/online_sources/gelbooru/source.py:GelbooruSource.fetch_meta``
+            - ``services/online_sources/gelbooru/source.py:GelbooruSource.download``
+            - ``services/online_sources/bilibili/source.py:BilibiliSource.download``
+            - ``services/online_sources/pixiv/source.py:PixivSource.download``
+            - ``services/online_sources/pixiv/source.py:PixivSource.fetch_meta``
+            - ``services/online_sources/mihuashi/source.py:MihuashiSource.download``
+            - ``services/online_sources/mihuashi/source.py:MihuashiSource.fetch_meta``
+            - ``services/online_sources/framework/gallerydl.py:GalleryDLSource.download``
+            - ``services/online_sources/framework/gallerydl.py:GalleryDLSource.fetch_meta``
+        """
         meta_dir = out_dir / self.meta_subdir
         meta_dir.mkdir(parents=True, exist_ok=True)
         (meta_dir / f"{pid}.json").write_text(
-            post.model_dump_json(indent=2) + "\n", encoding="utf-8")
+            post.model_dump_json(exclude={"key"}, indent=2) + "\n", encoding="utf-8")
 
     async def _save_png(self, data: bytes, dest: Path) -> None:
         """将下载字节转为 PNG 写入磁盘.
@@ -312,7 +314,21 @@ class SourceClient(ABC):
         save_png_bytes(data, dest)
 
     def _clean_old_files(self, out_dir: Path, pid: str, keep: Path) -> None:
-        from services.online_sources.framework.utils import stem_candidates
+        """删除同 pid 其他命名变体的图片文件, 仅保留本次写入的文件.
+
+        Args:
+            out_dir: 输出目录.
+            pid: 帖子 ID.
+            keep: 本次写入的图片路径, 清理时跳过.
+
+        Callers:
+            - ``services/online_sources/danbooru/source.py:DanbooruSource.download``
+            - ``services/online_sources/gelbooru/source.py:GelbooruSource.download``
+            - ``services/online_sources/bilibili/source.py:BilibiliSource.download``
+            - ``services/online_sources/pixiv/source.py:PixivSource.download``
+            - ``services/online_sources/mihuashi/source.py:MihuashiSource.download``
+            - ``services/online_sources/framework/gallerydl.py:GalleryDLSource.download``
+        """
         for old in stem_candidates(pid, file_stem_fn=self.file_stem):
             for ext in IMAGE_EXTS:
                 p = out_dir / f"{old}{ext}"
@@ -339,6 +355,7 @@ def build_caption(post: BooruPost, *, anima_format: bool = False,
         - ``services/online_sources/framework/media.py:regenerate_captions``
     """
     def _norm(t: str) -> str:
+        """按 ``keep_underscores`` 决定是否把标签下划线还原为空格."""
         return t if keep_underscores else t.replace("_", " ")
     if not anima_format and include_meta_tags:
         return _norm(_tags_to_caption(post.tags))
@@ -352,6 +369,7 @@ def build_caption(post: BooruPost, *, anima_format: bool = False,
                          if t.strip() and t.lower() not in meta_set)
 
     def _split(raw: str) -> list[str]:
+        """把逗号/空白分隔的标签串拆为去空白的标签列表."""
         return [t.strip() for t in raw.replace(",", " ").split() if t.strip()]
     general = _split(post.tag_string_general or post.tags)
     gender, rest = [], []

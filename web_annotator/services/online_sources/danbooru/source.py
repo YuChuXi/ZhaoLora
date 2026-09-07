@@ -109,20 +109,16 @@ async def _fetch_image_bytes(post) -> bytes:
 
 
 class DanbooruSource(SourceClient):
+    """Danbooru 图站来源客户端 (页码式).
+
+    Callers:
+        - ``services/online_sources/framework/base.py:register_source``
+    """
+
     name = "danbooru"
     prefix = "d"
     order_tags = {"score": "order:score", "id": "order:id_desc", "id_asc": "order:id"}
     valid_orders = ("score", "id", "id_asc")
-
-    def preview_url(self, post: BooruPost) -> str:
-        """Danbooru 帖缩略图 URL, 优先 720x720 webp.
-
-        覆盖父类 ``base.SourceClient``。
-
-        Callers:
-            - ``routes/online_sources.py:`` 搜索结果列表
-        """
-        return preview_url(post)
 
     @staticmethod
     def normalize(post: BooruPost) -> BooruPost | None:
@@ -223,7 +219,7 @@ class DanbooruSource(SourceClient):
         """下载 Danbooru 原图并写旁路标签.
 
         直接使用 search 阶段已获取的完整 ``post`` (含原图 URL 与标签字段),
-        不再按 id 重新拉取 ``posts/{pid}.json``。视频帖 (``post.is_video``)
+        帖文元数据一律以入参为准。视频帖 (``post.is_video``)
         经由 ``download_raw_file`` 下载原始文件。实现 ``base.SourceClient.download``。
 
         Args:

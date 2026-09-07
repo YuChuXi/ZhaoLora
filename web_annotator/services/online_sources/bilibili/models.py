@@ -9,7 +9,7 @@ Callers:
 
 from __future__ import annotations
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class Author(BaseModel):
@@ -119,3 +119,15 @@ class DynamicRecord(BaseModel):
     video: VideoInfo | None
     stat: StatInfo | None
     forwarded: DynamicRecord | None = None
+
+
+class SessionState(BaseModel):
+    """B 站搜索会话的续拉状态.
+
+    Attributes:
+        offsets (list[str]): 动态拉取 offset 栈, 栈顶为当前游标, 空串表示从头开始.
+    """
+
+    offsets: list[str] = Field(default_factory=lambda: [""])
+
+

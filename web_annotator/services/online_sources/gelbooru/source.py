@@ -37,6 +37,12 @@ def _to_model_data(raw: dict) -> dict:
 
 
 class GelbooruSource(SourceClient):
+    """Gelbooru 图站来源客户端 (页码式).
+
+    Callers:
+        - ``services/online_sources/framework/base.py:register_source``
+    """
+
     name = "gelbooru"
     prefix = "g"
     order_tags = {"score": "sort:score:desc", "id": "sort:id:desc", "id_asc": "sort:id:asc"}
@@ -46,6 +52,19 @@ class GelbooruSource(SourceClient):
     _IMAGE_TIMEOUTS = {"thumb": 30.0, "sample": 45.0}
 
     def image_timeout_for(self, kind: str) -> float:
+        """按图片类型返回代理超时: 缩略图快、样图大图放宽.
+
+        覆盖父类 ``base.SourceClient``.
+
+        Args:
+            kind: 图片类型 (``thumb``/``sample``/空).
+
+        Returns:
+            float: 超时秒数.
+
+        Callers:
+            - ``services/online_sources/framework/base.py:SourceClient.proxy_image``
+        """
         return self._IMAGE_TIMEOUTS.get(kind, self.image_timeout)
 
     def filter_extra(self, extra: str) -> str:
@@ -61,21 +80,12 @@ class GelbooruSource(SourceClient):
         tokens = [x for x in extra.split() if not x.lower().startswith("date:")]
         return " ".join(tokens)
 
-    def is_media_url(self, url: str) -> bool:
-        """仅允许 gelbooru.com 图床.
-
-        覆盖父类 ``base.SourceClient``.
-
-        Callers:
-            - ``routes/online_sources.py:`` 缩略图代理白名单检查
-        """
-        return "gelbooru.com" in url
-
     @staticmethod
     def normalize(post: BooruPost) -> BooruPost | None:
-        """Gelbooru 原始帖补充 ``source`` 和回退 URL.
+        """Gelbooru 原始帖补充 ``source``.
 
-        覆盖父类 ``base.SourceClient``.
+        覆盖父类 ``base.SourceClient``. 预览/样图 URL 回退由 ``BooruPost``
+        模型校验器统一处理.
 
         Callers:
             - ``services/online_sources/gelbooru/source.py:GelbooruSource.search``
@@ -83,8 +93,6 @@ class GelbooruSource(SourceClient):
         if not post.file_url:
             return None
         post.source = "gelbooru"
-        post.preview_url = post.preview_url or post.sample_url or post.file_url
-        post.sample_url = post.sample_url or post.preview_url
         post.is_video = post_is_video(post)
         return post
 
@@ -167,7 +175,7 @@ class GelbooruSource(SourceClient):
         """下载 Gelbooru 原图并写旁路标签.
 
         直接使用 search 阶段已持有的 ``post.file_url`` 与 ``post.tags`` 写入,
-        不再重新请求 ``get_post``; 仅 anima 格式需要额外查询标签类型。
+        帖文元数据一律以入参为准; 仅 anima 格式需要额外查询标签类型。
         视频帖 (``post.is_video``) 经由 ``download_raw_file`` 下载原始文件。
         实现 ``base.SourceClient.download``。
 
