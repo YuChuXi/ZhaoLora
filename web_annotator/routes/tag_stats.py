@@ -541,10 +541,13 @@ def edit_one(request: Request, body: TagEditOneBody) -> TagCheckItem:
 
     Args:
         request (Request): FastAPI 请求对象, 由路由参数注入。
-        body (TagEditOneBody): 编辑参数, 含路径、标签、位置。
+        body (TagEditOneBody): 编辑参数, 含路径、标签、插入位置与检查位置。
 
     Returns:
         TagCheckItem: 编辑后的最新检查结果。
+
+    Raises:
+        HTTPException: 插入位置或检查位置非法、标签为空、图片不存在时返回 400/404。
 
     Callers:
         - ``static/js/tag_check.js:onCardClick``
@@ -554,6 +557,8 @@ def edit_one(request: Request, body: TagEditOneBody) -> TagCheckItem:
     root = rt.root
     if body.position not in TAG_INSERT_POSITIONS:
         raise HTTPException(400, f"position 非法: {body.position}")
+    if body.check_position not in TAG_CHECK_POSITIONS:
+        raise HTTPException(400, f"check_position 非法: {body.check_position}")
     if not body.tag.strip():
         raise HTTPException(400, "标签不能为空")
 
@@ -582,7 +587,7 @@ def edit_one(request: Request, body: TagEditOneBody) -> TagCheckItem:
         body.position,
     )
     return _build_check_item(
-        rel, stem, work_dir, dir_name, root, rt.thumbnailer, tag, body.position
+        rel, stem, work_dir, dir_name, root, rt.thumbnailer, tag, body.check_position
     )
 
 

@@ -78,8 +78,8 @@ class TagCleanResult(BaseModel):
 # 标签检查位置选项: any / top / bottom / before-sep / after-sep / bottom-before
 TAG_CHECK_POSITIONS = frozenset({"any", "top", "bottom", "before-sep", "after-sep", "bottom-before"})
 
-# 标签插入位置选项: top / bottom / before-sep / after-sep / random / random-before / random-after
-TAG_INSERT_POSITIONS = frozenset({"top", "bottom", "before-sep", "after-sep", "random", "random-before", "random-after"})
+# 标签插入位置选项: top / bottom / before-sep / after-sep
+TAG_INSERT_POSITIONS = frozenset({"top", "bottom", "before-sep", "after-sep"})
 
 
 class TagCheckItem(ImageThumbItem):
@@ -115,7 +115,8 @@ class TagEditOneBody(BaseModel):
 
     path: str = Field(..., description="图片相对数据集根的路径")
     tag: str
-    position: str = Field("any", description="any/top/bottom/before-sep/after-sep")
+    position: str = Field(..., description="插入位置: top/bottom/before-sep/after-sep")
+    check_position: str = Field(..., description="编辑后检查所用位置: any/top/bottom/before-sep/after-sep/bottom-before")
 
 
 class EmbeddingStatusResponse(BaseModel):

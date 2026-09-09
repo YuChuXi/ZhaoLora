@@ -10,8 +10,6 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
-from services.models.dataset import ImageThumbItem
-
 
 class CropMatchConfig(BaseModel):
     """裁剪边长网格配置."""
@@ -23,10 +21,25 @@ class CropMatchConfig(BaseModel):
     max_output_pixels: int
 
 
-class CropImageItem(ImageThumbItem):
-    """裁剪页图片列表项. ``path`` 为数据集根相对路径(如 ``main/foo.png``)."""
+class CropPartRecord(BaseModel):
+    """单个部位输出的裁剪记录.
 
-    done: bool
+    ``crop`` 为源图像素坐标 ``[x1, y1, x2, y2]``; 整图输出或未记录坐标时为 None.
+    ``size`` 为输出像素尺寸 ``[宽, 高]``; 未记录时为 None.
+    """
+
+    crop: list[int] | None = None
+    size: list[int] | None = None
+
+
+class CropImageState(BaseModel):
+    """单张源图的部位输出状态(部位目录名 -> 输出记录).
+
+    同时用作 ``.crops/{stem}.json`` 的持久化结构与 ``/crop/state`` 端点响应.
+    """
+
+    stem: str
+    parts: dict[str, CropPartRecord] = Field(default_factory=dict)
 
 
 class CropPageConfig(BaseModel):

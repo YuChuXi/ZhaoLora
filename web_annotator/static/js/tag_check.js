@@ -114,17 +114,14 @@
 
   /**
    * 从双下拉框计算插入用的位置值（position + mode → add_tag_to_caption 的 position）。
-   * @returns {string} "top" | "bottom" | "random" | "before-sep" | "after-sep" | "random-before" | "random-after"
+   * 任意模式追加到所选区域末尾: 任意位置→全局末尾, ||| 前→头部末尾, ||| 后→正文末尾。
+   * @returns {string} "top" | "bottom" | "before-sep" | "after-sep"
    */
   function getInsertPosition() {
     var sep = document.getElementById('check-position').value;
     var mode = document.getElementById('check-mode').value;
-    if (sep === 'any') {
-      if (mode === 'top') return 'top';
-      if (mode === 'bottom') return 'bottom';
-      return 'random';
-    }
-    if (mode === 'random') return sep === 'before' ? 'random-before' : 'random-after';
+    if (mode === 'random') return sep === 'before' ? 'before-sep' : 'bottom';
+    if (sep === 'any') return mode === 'top' ? 'top' : 'bottom';
     if (sep === 'before') return mode === 'top' ? 'top' : 'before-sep';
     return mode === 'top' ? 'after-sep' : 'bottom';
   }
@@ -154,7 +151,10 @@
       body = JSON.stringify({ path: img.path, tag: tag });
     } else {
       endpoint = API.apiPath('/tags/edit-one');
-      body = JSON.stringify({ path: img.path, tag: tag, position: getInsertPosition() });
+      body = JSON.stringify({
+        path: img.path, tag: tag,
+        position: getInsertPosition(), check_position: getCheckPosition(),
+      });
     }
 
     API.request(endpoint, { method: 'POST', body: body }).then(function (updated) {
@@ -437,7 +437,10 @@
       body = JSON.stringify({ path: img.path, tag: tag });
     } else {
       endpoint = API.apiPath('/tags/edit-one');
-      body = JSON.stringify({ path: img.path, tag: tag, position: getInsertPosition() });
+      body = JSON.stringify({
+        path: img.path, tag: tag,
+        position: getInsertPosition(), check_position: getCheckPosition(),
+      });
     }
 
     API.request(endpoint, { method: 'POST', body: body }).then(function (updated) {

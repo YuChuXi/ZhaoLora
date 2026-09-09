@@ -70,8 +70,7 @@
 <nav class="app-tabs" id="app-tabs"></nav>
 <div class="toolbar">
   <button class="btn" id="btn-prev" title="←/A">上一张</button>
-  <button class="btn" id="btn-next" title="→/D">下一张</button>
-  <button class="btn" id="btn-skip" title="空格">跳过</button>
+  <button class="btn" id="btn-next" title="→/D/空格">下一张</button>
   <button class="btn green" id="btn-save" title="S">保存</button>
   <span class="sep"></span>
   <button class="btn" id="btn-add-crop" title="Q">新建选区</button>
@@ -106,7 +105,7 @@
     </div>
     <div class="side-actions">
       <div style="font-size:11px;color:var(--text-dim);line-height:1.45;">
-        S 保存 · 空格跳过 · ←/A 上张 · →/D 下张 · Q 新建 · E 删除 · C 清空
+        S 保存并下张 · 空格/→/D 下张 · ←/A 上张 · Q 新建 · E 删除 · C 清空
       </div>
     </div>
   </aside>
@@ -115,9 +114,7 @@
 <div class="filmstrip" id="filmstrip" hidden></div>
 <div class="status-bar" id="crop-status">
   <span class="status-seg" id="seg-pos">0/0</span>
-  <span class="status-seg" id="seg-done">已裁 0</span>
   <span class="status-seg" id="seg-name">-</span>
-  <span class="status-seg" id="seg-obj">-</span>
   <span class="status-seg" id="seg-metric">-</span>
   <span class="status-seg" id="seg-extra">选区 0<span class="live" id="live-match"></span></span>
 </div>

@@ -81,9 +81,10 @@ from services.models.jobs import (
     JobCancelResponse,
 )
 from services.models.crop import (
+    CropImageState,
     CropMatchConfig,
-    CropImageItem,
     CropPageConfig,
+    CropPartRecord,
     CropSavedItem,
     CropSaveResponse,
 )
@@ -184,7 +185,8 @@ __all__ = [
     'JobSnapshot',
     'JobCancelResponse',
     'CropMatchConfig',
-    'CropImageItem',
+    'CropImageState',
+    'CropPartRecord',
     'CropPageConfig',
     'CropSavedItem',
     'CropSaveResponse',

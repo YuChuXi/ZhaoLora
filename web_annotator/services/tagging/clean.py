@@ -154,16 +154,12 @@ def add_tag_to_caption(raw: str, tag: str, position: str) -> str:
         raw (str): 原始 caption 文本.
         tag (str): 待添加的标签原文.
         position (str): 目标位置 — ``top`` / ``bottom`` / ``before-sep`` /
-            ``after-sep`` / ``random`` / ``random-before`` /
-            ``random-after``.
+            ``after-sep``.
             各位置插入策略:
             - ``top``: 头部首位(跳过质量/分数等优先标签后插入)
             - ``bottom``: 有 ``|||`` 时追加到正文末尾, 否则头部末尾
             - ``before-sep``: 头部末尾
             - ``after-sep``: 正文首位(无 ``|||`` 时自动创建)
-            - ``random``: 全局随机位置(保留 ``|||``, 随机选头部或正文再随机插入)
-            - ``random-before``: 头部随机位置
-            - ``random-after``: 正文随机位置
 
     Returns:
         str: 编辑后的 caption 字符串.
@@ -182,26 +178,13 @@ def add_tag_to_caption(raw: str, tag: str, position: str) -> str:
         header.insert(idx, tag)
     elif position == "before-sep":
         header.append(tag)
-    elif position == "random-before":
-        idx = random.randint(0, len(header))
-        header.insert(idx, tag)
     elif position == "after-sep":
         body.insert(0, tag)
-    elif position == "random-after":
-        idx = random.randint(0, len(body))
-        body.insert(idx, tag)
     elif position == "bottom":
         if has_sep:
             body.append(tag)
         else:
             header.append(tag)
-    elif position == "random":
-        if random.choice([True, False]):
-            idx = random.randint(0, len(header))
-            header.insert(idx, tag)
-        else:
-            idx = random.randint(0, len(body))
-            body.insert(idx, tag)
     else:
         raise ValueError(f"不支持的插入位置: {position!r}")
 

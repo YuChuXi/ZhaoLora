@@ -32,12 +32,16 @@ RESERVED_DIR_NAMES = frozenset({
     "main",
     "mask",
     "crops",              # 未命名选区的存放目录
+    ".crops",             # 每图裁剪输出记录(.crops/{stem}.json)
     "aesthetic_report",   # 美学报告
     ".trash",
     ".thumbs",
     ".thumbnails",
     "__pycache__",
 })
+
+# 每图裁剪输出记录目录名(datasets/xxx/.crops/{stem}.json, routes/crop.py 读写)
+CROP_META_DIRNAME = ".crops"
 
 # 视频目录名(数据集根下, 可为指向外部存储的符号链接)
 VIDEO_DIRNAME = "video"
@@ -52,6 +56,7 @@ class DatasetLayout:
     main_dir: Path      # datasets/xxx/main
     mask_dir: Path      # datasets/xxx/mask
     crops_dir: Path     # datasets/xxx/crops(未命名选区)
+    crop_meta_dir: Path  # datasets/xxx/.crops(每图裁剪输出记录)
 
     def part_dir(self, name: str) -> Path:
         """部位输出目录: root/{name}/.
@@ -78,7 +83,7 @@ class DatasetLayout:
 
         Callers:
             - ``routes/crop.py:get_config``
-            - ``services/dataset/layout.py:DatasetLayout.stem_has_part_output``
+            - ``routes/crop.py:get_crop_state``
         """
         if not self.root.is_dir():
             return []
@@ -88,36 +93,6 @@ class DatasetLayout:
                 out.append(p)
         return out
 
-    def stem_has_part_output(self, stem: str, exclude_dir: str = "") -> bool:
-        """任一部位目录或 crops 中已有同 stem 输出.
-
-        Args:
-            stem (str): 图片 stem.
-            exclude_dir (str): 需排除的目录名(当前源目录自身不会成为输出目标,
-                其内同 stem 文件不构成完成依据).
-
-        Returns:
-            bool: 已有同 stem 输出则为 True.
-
-        Callers:
-            - ``routes/crop.py:list_crop_images``
-        """
-        candidates = [*self.list_part_dirs(), self.crops_dir]
-        exclude = (exclude_dir or "").lower()
-        for d in candidates:
-            if exclude and d.name.lower() == exclude:
-                continue
-            if not d.is_dir():
-                continue
-            if (d / f"{stem}.png").is_file():
-                return True
-            for f in d.iterdir():
-                if not f.is_file() or f.suffix.lower() != ".png":
-                    continue
-                if f.stem == stem or f.stem.startswith(stem + "_"):
-                    return True
-        return False
-
 
 def resolve_dataset_layout(data_dir: Path) -> DatasetLayout:
     """解析数据集根目录, 自动确保 ``main/`` 与 ``mask/`` 存在.
@@ -126,7 +101,7 @@ def resolve_dataset_layout(data_dir: Path) -> DatasetLayout:
         data_dir (Path): 数据集根目录(``datasets/xxx``).
 
     Returns:
-        DatasetLayout: 解析后的布局, 含 root / main_dir / mask_dir / crops_dir.
+        DatasetLayout: 解析后的布局, 含 root / main_dir / mask_dir / crops_dir / crop_meta_dir.
 
     Raises:
         FileNotFoundError: 目录不存在.
@@ -143,4 +118,10 @@ def resolve_dataset_layout(data_dir: Path) -> DatasetLayout:
     mask_dir = data_dir / "mask"
     mask_dir.mkdir(parents=True, exist_ok=True)
 
-    return DatasetLayout(root=data_dir, main_dir=main_dir, mask_dir=mask_dir, crops_dir=data_dir / "crops")
+    return DatasetLayout(
+        root=data_dir,
+        main_dir=main_dir,
+        mask_dir=mask_dir,
+        crops_dir=data_dir / "crops",
+        crop_meta_dir=data_dir / CROP_META_DIRNAME,
+    )

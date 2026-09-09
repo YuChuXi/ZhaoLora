@@ -13,18 +13,19 @@ from pydantic import BaseModel, Field
 from PIL import Image
 
 from routes.deps import get_runtime, resolve_path
-from services.core.natural import natural_key
 from services.core.scanner import scan_images
 from services.core.thumbnailer import image_size
 from services.core.work_dir import resolve_subdir
 from services.dataset.crop import clamp_target_size, match_config
 from services.dataset.layout import RESERVED_DIR_NAMES, VIDEO_DIRNAME, DatasetLayout
 from services.models import (
-    CropImageItem,
+    CropImageState,
     CropMatchConfig,
     CropPageConfig,
+    CropPartRecord,
     CropSaveResponse,
     CropSavedItem,
+    ImageThumbItem,
 )
 
 logger = logging.getLogger(__name__)
@@ -125,18 +126,63 @@ def _out_dir_for(layout: DatasetLayout, name: str, source_dir: str) -> Path:
     return out_dir
 
 
-def _resolve_out_path(layout: DatasetLayout, stem: str, part_name: str, index: int, total: int, source_dir: str) -> Path:
+def _read_crop_meta(layout: DatasetLayout, stem: str) -> CropImageState:
+    """读取单张源图的裁剪输出记录 ``.crops/{stem}.json``.
+
+    Args:
+        layout (DatasetLayout): 当前数据集布局, 用于定位记录目录.
+        stem (str): 源图文件名 stem.
+
+    Returns:
+        CropImageState: 该图的部位输出记录; 无记录文件时返回空状态.
+
+    Raises:
+        pydantic.ValidationError: 记录文件内容与结构不符时向上传播.
+
+    Callers:
+        - ``routes/crop.py:get_crop_state``
+        - ``routes/crop.py:_record_saved``
+    """
+    meta_path = layout.crop_meta_dir / f"{stem}.json"
+    if not meta_path.is_file():
+        return CropImageState(stem=stem)
+    return CropImageState.model_validate_json(meta_path.read_text(encoding="utf-8"))
+
+
+def _record_saved(layout: DatasetLayout, stem: str, saved: list[CropSavedItem]) -> None:
+    """把本轮保存的输出记录写入 ``.crops/{stem}.json`` (读-改-写, 同名部位覆盖).
+
+    记录先写临时文件再原子替换, 不会留下写了一半的记录文件.
+
+    Args:
+        layout (DatasetLayout): 当前数据集布局, 用于定位记录目录.
+        stem (str): 源图文件名 stem.
+        saved (list[CropSavedItem]): 本轮保存的输出列表, 输出目录名作部位键.
+
+    Callers:
+        - ``routes/crop.py:save_crops``
+    """
+    meta = _read_crop_meta(layout, stem)
+    for item in saved:
+        meta.parts[Path(item.file).parent.name] = CropPartRecord(crop=item.crop, size=item.size)
+    layout.crop_meta_dir.mkdir(parents=True, exist_ok=True)
+    meta_path = layout.crop_meta_dir / f"{stem}.json"
+    tmp_path = meta_path.with_name(meta_path.name + ".tmp")
+    tmp_path.write_text(meta.model_dump_json(indent=2) + "\n", encoding="utf-8")
+    tmp_path.replace(meta_path)
+
+
+def _resolve_out_path(layout: DatasetLayout, stem: str, part_name: str, source_dir: str) -> Path:
     """计算单张裁剪的输出路径.
 
     有合法 ``part_name`` 时写入 ``root/{part}/{stem}.png``;
-    否则写入 ``root/crops/``, 多张时附加序号 ``_{index+1:03d}``.
+    否则写入 ``root/crops/{stem}.png``. 同轮保存的输出路径冲突
+    (部位名重复或多个未命名选区)由调用方在写盘前统一拒绝.
 
     Args:
         layout (DatasetLayout): 当前数据集布局, 用于定位部位目录与 crops 目录.
-        stem (str): 源图文件名 stem, 用作输出文件名前缀.
-        part_name (str): 候选部位名, 非空且合法时归入对应部位目录.
-        index (int): 当前选区在保存序列中的索引(用于多张时编号).
-        total (int): 本轮保存的选区总数(决定是否需要附加序号).
+        stem (str): 源图文件名 stem, 用作输出文件名.
+        part_name (str): 候选部位名, 非空时归入对应部位目录.
         source_dir (str): 源图所在工作目录名, 透传给输出目录校验.
 
     Returns:
@@ -149,31 +195,26 @@ def _resolve_out_path(layout: DatasetLayout, stem: str, part_name: str, index: i
     Callers:
         - ``routes/crop.py:save_crops``
     """
-    if part_name and _SAFE_NAME.match(part_name):
+    if part_name:
         out_dir = _out_dir_for(layout, part_name, source_dir)
         return out_dir / f"{stem}.png"
 
     if source_dir and source_dir.lower() == layout.crops_dir.name:
         raise HTTPException(400, "源目录为 crops 时未命名选区无处可写, 请填写部位名")
-    layout.crops_dir.mkdir(parents=True, exist_ok=True)
-    if total == 1:
-        return layout.crops_dir / f"{stem}.png"
-    return layout.crops_dir / f"{stem}_{index + 1:03d}.png"
+    return layout.crops_dir / f"{stem}.png"
 
 
 @router.get("/images")
-def list_crop_images(request: Request, dir: str = Query("main")) -> list[CropImageItem]:
-    """列出指定工作目录下图片及是否已有部位或裁剪输出.
-
-    按 (是否已完成, 路径名) 升序排序, 未完成项排在前面便于切帧.
+def list_crop_images(request: Request, dir: str = Query("main")) -> list[ImageThumbItem]:
+    """列出指定工作目录下的源图清单(自然序).
 
     Args:
         request (Request): FastAPI 请求对象, 由路由参数注入.
         dir (str): 源工作目录名(数据集根下一级子目录, 默认 main).
 
     Returns:
-        list[CropImageItem]: 图片清单, ``path`` 为数据集根相对路径
-            (如 ``main/foo.png``), 含 stem/尺寸/缩略图哈希/完成标记.
+        list[ImageThumbItem]: 图片清单, ``path`` 为数据集根相对路径
+            (如 ``main/foo.png``), 含 stem/尺寸/缩略图哈希.
 
     Raises:
         HTTPException: 目录名非法或不存在时抛出 400.
@@ -187,21 +228,55 @@ def list_crop_images(request: Request, dir: str = Query("main")) -> list[CropIma
         name, work_dir = resolve_subdir(layout.root, dir)
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
-    result: list[CropImageItem] = []
+    result: list[ImageThumbItem] = []
     for img in scan_images(work_dir, path_prefix=name):
         w, h = image_size(layout.root / img.path)
         result.append(
-            CropImageItem(
+            ImageThumbItem(
                 path=img.path,
                 stem=img.stem,
-                done=layout.stem_has_part_output(img.stem, exclude_dir=name),
                 thumbnail_hash=thumbnailer.hash_for(img.path),
                 width=w,
                 height=h,
             )
         )
-    result.sort(key=lambda x: (1 if x.done else 0, natural_key(x.path)))
     return result
+
+
+@router.get("/state")
+def get_crop_state(request: Request, path: str = Query(...)) -> CropImageState:
+    """查询单张源图各部位的输出状态.
+
+    存在性以磁盘为准: 遍历部位目录与 crops 检查 ``{stem}.png``(排除当前
+    源目录自身, 源目录不兼作输出目标); 坐标与输出尺寸取自
+    ``.crops/{stem}.json`` 保存记录, 未记录的输出两者为 null.
+
+    Args:
+        request (Request): FastAPI 请求对象, 由路由参数注入.
+        path (str): 源图数据集根相对路径(如 ``main/foo.png``).
+
+    Returns:
+        CropImageState: 仅含磁盘实际存在输出的部位状态映射.
+
+    Raises:
+        HTTPException: 路径越界(400).
+
+    Callers:
+        - ``static/js/crop.js:loadIndex``
+    """
+    layout = _layout(request)
+    resolve_path(layout.root, path)
+    stem = Path(path).stem
+    source_dir = _source_dir_of(path)
+    meta = _read_crop_meta(layout, stem)
+    parts: dict[str, CropPartRecord] = {}
+    for d in [*layout.list_part_dirs(), layout.crops_dir]:
+        if source_dir and d.name.lower() == source_dir.lower():
+            continue
+        if not (d / f"{stem}.png").is_file():
+            continue
+        parts[d.name] = meta.parts.get(d.name) or CropPartRecord()
+    return CropImageState(stem=stem, parts=parts)
 
 
 @router.get("/image")
@@ -271,8 +346,9 @@ def save_crops(request: Request, body: SaveCropsBody) -> CropSaveResponse:
     ``body.path`` 为数据集根相对路径, 源图可来自任意工作目录;
     源目录自身与保留名(main/mask/crops 等)禁止作为输出目录.
     当 ``body.no_crop_resize`` 为真时整图直接保存到部位目录;
-    否则逐个选区裁切, 缩放到目标尺寸, 写入部位目录或 ``crops/``,
-    同名输出文件自动追加序号避免覆盖.
+    否则逐个选区裁切, 缩放到目标尺寸, 写入 ``root/{部位}/{stem}.png``
+    或 ``root/crops/{stem}.png``; 同名输出即覆盖旧文件(重新裁剪语义).
+    部位名重复或多个未命名选区导致输出路径冲突时, 在写盘前整体拒绝.
 
     Args:
         request (Request): FastAPI 请求对象, 由路由参数注入.
@@ -283,7 +359,8 @@ def save_crops(request: Request, body: SaveCropsBody) -> CropSaveResponse:
 
     Raises:
         HTTPException: 图片不存在(404); 无裁剪区域(400);
-            部位名非法/占用保留名/与源目录相同(400).
+            部位名非法/占用保留名/与源目录相同(400);
+            部位名重复或多个未命名选区导致输出路径冲突(400).
 
     Callers:
         - ``static/js/crop.js:saveAndNext``
@@ -302,12 +379,15 @@ def save_crops(request: Request, body: SaveCropsBody) -> CropSaveResponse:
     iw, ih = img.size
     stem = Path(rel).stem
     saved: list[CropSavedItem] = []
+    staged: list[tuple[Path, Path]] = []  # (临时文件, 最终路径); 全部写完后统一原子替换
 
     if body.no_crop_resize:
         part = (body.part_name or (body.crops[0].name if body.crops else "") or "").strip()
         out_dir = _out_dir_for(layout, part, source_dir)
         out_path = out_dir / f"{stem}.png"
-        img.save(out_path, format="PNG")
+        tmp_path = out_path.with_name(out_path.name + ".tmp")
+        img.save(tmp_path, format="PNG")
+        staged.append((tmp_path, out_path))
         saved.append(
             CropSavedItem(
                 file=str(out_path.relative_to(layout.root)),
@@ -315,51 +395,52 @@ def save_crops(request: Request, body: SaveCropsBody) -> CropSaveResponse:
                 name=part,
             )
         )
-        logger.info("数据集 %s 整图保存至部位目录: %s -> %s",
-                    layout.root.name, rel, part)
-        return CropSaveResponse(saved=saved, count=len(saved))
+    else:
+        seen_names: set[str] = set()
+        for c in body.crops:
+            raw = (c.name or "").strip()
+            if not raw:
+                continue
+            if not _SAFE_NAME.match(raw):
+                raise HTTPException(400, f"部位名非法: {raw}")
+            if raw in seen_names:
+                raise HTTPException(400, f"部位名重复: {raw}, 请为每个选区指定不同部位名")
+            seen_names.add(raw)
+        if len(body.crops) - len(seen_names) > 1:
+            raise HTTPException(400, "多个未命名选区输出文件名冲突, 请填写部位名")
 
-    used_keys: set[str] = set()
-    for i, c in enumerate(body.crops):
-        x1 = max(0, min(iw - 1, c.x1))
-        y1 = max(0, min(ih - 1, c.y1))
-        x2 = max(x1 + 1, min(iw, c.x2))
-        y2 = max(y1 + 1, min(ih, c.y2))
-        cw, ch = x2 - x1, y2 - y1
-        tw = int(c.target_w or cw)
-        th = int(c.target_h or ch)
-        tw, th = clamp_target_size(tw, th)
+        for c in body.crops:
+            x1 = max(0, min(iw - 1, c.x1))
+            y1 = max(0, min(ih - 1, c.y1))
+            x2 = max(x1 + 1, min(iw, c.x2))
+            y2 = max(y1 + 1, min(ih, c.y2))
+            cw, ch = x2 - x1, y2 - y1
+            tw = int(c.target_w or cw)
+            th = int(c.target_h or ch)
+            tw, th = clamp_target_size(tw, th)
 
-        crop = img.crop((x1, y1, x2, y2))
-        out_img = crop.resize((tw, th), Image.Resampling.LANCZOS)
+            crop = img.crop((x1, y1, x2, y2))
+            out_img = crop.resize((tw, th), Image.Resampling.LANCZOS)
 
-        raw_name = (c.name or "").strip()
-        out_path = _resolve_out_path(layout, stem, raw_name, i, len(body.crops), source_dir)
+            raw_name = (c.name or "").strip()
+            out_path = _resolve_out_path(layout, stem, raw_name, source_dir)
 
-        key = str(out_path)
-        n = 1
-        while key in used_keys:
-            if raw_name and _SAFE_NAME.match(raw_name):
-                out_path = layout.part_dir(raw_name) / f"{stem}_{n:02d}.png"
-            else:
-                out_path = layout.crops_dir / f"{stem}_{i + 1:03d}_{n:02d}.png"
-            key = str(out_path)
-            n += 1
-            if n > 99:
-                break
-
-        used_keys.add(key)
-        out_path.parent.mkdir(parents=True, exist_ok=True)
-        out_img.save(out_path, format="PNG")
-        saved.append(
-            CropSavedItem(
-                file=str(out_path.relative_to(layout.root)),
-                crop=[x1, y1, x2, y2],
-                size=[tw, th],
-                name=raw_name or out_path.parent.name,
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            tmp_path = out_path.with_name(out_path.name + ".tmp")
+            out_img.save(tmp_path, format="PNG")
+            staged.append((tmp_path, out_path))
+            saved.append(
+                CropSavedItem(
+                    file=str(out_path.relative_to(layout.root)),
+                    crop=[x1, y1, x2, y2],
+                    size=[tw, th],
+                    name=raw_name or out_path.parent.name,
+                )
             )
-        )
 
+    for tmp_path, out_path in staged:
+        tmp_path.replace(out_path)
+    _record_saved(layout, stem, saved)
     logger.info("数据集 %s 保存裁剪选区: 源图 %s, 共 %d 个输出",
                 layout.root.name, rel, len(saved))
     return CropSaveResponse(saved=saved, count=len(saved))

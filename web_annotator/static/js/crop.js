@@ -21,7 +21,7 @@
   var _scale = 1;
   var _offsetX = 0;
   var _offsetY = 0;
-  var _crops = []; // {x1,y1,x2,y2,target_w,target_h,zoom,name}
+  var _crops = []; // {x1,y1,x2,y2,target_w,target_h,zoom,name,saved}
   var _selected = -1;
   var _autoParts = []; // 已添加的部位名，后续每张图自动生成选区
   var _deniedParts = []; // 永久删除的部位，刷新后也不再自动纳入
@@ -150,6 +150,11 @@
     if (cfg.max_output_pixels != null) MAX_OUTPUT_PIXELS = cfg.max_output_pixels;
   }
 
+  /**
+   * 构造选区对象. ``saved`` 标记坐标是否与上次保存一致: 拖动/缩放经本函数
+   * 重建对象时自动归为未保存, 改名处需手动清除.
+   * 引用：initDefaultCrop、applySnap、doDrag、新建选区。
+   */
   function makeCrop(x1, y1, x2, y2, cand, name) {
     return {
       x1: x1, y1: y1, x2: x2, y2: y2,
@@ -157,6 +162,7 @@
       target_h: cand ? cand.target_h : Math.min(y2 - y1, 1536),
       zoom: cand ? cand.zoom : 1.0,
       name: name || '',
+      saved: false,
     };
   }
 
@@ -428,18 +434,37 @@
     toast('已添加 ' + name);
   }
 
-  function initDefaultCrop() {
+  /**
+   * 生成本图初始选区: 保存记录的部位直接还原为编辑态选区(坐标/输出尺寸/缩放比,
+   * 标记 saved), 自动部位中记录未覆盖的补默认网格框; 二者皆空时生成单个未命名默认框.
+   * 引用：loadIndex(传记录)、clearCrops、onToggleNoCrop(无参=纯默认框)。
+   * @param {Object.<string, {crop:number[]|null, size:number[]|null}>} [savedParts]
+   */
+  function initDefaultCrop(savedParts) {
     _crops = [];
     _selected = -1;
     if (!_origW || !_origH) return;
-    if (_autoParts.length) {
-      for (var i = 0; i < _autoParts.length; i++) {
-        _crops.push(makeDefaultSizedCrop(_autoParts[i], i));
+    if (savedParts) {
+      for (var name in savedParts) {
+        var rec = savedParts[name];
+        if (!rec.crop || rec.crop.length !== 4) continue;
+        var cx1 = rec.crop[0], cy1 = rec.crop[1], cx2 = rec.crop[2], cy2 = rec.crop[3];
+        var tw = rec.size ? rec.size[0] : cx2 - cx1;
+        var th = rec.size ? rec.size[1] : cy2 - cy1;
+        var box = makeCrop(cx1, cy1, cx2, cy2,
+          { target_w: tw, target_h: th, zoom: tw / Math.max(1, cx2 - cx1) }, name);
+        box.saved = true;
+        _crops.push(box);
       }
-      _selected = 0;
-      return;
     }
-    _crops.push(makeDefaultSizedCrop('', 0));
+    for (var i = 0; i < _autoParts.length; i++) {
+      var part = _autoParts[i], exists = false;
+      for (var j = 0; j < _crops.length; j++) {
+        if (_crops[j].name === part) { exists = true; break; }
+      }
+      if (!exists) _crops.push(makeDefaultSizedCrop(part, _crops.length));
+    }
+    if (!_crops.length) _crops.push(makeDefaultSizedCrop('', 0));
     _selected = 0;
   }
 
@@ -541,14 +566,16 @@
       var box = _crops[i];
       var x1 = box.x1, y1 = box.y1, x2 = box.x2, y2 = box.y2;
       var active = i === _selected;
-      ctx.strokeStyle = active ? '#00ffff' : '#00cc66';
+      // 颜色只编码保存状态: 红=与上次保存一致, 绿=已改动; 选中仅加粗
+      var isSaved = !!box.saved;
+      ctx.strokeStyle = isSaved ? '#e05555' : '#00cc66';
       ctx.lineWidth = active ? lw : lwInactive;
       ctx.strokeRect(x1, y1, x2 - x1, y2 - y1);
 
       var corners = [
         [x1, y1], [x2, y1], [x1, y2], [x2, y2],
       ];
-      ctx.fillStyle = active ? '#00ffff' : '#00cc66';
+      ctx.fillStyle = isSaved ? '#e05555' : '#00cc66';
       for (var c = 0; c < corners.length; c++) {
         ctx.fillRect(corners[c][0] - hs, corners[c][1] - hs, hs * 2, hs * 2);
       }
@@ -557,11 +584,11 @@
       var info = (box.x2 - box.x1) + 'x' + (box.y2 - box.y1) +
         ' → ' + box.target_w + 'x' + box.target_h + '@' + Number(box.zoom).toFixed(1) + 'x';
       ctx.font = fontPx + 'px sans-serif';
-      ctx.fillStyle = active ? '#003333' : '#003320';
+      ctx.fillStyle = isSaved ? '#330a0a' : '#003320';
       var tw = Math.max(ctx.measureText(label).width, ctx.measureText(info).width) + uiPx(8);
       var ly = Math.max(0, y1 - labelGap);
       ctx.fillRect(x1, ly, tw, labelH);
-      ctx.fillStyle = active ? '#00ffff' : '#a0ffc0';
+      ctx.fillStyle = isSaved ? '#ffb0b0' : '#a0ffc0';
       ctx.fillText(label, x1 + uiPx(4), ly + fontPx);
       ctx.fillText(info, x1 + uiPx(4), ly + fontPx * 2 + uiPx(2));
     }
@@ -615,6 +642,7 @@
           var oldName = _crops[idx].name || '';
           var newName = input.value.trim();
           _crops[idx].name = newName;
+          if (oldName !== newName) _crops[idx].saved = false;
           if (oldName && oldName !== newName) {
             var still = false;
             for (var j = 0; j < _crops.length; j++) {
@@ -670,16 +698,13 @@
   }
 
   /**
-   * 底栏六段：位置、完成量、文件名、对象状态、分辨率、附加。
+   * 底栏四段：位置、文件名、分辨率、附加。
    * 引用：换图、保存、选区变更。
    */
   function updateNav() {
     var img = _images[_index];
-    var done = 0;
-    for (var i = 0; i < _images.length; i++) if (_images[i].done) done++;
     document.getElementById('seg-pos').textContent =
       (_images.length ? (_index + 1) : 0) + '/' + _images.length;
-    document.getElementById('seg-done').textContent = '已裁 ' + done;
     var live = document.getElementById('live-match');
     var extra = document.getElementById('seg-extra');
     function setExtraPrefix(text) {
@@ -695,7 +720,6 @@
     if (!img) {
       document.getElementById('seg-name').textContent = '-';
       document.getElementById('seg-name').title = '';
-      document.getElementById('seg-obj').textContent = '-';
       document.getElementById('seg-metric').textContent = '-';
       setExtraPrefix('选区 0');
       if (live) live.textContent = '';
@@ -704,7 +728,6 @@
     var base = img.path.split(/[/\\]/).pop() || img.path;
     document.getElementById('seg-name').textContent = base;
     document.getElementById('seg-name').title = img.path;
-    document.getElementById('seg-obj').textContent = img.done ? '已裁剪' : '未裁剪';
     document.getElementById('seg-metric').textContent = _origW + '×' + _origH;
     var prefix = '选区 ' + _crops.length;
     if (_autoParts.length) prefix += ' · 自动：' + _autoParts.join(', ');
@@ -998,45 +1021,31 @@
     _images = res;
     if (_strip) _strip.refresh();
     if (_images.length > 0) {
-      var start = findNextUnfinished(-1);
-      if (start < 0) {
-        await loadIndex(0);
-        toast('全部已裁剪');
-      } else {
-        await loadIndex(start);
-      }
+      await loadIndex(0);
     } else {
       updateNav();
       toast('没有图片');
     }
   }
 
-  function findNextUnfinished(fromIdx) {
-    for (var i = fromIdx + 1; i < _images.length; i++) {
-      if (!_images[i].done) return i;
-    }
-    return -1;
-  }
-
-  function goNextUnfinished() {
-    var next = findNextUnfinished(_index);
-    if (next < 0) {
-      toast('后面没有未裁剪的图');
-      return;
-    }
-    loadIndex(next);
+  function goNext() {
+    if (_index + 1 < _images.length) loadIndex(_index + 1);
+    else toast('已是最后一张');
   }
 
   function goPrev() {
     if (_index > 0) loadIndex(_index - 1);
+    else toast('已是第一张');
   }
 
   async function loadIndex(idx) {
     if (!_images.length) return;
     _index = Math.max(0, Math.min(_images.length - 1, idx));
     var imgMeta = _images[_index];
-    // 裁剪图二进制: 非 JSON 边界, 直接 fetch + blob (API.request 仅支持 JSON)
-    var imgRes = await fetch(API.apiPath('/crop/image?path=' + encodeURIComponent(imgMeta.path)));
+    // 裁剪图二进制与部位状态并行请求 (API.request 仅支持 JSON, 二进制直接 fetch + blob)
+    var imgTask = fetch(API.apiPath('/crop/image?path=' + encodeURIComponent(imgMeta.path)));
+    var stateTask = API.request(API.apiPath('/crop/state') + '?path=' + encodeURIComponent(imgMeta.path));
+    var imgRes = await imgTask;
     if (!imgRes.ok) throw new Error(imgRes.status + ': ' + await imgRes.text());
     var blob = await imgRes.blob();
     var url = URL.createObjectURL(blob);
@@ -1053,7 +1062,8 @@
     _noCrop = false;
     document.getElementById('chk-no-crop').checked = false;
     document.getElementById('part-name-wrap').style.display = 'none';
-    initDefaultCrop();
+    var state = await stateTask;
+    initDefaultCrop((_images[_index] && _images[_index].path === imgMeta.path) ? state.parts : null);
     fitCanvas();
     buildBase();
     redraw();
@@ -1089,15 +1099,17 @@
       method: 'POST',
       body: JSON.stringify(body),
     });
-    imgMeta.done = true;
     toast('已保存 ' + res.count + ' 张');
-    var next = findNextUnfinished(_index);
-    if (next < 0) {
-      updateNav();
-      toast('全部完成');
-      return;
+    if (_index + 1 < _images.length) {
+      await loadIndex(_index + 1);
+    } else {
+      // 已在最后一张: 选区标记为已保存色
+      if (!_noCrop) {
+        for (var i = 0; i < _crops.length; i++) _crops[i].saved = true;
+      }
+      redraw();
+      renderList();
     }
-    await loadIndex(next);
   }
 
   function addCrop() {
@@ -1171,8 +1183,7 @@
     }
 
     document.getElementById('btn-prev').addEventListener('click', goPrev);
-    document.getElementById('btn-next').addEventListener('click', goNextUnfinished);
-    document.getElementById('btn-skip').addEventListener('click', goNextUnfinished);
+    document.getElementById('btn-next').addEventListener('click', goNext);
     // 横排预览条: 点击第一段(位置)展开, 点击缩略图跳转
     _strip = Filmstrip.create({
       container: document.getElementById('filmstrip'),
@@ -1227,7 +1238,7 @@
       if ((e.ctrlKey || e.metaKey) && (key === 'n' || key === 'N' || code === 'KeyN')) {
         e.preventDefault();
         if (inField) e.target.blur();
-        goNextUnfinished();
+        goNext();
         return;
       }
       if (inField) return;
@@ -1241,13 +1252,13 @@
         saveAndNext();
       } else if (key === ' ' || code === 'Space') {
         e.preventDefault();
-        goNextUnfinished();
+        goNext();
       } else if (key === 'ArrowLeft' || key === 'a' || key === 'A' || code === 'KeyA') {
         e.preventDefault();
         goPrev();
       } else if (key === 'ArrowRight' || key === 'd' || key === 'D' || code === 'KeyD') {
         e.preventDefault();
-        goNextUnfinished();
+        goNext();
       } else if (key === 'q' || key === 'Q' || code === 'KeyQ') {
         e.preventDefault();
         addCrop();
