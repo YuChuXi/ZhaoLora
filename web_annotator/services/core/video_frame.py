@@ -26,6 +26,7 @@ from av.bitstream import BitStreamFilterContext
 from av.codec.context import ThreadType
 from av.video.frame import PictureType
 
+from services.core.atomic import atomic_write_bytes, atomic_write_text
 from services.core.video_scanner import cover_hash
 from services.core.work_dir import resolve_under
 from services.models.video import BitstreamTypes
@@ -215,9 +216,7 @@ class VideoFrameStore:
         """
         d = self._cache_dir(video_rel)
         d.mkdir(parents=True, exist_ok=True)
-        tmp = self._bitstream_path(video_rel).with_suffix(".tmp")
-        tmp.write_text(json.dumps(bits.model_dump()), encoding="utf-8")
-        tmp.replace(self._bitstream_path(video_rel))
+        atomic_write_text(self._bitstream_path(video_rel), json.dumps(bits.model_dump()))
 
     def _stream_layout(self, path: Path, container, stream) -> _StreamLayout:
         """读取(带缓存)视频流的帧号几何.
@@ -498,9 +497,7 @@ class VideoFrameStore:
         ok, buf = cv2.imencode(".png", frame)
         if not ok:
             raise VideoFrameError("帧编码失败")
-        tmp = dest.with_suffix(".tmp.png")
-        tmp.write_bytes(buf.tobytes())
-        tmp.replace(dest)
+        atomic_write_bytes(dest, buf.tobytes())
         return dest
 
     def remove_frame(self, video_rel: str, index: int) -> bool:

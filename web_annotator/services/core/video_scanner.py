@@ -16,6 +16,7 @@ from pathlib import Path
 import av
 import cv2
 
+from services.core.atomic import atomic_write_bytes
 from services.core.natural import natural_key
 from services.models import VideoInfo
 
@@ -222,7 +223,5 @@ def ensure_cover(video_path: Path, cover_dir: Path, video_rel_path: str) -> Path
     ok, buf = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, COVER_JPEG_QUALITY])
     if not ok:
         raise VideoScanError("封面生成失败: JPEG 编码失败")
-    tmp = out.with_suffix(".tmp.jpg")
-    tmp.write_bytes(buf.tobytes())
-    tmp.replace(out)
+    atomic_write_bytes(out, buf.tobytes())
     return out

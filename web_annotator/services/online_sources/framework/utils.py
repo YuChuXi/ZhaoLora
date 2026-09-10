@@ -13,6 +13,8 @@ from pathlib import Path
 
 from PIL import Image
 
+from services.core.atomic import atomic_write_bytes
+
 
 def sniff_image_kind(data: bytes) -> str:
     """按魔数判定字节流的文件类型.
@@ -89,7 +91,7 @@ def save_png_bytes(data: bytes, dest: Path) -> None:
         raise ValueError(f"不支持该文件类型({kind})")
     dest.parent.mkdir(parents=True, exist_ok=True)
     if kind == "png":
-        dest.write_bytes(data)
+        atomic_write_bytes(dest, data)
         return
     img = Image.open(io.BytesIO(data))
     img.load()

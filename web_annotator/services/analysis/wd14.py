@@ -10,6 +10,7 @@ import numpy as np
 from PIL import Image
 
 from services.models import JobSnapshot, WorkDirInfo
+from services.core.atomic import atomic_write_text
 from services.core.natural import natural_key
 from services.core.scanner import IMAGE_EXTS, collect_images
 from services.online_sources.framework.utils import _GENDER_TAGS
@@ -495,7 +496,7 @@ def _process_one(
         base = Tags.split_caption(_load_text(out_txt_path))
     wd_scored = _infer_wd14(img, threshold, handle)
     caption = Tags.merge_for_disk_by_confidence(base, wd_scored, artist_tag=artist_tag)
-    out_txt_path.write_text(caption, encoding="utf-8")
+    atomic_write_text(out_txt_path, caption)
     return "ok"
 
 

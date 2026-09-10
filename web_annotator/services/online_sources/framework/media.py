@@ -12,6 +12,7 @@ import logging
 from pathlib import Path
 from urllib.parse import urlparse
 
+from services.core.atomic import atomic_write_text
 from services.core.natural import natural_key
 from services.core.video_scanner import VIDEO_EXTS
 from services.models import BooruDownloadResult, BooruPost, BooruUndownloadResult
@@ -264,7 +265,7 @@ async def regenerate_captions(
                 include_meta_tags=include_meta_tags,
                 keep_underscores=keep_underscores,
             )
-            txt_path.write_text(caption + "\n", encoding="utf-8")
+            atomic_write_text(txt_path, caption + "\n")
 
             count += 1
 

@@ -6,9 +6,11 @@
 from __future__ import annotations
 
 import shutil
+import threading
 import time
 from pathlib import Path
 
+from services.core.atomic import atomic_write_text, locked
 from services.models import AnnotatorState
 from services.core.scanner import IMAGE_EXTS
 from services.core.work_dir import resolve_under
@@ -19,6 +21,9 @@ TRASH_DIRNAME = ".trash"
 
 class StateManager:
     """管理选中状态, 并将文件在数据目录与回收站之间移动.
+
+    状态读改写方法经 ``locked`` 装饰器用实例锁串行化, 写入经临时文件
+    原子替换, 并发请求不会交错损坏状态文件.
 
     Callers:
         - ``services/dataset/runtime.py:DatasetRegistry.ensure``
@@ -42,6 +47,7 @@ class StateManager:
         self.meta_dir = meta
         self.state_path = meta / STATE_FILENAME
         self.trash_dir = meta / TRASH_DIRNAME
+        self._lock = threading.Lock()
 
     def _read(self) -> AnnotatorState:
         """读取状态文件.
@@ -61,7 +67,7 @@ class StateManager:
         return AnnotatorState.model_validate_json(self.state_path.read_text(encoding="utf-8"))
 
     def _write(self, state: AnnotatorState) -> None:
-        """将状态写入 JSON 文件.
+        """将状态写入 JSON 文件 (临时文件写入后原子替换, 不会留下写了一半的文件).
 
         Args:
             state (AnnotatorState): 待写入的状态对象.
@@ -75,10 +81,7 @@ class StateManager:
             - ``services/state/annotator.py:StateManager.select_all``
             - ``services/state/annotator.py:StateManager.toggle``
         """
-        self.state_path.write_text(
-            state.model_dump_json(indent=2),
-            encoding="utf-8",
-        )
+        atomic_write_text(self.state_path, state.model_dump_json(indent=2))
 
     def get(self) -> AnnotatorState:
         """返回当前标注状态.
@@ -99,6 +102,7 @@ class StateManager:
         """
         return self._read()
 
+    @locked
     def toggle(self, path: str) -> bool:
         """切换单张图片选中状态.
 
@@ -121,6 +125,7 @@ class StateManager:
         self._write(state)
         return result
 
+    @locked
     def select_all(self, paths: list[str]) -> int:
         """将给定路径全部标为选中.
 
@@ -141,6 +146,7 @@ class StateManager:
         self._write(state)
         return len(state.selected)
 
+    @locked
     def deselect_all(self) -> None:
         """清空选中表.
 
@@ -154,14 +160,23 @@ class StateManager:
         state.selected = {}
         self._write(state)
 
+    @locked
     def apply_delete(self, paths: list[str]) -> int:
-        """将指定图片及其同 stem 旁路文件移入 ``.trash/``.
+        """把指定图片移入回收站 ``.trash/``.
+
+        处理流程:
+        1. 每个路径在回收站内保持相同的相对目录结构
+           (``main/a.png`` → ``.trash/main/a.png``).
+        2. 同 stem 旁路文件 (``.txt`` 标注、``.npz`` 蒙板等非图像文件) 与
+           来源元数据 (``.{来源}_meta/{pid}.json``) 一并随之移入,
+           保证永久删除时不残留孤儿元数据.
+        3. 回收站路径与删除时间写入状态的 ``trashed`` 表, 并清空选中表.
 
         Args:
             paths (list[str]): 相对数据集根、且文件当前存在的路径.
 
         Returns:
-            int: 成功移动的图片数量.
+            int: 成功移入回收站的图片数量.
 
         Raises:
             ValueError: 路径越界.
@@ -194,6 +209,7 @@ class StateManager:
         self._write(state)
         return moved
 
+    @locked
     def restore(self, paths: list[str]) -> int:
         """从 ``.trash/`` 恢复指定图片及其同 stem 旁路文件.
 

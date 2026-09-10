@@ -12,9 +12,11 @@ Callers:
 from __future__ import annotations
 
 import json
+import threading
 import time
 from pathlib import Path
 
+from services.core.atomic import atomic_write_text, locked
 from services.core.natural import natural_key
 from services.dataset.layout import TASK_ROOT_RESERVED
 from services.models import TaskEntry, TaskInfo, TaskListFile
@@ -63,6 +65,9 @@ def validate_task_name(name: str) -> str:
 class TaskStore:
     """读写任务清单.
 
+    清单读改写由实例锁串行化, 写入经临时文件原子替换,
+    并发请求不会交错损坏清单文件.
+
     Callers:
         - ``server.py:main``
         - ``routes/tasks.py:`` 各接口
@@ -83,6 +88,7 @@ class TaskStore:
         """
         self.root = root.resolve()
         self.path = self.root / TASKS_FILE
+        self._lock = threading.Lock()
         self.tasks = self._load()
 
     def _load(self) -> dict[str, TaskEntry]:
@@ -105,7 +111,7 @@ class TaskStore:
         return {e.name: e for e in data.tasks}
 
     def _write(self) -> None:
-        """把内存中的任务清单原子写入磁盘.
+        """把内存中的任务清单原子写入磁盘 (临时文件 + 原子替换).
 
         Returns:
             None
@@ -114,6 +120,7 @@ class TaskStore:
             - ``services/state/tasks.py:TaskStore.add``
             - ``services/state/tasks.py:TaskStore.add_trigger_word``
             - ``services/state/tasks.py:TaskStore.clear_archived``
+            - ``services/state/tasks.py:TaskStore.remove_trigger_word``
             - ``services/state/tasks.py:TaskStore.reorder``
             - ``services/state/tasks.py:TaskStore.set_archived``
             - ``services/state/tasks.py:TaskStore.set_completed``
@@ -122,8 +129,9 @@ class TaskStore:
         """
         self.root.mkdir(parents=True, exist_ok=True)
         text = TaskListFile(tasks=list(self.tasks.values())).model_dump_json(indent=2) + "\n"
-        self.path.write_text(text, encoding="utf-8")
+        atomic_write_text(self.path, text)
 
+    @locked
     def list_entries(self) -> list[TaskInfo]:
         """返回全部任务条目, 按 sort_order 升序排列.
 
@@ -138,6 +146,7 @@ class TaskStore:
         entries = sorted(self.tasks.values(), key=lambda e: (e.sort_order, natural_key(e.name)))
         return [TaskInfo(**e.model_dump()) for e in entries]
 
+    @locked
     def contains(self, name: str) -> bool:
         """检查任务是否在清单中.
 
@@ -153,6 +162,7 @@ class TaskStore:
         """
         return name in self.tasks
 
+    @locked
     def add(self, name: str) -> TaskInfo:
         """登记新任务, 默认排在最前; 必要时自动创建 main/ 与 mask/ 目录.
 
@@ -184,6 +194,7 @@ class TaskStore:
         self._write()
         return TaskInfo(name=name, completed=False, root=str(task_root), note="", trigger_word="", sort_order=min_order - 1)
 
+    @locked
     def set_completed(self, name: str, completed: bool) -> TaskInfo:
         """标记任务完成或重新打开.
 
@@ -209,6 +220,7 @@ class TaskStore:
         updated = self.tasks[name]
         return TaskInfo(name=name, completed=bool(completed), note=updated.note, trigger_word=updated.trigger_word)
 
+    @locked
     def archived_entries(self) -> list[tuple[str, TaskEntry]]:
         """返回已归档任务条目, 按归档时间降序排列.
 
@@ -223,6 +235,7 @@ class TaskStore:
         items.sort(key=lambda kv: kv[1].archived_at or 0, reverse=True)
         return items
 
+    @locked
     def set_archived(
         self,
         name: str,
@@ -262,6 +275,7 @@ class TaskStore:
         self._write()
         return TaskInfo(name=name, completed=updated.completed, note=updated.note, trigger_word=updated.trigger_word)
 
+    @locked
     def clear_archived(self, name: str) -> TaskInfo:
         """把已归档任务恢复为当前任务(清空归档状态与详情).
 
@@ -290,6 +304,7 @@ class TaskStore:
         self._write()
         return TaskInfo(name=name, completed=updated.completed, note=updated.note, trigger_word=updated.trigger_word)
 
+    @locked
     def set_note(self, name: str, note: str) -> TaskInfo:
         """修改任务备注.
 
@@ -313,6 +328,7 @@ class TaskStore:
         self._write()
         return TaskInfo(name=name, completed=updated.completed, note=updated.note, trigger_word=updated.trigger_word)
 
+    @locked
     def set_trigger_word(self, name: str, trigger_word: str) -> TaskInfo:
         """修改任务触发词(用于就绪 TOML 的 subset class_tokens).
 
@@ -336,6 +352,7 @@ class TaskStore:
         self._write()
         return TaskInfo(name=name, completed=updated.completed, note=updated.note, trigger_word=updated.trigger_word)
 
+    @locked
     def add_trigger_word(self, name: str, word: str) -> TaskInfo:
         """向任务触发词集合添加一个词, 不覆盖已有触发词.
 
@@ -368,6 +385,7 @@ class TaskStore:
             self._write()
         return TaskInfo(name=name, completed=entry.completed, note=entry.note, trigger_word=entry.trigger_word)
 
+    @locked
     def remove_trigger_word(self, name: str, word: str) -> TaskInfo:
         """从任务触发词集合移除一个词, 其余触发词保持原序.
 
@@ -400,6 +418,7 @@ class TaskStore:
             self._write()
         return TaskInfo(name=name, completed=entry.completed, note=entry.note, trigger_word=entry.trigger_word)
 
+    @locked
     def reorder(self, ordered_names: list[str]) -> None:
         """按给定名称列表重排所有任务的 sort_order.
 

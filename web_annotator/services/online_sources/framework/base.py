@@ -17,6 +17,7 @@ from collections.abc import AsyncIterator, Callable
 from pathlib import Path
 from urllib.parse import urlparse
 
+from services.core.atomic import atomic_write_text
 from services.core.scanner import IMAGE_EXTS
 from services.online_sources.framework.http import HttpClient
 from services.online_sources.framework.utils import (
@@ -274,8 +275,7 @@ class SourceClient(ABC):
         """
         meta_dir = out_dir / self.meta_subdir
         meta_dir.mkdir(parents=True, exist_ok=True)
-        (meta_dir / f"{pid}.json").write_text(
-            post.model_dump_json(exclude={"key"}, indent=2) + "\n", encoding="utf-8")
+        atomic_write_text(meta_dir / f"{pid}.json", post.model_dump_json(exclude={"key"}, indent=2) + "\n")
 
     async def _save_png(self, data: bytes, dest: Path) -> None:
         """将下载字节转为 PNG 写入磁盘.

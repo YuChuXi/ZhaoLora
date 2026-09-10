@@ -15,6 +15,7 @@ from huggingface_hub import hf_hub_download
 from PIL import Image, UnidentifiedImageError
 
 from services.models import JobSnapshot
+from services.core.atomic import atomic_write_text
 from services.core.scanner import IMAGE_EXTS, collect_images
 from services.core.device import register_model
 
@@ -147,7 +148,7 @@ def save_score_json(root: Path, filename: str, scores: dict[str, float]) -> None
     """
     path = root.resolve() / filename
     clean = {str(k).replace("\\", "/").lstrip("/"): round(float(v), 6) for k, v in scores.items()}
-    path.write_text(json.dumps(clean, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    atomic_write_text(path, json.dumps(clean, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
 
 
 

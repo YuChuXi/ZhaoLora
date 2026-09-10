@@ -7,13 +7,13 @@ Callers:
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable
 
 from services.dataset.layout import DatasetLayout, resolve_dataset_layout
 from services.core.natural import natural_key
-from services.models import JobSnapshot
 from services.state.annotator import StateManager
 from services.core.thumbnailer import Thumbnailer
 from services.analysis.sort_cache import CACHE_FILENAME, SemanticSortCache
@@ -58,7 +58,10 @@ class DatasetRuntime:
 
 @dataclass
 class DatasetRegistry:
-    """按需缓存任务运行时. 
+    """按需缓存任务运行时.
+
+    ``ensure`` 为协程且内部跨 ``await``, 用实例 ``asyncio.Lock`` 串行化,
+    并发请求同一数据集时不会重复创建运行时与重复提交缩略图任务.
 
     Callers:
         - ``server.py:main`` (初始化挂载到 ``app.state.datasets``)
@@ -70,9 +73,10 @@ class DatasetRegistry:
     thumbnail_size: int = 1280
     job_manager: JobManager | None = None
     by_name: dict[str, DatasetRuntime] = field(default_factory=dict)
+    _lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
 
     def get(self, name: str) -> DatasetRuntime | None:
-        """按名取已加载运行时. 
+        """按名取已加载运行时.
 
         Callers:
             - ``services/dataset/runtime.py:DatasetRegistry``
@@ -80,7 +84,7 @@ class DatasetRegistry:
         return self.by_name.get(name)
 
     def names(self) -> list[str]:
-        """已加载任务名列表. 
+        """已加载任务名列表.
         """
         return sorted(self.by_name.keys(), key=natural_key)
 
@@ -88,7 +92,8 @@ class DatasetRegistry:
         """若尚未加载则解析 ``{task_root}/{name}`` 并缓存, 同时提交缩略图填充任务.
 
         声明为协程: 内部经 ``_submit_thumb_fill`` → ``JobManager.submit`` 提交
-        后台任务, 后者要求事件循环上下文.
+        后台任务, 后者要求事件循环上下文. 整个"检查-创建-提交"临界区由
+        实例 ``asyncio.Lock`` 串行化, 并发调用只创建一次.
 
         Callers:
             - ``server.py:bind_dataset_middleware``
@@ -98,28 +103,29 @@ class DatasetRegistry:
             - ``routes/tasks.py:list_tasks`` / `add_task`
             - ``routes/online_sources.py:download``
         """
-        existing = self.by_name.get(name)
-        if existing is not None:
-            return existing
-        layout = resolve_dataset_layout(self.task_root / name)
-        thumbnailer = Thumbnailer(
-            layout.root, size=self.thumbnail_size, meta_dir=layout.root
-        )
-        state_manager = StateManager(layout.root, meta_dir=layout.root)
-        mask_dir = layout.mask_dir
-        mask_dir.mkdir(parents=True, exist_ok=True)
-        rt = DatasetRuntime(
-            name=name,
-            layout=layout,
-            thumbnailer=thumbnailer,
-            state_manager=state_manager,
-            mask_dir=mask_dir,
-            sort_cache=SemanticSortCache(layout.root / CACHE_FILENAME),
-        )
-        self.by_name[name] = rt
-        if self.job_manager is not None:
-            await _submit_thumb_fill(self.job_manager, name, thumbnailer)
-        return rt
+        async with self._lock:
+            existing = self.by_name.get(name)
+            if existing is not None:
+                return existing
+            layout = resolve_dataset_layout(self.task_root / name)
+            thumbnailer = Thumbnailer(
+                layout.root, size=self.thumbnail_size, meta_dir=layout.root
+            )
+            state_manager = StateManager(layout.root, meta_dir=layout.root)
+            mask_dir = layout.mask_dir
+            mask_dir.mkdir(parents=True, exist_ok=True)
+            rt = DatasetRuntime(
+                name=name,
+                layout=layout,
+                thumbnailer=thumbnailer,
+                state_manager=state_manager,
+                mask_dir=mask_dir,
+                sort_cache=SemanticSortCache(layout.root / CACHE_FILENAME),
+            )
+            self.by_name[name] = rt
+            if self.job_manager is not None:
+                await _submit_thumb_fill(self.job_manager, name, thumbnailer)
+            return rt
 
 
 async def _submit_thumb_fill(jobs: JobManager, dataset: str, thumb: Thumbnailer) -> None:

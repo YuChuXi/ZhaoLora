@@ -13,6 +13,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from services.core.atomic import atomic_write_text
+
 
 _TEMPLATES_FILE = ".mask_templates.json"
 
@@ -72,9 +74,4 @@ def save_templates(dataset_root: Path, templates: list[dict]) -> None:
     """
     p = templates_path(dataset_root)
     p.parent.mkdir(parents=True, exist_ok=True)
-    tmp = p.with_name(p.name + ".tmp")
-    tmp.write_text(
-        json.dumps({"templates": templates}, ensure_ascii=False),
-        encoding="utf-8",
-    )
-    tmp.replace(p)
+    atomic_write_text(p, json.dumps({"templates": templates}, ensure_ascii=False))

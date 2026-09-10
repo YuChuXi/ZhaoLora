@@ -13,6 +13,7 @@ from routes.deps import get_runtime
 from services.models import ReadyDirsResponse, ReadyTomlResult, TrainExportResult
 from services.ready import build_ready_toml, build_train_config, subdir_mask_stats
 from services.core.work_dir import list_work_dirs
+from services.core.atomic import atomic_write_text
 
 logger = logging.getLogger(__name__)
 
@@ -135,9 +136,7 @@ def export(
     written: list[str] = []
     for name, content in files.items():
         p = out_dir / name
-        tmp = p.with_name(p.name + ".tmp")
-        tmp.write_text(content, encoding="utf-8")
-        tmp.replace(p)
+        atomic_write_text(p, content)
         written.append(name)
     logger.info("数据集 %s 导出训练配置到 %s: 写入 %d 个文件 (%s)",
                 root.name, out_dir, len(written), ", ".join(written))

@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 from PIL import Image
 
 from routes.deps import get_runtime, resolve_path
+from services.core.atomic import atomic_write_bytes
 from services.core.scanner import scan_images
 from services.core.thumbnailer import image_size
 from services.state.mask import has_mask, load_mask, mask_out_path, save_mask
@@ -271,7 +272,7 @@ def serve_mask_preview(request: Request, path: str = Query(...)) -> Response:
         return Response(content=cache_path.read_bytes(), media_type="image/avif")
     data = compose_mask_preview(base, alpha)
     cache_path.parent.mkdir(parents=True, exist_ok=True)
-    cache_path.write_bytes(data)
+    atomic_write_bytes(cache_path, data)
     return Response(content=data, media_type="image/avif")
 
 

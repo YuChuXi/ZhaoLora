@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 from PIL import Image
 
 from routes.deps import get_runtime, resolve_path
+from services.core.atomic import atomic_write_text
 from services.core.scanner import scan_images
 from services.core.thumbnailer import image_size
 from services.core.work_dir import resolve_subdir
@@ -167,9 +168,7 @@ def _record_saved(layout: DatasetLayout, stem: str, saved: list[CropSavedItem]) 
         meta.parts[Path(item.file).parent.name] = CropPartRecord(crop=item.crop, size=item.size)
     layout.crop_meta_dir.mkdir(parents=True, exist_ok=True)
     meta_path = layout.crop_meta_dir / f"{stem}.json"
-    tmp_path = meta_path.with_name(meta_path.name + ".tmp")
-    tmp_path.write_text(meta.model_dump_json(indent=2) + "\n", encoding="utf-8")
-    tmp_path.replace(meta_path)
+    atomic_write_text(meta_path, meta.model_dump_json(indent=2) + "\n")
 
 
 def _resolve_out_path(layout: DatasetLayout, stem: str, part_name: str, source_dir: str) -> Path:

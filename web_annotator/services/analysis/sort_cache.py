@@ -17,9 +17,10 @@ Callers:
 from __future__ import annotations
 
 import json
-import os
 import time
 from pathlib import Path
+
+from services.core.atomic import atomic_write_text
 
 # 每个数据集最多保留的排序结果次数
 MAX_ENTRIES = 20
@@ -92,9 +93,7 @@ class SemanticSortCache:
             },
             "recent": self._recent,
         }
-        tmp = self._path.with_suffix(self._path.suffix + ".tmp")
-        tmp.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
-        os.replace(tmp, self._path)
+        atomic_write_text(self._path, json.dumps(payload, ensure_ascii=False))
 
     @staticmethod
     def _coerce(entry: object) -> _Entry | None:

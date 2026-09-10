@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import html
 import json
 from collections import Counter
@@ -9,6 +10,7 @@ from pathlib import Path
 
 import httpx
 
+from services.core.atomic import atomic_write_text
 from services.core.natural import natural_key
 from services.core.work_dir import list_work_dirs
 from services.models import TagStatRow, TagStatsResult
@@ -270,10 +272,15 @@ def count_tags(
     )
 
 
+_TRANSLATE_LOCK = asyncio.Lock()
+
+
 async def translate_missing_tags(tags: list[str], root: Path) -> dict[str, str]:
     """批量翻译标签(en → zh-CN), 写入共享缓存 ``.translation_cache.json``.
 
     经 Google Translate API 批量翻译缺失译名的标签, 合并已有缓存后回写磁盘.
+    整个"读缓存-翻译-写缓存"临界区由模块级 ``asyncio.Lock`` 串行化,
+    并发翻译请求不会因跨 ``await`` 交错而丢失缓存更新.
 
     Args:
         tags (list[str]): 待翻译的标签列表.
@@ -285,41 +292,42 @@ async def translate_missing_tags(tags: list[str], root: Path) -> dict[str, str]:
     Callers:
         - ``routes/tag_stats.py:translate_missing``
     """
-    if not tags:
-        return {}
-    root = root.resolve()
-    cache_path = root.parent / _SHARED_CACHE_NAME
+    async with _TRANSLATE_LOCK:
+        if not tags:
+            return {}
+        root = root.resolve()
+        cache_path = root.parent / _SHARED_CACHE_NAME
 
-    existing: dict[str, str] = {}
-    if cache_path.is_file():
-        data = json.loads(cache_path.read_text(encoding="utf-8"))
-        if isinstance(data, dict):
-            existing = {str(k): str(v) for k, v in data.items() if k and v}
+        existing: dict[str, str] = {}
+        if cache_path.is_file():
+            data = json.loads(cache_path.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                existing = {str(k): str(v) for k, v in data.items() if k and v}
 
-    uniq = list(dict.fromkeys(tags))
-    missing = [t for t in uniq if t not in existing]
-    if not missing:
+        uniq = list(dict.fromkeys(tags))
+        missing = [t for t in uniq if t not in existing]
+        if not missing:
+            return {t: existing[t] for t in uniq if t in existing}
+
+        async with httpx.AsyncClient(timeout=30) as client:
+            for i in range(0, len(missing), _BATCH_SIZE):
+                chunk = missing[i : i + _BATCH_SIZE]
+                params: list[tuple[str, str]] = [
+                    ("client", "gtx"), ("sl", "en"), ("tl", "zh-CN"),
+                ]
+                for t in chunk:
+                    params.append(("q", t))
+                resp = await client.get(
+                    "https://translate.google.com/translate_a/t",
+                    params=params,
+                    headers={"User-Agent": "Mozilla/5.0"},
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                translations = [str(v) for v in data] if isinstance(data, list) else chunk
+                for en, zh in zip(chunk, translations):
+                    existing[en] = zh.strip() if zh else en
+
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        atomic_write_text(cache_path, json.dumps(existing, ensure_ascii=False, indent=2) + "\n")
         return {t: existing[t] for t in uniq if t in existing}
-
-    async with httpx.AsyncClient(timeout=30) as client:
-        for i in range(0, len(missing), _BATCH_SIZE):
-            chunk = missing[i : i + _BATCH_SIZE]
-            params: list[tuple[str, str]] = [
-                ("client", "gtx"), ("sl", "en"), ("tl", "zh-CN"),
-            ]
-            for t in chunk:
-                params.append(("q", t))
-            resp = await client.get(
-                "https://translate.google.com/translate_a/t",
-                params=params,
-                headers={"User-Agent": "Mozilla/5.0"},
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            translations = [str(v) for v in data] if isinstance(data, list) else chunk
-            for en, zh in zip(chunk, translations):
-                existing[en] = zh.strip() if zh else en
-
-    cache_path.parent.mkdir(parents=True, exist_ok=True)
-    cache_path.write_text(json.dumps(existing, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    return {t: existing[t] for t in uniq if t in existing}

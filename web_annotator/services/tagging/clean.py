@@ -10,6 +10,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any, NamedTuple
 
+from services.core.atomic import atomic_write_text
 from services.core.natural import natural_key
 from services.models import TagCleanResult, TagCleanSample
 from services.core.scanner import IMAGE_EXTS
@@ -621,7 +622,7 @@ def _record_sample(raw: str, new: str, *, path: Path, root: Path | None, dry_run
             )
         )
     if not dry_run:
-        path.write_text(new + "\n", encoding="utf-8")
+        atomic_write_text(path, new + "\n")
 
 
 class _BatchStats(NamedTuple):

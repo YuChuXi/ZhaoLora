@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 
 from routes.deps import get_runtime, jobs, resolve_path
 from services.analysis.scoring import load_score_json
+from services.core.atomic import atomic_write_text
 from services.core.jobs import EmitFn
 from services.core.natural import natural_key
 from services.core.scanner import scan_images
@@ -573,7 +574,7 @@ def edit_one(request: Request, body: TagEditOneBody) -> TagCheckItem:
         raw = txt_path.read_text(encoding="utf-8")
 
     new_caption = add_tag_to_caption(raw, tag, body.position)
-    txt_path.write_text(new_caption + "\n", encoding="utf-8")
+    atomic_write_text(txt_path, new_caption + "\n")
 
     stem = img_abs.stem
     work_dir = img_abs.parent
@@ -629,7 +630,7 @@ def delete_one(request: Request, body: TagDeleteOneBody) -> TagCheckItem:
         raw = txt_path.read_text(encoding="utf-8")
 
     new_caption = delete_tag_from_caption(raw, tag)
-    txt_path.write_text(new_caption + "\n", encoding="utf-8")
+    atomic_write_text(txt_path, new_caption + "\n")
 
     stem = img_abs.stem
     work_dir = img_abs.parent
@@ -903,7 +904,7 @@ def embedding_batch_tag(request: Request, body: EmbeddingBatchTagBody) -> Embedd
             new_caption = delete_tag_from_caption_fuzzy(raw, tag)
         else:
             new_caption = delete_tag_from_caption(raw, tag)
-        txt_path.write_text(new_caption + "\n", encoding="utf-8")
+        atomic_write_text(txt_path, new_caption + "\n")
         changed += 1
 
     logger.info(

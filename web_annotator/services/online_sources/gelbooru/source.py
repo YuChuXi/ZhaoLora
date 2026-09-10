@@ -9,6 +9,7 @@ from __future__ import annotations
 from datetime import datetime
 from pathlib import Path
 
+from services.core.atomic import atomic_write_text
 from services.online_sources.framework.base import ProgressFn, SourceClient, build_caption
 from services.online_sources.framework.media import download_raw_file, post_is_video
 from services.online_sources.framework.utils import find_downloaded
@@ -210,7 +211,7 @@ class GelbooruSource(SourceClient):
             raw = await _categorize_gelbooru_tags(api_post.model_dump(), api)
             api_post = BooruPost.model_validate(raw)
         caption = build_caption(api_post, anima_format=anima_format, include_meta_tags=include_meta_tags, keep_underscores=keep_underscores)
-        tags_path.write_text(caption + "\n", encoding="utf-8")
+        atomic_write_text(tags_path, caption + "\n")
         self._write_meta(out_dir, pid, api_post)
         return {"path": str(image_path), "stem": stem, "id": pid, "tags_path": str(tags_path)}
 
