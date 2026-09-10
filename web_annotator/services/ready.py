@@ -301,20 +301,23 @@ def build_ready_toml(
             lines.append(f"  num_repeats = {repeats}")
         blocks.append("\n".join(lines))
 
+    # 正则化数据段与数据集块共用同一文本渲染(缩进、空行风格一致), 统一解析后合并
+    if use_reg:
+        for res, sub in _REGL_DATASETS:
+            blocks.append(
+                "[[datasets]]\n"
+                f"resolution = {res}\n"
+                "  [[datasets.subsets]]\n"
+                f'  image_dir = "{_REGL_ROOT}/{sub}"\n'
+                "  num_repeats = 1"
+            )
+
     # dataset.toml 完整文档: [general] 固定段 + 数据集块 + 可选正则化数据段,
     # 预览与导出共用同一渲染
     doc = tomlkit.document()
     doc["general"] = dict(_GENERAL_CONFIG)
     aot = tomlkit.aot()
     aot.extend(tomlkit.parse("\n\n".join(blocks)).get("datasets", []))
-    if use_reg:
-        for res, sub in _REGL_DATASETS:
-            seg = tomlkit.table()
-            seg["resolution"] = res
-            subs = tomlkit.aot()
-            subs.append({"image_dir": f"{_REGL_ROOT}/{sub}"})
-            seg["subsets"] = subs
-            aot.append(seg)
     doc["datasets"] = aot
     toml = tomlkit.dumps(doc)
     main_ms = next((m for m in mask_stats if m.name == "main"),
