@@ -307,7 +307,6 @@ def set_trigger_word(request: Request, name: str, body: SetTriggerWordBody) -> T
 
     Callers:
         - ``static/js/index.js:buildCard``
-        - ``static/js/tags.js:saveTriggers``
     """
     store = _store(request)
     try:
@@ -322,8 +321,8 @@ def set_trigger_word(request: Request, name: str, body: SetTriggerWordBody) -> T
 def add_trigger_word(request: Request, name: str, body: SetTriggerWordBody) -> TaskOkResponse:
     """向任务触发词集合添加一个词, 不覆盖已有触发词。
 
-    批量打标提交时把画师词并入触发词集合; 与 ``set_trigger_word`` 的整串
-    设置语义互补, 避免覆盖标签页勾选的触发词。
+    新词插入最前, 已存在的词保留原位。标签页勾选与批量打标提交画师词
+    均走此增量语义; 与 ``remove_trigger_word`` 对称。
 
     Args:
         request (Request): FastAPI 请求对象, 由路由参数注入。
@@ -335,6 +334,7 @@ def add_trigger_word(request: Request, name: str, body: SetTriggerWordBody) -> T
 
     Callers:
         - ``static/js/tagging.js:startJob``
+        - ``static/js/tags.js:renderTable``
     """
     store = _store(request)
     try:
@@ -342,6 +342,33 @@ def add_trigger_word(request: Request, name: str, body: SetTriggerWordBody) -> T
     except KeyError:
         raise HTTPException(404, f"未知任务: {name}") from None
     logger.info("任务触发词添加 name=%s, 词=%r", name, body.trigger_word)
+    return TaskOkResponse(ok=True, name=info.name, completed=info.completed, note=info.note, trigger_word=info.trigger_word)
+
+
+@router.post("/{name}/trigger-word/remove")
+def remove_trigger_word(request: Request, name: str, body: SetTriggerWordBody) -> TaskOkResponse:
+    """从任务触发词集合移除一个词, 其余触发词保持原序。
+
+    与 ``add_trigger_word`` 对称, 供标签页取消勾选时增量编辑;
+    增量语义不受当前筛选视图影响, 不会误删视图外的触发词。
+
+    Args:
+        request (Request): FastAPI 请求对象, 由路由参数注入。
+        name (str): 任务名。
+        body (SetTriggerWordBody): 含待移除的触发词。
+
+    Returns:
+        TaskOkResponse: 含任务名与移除后的最新触发词。
+
+    Callers:
+        - ``static/js/tags.js:renderTable``
+    """
+    store = _store(request)
+    try:
+        info = store.remove_trigger_word(name, body.trigger_word)
+    except KeyError:
+        raise HTTPException(404, f"未知任务: {name}") from None
+    logger.info("任务触发词移除 name=%s, 词=%r", name, body.trigger_word)
     return TaskOkResponse(ok=True, name=info.name, completed=info.completed, note=info.note, trigger_word=info.trigger_word)
 
 

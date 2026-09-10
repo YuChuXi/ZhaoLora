@@ -88,9 +88,17 @@
       tcb.checked = !!_triggers[row.tag];
       tcb.addEventListener('click', function (e) { e.stopPropagation(); });
       tcb.addEventListener('change', function () {
+        // 增量语义: 勾选并入(新词居首), 取消即移除; 不受当前筛选视图影响
+        var action = tcb.checked
+          ? API.request('/api/tasks/' + encodeURIComponent(API.dataset()) + '/trigger-word/add', {
+              method: 'POST', body: JSON.stringify({ trigger_word: row.tag }),
+            })
+          : API.request('/api/tasks/' + encodeURIComponent(API.dataset()) + '/trigger-word/remove', {
+              method: 'POST', body: JSON.stringify({ trigger_word: row.tag }),
+            });
+        action.catch(function (e) { toast('触发词保存失败: ' + (e.message || e)); });
         if (tcb.checked) _triggers[row.tag] = true;
         else delete _triggers[row.tag];
-        saveTriggers().catch(function (e) { toast('触发词保存失败: ' + (e.message || e)); });
       });
       tdTrigger.appendChild(tcb);
 
@@ -199,19 +207,6 @@
     var text = parts.join(', ');
     document.getElementById('export-text').value = text;
     copyText(text);
-  }
-
-  /**
-   * 将表格中勾选为触发词的标签实时写入任务触发词(逗号分隔).
-   * @returns {Promise<*>}
-   * 引用：renderTable 中触发词复选框 change 回调。
-   */
-  function saveTriggers() {
-    var word = _tags.filter(function (t) { return _triggers[t.tag]; }).map(function (t) { return t.tag; }).join(', ');
-    return API.request('/api/tasks/' + encodeURIComponent(API.dataset()) + '/trigger-word', {
-      method: 'POST',
-      body: JSON.stringify({ trigger_word: word }),
-    });
   }
 
   /**
