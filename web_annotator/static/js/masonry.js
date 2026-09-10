@@ -119,7 +119,6 @@ var Masonry = (function() {
     var card = document.createElement('div');
     card.className = 'card';
     if (img.selected) card.classList.add('selected');
-    if (img.trashed)  card.classList.add('trashed');
     card.dataset.path = img.path;
     card.addEventListener('click', function(e) {
       if (_config.onClick) {

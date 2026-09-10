@@ -35,6 +35,7 @@ class SelectAllBody(BaseModel):
 
     dirs: list[str] | None = None
     dir: str | None = None
+    show_trash: bool = False
 
 
 class RestoreBody(BaseModel):
@@ -121,11 +122,16 @@ def toggle(request: Request, body: ToggleBody) -> ToggleResponse:
 
 @router.post("/select-all")
 def select_all(request: Request, body: SelectAllBody) -> SelectAllResponse:
-    """全选当前子目录中未被删除的图片。
+    """全选当前视图的图片.
+
+    工作目录视图与回收站视图互斥, 全选范围即视图可见集合: ``show_trash``
+    为 False 时只选中 ``{sub}`` 下的存活图片, 为 True 时只选中
+    ``.trash/{sub}`` 下的回收站图片. 删除与恢复消费同一选中集合,
+    仅方向不同.
 
     Args:
         request (Request): FastAPI 请求对象, 由路由参数注入。
-        body (SelectAllBody): 含目录列表或单个目录名。
+        body (SelectAllBody): 含目录列表、单个目录名与当前视图是否为回收站视图。
 
     Returns:
         SelectAllResponse: 含选中数量与目录列表。
@@ -141,13 +147,14 @@ def select_all(request: Request, body: SelectAllBody) -> SelectAllResponse:
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
 
-    trashed = set(state_mgr.get().trashed.keys())
     all_paths: list[str] = []
     for sub, work in pairs:
-        all_paths.extend(
-            img.path for img in scan_images(work, path_prefix=sub)
-            if img.path not in trashed
-        )
+        if body.show_trash:
+            trash_work = state_mgr.trash_dir / sub
+            if trash_work.is_dir():
+                all_paths.extend(img.path for img in scan_images(trash_work, path_prefix=sub))
+        else:
+            all_paths.extend(img.path for img in scan_images(work, path_prefix=sub))
     count = state_mgr.select_all(all_paths)
     return SelectAllResponse(selected=count, dirs=[s for s, _ in pairs])
 
@@ -234,11 +241,14 @@ def apply_delete(request: Request) -> CountResponse:
 
 @router.post("/restore")
 def restore(request: Request, body: RestoreBody) -> CountResponse:
-    """从回收站恢复图片。
+    """从回收站恢复指定的选中图片.
+
+    只恢复 ``body.paths`` 中已登记在回收站表里的路径; 恢复全部由前端
+    先全选再传入完整路径列表完成, 本接口不设"空列表 = 全部"的隐含语义.
 
     Args:
         request (Request): FastAPI 请求对象, 由路由参数注入。
-        body (RestoreBody): 含要恢复的路径列表(空表示全部恢复)。
+        body (RestoreBody): 含要恢复的路径列表。
 
     Returns:
         CountResponse: 含已恢复数量。
@@ -249,10 +259,7 @@ def restore(request: Request, body: RestoreBody) -> CountResponse:
     root = _root(request)
     state_mgr = _state(request)
     trashed = state_mgr.get().trashed
-    if body.paths:
-        to_restore = [_rel_under(root, p) for p in body.paths if p in trashed]
-    else:
-        to_restore = [_rel_under(root, p) for p in trashed]
+    to_restore = [_rel_under(root, p) for p in body.paths if p in trashed]
     if not to_restore:
         return CountResponse(restored=0)
     restored = state_mgr.restore(to_restore)

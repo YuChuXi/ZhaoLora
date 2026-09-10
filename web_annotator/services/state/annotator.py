@@ -213,6 +213,11 @@ class StateManager:
     def restore(self, paths: list[str]) -> int:
         """从 ``.trash/`` 恢复指定图片及其同 stem 旁路文件.
 
+        与 ``apply_delete`` 除移动方向外完全对称: 逐个把回收站内同结构
+        路径的图片移回数据集原位、旁路文件与来源元数据随行、从 ``trashed``
+        表移除记录; 文件已不在回收站的路径仅清理残留记录. 结束后清空
+        选中表, 避免恢复后的图片残留选中状态而被再次删除.
+
         Args:
             paths (list[str]): 回收站状态中的相对路径.
 
@@ -246,6 +251,7 @@ class StateManager:
             restored += 1
             self._move_sidecar_files(src.parent, rel_path, data_root)
 
+        state.selected = {}
         self._write(state)
         return restored
 

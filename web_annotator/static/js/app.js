@@ -15,8 +15,11 @@
 
   function refreshView() {
     if (typeof BooruFilter !== 'undefined' && BooruFilter.isRemote()) return;
-    var showTrash = document.getElementById('chk-show-trash').checked;
-    Masonry.render(Store.getVisible(showTrash));
+    Masonry.render(Store.getVisible(showTrashChecked()));
+  }
+
+  function showTrashChecked() {
+    return document.getElementById('chk-show-trash').checked;
   }
 
   async function handleApplyDelete() {
@@ -31,20 +34,10 @@
   }
 
   async function handleRestore() {
-    var st = Store.stats();
-    if (st.trashed === 0) { toast('回收站为空'); return; }
-    var restoreAll = confirm('恢复全部回收站图片？\n确定 = 全部 · 取消 = 仅选中项');
-    var paths;
-    if (restoreAll) {
-      paths = [];
-      var imgs = Store.getAll();
-      for (var i = 0; i < imgs.length; i++) { if (imgs[i].trashed) paths.push(imgs[i].path); }
-    } else {
-      paths = [];
-      var imgs2 = Store.getAll();
-      for (var i = 0; i < imgs2.length; i++) { if (imgs2[i].trashed && imgs2[i].selected) paths.push(imgs2[i].path); }
-      if (paths.length === 0) { toast('请先显示回收站并选中图片'); return; }
-    }
+    var imgs = Store.getAll();
+    var paths = [];
+    for (var i = 0; i < imgs.length; i++) { if (imgs[i].trashed && imgs[i].selected) paths.push(imgs[i].path); }
+    if (paths.length === 0) { toast('回收站视图中未选中图片'); return; }
     try {
       var res = await Store.restore(paths);
       refreshView();
@@ -56,7 +49,7 @@
     if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return;
     if (typeof BooruFilter !== 'undefined' && BooruFilter.isRemote()) return;
     if ((e.ctrlKey || e.metaKey) && e.key === 'a') {
-      e.preventDefault(); Store.selectAll().then(refreshView);
+      e.preventDefault(); Store.selectAll(showTrashChecked()).then(refreshView);
     } else if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === 'A' || e.key === 'a')) {
       e.preventDefault(); Store.deselectAll().then(refreshView);
     } else if ((e.ctrlKey || e.metaKey) && e.key === 'i') {
@@ -278,7 +271,7 @@
     });
 
     document.getElementById('btn-select-all').addEventListener('click', function() {
-      Store.selectAll().then(refreshView);
+      Store.selectAll(showTrashChecked()).then(refreshView);
     });
     document.getElementById('btn-deselect-all').addEventListener('click', function() {
       Store.deselectAll().then(refreshView);

@@ -261,14 +261,6 @@ body {
 .card.selected img {
   filter: brightness(0.5);
 }
-.card.trashed {
-  opacity: 0.4;
-  border-color: #444;
-}
-.card.trashed.selected {
-  border-color: var(--accent);
-  opacity: 0.7;
-}
 /* 评分画廊: 离屏卡片跳过渲染, 缩略图经原生 loading=lazy 自动懒加载 */
 #gallery .card {
   content-visibility: auto;

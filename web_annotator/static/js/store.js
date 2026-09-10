@@ -100,11 +100,16 @@ var Store = (function() {
 
   function getAll() { return _images; }
 
+  /**
+   * 当前视图可见列表: 工作目录视图与回收站视图互斥.
+   * @param {boolean} showTrash true = 仅回收站图片; false = 仅工作目录图片
+   * @returns {Array} 排序后的可见图片列表
+   */
   function getVisible(showTrash) {
     var result = [];
     for (var i = 0; i < _images.length; i++) {
       var img = _images[i];
-      if (img.trashed && !showTrash) continue;
+      if (!!img.trashed !== showTrash) continue;
       result.push(img);
     }
     return _sortList(result);
@@ -146,10 +151,14 @@ var Store = (function() {
     }
   }
 
-  async function selectAll() {
-    await API.selectAll();
+  /**
+   * 全选当前视图的图片: 工作目录视图只选存活图片, 回收站视图只选回收站图片.
+   * @param {boolean} showTrash 当前视图是否为回收站视图
+   */
+  async function selectAll(showTrash) {
+    await API.selectAll(showTrash);
     for (var i = 0; i < _images.length; i++) {
-      if (!_images[i].trashed) _images[i].selected = true;
+      if (!!_images[i].trashed === showTrash) _images[i].selected = true;
     }
     _notify();
   }

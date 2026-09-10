@@ -146,10 +146,10 @@ var API = (function () {
     return request(apiPath('/select-range'), { method: 'POST', body: JSON.stringify({ paths: paths }) });
   }
 
-  function selectAll() {
+  function selectAll(showTrash) {
     return request(apiPath('/select-all'), {
       method: 'POST',
-      body: JSON.stringify({ dirs: getDirs() }),
+      body: JSON.stringify({ dirs: getDirs(), show_trash: !!showTrash }),
     });
   }
 
