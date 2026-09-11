@@ -58,6 +58,7 @@ var VideoExtract = (function () {
   var _pendingTarget = -1; // 请求中的全局帧索引(过期目标丢弃)
   var _pendingPos = -1;    // 等待解码输出的段内位置
   var _pendingSeq = -1;    // _pendingPos 所属的段版本(防跨段回调误绘)
+  var _inflight = null;    // 在途请求覆盖的窗口 { start, end }, 目标已被覆盖时不重复发请求
 
   /** ``document.getElementById`` 快捷别名, 全文件通用。 */
   function $(id) { return document.getElementById(id); }
@@ -186,9 +187,11 @@ var VideoExtract = (function () {
    */
   function ensureSegment(idx) {
     if (_seg && idx >= _seg.start && idx <= _seg.end) return Promise.resolve();
+    if (_inflight && idx >= _inflight.start && idx <= _inflight.end) return Promise.resolve();
     var half = segHalf();
     var start = Math.max(0, idx - half);
     var end = Math.min(state.total - 1, idx + half);
+    _inflight = { start: start, end: end };
     var seq = ++_segSeq;
     var stage = $('ve-stage');
     if (stage) stage.classList.add('loading');
@@ -222,6 +225,10 @@ var VideoExtract = (function () {
         _pendingPos = -1;
         _fedUntil = -1;
         _flushedEnd = -1;
+      })
+      .catch(function (e) {
+        if (seq === _segSeq) _inflight = null; // 最新请求失败, 释放窗口登记允许重试
+        throw e;
       });
   }
 
@@ -449,6 +456,7 @@ var VideoExtract = (function () {
     if (_decoder) { try { _decoder.close(); } catch (ignore) {} }
     _decoder = null;
     _seg = null;
+    _inflight = null; // 旧视频的窗口帧号对新视频无意义, 必须释放
     _segSeq++;
     clearFrames();
     _fedUntil = -1;
@@ -488,6 +496,11 @@ var VideoExtract = (function () {
    */
   async function setPath(p) {
     state.path = p;
+    // 视频序号随当前路径同步定位, 是连续切换的游标
+    state.vidIdx = -1;
+    for (var i = 0; i < state.videoList.length; i++) {
+      if (state.videoList[i].path === p) { state.vidIdx = i; break; }
+    }
     state.idx = 0;
     state.total = 0;
     state.types = {};
@@ -1178,10 +1191,18 @@ var VideoExtract = (function () {
    */
   async function init() {
     if (typeof API === 'undefined' || typeof API.dataset !== 'function') return;
+    // 先拉取视频列表(A/D 切换游标与无 path 时自动选中第一个视频)
+    try {
+      var list = await API.request(API.apiPath('/videos'));
+      state.videoList = list || [];
+    } catch (e) {
+      toast(String(e.message || e));
+    }
     state.path = readQueryPath();
+    if (!state.path && state.videoList.length) state.path = state.videoList[0].path;
     if (!state.path) {
       var stageDom = $('ve-stage');
-      if (stageDom) stageDom.innerHTML = '<p style="padding:40px;color:var(--text-dim);">缺少 path 参数</p>';
+      if (stageDom) stageDom.innerHTML = '<p style="padding:40px;color:var(--text-dim);">数据集 video 目录为空</p>';
       return;
     }
     if (typeof VideoDecoder === 'undefined' || typeof EncodedVideoChunk === 'undefined') {
@@ -1207,17 +1228,6 @@ var VideoExtract = (function () {
         el.scrollLeft += e.deltaY;
       }, { passive: false });
     });
-
-    // 拉取视频列表以支持 A/D 切换
-    try {
-      var list = await API.request(API.apiPath('/videos'));
-      state.videoList = list || [];
-      for (var i = 0; i < state.videoList.length; i++) {
-        if (state.videoList[i].path === state.path) { state.vidIdx = i; break; }
-      }
-    } catch (e) {
-      toast(String(e.message || e));
-    }
 
     await setPath(state.path);
     resumeAnalysis();
