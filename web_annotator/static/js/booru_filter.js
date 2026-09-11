@@ -52,6 +52,19 @@ var BooruFilter = (function () {
         { type: 'sep' },
       ],
     },
+    'bilibili-video': {
+      extra: 'bilibili-video',
+      fields: [
+        { type: 'text', id: 'bilibili-video-uid', placeholder: 'B站 UID' },
+        { type: 'button', role: 'extra', id: 'btn-bilibili-video-extra', label: '条件',
+          title: '类型、关键词、时间等', badge: true },
+        { type: 'hidden', id: 'bilibili-video-extra', value: 'type:video' },
+        { type: 'button', role: 'search', label: '搜索', cls: 'green' },
+        { type: 'button', role: 'batch', label: '批量下载', title: '按当前筛选批量下载' },
+        { type: 'button', role: 'meta', label: '元数据', title: '重生成 Caption / 刷新元数据' },
+        { type: 'sep' },
+      ],
+    },
     x: {
       extra: null,
       fields: [
@@ -125,7 +138,20 @@ var BooruFilter = (function () {
       cheat: false,
       fields: [
         { type: 'chips', key: 'type', label: '类型', multi: true,
-          options: [['image', '图片'], ['video', '视频'], ['forward', '转发']] },
+          options: [['image', '图片'], ['forward', '转发']] },
+        { type: 'text', key: 'keyword', label: '关键词', placeholder: '过滤正文关键词' },
+        { type: 'range', label: '日期', lo: 'dateLo', hi: 'dateHi', date: true },
+      ],
+      parse: _biliParseExtra,
+      build: _biliBuildExtra,
+      count: _biliCountExtra,
+      summarize: _biliSummarizeExtra,
+    },
+    'bilibili-video': {
+      cheat: false,
+      fields: [
+        { type: 'chips', key: 'type', label: '类型', multi: true,
+          options: [['video', '视频'], ['cover', '封面']] },
         { type: 'text', key: 'keyword', label: '关键词', placeholder: '过滤正文关键词' },
         { type: 'range', label: '日期', lo: 'dateLo', hi: 'dateHi', date: true },
       ],
@@ -250,6 +276,34 @@ var BooruFilter = (function () {
       pageUrl: function (post) {
         var i = post.id.lastIndexOf('_');
         return 'https://t.bilibili.com/' + (i > 0 ? post.id.slice(0, i) : post.id);
+      },
+      renderPreviewTags: function (el, post) {
+        var para = document.createElement('div');
+        para.className = 'bili-preview-text';
+        para.textContent = post.tags || '(无正文)';
+        el.appendChild(para);
+      },
+    },
+    'bilibili-video': {
+      remote: true,
+      bar: 'bilibili-video',
+      stemPrefix: 'bv',
+      nameLabel: 'Bilibili视频',
+      noJump: true, // 游标式分页: 仅能顺序翻页, 禁用跳页
+      requireTags: true,
+      fixedAspect: '16 / 9', // B站视频封面为 16:9 平台画幅, 无真实宽高时按此占位
+      hintText: '输入 B站 UID 搜索 · 左键写入目录 · 右键大图',
+      buildRequest: function () {
+        return { tags: _val('bilibili-video-uid').trim(), extra: _val('bilibili-video-extra').trim(), order: '' };
+      },
+      thumb: function (post) {
+        return API.apiPath('/online-sources/bilibili-video-image') + '?url=' + encodeURIComponent(post.preview_url || post.sample_url || '');
+      },
+      sample: function (post) {
+        return API.apiPath('/online-sources/bilibili-video-image') + '?url=' + encodeURIComponent(post.sample_url || post.file_url || post.preview_url || '');
+      },
+      pageUrl: function (post) {
+        return 'https://www.bilibili.com/video/' + post.id;
       },
       renderPreviewTags: function (el, post) {
         var para = document.createElement('div');
@@ -731,6 +785,8 @@ var BooruFilter = (function () {
   var _selected = {};
   var _status = {};
   var _aborters = {};
+  var _jobId = {}; // 帖子 key -> 长任务 job_id (视频帖下载任务, 支持点击取消)
+  var _progress = {}; // 帖子 key -> 进度文本 (视频帖下载中显示)
   var _pageIo = null;
   var _colLo = null;
   var _colHi = null;
@@ -1330,7 +1386,8 @@ var BooruFilter = (function () {
       : st === 'done' ? '已保存'
       : st === 'error' ? '失败'
       : '未保存';
-    var tag = post.is_video ? '视频' : (post.is_forward ? '转发' : stLabel);
+    var typeTag = { video: '视频', cover: '封面', forward: '转发' }[post.post_type];
+    var tag = typeTag || (post.is_forward ? '转发' : stLabel);
     var rs = resText(post);
     var stem = post.stem || (((_SOURCES[post.source] || {}).stemPrefix || 'g') + post.id);
     return tag + ' · ' + (rs ? rs + ' ' : '') + stem;
@@ -1369,7 +1426,12 @@ var BooruFilter = (function () {
     card.classList.toggle('selected', !!_selected[key]);
     var name = card.querySelector('.info .name');
     var post = postByKey(key);
-    if (name && post) name.textContent = cardLabel(post);
+    if (name && post) {
+      var text = cardLabel(post);
+      // 长任务 (视频帖) 下载中在卡片名旁显示实时进度
+      if (_status[key] === 'downloading' && _progress[key]) text += ' · ' + _progress[key];
+      name.textContent = text;
+    }
   }
 
   function resolveCols() {
@@ -1407,9 +1469,11 @@ var BooruFilter = (function () {
     imgEl.src = thumbUrl(post);
     imgEl.style.width = '100%';
     imgEl.style.height = 'auto';
-    // 宽高已知时按真实比例占位, 避免加载前塌缩与加载后拉伸
+    // 宽高已知时按真实比例占位; 来源声明固定画幅 (如 B站封面 16:9) 时按其占位, 避免加载前塌缩
     if (hasSize(post)) {
       imgEl.style.aspectRatio = post.width + ' / ' + post.height;
+    } else if (srcDef.fixedAspect) {
+      imgEl.style.aspectRatio = srcDef.fixedAspect;
     }
     imgEl.style.background = '#111';
     card.appendChild(imgEl);
@@ -1669,18 +1733,25 @@ var BooruFilter = (function () {
     var data = await res.json();
     // 视频帖: 后端返回长任务, 需监听进度; 图片帖直接返回写入结果
     if (data.job_id) {
-      toast('视频下载中…');
+      _jobId[post.key] = data.job_id;
       API.watchJob(data.job_id, function (s) {
         if (s.status === 'done') {
           _status[post.key] = 'done';
+          delete _jobId[post.key];
+          delete _progress[post.key];
           updateCard(post.key);
           toast('视频下载完成 · ' + (s.message || ''));
           refreshDiskCount();
         } else if (s.status === 'error') {
           _status[post.key] = 'error';
+          delete _jobId[post.key];
+          delete _progress[post.key];
           updateCard(post.key);
           delete _selected[post.key];
           toast('视频下载失败: ' + (s.message || ''));
+        } else {
+          _progress[post.key] = s.status === 'queued' ? '排队中' : (s.message || ((s.pct != null ? Math.round(s.pct) : 0) + '%'));
+          updateCard(post.key);
         }
       });
       return data;
@@ -2034,15 +2105,24 @@ var BooruFilter = (function () {
   }
 
   /**
-   * 取消进行中的下载: 中断前端请求并清理本地状态与可能已写入的文件.
+   * 取消进行中的下载: 长任务 (视频帖) 向任务管理器请求停止, 普通请求中断
+   * 前端连接并清理本地状态与可能已写入的文件.
    * 引用: onCardClick.
    * @param {object} post
    */
   function cancelDownload(post) {
-    var ctrl = _aborters[post.key];
+    var jobId = _jobId[post.key];
     delete _selected[post.key];
     delete _status[post.key];
+    delete _jobId[post.key];
+    delete _progress[post.key];
     updateCard(post.key);
+    if (jobId) {
+      API.cancelJob(jobId).catch(function (e) { toast('停止任务失败: ' + (e.message || e)); });
+      toast('已请求停止下载任务');
+      return;
+    }
+    var ctrl = _aborters[post.key];
     if (ctrl) ctrl.abort();
     // 后端检测断开会取消下载协程; 若文件已原子写入, 一并清理目录
     undownloadOne(post).catch(function () {});
@@ -2068,10 +2148,8 @@ var BooruFilter = (function () {
     }
     _selected[post.key] = true;
     updateCard(post.key);
-    // 视频帖卡片点击下载封面(文件URL换为预览图), 视频文件由显式下载按钮处理
-    var dlPost = post.is_video ? Object.assign({}, post, {file_url: post.sample_url, is_video: false}) : post;
-    downloadOne(dlPost).then(function (data) {
-      if (data) toast(data.skipped ? ('已存在 ' + (data.stem || post.id)) : ('已保存 ' + (data.stem || post.id) + '.png'));
+    downloadOne(post).then(function (data) {
+      if (data) toast(data.skipped ? ('已存在 ' + (data.stem || post.id)) : ('已保存 ' + (data.stem || post.id)));
     }).catch(function (e) {
       delete _selected[post.key];
       updateCard(post.key);
@@ -2146,6 +2224,8 @@ var BooruFilter = (function () {
       _posts = [];
       _selected = {};
       _status = {};
+      _jobId = {};
+      _progress = {};
       _hasMore = false;
       _hasPrev = start > 1;
       _dupSkip = 0;
@@ -2279,6 +2359,8 @@ var BooruFilter = (function () {
     _pageHi = start;
     _selected = {};
     _status = {};
+    _jobId = {};
+    _progress = {};
     _hasMore = false;
     _hasPrev = start > 1;
     resetLayout();

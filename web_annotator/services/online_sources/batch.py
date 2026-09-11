@@ -18,6 +18,7 @@ from typing import Any
 from services.online_sources.framework.base import get_source
 from services.online_sources.framework.media import download_post, local_rel_path
 from services.online_sources.framework.utils import is_downloaded
+from services.dataset.layout import VIDEO_DIRNAME
 from services.models import JobSnapshot
 
 # 连续空页判定抓完的阈值: 会话式来源(如 B 站)的风控空心响应与真实末页结构
@@ -319,6 +320,9 @@ async def _run_async(
     async def fill_buffer() -> None:
         """向后翻一页并加入未下载候选.
 
+        视频帖不做工作目录文件判定 (其产物在数据集 ``video`` 目录, 由
+        BBDown 以 BV 前缀判定, 见 ``download_one``), 一律进入候选。
+
         Returns:
             None: 无返回值; 候选写入闭包 ``buffer`` 并更新 ``has_more_pages``.
 
@@ -348,7 +352,7 @@ async def _run_async(
                 # 拿到末页(记录存在且无后续游标), 判定抓完
                 has_more_pages = False
             for p in posts:
-                if is_downloaded(out_dir, p.filename):
+                if not p.is_video and is_downloaded(out_dir, p.filename):
                     progress.skipped += 1
                 else:
                     buffer.append(p)
@@ -380,7 +384,7 @@ async def _run_async(
                 while buf_i < len(buffer):
                     p = buffer[buf_i]
                     buf_i += 1
-                    if is_downloaded(out_dir, p.filename):
+                    if not p.is_video and is_downloaded(out_dir, p.filename):
                         progress.skipped += 1
                         push("")
                         continue
@@ -393,6 +397,9 @@ async def _run_async(
 
     async def download_one(post: Any) -> None:
         """单帖下载(含 429 退避).
+
+        视频帖的目标目录为数据集根 ``video`` (BBDown 产物原位写入),
+        其余帖子落工作目录; 视频文件不做缩略图。
 
         Args:
             post (Any): 待下载帖对象.
@@ -416,7 +423,7 @@ async def _run_async(
                     result = await download_post(
                         source,
                         post,
-                        out_dir,
+                        root / VIDEO_DIRNAME if post.is_video else out_dir,
                         overwrite=False,
                         anima_format=anima_format,
                         include_meta_tags=include_meta_tags,
@@ -426,7 +433,7 @@ async def _run_async(
                         progress.skipped += 1
                     else:
                         progress.done += 1
-                        if thumbnailer is not None:
+                        if thumbnailer is not None and not post.is_video:
                             rel = local_rel_path(root, result.path)
                             await thumbnailer.ensure_async(rel)
                     push("")

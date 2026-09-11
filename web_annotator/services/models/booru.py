@@ -60,6 +60,10 @@ class BooruPost(BaseModel):
     is_video: bool = False
     # 转发动态标记: 卡片标注「转发」(配图来自原动态)
     is_forward: bool = False
+    # 帖子形态类别: bilibili 家族填 "image"/"forward"/"video"/"cover",
+    # 驱动来源内类型筛选与卡片标注; 同源同 id 双帖 (视频帖+封面帖) 亦经
+    # 它区分会话 key。其余来源无类型筛选需求, 留空。
+    post_type: str = ""
 
     @model_validator(mode="after")
     def _fallback_urls(self) -> "BooruPost":
@@ -77,7 +81,16 @@ class BooruPost(BaseModel):
     @computed_field
     @property
     def key(self) -> str:
-        return f"{self.source}:{self.id}"
+        """会话内唯一键: ``source:id`` 加帖子形态类别段 (非空时).
+
+        bilibili 视频动态会展开出同 id 的视频帖与封面帖, 两帖以
+        ``post_type`` 段区分; ``post_type`` 为空的来源 key 维持
+        ``source:id`` 原形。
+
+        Returns:
+            str: 会话内唯一键, 如 ``danbooru:123`` 或 ``bilibili-video:BV1xxx:cover``。
+        """
+        return ":".join(part for part in (self.source, self.id, self.post_type) if part)
 
 
 class BooruSearchResult(BaseModel):
@@ -116,6 +129,7 @@ class BooruDownloadResult(BaseModel):
     dir: str = ""
     rel_path: str = ""
     thumbnail_hash: str = ""
+    files: list[str] = Field(default_factory=list)
 
 
 class BooruUndownloadResult(BaseModel):

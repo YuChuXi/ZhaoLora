@@ -165,7 +165,12 @@ async def search(request: Request, body: SearchBody) -> BooruSearchResult:
 
     posts: list[BooruPost] = []
     for post in raw_posts:
-        post.downloaded = is_downloaded(out_dir, post.filename)
+        if post.is_video:
+            # 视频帖产物在数据集根 video 目录, 以 BV 前缀判定 (BBDown 命名 {bvid}_{标题}...)
+            video_dir = root / VIDEO_DIRNAME
+            post.downloaded = video_dir.is_dir() and any(video_dir.glob(f"{post.id}_*"))
+        else:
+            post.downloaded = is_downloaded(out_dir, post.filename)
         posts.append(post)
 
     logger.info(
@@ -339,7 +344,9 @@ async def _submit_video_download(
 
     工作线程内运行 ``download_post`` (视频帖进入对应来源的 ``download`` 视频
     分支, B 站用 BBDown, 其余来源下载原始文件); 异常由 ``JobManager`` 捕获并
-    置为 error 状态, 本函数无需自行捕获处理异常。
+    置为 error 状态, 本函数无需自行捕获处理异常。任务在 ``network`` 互斥组内
+    排队依次执行 (BBDown 单任务已占满下载带宽, 多任务串行), 与批量下载同组
+    互斥; 同一视频重复提交排队后命中产物已存在的跳过语义。
 
     Args:
         request (Request): 请求对象。
@@ -350,16 +357,11 @@ async def _submit_video_download(
     Returns:
         JobSubmitResponse: 任务提交结果, 前端据 ``job_id`` 监听进度。
 
-    Raises:
-        HTTPException: 已有进行中的视频下载任务时返回 409。
-
     Callers:
         - ``routes/online_sources.py:download``
     """
     rt = get_runtime(request)
     mgr = jobs(request)
-    if mgr.find_active(dataset=rt.name, kind="video_download") is not None:
-        raise HTTPException(409, "视频下载已在进行中")
     video_dir = root / VIDEO_DIRNAME
 
     def run(emit: EmitFn) -> None:
@@ -400,10 +402,14 @@ async def _submit_video_download(
         result = asyncio.run(
             download_post(source, post, video_dir, overwrite=False, emit=on_progress)
         )
+        if len(result.files) > 1:
+            done_msg = f"视频下载完成: {len(result.files)} 个分P"
+        else:
+            done_msg = f"视频下载完成: {Path(result.path).name}"
         emit(
             JobSnapshot(
                 status="done", phase="done", total=1, done=1, pct=100,
-                message=f"视频下载完成: {Path(result.path).name}",
+                message=done_msg,
             )
         )
 

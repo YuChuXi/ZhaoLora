@@ -67,16 +67,41 @@ def pil_can_open(data: bytes) -> bool:
         return False
 
 
-def save_png_bytes(data: bytes, dest: Path) -> None:
-    """将图片字节按 PNG 写入磁盘, 并校验其确为可识别图片.
+def probe_image_size(data: bytes) -> tuple[int, int]:
+    """读取图片字节的真实像素尺寸 (仅解码图片头, 不落盘).
+
+    Args:
+        data: 完整图片字节.
+
+    Returns:
+        tuple[int, int]: ``(宽度, 高度)``。
+
+    Raises:
+        UnidentifiedImageError / OSError: 数据无法被 PIL 识别。
+
+    Callers:
+        - ``services/online_sources/bilibili/source.py:BilibiliVideoSource.fetch_meta``
+    """
+    im = Image.open(io.BytesIO(data))
+    width, height = im.size
+    im.close()
+    return width, height
+
+
+def save_png_bytes(data: bytes, dest: Path) -> tuple[int, int]:
+    """将图片字节按 PNG 写入磁盘, 校验其确为可识别图片并返回实际像素尺寸.
 
     校验规则: 先按魔数排除 html/zip/video/webm 等非图片; PNG 原样写入;
     其余格式经 PIL 解码重编码为 PNG。PIL 无法识别或解码失败时抛出异常,
-    保证磁盘上不会出现以图片扩展名存放的非图片数据。
+    保证磁盘上不会出现以图片扩展名存放的非图片数据。返回值取自解码后
+    的真实像素尺寸, 供产物元数据以实际数据修正 API 声称值。
 
     Args:
         data: 原始字节.
         dest: 目标 PNG 路径 (父目录不存在时自动创建).
+
+    Returns:
+        tuple[int, int]: 写入 PNG 的实际 ``(宽度, 高度)``。
 
     Raises:
         ValueError: 非图片类型 (html/zip/video/webm).
@@ -90,13 +115,17 @@ def save_png_bytes(data: bytes, dest: Path) -> None:
     if kind in ("html", "zip", "video", "webm"):
         raise ValueError(f"不支持该文件类型({kind})")
     dest.parent.mkdir(parents=True, exist_ok=True)
+    probe = Image.open(io.BytesIO(data))
+    width, height = probe.size
+    probe.close()
     if kind == "png":
         atomic_write_bytes(dest, data)
-        return
+        return width, height
     img = Image.open(io.BytesIO(data))
     img.load()
     out = img.convert("RGBA") if img.mode in ("RGBA", "LA", "P") else img.convert("RGB")
     out.save(dest, format="PNG", optimize=True)
+    return width, height
 
 
 def stem_candidates(post_id: str, *, file_stem_fn) -> list[str]:

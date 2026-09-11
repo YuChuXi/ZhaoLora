@@ -531,19 +531,22 @@ async def resolve_record(dynamic_id: str) -> DynamicRecord:
 
 
 async def fetch_video_record(bvid: str) -> VideoInfo:
-    """免登录获取视频稿件信息 (标题 / 简介 / 发布时间 / 封面).
+    """免登录获取视频稿件信息 (标题 / 简介 / 发布时间 / 封面 / 画面分辨率).
 
     Args:
         bvid (str): 视频 BV 号。
 
     Returns:
-        VideoInfo: 含 desc 与 pub_ts 的视频稿件记录。
+        VideoInfo: 含 desc / pub_ts / width / height 的视频稿件记录,
+            宽高取自接口顶层 ``dimension`` (视频画面分辨率, 各分 P 可能
+            不同; 接口未提供时为 None)。
 
     Raises:
         RuntimeError: 接口返回非 0 code。
 
     Callers:
         - ``services/online_sources/bilibili/source.py:BilibiliSource.fetch_meta``
+        - ``services/online_sources/bilibili/source.py:BilibiliVideoSource._fill_video_dims``
     """
     async with HttpClient() as client:
         resp = await client.get(
@@ -558,6 +561,7 @@ async def fetch_video_record(bvid: str) -> VideoInfo:
     if data.get("code") != 0:
         raise RuntimeError(f"code={data.get('code')} message={data.get('message')}")
     v = data["data"]
+    dim = v.get("dimension") or {}
     return VideoInfo(
         bvid=v.get("bvid"),
         title=v.get("title"),
@@ -566,6 +570,8 @@ async def fetch_video_record(bvid: str) -> VideoInfo:
         play=None,
         desc=v.get("desc"),
         pub_ts=int(v["pubdate"]),
+        width=dim.get("width"),
+        height=dim.get("height"),
     )
 
 

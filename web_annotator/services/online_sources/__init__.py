@@ -25,7 +25,7 @@ from services.online_sources.framework.media import (
 )
 from services.online_sources.danbooru import DanbooruSource
 from services.online_sources.gelbooru import GelbooruSource
-from services.online_sources.bilibili import BilibiliSource
+from services.online_sources.bilibili import BilibiliSource, BilibiliVideoSource
 from services.online_sources.x import XSource
 from services.online_sources.pixiv import PixivSource, fetch_bytes as fetch_pixiv_bytes
 from services.online_sources.mihuashi import MihuashiSource
@@ -35,6 +35,7 @@ from services.online_sources.framework.utils import is_downloaded
 register_source(GelbooruSource())
 register_source(DanbooruSource())
 register_source(BilibiliSource())
+register_source(BilibiliVideoSource())
 register_source(XSource())
 register_source(PixivSource())
 register_source(MihuashiSource())

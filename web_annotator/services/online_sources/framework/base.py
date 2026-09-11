@@ -277,8 +277,8 @@ class SourceClient(ABC):
         meta_dir.mkdir(parents=True, exist_ok=True)
         atomic_write_text(meta_dir / f"{pid}.json", post.model_dump_json(exclude={"key"}, indent=2) + "\n")
 
-    async def _save_png(self, data: bytes, dest: Path) -> None:
-        """将下载字节转为 PNG 写入磁盘.
+    async def _save_png(self, data: bytes, dest: Path) -> tuple[int, int]:
+        """将下载字节转为 PNG 写入磁盘并返回实际像素尺寸.
 
         图片解码/重编码是 CPU 密集的同步操作, 移入线程池执行以避免阻塞事件
         循环; 转码核心逻辑见 ``_save_png_sync``。
@@ -286,6 +286,9 @@ class SourceClient(ABC):
         Args:
             data: 原始字节。
             dest: 目标 PNG 路径。
+
+        Returns:
+            tuple[int, int]: 写入 PNG 的实际 ``(宽度, 高度)``。
 
         Raises:
             ValueError: 文件类型不支持 (html/zip/video/webm)。
@@ -297,21 +300,25 @@ class SourceClient(ABC):
             - ``services/online_sources/bilibili/source.py:BilibiliSource.download``
             - ``services/online_sources/framework/gallerydl.py:download``
         """
-        await asyncio.to_thread(self._save_png_sync, data, dest)
+        return await asyncio.to_thread(self._save_png_sync, data, dest)
 
-    def _save_png_sync(self, data: bytes, dest: Path) -> None:
+    def _save_png_sync(self, data: bytes, dest: Path) -> tuple[int, int]:
         """同步执行 PNG 字节转码写入 (经 ``asyncio.to_thread`` 调用).
 
-        校验与转码核心逻辑集中在 ``utils.save_png_bytes``。
+        校验与转码核心逻辑集中在 ``utils.save_png_bytes``, 返回解码后的
+        真实像素尺寸。
 
         Args:
             data: 原始字节。
             dest: 目标 PNG 路径。
 
+        Returns:
+            tuple[int, int]: 写入 PNG 的实际 ``(宽度, 高度)``。
+
         Callers:
             - ``services/online_sources/framework/base.py:SourceClient._save_png``
         """
-        save_png_bytes(data, dest)
+        return save_png_bytes(data, dest)
 
     def _clean_old_files(self, out_dir: Path, pid: str, keep: Path) -> None:
         """删除同 pid 其他命名变体的图片文件, 仅保留本次写入的文件.

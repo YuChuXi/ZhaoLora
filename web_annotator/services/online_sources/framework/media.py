@@ -165,9 +165,10 @@ async def download_post(
 ) -> BooruDownloadResult:
     """下载帖子到目标目录, 并写旁路标签与 meta.
 
-    全部委托给对应 ``SourceClient.download`` 实现 (图片帖经 ``out_dir``
-    筛选子目录, 视频帖经 ``out_dir`` ``video`` 目录), 本层只做前缀校验与
-    结果翻译。``emit`` (仅视频帖有意义) 原样透传给 ``SourceClient.download``。
+    全部委托给对应 ``SourceClient.download`` 实现, 本层只做前缀校验与
+    结果翻译; 目标目录语义由调用方保证: 图片帖 (含 bilibili 封面帖)
+    传筛选工作目录, 视频帖传数据集 ``video`` 目录。
+    ``emit`` (仅视频帖有意义) 原样透传给 ``SourceClient.download``。
 
     Args:
         source: 来源名。

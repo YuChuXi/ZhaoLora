@@ -58,7 +58,7 @@ class VideoInfo(BaseModel):
     """视频稿件信息.
 
     动态接口仅提供 bvid/title/cover/duration_text/play; 视频信息接口
-    (``client.fetch_video_record``) 另有 desc/pub_ts, 均可选。
+    (``client.fetch_video_record``) 另有 desc/pub_ts/width/height, 均可选。
 
     Args:
         bvid (str | None): 视频 BV 号。
@@ -68,6 +68,8 @@ class VideoInfo(BaseModel):
         play (str | None): 播放量。
         desc (str | None): 视频简介 (仅视频信息接口)。
         pub_ts (int | None): 发布时间 Unix 秒 (仅视频信息接口)。
+        width (int | None): 视频画面宽 (仅视频信息接口 dimension)。
+        height (int | None): 视频画面高 (仅视频信息接口 dimension)。
     """
 
     bvid: str | None
@@ -77,6 +79,8 @@ class VideoInfo(BaseModel):
     play: str | None
     desc: str | None = None
     pub_ts: int | None = None
+    width: int | None = None
+    height: int | None = None
 
 
 class StatInfo(BaseModel):
