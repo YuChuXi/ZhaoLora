@@ -445,57 +445,81 @@ class BilibiliVideoSource(BilibiliSource):
     POST_TYPES: frozenset[str] = frozenset({"video"})
 
     def __init__(self) -> None:
-        """初始化视频源, 建立视频画面分辨率缓存 (bvid -> (宽, 高)).
+        """初始化视频源, 建立分辨率缓存 (bvid -> (宽, 高)).
 
-        B 站动态 feed 接口不提供分辨率字段, 搜索批次对视频帖逐条经
-        视频信息接口补全; 缓存避免翻页与重搜的重复请求。
+        B 站动态 feed 接口不提供分辨率字段: 搜索批次对视频帖经视频
+        信息接口补视频画面分辨率, 对封面帖拉取封面字节用 PIL 实测封面
+        尺寸; 缓存避免翻页与重搜的重复请求。
         """
         super().__init__()
         self._dim_cache: dict[str, tuple[int, int]] = {}
+        self._cover_dim_cache: dict[str, tuple[int, int]] = {}
 
-    async def _fill_video_dims(self, posts: list[BooruPost]) -> list[BooruPost]:
-        """为视频帖并发补全视频画面分辨率 (带进程级缓存).
+    async def _fill_dims(self, posts: list[BooruPost]) -> list[BooruPost]:
+        """并发补全视频帖与封面帖的分辨率 (带进程级缓存).
 
-        动态 feed 接口的 archive 卡片不提供分辨率字段 (全字段通读确认);
-        视频信息接口 (``fetch_video_record``) 的顶层 ``dimension`` 提供
-        视频画面分辨率。仅补视频帖 (封面帖的分辨率语义是封面图实际
-        尺寸, 视频画面分辨率不是其真实值, 留待下载时 PIL 实测); 缓存
-        命中的 bvid 不重复请求, 限并发 5, 单条失败跳过该帖补全。
+        动态 feed 接口的 archive 卡片不提供分辨率字段 (全字段通读确
+        认)。视频帖取视频信息接口 (``fetch_video_record``) 顶层
+        ``dimension`` 的视频画面分辨率; 封面帖的分辨率语义是封面图实
+        际尺寸 (B 站封面按视频画幅生成但不保证逐像素一致), 拉取封面
+        原图字节用 PIL 实测, 与 ``fetch_meta`` 的探测一致。封面尺寸
+        无接口提供, 实测是唯一精确来源; 缓存命中的 bvid 不重复请求,
+        两类共享并发上限 5, 单条失败跳过该帖补全 (前端以 16:9 平台
+        画幅占位)。
 
         Args:
             posts (list[BooruPost]): 本批展开后的帖子。
 
         Returns:
-            list[BooruPost]: 视频帖已补全分辨率的帖子 (其余原样)。
+            list[BooruPost]: 分辨率已补全的帖子 (缺失原样)。
 
         Callers:
             - ``services/online_sources/bilibili/source.py:BilibiliVideoSource._post_process``
         """
         video_posts = [p for p in posts if p.post_type == "video"]
-        missing = sorted({p.id for p in video_posts if p.id not in self._dim_cache})
+        cover_posts = [p for p in posts if p.post_type == "cover"]
+        missing_video = sorted({p.id for p in video_posts if p.id not in self._dim_cache})
+        missing_cover = sorted({p.id for p in cover_posts if p.id not in self._cover_dim_cache})
         sem = asyncio.Semaphore(5)
 
-        async def load(bvid: str) -> None:
+        async def load_video(bvid: str) -> None:
             """单条拉取视频信息并写入缓存, 失败不缓存由下次重试."""
             async with sem:
                 info = await fetch_video_record(bvid)
             if info.width and info.height:
                 self._dim_cache[bvid] = (info.width, info.height)
 
-        results = await asyncio.gather(*(load(b) for b in missing), return_exceptions=True)
-        for bvid, exc in zip(missing, results):
+        async def load_cover(bvid: str, cover: str) -> None:
+            """单条拉取封面原图并实测尺寸写入缓存, 失败不缓存由下次重试."""
+            async with sem:
+                data, _ = await fetch_bili_bytes(cover)
+            width, height = probe_image_size(data)
+            self._cover_dim_cache[bvid] = (width, height)
+
+        cover_by_id: dict[str, str] = {}
+        for post in cover_posts:
+            cover_by_id.setdefault(post.id, post.file_url)
+        results = await asyncio.gather(
+            *(load_video(b) for b in missing_video),
+            *(load_cover(b, cover_by_id[b]) for b in missing_cover),
+            return_exceptions=True,
+        )
+        for exc in results:
             if isinstance(exc, Exception):
-                logger.warning("视频 %s 分辨率补全失败: %s", bvid, exc)
+                logger.warning("视频分辨率补全失败: %s", exc)
         updated: list[BooruPost] = []
         for post in posts:
             if post.post_type == "video" and post.id in self._dim_cache:
                 width, height = self._dim_cache[post.id]
                 post = post.model_copy(update={"width": width, "height": height})
+            elif post.post_type == "cover" and post.id in self._cover_dim_cache:
+                width, height = self._cover_dim_cache[post.id]
+                post = post.model_copy(update={"width": width, "height": height})
             updated.append(post)
         return updated
 
     async def _post_process(self, posts: list[BooruPost]) -> list[BooruPost]:
-        """搜索批次补全: 为视频帖补画面分辨率.
+        """搜索批次补全: 为视频帖与封面帖补分辨率.
 
         Args:
             posts (list[BooruPost]): 本批展开后的帖子。
@@ -506,7 +530,7 @@ class BilibiliVideoSource(BilibiliSource):
         Callers:
             - ``services/online_sources/bilibili/source.py:BilibiliSource.search_session``
         """
-        return await self._fill_video_dims(posts)
+        return await self._fill_dims(posts)
 
     def _expand(self, record: DynamicRecord) -> list[BooruPost]:
         """将一条视频动态展开为封面帖与视频帖.
@@ -514,9 +538,9 @@ class BilibiliVideoSource(BilibiliSource):
         封面帖直接取视频 cover URL 作为媒体, 缩略图 / 样图 URL 由封面
         URL 加 B 站 CDN 后缀派生; 视频帖携带 BV 号供 BBDown 下载,
         ``file_url`` 同为封面 (仅供前端展示)。动态 API 不提供封面像素
-        尺寸, ``width`` / ``height`` 置 0 表示未知 (前端以 16:9 平台画幅
-        占位), 真实尺寸在产物形成点修正 (下载经 PIL 实测, 元数据重建
-        经 ``fetch_meta`` 探测); 无 BV 号或封面的动态不产出帖子。
+        尺寸, ``width`` / ``height`` 置 0, 由 ``_post_process`` 实测
+        封面补全 (失败时前端以 16:9 平台画幅占位); 无 BV 号或封面的
+        动态不产出帖子。
 
         Callers:
             - ``services/online_sources/bilibili/source.py:BilibiliSource.search_session``

@@ -16,6 +16,7 @@ var VideoExtract = (function () {
   var THUMB_COUNT = 60; // 缩略图条采样目标数量
   var THUMB_SIZE = 256; // 缩略图条帧最长边
   var FRAME_COLORS = { I: '#ff6b6b', P: '#f5c542', B: '#4a9eff' }; // 红I/黄P/蓝B
+  var SAVED_MARKER_COLOR = '#3ecf8e'; // 已保存帧标记色(绿色, 与三帧色区分)
   var SEG_MAX_SEC = 10; // 帧窗口最大时长(秒), 前后各半
   var FRAME_CACHE = 60; // 已解码帧缓存上限(段内位置), LRU 淘汰
   var FEED_MARGIN = 16; // 回退重建解码器时, 目标帧之后追加喂入的包数(覆盖 B 帧后向参考)
@@ -835,20 +836,18 @@ var VideoExtract = (function () {
     }
     svg.appendChild(bars);
 
-    // 已保存帧标记: 顶部彩色条, 颜色取帧类型(I 红/P 黄/B 蓝);
-    // 隐藏 B 帧时已保存的 B 帧映射到最近的可见帧位置
+    // 已保存帧标记: 顶部绿色条(SAVED_MARKER_COLOR, 与柱色区分, 高柱顶伸入标记区
+    // 仍可辨); 绘制于柱之后故位于上层。隐藏 B 帧时已保存的 B 帧映射到最近的可见帧位置
     if (state.saved.length) {
       for (var s2 = 0; s2 < state.saved.length; s2++) {
         var saveIdx = state.saved[s2];
         var visIdx = nearestVisibleIdx(saveIdx);
-        var saveFt = state.types[saveIdx];
-        var markerColor = saveFt ? (FRAME_COLORS[saveFt.type] || '#888') : '#3ecf8e';
         var t = document.createElementNS(ns, 'rect');
         t.setAttribute('x', barOrdinal(visIdx) * ppf);
         t.setAttribute('y', 0);
         t.setAttribute('width', Math.max(2, ppf));
         t.setAttribute('height', 8);
-        t.setAttribute('fill', markerColor);
+        t.setAttribute('fill', SAVED_MARKER_COLOR);
         svg.appendChild(t);
       }
     }

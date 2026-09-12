@@ -291,7 +291,7 @@ var BooruFilter = (function () {
       nameLabel: 'Bilibili视频',
       noJump: true, // 游标式分页: 仅能顺序翻页, 禁用跳页
       requireTags: true,
-      fixedAspect: '16 / 9', // B站视频封面为 16:9 平台画幅, 无真实宽高时按此占位
+      fixedAspect: '16 / 9', // 视频帖按封面画幅渲染(预览媒体为横版封面); 其余无宽高时也按此占位
       hintText: '输入 B站 UID 搜索 · 左键写入目录 · 右键大图',
       buildRequest: function () {
         return { tags: _val('bilibili-video-uid').trim(), extra: _val('bilibili-video-extra').trim(), order: '' };
@@ -1469,8 +1469,10 @@ var BooruFilter = (function () {
     imgEl.src = thumbUrl(post);
     imgEl.style.width = '100%';
     imgEl.style.height = 'auto';
-    // 宽高已知时按真实比例占位; 来源声明固定画幅 (如 B站封面 16:9) 时按其占位, 避免加载前塌缩
-    if (hasSize(post)) {
+    // 宽高已知时按真实比例占位; 视频帖的 width/height 是视频画面分辨率,
+    // 而预览媒体恒为横版封面, 按其渲染会拉伸变形, 故改用来源声明的封面画幅;
+    // 其余无宽高的帖子用来源声明的固定画幅占位, 避免加载前塌缩
+    if (hasSize(post) && !post.is_video) {
       imgEl.style.aspectRatio = post.width + ' / ' + post.height;
     } else if (srcDef.fixedAspect) {
       imgEl.style.aspectRatio = srcDef.fixedAspect;
