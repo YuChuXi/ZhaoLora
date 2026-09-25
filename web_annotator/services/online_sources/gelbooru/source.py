@@ -219,9 +219,28 @@ class GelbooruSource(SourceClient):
 # 标签类型缓存, 进程内复用
 _tag_types_cache: dict[str, int] = {}
 
+# Gelbooru 标签类型 -> Danbooru 兼容字段; 编号 2 为历史遗留空缺。
+_TAG_TYPE_FIELDS: dict[int, str] = {
+    0: "tag_string_general",
+    1: "tag_string_artist",
+    3: "tag_string_copyright",
+    4: "tag_string_character",
+    5: "tag_string_meta",
+}
+
+# 类型 6 = bad_tag (Gelbooru 声明不使用且永不使用的标签, 其他 booru 的
+# 标签被 alias 到此, 见官方 wiki bad_tag 词条): 不属于任何类别, 不写入
+# 分类字段 (对训练数据是噪声), 原始 tags 字段不受影响。
+_BAD_TAG_TYPE = 6
+
 
 async def _categorize_gelbooru_tags(post: dict, api: GelbooruClient) -> dict:
     """查询 Gelbooru 标签类型并写入 Danbooru 兼容字段, 结果缓存在内存.
+
+    类型编号必须全部落在 ``_TAG_TYPE_FIELDS`` (bad_tag 6 除外): API 对
+    帖子上的标签必然返回类型行, 查询后缺类型的标签以 KeyError 暴露;
+    遇到映射表外的未知类型编号同样抛错, 等待查明语义后扩充映射, 不
+    静默归类污染 caption。
 
     Args:
         post: Gelbooru API 返回的帖子数据.
@@ -229,6 +248,9 @@ async def _categorize_gelbooru_tags(post: dict, api: GelbooruClient) -> dict:
 
     Returns:
         含 tag_string_* 字段的新 dict.
+
+    Raises:
+        KeyError: 标签类型查询结果缺失或出现未知类型编号。
 
     Callers:
         - ``services/online_sources/gelbooru/source.py:GelbooruSource.download``
@@ -240,13 +262,13 @@ async def _categorize_gelbooru_tags(post: dict, api: GelbooruClient) -> dict:
     if missing:
         types = await api.get_tag_types(missing)
         _tag_types_cache.update(types)
-    cats: dict[int, list[str]] = {0: [], 1: [], 3: [], 4: [], 5: []}
+    buckets: dict[str, list[str]] = {}
     for t in all_names:
-        cats[_tag_types_cache.get(t, 0)].append(t)
+        ttype = _tag_types_cache[t]
+        if ttype == _BAD_TAG_TYPE:
+            continue
+        buckets.setdefault(_TAG_TYPE_FIELDS[ttype], []).append(t)
     post = dict(post)
-    post["tag_string_general"] = " ".join(cats[0])
-    post["tag_string_artist"] = " ".join(cats[1])
-    post["tag_string_copyright"] = " ".join(cats[3])
-    post["tag_string_character"] = " ".join(cats[4])
-    post["tag_string_meta"] = " ".join(cats[5])
+    for field in _TAG_TYPE_FIELDS.values():
+        post[field] = " ".join(buckets.get(field, []))
     return post

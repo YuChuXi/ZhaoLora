@@ -33,21 +33,41 @@
     border-radius: 4px; padding: 3px 6px; font-size: 12px;
   }
   .toolbar .status-seg { min-width: 0; flex: 0 1 auto; }
+  .mode-seg { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+  .mode-seg button {
+    background: transparent; color: var(--text-dim); border: none; cursor: pointer;
+    padding: 4px 12px; font-size: 12px; font-family: inherit;
+  }
+  .mode-seg button.active { background: var(--accent); color: #fff; }
+  .file-tabs { display: flex; gap: 4px; padding: 10px 14px 0; }
+  .file-tab {
+    background: transparent; border: 1px solid var(--border); color: var(--text-dim);
+    cursor: pointer; padding: 4px 14px; font-size: 12px; border-radius: 6px 6px 0 0;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  .file-tab.active { color: var(--text); background: #0a1a30; }
   .toml-box {
-    flex: 1; margin: 12px 14px 14px; resize: none; min-height: 0;
+    flex: 1; margin: 0 14px 14px; resize: none; min-height: 0;
     background: #0a1a30; color: #c8d4e0; border: 1px solid var(--border);
-    border-radius: 8px; padding: 12px 14px;
+    border-radius: 0 8px 8px 8px; padding: 12px 14px;
     font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
     font-size: 13px; line-height: 1.5;
   }
+  .toml-box.hidden { display: none; }
   .ready-content { flex: 1; display: flex; flex-direction: column; min-width: 0; overflow: hidden; }
 </style>
 </head>
 <body>
 <nav class="app-tabs" id="app-tabs"></nav>
 <div class="toolbar">
+  <span class="mode-seg" id="mode-seg"
+    title="训练模式: 画风 rank 16 / 角色 rank 32 (network_dim = network_alpha), 切换后重新生成">
+    <button class="active" data-mode="style" title="画风模式: network_dim = network_alpha = 16">画风</button>
+    <button data-mode="character" title="角色模式: network_dim = network_alpha = 32">角色</button>
+  </span>
+  <span class="sep"></span>
   <button class="btn green" id="btn-gen">生成</button>
-  <button class="btn" id="btn-copy">复制</button>
+  <button class="btn" id="btn-copy" title="复制当前标签页内容">复制</button>
   <button class="btn green" id="btn-export">导出配置</button>
   <span class="sep"></span>
   <label style="font-size:12px;color:var(--text-dim);display:flex;align-items:center;gap:4px;"
@@ -71,7 +91,14 @@
     <div class="dir-list" id="dir-list"></div>
   </aside>
   <div class="ready-content">
-    <textarea class="toml-box" id="toml-box" readonly placeholder="生成后显示"></textarea>
+    <div class="file-tabs" id="file-tabs">
+      <button class="file-tab active" data-file="lora.toml">lora.toml</button>
+      <button class="file-tab" data-file="dataset.toml">dataset.toml</button>
+      <button class="file-tab" data-file="prompt.txt">prompt.txt</button>
+    </div>
+    <textarea class="toml-box" id="file-lora.toml" data-file="lora.toml" spellcheck="false" placeholder="生成后显示"></textarea>
+    <textarea class="toml-box hidden" id="file-dataset.toml" data-file="dataset.toml" spellcheck="false" placeholder="生成后显示"></textarea>
+    <textarea class="toml-box hidden" id="file-prompt.txt" data-file="prompt.txt" spellcheck="false" placeholder="生成后显示"></textarea>
   </div>
 </div>
 <div class="toast" id="toast"></div>

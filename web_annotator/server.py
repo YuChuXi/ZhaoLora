@@ -93,6 +93,11 @@ async def lifespan(app: FastAPI):
         "true",
         "yes",
     )
+    no_browser_cache = os.environ.get("ANNOTATOR_NO_BROWSER_CACHE", "").lower() in (
+        "1",
+        "true",
+        "yes",
+    )
 
     setup_logging(log_level, log_dir or (data_dir / LOG_DIRNAME))
     log = logging.getLogger("web_annotator")
@@ -110,11 +115,14 @@ async def lifespan(app: FastAPI):
     app.state.jobs = jobs
     app.state.paint_default_alpha = 255
     app.state.block_chinese_ua = block_chinese_ua
+    app.state.no_browser_cache = no_browser_cache
 
     log.info("任务根   : %s", data_dir)
     log.info("清单任务 : %s", len(store.list_entries()))
     if block_chinese_ua:
         log.info("UA 拦截  : 已启用(屏蔽 QQ/微信/国产浏览器)")
+    if no_browser_cache:
+        log.info("缓存禁用 : 已启用(响应附加 Cache-Control: no-store)")
 
     yield
 
@@ -245,6 +253,32 @@ async def _access_log_middleware(
         response.status_code,
         duration_ms,
     )
+    return response
+
+
+@app.middleware("http")
+async def _no_browser_cache_middleware(
+    request: Request,
+    call_next: Callable[[Request], Awaitable[Response]],
+) -> Response:
+    """按开关为所有响应附加 ``Cache-Control: no-store``.
+
+    ``ANNOTATOR_NO_BROWSER_CACHE`` 启用时, 静态脚本/样式与页面响应均指示
+    浏览器不写入缓存, 前端修改后普通刷新即生效, 无需手动强制刷新。
+
+    Args:
+        request: 当前 HTTP 请求.
+        call_next: ASGI 链中下一个中间件/路由处理器.
+
+    Returns:
+        Response: 下游响应; 开关开启时已附加 no-store 头.
+
+    Callers:
+        - ``server.py:`` (FastAPI ``@app.middleware`` 装饰器注册, 由 Starlette ASGI 框架调度)
+    """
+    response = await call_next(request)
+    if request.app.state.no_browser_cache:
+        response.headers["Cache-Control"] = "no-store"
     return response
 
 

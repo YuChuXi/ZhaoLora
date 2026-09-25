@@ -1,0 +1,94 @@
+标签检查页支持用clip类模型进行匹配度排序
+需要传入标签, 和可选的标签描述, 描述优先用于匹配
+
+danbooru/gelbooru 支持tag补全, 
+
+筛选添加视频源, 读取保存至video 下的视频, 在线源下载的视频也保存到video下, 视频筛选时使用瀑布流显示视频封面, 点击进入视频抽帧, 交互参考/media/yuchuxi/WD1/BiliBili/YSM/app.py
+
+标签检查页添加一个自动标记, 使用https://huggingface.co/Qwen/Qwen3-VL-Embedding-2B对图片编制向量, 输入查询字符串, 此时支持将瀑布流按匹配度排序, 支持按工具栏预设的tag和位置以指定匹配度大于或小于阈值批量添加或删去tag, 删去支持模糊匹配
+
+
+https://huggingface.co/Qwen/Qwen3-VL-Reranker-2B
+创建一个agent文件, 告知ai项目的开发标准, 包括各种统一管理器, 代码风格, 对话框状态栏等标准控件
+
+bilibili批量下载没有对话框且已完成 0/50 · 失败 14 · 失败 1233086197365997571_0: [Errno 21] Is a directory: '/home/yuchuxi/Projects/Experiments/Dataset/ZhaoLora/datasets/gaga_boluo/main'
+
+{"status":"error","kind":"video_download","dataset":"gaga_boluo","job_id":"5b72853a84fa4761800db8dff197f4ac","message":"BBDown 下载失败, 退出码 1","done":0,"total":0,"failed":0,"skipped":0,"ok":0,"pct":null,"phase":"","current":"","cancel_requested":false,"report_ready":false,"report_url":null,"report_mtime":null,"logs":[],"summary":{"count":0,"mean":0.0,"median":0.0,"std":0.0,"min":0.0,"max":0.0,"pony_counts":[],"scores_file":"","report":""},"result":null}
+
+
+蒙板又不是只有0和1, +-*min max都要, 每次+-*要进行钳位, 乘法以0-1为域. 表达式直接写0-1, 在输入框外写上*255告诉用户
+
+已完成的任务加个归档按钮, 清理目录下的缩略图和npz, 使用7Z极限压缩保存到__packed__/name-time.7z|zip, 优先使用7z, 取最多4张缩略图作为以归档的预览, 然后确保归档完好再删除目录. 压缩和解压需要托管到jobmanager并显示进度条
+
+/api/jobs/active
+为web标注撰写依赖表
+
+    引用: ``routes/ready.py``.
+
+
+virtual youtuber, *watermark*, * name, * username, signature, *censor*, *text*
+
+
+1. 使用中文进行回答
+2. 严禁出现任何无法解决实际问题或可能吞没异常的try语句
+3. 不要使用各种黑话和简写如落盘, 使用专业准确的措辞, 严禁出现不准确不专业用语
+4. 内置工具和沙盒可能会忽略一些文件, 必要时使用shell或绕过沙盒. 你应该意识到开发环境工具的局限性
+5. 所有函数必须包含专业规范的文档注释, 使用诸如 Google 风格、JSDoc / JavaDoc 风格 或 NumPy / Sphinx 风格, 必须严格标识函数的用途/入参/出参/被引用, 例如:
+    """ 首行简要描述
+
+    详细的补充说明文字，可以写多行，
+    用来解释复杂的逻辑或注意事项。
+
+    Args:
+        arg1 (int): 参数1的描述。
+        arg2 (dict): 参数2的描述。
+
+    Returns:
+        bool: 返回值的描述。
+
+    Callers:
+        - `file:class.method`: 函数被引用的位置。
+    """
+6. 你必须思考统筹, 使得整个系统用高效精简的代码实现用户的要求的逻辑, 而不是随地盲目插入新的补丁和堆砌代码, 所有代码应该倾向于整齐统一而不是各自独立
+7. 除非用户要求, 否则不应该引入任何对旧代码的兼容补丁. 存在相似的功能应该及时整合而不是胡乱堆砌.
+8. 你必须联网搜索或翻阅代码检查库API的有效性而不是臆测, 你应该优先去项目中/标准库中寻找现有实现而不是随地写新的功能
+9. 修改文件后你应该自行完成测试
+10. 任何兜底逻辑都是错误的, 你应该整理先前的代码寻找根因而不是堆砌各种"兜底", 数据应该在上游就被完善的处理而不是在下游用复杂的逻辑弥补
+11. 除非是更新历史文档, 否则任何地方不应该提及历史代码行为或当前代码相对于历史代码的行为差异, 包括隐性提及(即阅读注释后可以猜测出这些代码曾经的行为), 尤其是修改代码后!
+12. 除非用户明确要求, 否则禁止擅自改变产物位置
+13. 严禁直接操作系统/用户级python环境, 你应该从工作目录开始逐级向上检查存在的.venv
+14. 这些规则具有仅次于用户最新指令的高优先级, 任何时候的上下文操作都应该完整保留, 每次回复用户前需要完整复述并逐条核对, 不允许任何省略
+
+批量生成标签画师输入框改为触发词, 自动将标签添加为触发词, 添加为触发词按钮换成标签列表后面一列复选框
+
+
+
+蒙板绘制中
+添加空格快捷键应用蒙板
+添加esc取消分支模板
+蒙板拖拽按住shift时时候按中心为锚点缩放而不是对角
+每个蒙板支持添加两个自定义锚点, 在拖放蒙板的时候支持直接拖动自定义锚点
+
+用PyAV直接读取帧类型, 
+
+blur("角色主体"+"耳朵"+"头顶的光环"+"尾巴"+"长发"+"尾巴和头发上的花"+"身上的绒毛") > 0.4
+
+
+2026-09-05 01:01:16 | ERROR | services.analysis.sam3 | SAM3 处理失败 main/欠狐_【Live2D模型展示】超级无敌大尾巴！灵活可爱快来rua！_frame_003600.png: blur 需要两个参数 错误应该尽早识别并向前端抛出
+
+
+"Spiked metal rings" + "Fur on animal ears" + "Character's long hair and flowing strands" + "Character's long tail" + "Main character" + "Character's hair ornaments"
+
+a + (
+    "" +
+    "" +
+) * xx.xx
+
+
+接入ollama vlm标注, 将标注后的自然语言部分放在 
+
+重构项目, 引入数据集对象, 整合零散的方法, 引入跨数据源和数据集的桥, 会话与桥交互
+
+将各种格式的资料整理为适合Agent阅读的形式
+
+long hair, hair between eyes, hair flower, braided bangs, grey hair, dress, white hairband, yellow eyes, cat girl, extra ears, white hair, star in ear, simple background, white background, portrait, blurry, blurry background

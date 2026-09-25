@@ -6,7 +6,8 @@
 后按页切片返回。
 
 下载时按 ``{illust_id}_{num}`` 的 pid 下载作品, 取第 ``num``
-张从 pximg 图床拉取并转为 PNG 写入磁盘。
+张从 pximg 图床拉取并转为 PNG 写入磁盘。多页作品展开为卡片时,
+经 ``/ajax/illust/{id}/pages`` 取各页真实尺寸与本页缩略图地址。
 
 Callers:
     - ``services/online_sources/pixiv/__init__.py:`` (导出)
@@ -117,8 +118,8 @@ class PixivSource(SourceClient):
             str: 标签文本。
 
         Callers:
-            - ``services/online_sources/pixiv/source.py:PixivSource._fetch_work``
-            - ``services/online_sources/pixiv/source.py:PixivSource._fetch_tag_page``
+            - ``services/online_sources/pixiv/source.py:PixivSource._expand``
+            - ``services/online_sources/pixiv/source.py:PixivSource.fetch_meta``
         """
         tags = item.get("tags", [])
         if isinstance(tags, dict):
@@ -129,39 +130,50 @@ class PixivSource(SourceClient):
             return " ".join(t.get("tag", "") for t in tags)
         return " ".join(str(t) for t in tags)
 
-    @staticmethod
-    def _to_posts(illust_id: str, item: dict, urls: dict) -> list[BooruPost]:
-        """将单幅作品按页数展开为扁平卡片列表.
+    async def _expand(self, illust_id: str, item: dict) -> list[BooruPost]:
+        """将单幅作品按页数展开为卡片列表, 多页作品取各页真实尺寸与地址.
+
+        详情/搜索接口对多页作品只提供封面页 (第 0 页) 的尺寸与 URL,
+        多页作品经 ``/ajax/illust/{id}/pages`` 逐页取真实尺寸与本页
+        regular 缩略图地址, 使每张卡片的宽高与缩略图都对应本页。
 
         Args:
             illust_id: 作品 ID。
-            item: illust 数据字典。
-            urls: 图片 URL 字典, 含 ``regular`` 键.
+            item: illust 数据字典 (详情项含 ``urls`` 字典, 搜索项仅含
+                顶层方形缩略图 ``url``)。
 
         Returns:
-            list[BooruPost]: 卡片列表.
+            list[BooruPost]: 该作品各页的卡片, 单页作品为一项。
+
+        Raises:
+            NetworkError: pages 接口请求失败 (经 ``_request`` 上抛)。
+            RuntimeError: pages 接口返回 ``error: true``。
 
         Callers:
             - ``services/online_sources/pixiv/source.py:PixivSource._fetch_work``
             - ``services/online_sources/pixiv/source.py:PixivSource._fetch_tag_page``
         """
-        page_count = item.get("pageCount", 1)
-        sample_url = urls.get("regular", "")
-        tags = PixivSource._extract_tags(item)
-        posts: list[BooruPost] = []
-        for num in range(page_count):
-            posts.append(BooruPost(
-                source="pixiv",
-                id=f"{illust_id}_{num}",
-                width=item.get("width", 0),
-                height=item.get("height", 0),
-                posted_at=item.get("createDate", ""),
-                file_url=sample_url,
-                preview_url=sample_url,
-                sample_url=sample_url,
-                tags=tags,
-            ))
-        return posts
+        tags = self._extract_tags(item)
+        if item.get("pageCount", 1) > 1:
+            pages = await self._fetch_pages(illust_id)
+            rows = [(num, page.get("width", 0), page.get("height", 0),
+                     (page.get("urls") or {}).get("regular", ""))
+                    for num, page in enumerate(pages)]
+        else:
+            rows = [(0, item.get("width", 0), item.get("height", 0),
+                     (item.get("urls") or {}).get("regular", "")
+                     or item.get("url", ""))]
+        return [BooruPost(
+            source="pixiv",
+            id=f"{illust_id}_{num}",
+            width=width,
+            height=height,
+            posted_at=item.get("createDate", ""),
+            file_url=url,
+            preview_url=url,
+            sample_url=url,
+            tags=tags,
+        ) for num, width, height, url in rows]
 
     # ---- 搜索 ----
 
@@ -203,7 +215,7 @@ class PixivSource(SourceClient):
         item = detail.get("body", {})
         if item.get("illustType") not in _IMG_TYPES:
             return []
-        return self._to_posts(str(illust_id), item, item.get("urls", {}))
+        return await self._expand(str(illust_id), item)
 
     async def _serve_user_page(
         self, user_id: str, page: int,
@@ -245,8 +257,8 @@ class PixivSource(SourceClient):
         使用 ``/ajax/search/artworks`` 合并接口, 该接口返回 ``illustManga``
         (插画+漫画+动图) 合并列表, 避免 ``/ajax/search/illustrations`` 仅含
         插画+动图而导致漫画整类缺失; 用 ``type=all`` 取全量再按 ``illustType``
-        过滤出目标类型。搜索结果中每项不含 ``urls`` 字典, 只有方形缩略图
-        ``url``, 预处理为 regular URL 再展开.
+        过滤出目标类型。搜索结果中每项只有方形缩略图 ``url`` 与封面页尺寸,
+        多页作品经 ``_expand`` 逐页取真实尺寸与本页缩略图地址.
 
         Args:
             tag: 标签词。
@@ -265,16 +277,16 @@ class PixivSource(SourceClient):
         )
         illust = data.get("body", {}).get("illustManga", {})
         items = illust.get("data", [])
-        posts: list[BooruPost] = []
-        for item in items:
-            if item.get("illustType") not in _IMG_TYPES:
-                continue
-            posts.extend(self._to_posts(
-                str(item["id"]),
-                item,
-                {"regular": item.get("url", "")},
-            ))
-        return posts, len(items)
+        targets = [it for it in items if it.get("illustType") in _IMG_TYPES]
+        sem = asyncio.Semaphore(5)
+
+        async def _run(item: dict) -> list[BooruPost]:
+            """限流展开单幅搜索结果为卡片 (信号量约束并发上限)."""
+            async with sem:
+                return await self._expand(str(item["id"]), item)
+
+        results = await asyncio.gather(*[_run(it) for it in targets])
+        return [p for sub in results for p in sub], len(items)
 
     async def _serve_tag_page(
         self, tag: str, page: int,
@@ -426,6 +438,9 @@ class PixivSource(SourceClient):
     async def fetch_meta(self, out_dir: Path, pid: str) -> None:
         """按 pid 拉取媒体元数据并写入磁盘.
 
+        多页作品经 pages 接口取本页真实尺寸与本页 regular 地址, 与
+        搜索阶段展开的卡片元数据同构。
+
         Callers:
             - ``routes/online_sources.py:_run_refresh``
         """
@@ -434,10 +449,20 @@ class PixivSource(SourceClient):
         page_count = detail.get("pageCount", 1)
         if num >= page_count:
             raise ValueError(f"pid {pid} 无第 {num} 张媒体")
+        width = detail.get("width", 0)
+        height = detail.get("height", 0)
+        url = detail.get("urls", {}).get("regular", "")
+        if page_count > 1:
+            page = (await self._fetch_pages(illust_id))[num]
+            width = page.get("width", 0)
+            height = page.get("height", 0)
+            url = page.get("urls", {}).get("regular", "")
         post = BooruPost(
             source=self.name,
             id=pid,
-            file_url=detail.get("urls", {}).get("regular", ""),
+            width=width,
+            height=height,
+            file_url=url,
             posted_at=detail.get("createDate", ""),
             tags=self._extract_tags(detail),
         )

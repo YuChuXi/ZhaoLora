@@ -44,6 +44,7 @@ from services.models.dedupe import (
     DedupeMoveResponse,
 )
 from services.models.ready import (
+    LoraMode,
     MaskStats,
     ReadyDirsResponse,
     ReadySubset,
@@ -153,6 +154,7 @@ __all__ = [
     'DedupeGroup',
     'DedupeScanResult',
     'DedupeMoveResponse',
+    'LoraMode',
     'MaskStats',
     'ReadyDirsResponse',
     'ReadySubset',

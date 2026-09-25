@@ -8,7 +8,7 @@ import tomlkit
 
 from services.core.natural import natural_key
 from services.state.mask import has_mask
-from services.models import MaskStats, ReadySubset, ReadyTomlResult
+from services.models import LoraMode, MaskStats, ReadySubset, ReadyTomlResult
 from services.core.scanner import IMAGE_EXTS, scan_images
 from services.core.work_dir import list_work_dirs
 from services.tagging.clean import tag_key
@@ -31,7 +31,8 @@ _GENERAL_CONFIG = {
     "bucket_no_upscale": True,
 }
 
-# lora.toml 固定字段(模型/编码器路径与训练超参; output_name/sample_prompts/dataset_config 导出时覆写)
+# lora.toml 固定字段(模型/编码器路径与训练超参; network_dim/network_alpha 由模式决定,
+# output_name/sample_prompts/dataset_config 由 apply_lora_output_paths 覆写)
 _LORA_CONFIG = {
     "pretrained_model_name_or_path": "/media/yuchuxi/Data/Servers/ComfyUI/models/diffusion_models/anima-base-v1.0.safetensors",
     "vae": "/media/yuchuxi/Data/Servers/ComfyUI/models/vae/qwen_image_vae.safetensors",
@@ -52,18 +53,16 @@ _LORA_CONFIG = {
     "gradient_checkpointing": True,
     "gradient_accumulation_steps": 4,
     "network_train_unet_only": True,
-    "learning_rate": 5e-05,
-    "unet_lr": 5e-05,
+    "learning_rate": 1e-05,
+    "unet_lr": 1e-05,
     "text_encoder_lr": 0,
     "lr_scheduler": "cosine_with_min_lr",
-    "lr_scheduler_min_lr_ratio": 1e-2,
+    "lr_scheduler_min_lr_ratio": 0.01,
     "lr_warmup_steps": 50,
     "optimizer_type": "AdamW",
-    "network_dim": 16,
-    "network_alpha": 16,
-    "network_module": "lycoris.kohya",
-    "network_dropout": 0.1,
-    "network_args": ["dora_wd=1"],
+    "network_module": "networks.lora_anima",
+    "network_dropout": 0.2,
+    "network_args": ["loraplus_unet_lr_ratio=16"],
     "sample_at_first": True,
     "sample_every_n_steps": 50,
     "log_with": "wandb",
@@ -80,6 +79,12 @@ _LORA_CONFIG = {
     "optimizer_args": ["weight_decay=0.001"],
     "masked_loss": True,
 }
+
+# 各训练模式的网络规模: network_dim = network_alpha = rank
+_LORA_RANKS: dict[LoraMode, int] = {"style": 16, "character": 32}
+
+# build_train_config 产出的整套训练配置文件名(固定三件套)
+TRAIN_FILE_NAMES = ("lora.toml", "dataset.toml", "prompt.txt")
 
 # prompt.txt 固定采样参数(触发词与高频标签由导出时拼接)
 _PROMPT_SUFFIX = "--n worst quality, low quality, score_1, score_2, score_3, artist name, jpeg artifacts  --w 1024 --h 1024 --l 4  --s 30  --d 42"
@@ -366,10 +371,34 @@ def _top_caption_tags(root: Path, names: list[str], trigger_word: str) -> list[s
     ][:10]
 
 
+def apply_lora_output_paths(doc: tomlkit.TOMLDocument, *, root_name: str, out_dir: Path) -> None:
+    """覆写 lora.toml 文档中由导出位置决定的三项路径字段.
+
+    ``output_name`` 取数据集名派生, ``sample_prompts`` / ``dataset_config`` 指向导出
+    目录内的 prompt.txt / dataset.toml; 预览与导出共用本覆写, 保证两处路径语义一致.
+
+    Args:
+        doc (tomlkit.TOMLDocument): 构造中或编辑后的 lora.toml 文档, 原地修改.
+        root_name (str): 数据集名, 作为 output_name 的来源.
+        out_dir (Path): 导出目标目录(预览时为数据集根目录, 导出时为配置目录).
+
+    Returns:
+        None: 原地修改 ``doc``.
+
+    Callers:
+        - ``services/ready.py:build_train_config``
+        - ``routes/ready.py:export``
+    """
+    doc["output_name"] = f"{root_name}_anima"
+    doc["sample_prompts"] = str(out_dir / "prompt.txt")
+    doc["dataset_config"] = str(out_dir / "dataset.toml")
+
+
 def build_train_config(
     root: Path,
     *,
     out_dir: Path | None = None,
+    mode: LoraMode,
     dirs: list[str] | None = None,
     target_images: int = 512,
     subset_resolutions: dict[str, list[int]] | None = None,
@@ -380,14 +409,16 @@ def build_train_config(
 
     dataset.toml 由 ``build_ready_toml`` 完整渲染(``[general]`` 固定段 + 数据集块 +
     ``use_reg`` 为 True 时附带的正则化数据段), 与就绪页预览同源;
-    lora.toml 由 ``_LORA_CONFIG`` 固定字段构成,
-    另覆写 ``output_name`` / ``sample_prompts`` / ``dataset_config``;
+    lora.toml 由 ``_LORA_CONFIG`` 固定字段构成, ``network_dim`` / ``network_alpha``
+    取 ``_LORA_RANKS[mode]``(画风 style=16, 角色 character=32), 另经
+    ``apply_lora_output_paths`` 覆写三项路径字段;
     prompt.txt = 触发词(未设置则省略) + 出现次数最多的 10 个标签
     (``_top_caption_tags``) + 固定采样参数.
 
     Args:
         root (Path): 数据集根目录, 用于取数据集名、生成 main 段与统计高频标签.
-        out_dir (Path | None): 导出目标目录, 用于写出 prompt.txt / dataset.toml 的引用路径.
+        out_dir (Path | None): 导出目标目录, 用于写出 prompt.txt / dataset.toml 的引用路径; None 时取 root.
+        mode (LoraMode): 训练模式, 决定网络 rank(画风 style=16, 角色 character=32).
         dirs (list[str] | None): 参与导出的工作目录名; None 表示全部(透传 build_ready_toml).
         target_images (int): 目标图片数(透传 build_ready_toml).
         subset_resolutions (dict[str, list[int]] | None): 目录名→分辨率列表(透传 build_ready_toml).
@@ -395,9 +426,11 @@ def build_train_config(
         trigger_word (str): 该数据集触发词, 写入 prompt.txt 正向段开头; 可为空.
 
     Returns:
-        dict[str, str]: 文件名→配置文本(lora.toml / dataset.toml / prompt.txt).
+        dict[str, str]: 文件名→配置文本, 键与 ``TRAIN_FILE_NAMES`` 一致
+        (lora.toml / dataset.toml / prompt.txt).
 
     Callers:
+        - ``routes/ready.py:toml``
         - ``routes/ready.py:export``
     """
     dataset_toml = build_ready_toml(
@@ -405,14 +438,13 @@ def build_train_config(
         subset_resolutions=subset_resolutions, use_reg=use_reg,
     ).toml
 
-    # lora.toml: 固定字段 + 导出时覆写的三项
+    # lora.toml: 固定字段 + 模式 rank + 导出位置三项路径
     out = out_dir or root
+    rank = _LORA_RANKS[mode]
     lora_doc = tomlkit.document()
-    for key, value in _LORA_CONFIG.items():
+    for key, value in {**_LORA_CONFIG, "network_dim": rank, "network_alpha": rank}.items():
         lora_doc[key] = value
-    lora_doc["output_name"] = f"{root.name}_anima"
-    lora_doc["sample_prompts"] = str(out / "prompt.txt")
-    lora_doc["dataset_config"] = str(out / "dataset.toml")
+    apply_lora_output_paths(lora_doc, root_name=root.name, out_dir=out)
     lora = tomlkit.dumps(lora_doc)
 
     names = dirs if dirs is not None else [d.name for d in list_work_dirs(root)]

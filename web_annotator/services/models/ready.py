@@ -14,6 +14,9 @@ from pydantic import BaseModel, Field
 
 from services.models.dataset import WorkDirInfo
 
+# 训练模式: style=画风(network rank 16) / character=角色(network rank 32)
+LoraMode = Literal["style", "character"]
+
 
 class MaskStats(BaseModel):
     """单目录就绪统计: 图片 / 标注 / 蒙版计数与就绪状态.
@@ -53,10 +56,12 @@ class ReadySubset(BaseModel):
 
 
 class ReadyTomlResult(BaseModel):
-    """就绪页生成结果."""
+    """就绪页生成结果: 子集/蒙版统计与三件套训练配置预览文本."""
 
     root: str
     toml: str
+    lora: str = Field("", description="lora.toml 预览文本(三项路径字段以数据集根目录占位, 导出时按真实目录覆写)")
+    prompt: str = Field("", description="prompt.txt 预览文本")
     subsets: list[ReadySubset]
     dirs: list[WorkDirInfo]
     mask_stats: list[MaskStats] = Field(default_factory=list)

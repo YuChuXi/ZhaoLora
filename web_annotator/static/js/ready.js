@@ -1,11 +1,16 @@
 /**
- * ready.js —— 导出训练 TOML；侧栏蒙版状态与目录，顶栏仅操作与 subset 数。
+ * ready.js —— 就绪页: 画风/角色双模式生成 lora/dataset/prompt 三件套, 标签页展示与编辑,
+ * 导出以编辑后的文本为准; 侧栏蒙版状态与目录。
  *
  * 引用：templates/ready.html。
  */
 (function () {
   'use strict';
 
+  // 三件套文件名(与后端 TRAIN_FILE_NAMES 一致), 同时是文本区 id 前缀(file-<name>)与标签页 data-file
+  var FILES = ['lora.toml', 'dataset.toml', 'prompt.txt'];
+  var _mode = 'style';         // 训练模式: style=画风(rank 16) / character=角色(rank 32)
+  var _activeFile = FILES[0];  // 当前展示的标签页
   var _enabled = {};
   var _resolutions = {};
   var _sideKey = null;
@@ -95,7 +100,7 @@
   /**
    * 读取顶栏与侧栏参数构造请求体; 参数无效时提示并返回 null。引用：generate、doExport。
    * @param {boolean} silent
-   * @returns {object|null} 含 dirs / target_images / subset_resolutions / use_reg 的请求体。
+   * @returns {object|null} 含 dirs / target_images / subset_resolutions / use_reg / mode 的请求体。
    */
   function collectBody(silent) {
     var target = parseInt(document.getElementById('target-images').value, 10);
@@ -127,12 +132,33 @@
       dirs: Object.keys(_enabled).filter(function (n) { return _enabled[n]; }),
       target_images: target,
       subset_resolutions: subsetRes,
-      use_reg: document.getElementById('use-reg').checked
+      use_reg: document.getElementById('use-reg').checked,
+      mode: _mode
     };
   }
 
   /**
-   * 生成 TOML 预览并更新侧栏; 输入变化自动调用时静默(silent=true), 仅按钮手动生成时 toast.
+   * 读取三个文本区的编辑内容构造 files; 任一为空时提示并返回 null
+   * (导出以编辑后的文本为准, 不写空文件)。引用：doExport。
+   * @returns {object|null} 文件名→文本。
+   */
+  function collectFiles() {
+    var files = {};
+    for (var i = 0; i < FILES.length; i++) {
+      var name = FILES[i];
+      var text = document.getElementById('file-' + name).value;
+      if (!text.trim()) {
+        toast(name + ' 内容为空, 请先生成');
+        return null;
+      }
+      files[name] = text;
+    }
+    return files;
+  }
+
+  /**
+   * 生成三件套预览并更新侧栏; 输入变化自动调用时静默(silent=true), 仅按钮手动生成时 toast.
+   * 引用：init、tpl btn-gen、模式切换、autoGenerate。
    * @param {boolean} [silent]
    */
   async function generate(silent) {
@@ -149,7 +175,9 @@
       if (!silent) toast(String(e.message || e));
       return;
     }
-    document.getElementById('toml-box').value = data.toml || '';
+    document.getElementById('file-lora.toml').value = data.lora || '';
+    document.getElementById('file-dataset.toml').value = data.toml || '';
+    document.getElementById('file-prompt.txt').value = data.prompt || '';
     var subsets = data.subsets || [];
     var repeats = data.subset_repeats || {};
     var totalImages = subsets.reduce(function (sum, s) {
@@ -187,8 +215,12 @@
     _autoTimer = setTimeout(function () { generate(true); }, 300);
   }
 
+  /**
+   * 复制当前标签页文本区内容; 非安全上下文(局域网 http 访问)下选中文本供手动复制.
+   * 引用: tpl btn-copy。
+   */
   async function copyText() {
-    var tb = document.getElementById('toml-box');
+    var tb = document.getElementById('file-' + _activeFile);
     var text = tb.value;
     if (!text) {
       toast('无可复制内容');
@@ -196,7 +228,7 @@
     }
     if (navigator.clipboard && navigator.clipboard.writeText) {
       await navigator.clipboard.writeText(text);
-      toast('已复制');
+      toast('已复制 ' + _activeFile);
       return;
     }
     // 非安全上下文(局域网 http 访问)下 clipboard API 不可用: 选中文本供手动复制
@@ -213,9 +245,43 @@
     copyText().catch(function (e) { toast(String(e.message || e)); });
   });
 
+  // 训练模式切换(画风/角色): 切换后按新模式重新生成三件套
+  Array.prototype.forEach.call(document.querySelectorAll('#mode-seg button'), function (btn) {
+    btn.addEventListener('click', function () {
+      var next = btn.getAttribute('data-mode');
+      if (next === _mode) return;
+      _mode = next;
+      Array.prototype.forEach.call(document.querySelectorAll('#mode-seg button'), function (b) {
+        b.classList.toggle('active', b === btn);
+      });
+      generate(true);
+    });
+  });
+
+  // 标签页切换: 仅切换展示的文本区, 各文本区内容(含编辑)独立保留
+  Array.prototype.forEach.call(document.querySelectorAll('#file-tabs .file-tab'), function (tab) {
+    tab.addEventListener('click', function () {
+      _activeFile = tab.getAttribute('data-file');
+      Array.prototype.forEach.call(document.querySelectorAll('#file-tabs .file-tab'), function (t) {
+        t.classList.toggle('active', t === tab);
+      });
+      Array.prototype.forEach.call(document.querySelectorAll('.toml-box'), function (box) {
+        box.classList.toggle('hidden', box.getAttribute('data-file') !== _activeFile);
+      });
+    });
+  });
+
+  /**
+   * 按当前参数与编辑后的三件套文本导出整套训练配置(lora/dataset/prompt)到配置路径.
+   * 引用: tpl btn-export、exportConfig。
+   * @param {boolean} overwrite 目标目录已存在配置时置 true 覆盖写入。
+   */
   async function doExport(overwrite) {
     var body = collectBody(false);
     if (!body) return;
+    var files = collectFiles();
+    if (!files) return;
+    body.files = files;
     var url = API.apiPath('/ready/export');
     if (overwrite) url += '?overwrite=1';
     var data = await API.request(url, {
@@ -228,7 +294,7 @@
   /**
    * 按当前参数把数据集导出为整套训练配置(lora/dataset/prompt)到配置路径.
    * 目标目录已存在配置时(409)先提示确认覆盖.
-   * 引用: tpl btn-export.
+   * 引用: tpl btn-export。
    */
   async function exportConfig() {
     try {

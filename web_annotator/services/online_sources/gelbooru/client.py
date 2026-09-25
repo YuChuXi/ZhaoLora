@@ -191,7 +191,8 @@ class GelbooruClient:
             tags: 标签名列表.
 
         Returns:
-            dict[str, int]: 标签名 -> 类型编号 (0=general, 1=artist, 3=copyright, 4=character, 5=meta).
+            dict[str, int]: 标签名 -> 类型编号 (0=general, 1=artist, 3=copyright,
+                4=character, 5=meta, 6=bad_tag 即站点声明不使用的标签).
 
         Raises:
             NetworkError: 网络错误.
