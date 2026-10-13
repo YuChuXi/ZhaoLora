@@ -1,7 +1,8 @@
-"""WD14 批量打标. """
+"""WD14 批量打标 (SmilingWolf 系列标签模型, ONNX 推理). """
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable, Iterable, cast
@@ -21,10 +22,14 @@ if TYPE_CHECKING:
 
 DEFAULT_THRESHOLD = 0.1
 
+# WD14 打标模型权重: 经 ``WD14_MODEL`` 环境变量手动配置, 指向 ``.onnx`` 权重文件,
+# 标签表取与其同名的 ``.csv`` 文件; 留空时使用仓库内默认模型.
 _REPO_ROOT = Path(__file__).resolve().parents[3]
-WD14_MODEL_DIR = _REPO_ROOT / "wd14_tagger_model" / "SmilingWolf_wd-vit-large-tagger-v3"
-WD14_ONNX_PATH = WD14_MODEL_DIR / "model.onnx"
-WD14_CSV_PATH = WD14_MODEL_DIR / "selected_tags.csv"
+WD14_ONNX = Path(
+    os.environ.get("WD14_MODEL", "")
+    or _REPO_ROOT / "wd14_tagger_model" / "SmilingWolf_wd-vit-large-tagger-v3" / "model.onnx"
+)
+WD14_CSV = WD14_ONNX.with_suffix(".csv")
 
 # WD14 模型句柄: (onnx 会话, [(标签名, 是否角色), ...]), 由 device 管理生命周期
 _WD14_HANDLE = tuple["InferenceSession", list[tuple[str, bool]]]
@@ -247,17 +252,45 @@ def resolve_image_dirs(root: Path, names: list[str] | None) -> list[Path]:
     return dirs
 
 
+def _model_files() -> tuple[Path, Path]:
+    """定位 ONNX 权重与同名标签 CSV 文件.
+
+    Args:
+        (无参数, 使用模块级常量 ``WD14_ONNX`` / ``WD14_CSV``.)
+
+    Returns:
+        tuple[Path, Path]: ``(onnx_path, csv_path)``.
+
+    Raises:
+        RuntimeError: 权重或标签文件不存在时抛出.
+
+    Callers:
+        - ``services/analysis/wd14.py:model_ready``
+        - ``services/analysis/wd14.py:_build_session``
+        - ``services/analysis/wd14.py:_load_model``
+    """
+    if not WD14_ONNX.is_file():
+        raise RuntimeError(f"WD14 模型权重不存在: {WD14_ONNX}")
+    if not WD14_CSV.is_file():
+        raise RuntimeError(f"WD14 标签表不存在: {WD14_CSV}")
+    return WD14_ONNX, WD14_CSV
+
+
 def model_ready() -> tuple[bool, str]:
-    """检查本地 WD14 权重是否齐全; 返回相对仓库根的模型目录路径. 
+    """检查 WD14 模型目录与权重/标签文件是否齐全.
+
+    Returns:
+        ``(ok, message)``. ok 为 True 时表示模型就绪、可加载.
 
     Callers:
         - ``routes/tagging.py:dirs``
         - ``routes/tagging.py:start``
     """
-    rel = WD14_MODEL_DIR.relative_to(_REPO_ROOT).as_posix()
-    if WD14_ONNX_PATH.is_file() and WD14_CSV_PATH.is_file():
-        return True, rel
-    return False, f"找不到本地 WD14 模型: {rel}"
+    try:
+        onnx_path, _csv_path = _model_files()
+    except RuntimeError as e:
+        return False, str(e)
+    return True, f"模型就绪: {onnx_path}"
 
 
 def _build_session(providers: list[str]) -> "InferenceSession":
@@ -275,7 +308,8 @@ def _build_session(providers: list[str]) -> "InferenceSession":
     """
     import onnxruntime as ort
 
-    return ort.InferenceSession(str(WD14_ONNX_PATH), providers=providers)
+    onnx_path, _csv_path = _model_files()
+    return ort.InferenceSession(str(onnx_path), providers=providers)
 
 
 def _load_model() -> _WD14_HANDLE:
@@ -296,7 +330,8 @@ def _load_model() -> _WD14_HANDLE:
         raise RuntimeError(msg)
     import pandas as pd
 
-    df = pd.read_csv(WD14_CSV_PATH)
+    _onnx_path, csv_path = _model_files()
+    df = pd.read_csv(csv_path)
     is_character = (df["category"].astype(str) == "4").tolist()
     labels: list[tuple[str, bool]] = list(zip(df["name"].tolist(), is_character))
     return _build_session(["CPUExecutionProvider"]), labels

@@ -46,10 +46,9 @@ def _load_model() -> tuple:
     except ImportError:
         raise RuntimeError("需要 transformers: pip install transformers huggingface_hub")
 
-    weight_path = os.environ.get(
-        "BIREFNET_WEIGHT",
-        "/media/yuchuxi/Data/Servers/ComfyUI/models/background_removal/birefnet.safetensors",
-    )
+    # BiRefNet 权重文件: 经 ``BIREFNET_WEIGHT`` 环境变量手动配置 (safetensors/pt);
+    # 留空或文件缺失时从 HuggingFace 下载默认权重.
+    weight_path = os.environ.get("BIREFNET_WEIGHT", "").strip()
     config = AutoConfig.from_pretrained(MODEL_REPO, trust_remote_code=True)
     config.torch_dtype = torch.float32
     model = AutoModelForImageSegmentation.from_config(config, trust_remote_code=True)

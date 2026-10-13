@@ -10,6 +10,7 @@ Callers:
 
 from __future__ import annotations
 
+import os
 import threading
 from collections.abc import Callable
 from pathlib import Path
@@ -20,7 +21,8 @@ from services.core.device import cuda_device, register_model
 if TYPE_CHECKING:
     from sentence_transformers import CrossEncoder
 
-_MODEL_NAME = "Qwen/Qwen3-VL-Reranker-2B"
+# 重排序模型: 经 ``RERANKER_MODEL`` 环境变量手动配置, 取本地目录或 HuggingFace repo id.
+_MODEL_NAME = os.environ.get("RERANKER_MODEL", "") or "Qwen/Qwen3-VL-Reranker-2B"
 
 # instruction-aware 提示词, 用于将任务限定为「按查询检索图片」, 提升检索相关性
 _PROMPT = "Retrieve images or text relevant to the user's query."

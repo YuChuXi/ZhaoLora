@@ -27,7 +27,9 @@ from fastapi.staticfiles import StaticFiles
 from dotenv import load_dotenv
 from starlette.middleware.gzip import GZipMiddleware
 
-
+# 启动前加载 web_annotator/.env (与当前工作目录无关), 供数据源凭据、模型路径与
+# 服务器配置读取; 须先于各业务模块导入执行, 使模块级配置常量能读到 .env 值.
+load_dotenv(Path(__file__).parent / ".env")
 
 from routes.alpha_paint import router as paint_router
 from routes.annotations import router as annotations_router
@@ -50,9 +52,6 @@ from services.core.jobs import JobManager
 from services.core.logging import setup_logging
 from services.dataset.layout import LOG_DIRNAME
 from services.state.tasks import TaskStore
-
-# 启动前加载 web_annotator/.env (与当前工作目录无关), 供数据源凭据与服务器配置读取.
-load_dotenv(Path(__file__).parent / ".env")
 
 # 访问日志专用 logger, 经根日志器统一格式化输出.
 _ACCESS_LOG = logging.getLogger("web_annotator.access")

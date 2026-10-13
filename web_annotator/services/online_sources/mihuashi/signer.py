@@ -566,9 +566,30 @@ async def _discover() -> Signtool:
 
 
 _tool: Signtool | None = None
-_tool_lock = asyncio.Lock()
+_tool_locks: dict[asyncio.AbstractEventLoop, asyncio.Lock] = {}
 _ts_lock = threading.Lock()
 _last_ts: dict[str, int] = {}
+
+
+def _tool_lock() -> asyncio.Lock:
+    """返回当前事件循环的初始化锁.
+
+    asyncio.Lock 在首次等待时绑定所在循环, 而批量下载任务经 ``asyncio.run``
+    为每批次创建并关闭独立事件循环, 模块级单例锁会在循环关闭后失效。
+    锁按运行循环持有, 循环关闭后其条目在下次访问时清除; 签名器本体是
+    进程级单例, 经双重检查只初始化一次, 跨循环的并发初始化至多浪费一次
+    加载, 无正确性影响。
+
+    Returns:
+        asyncio.Lock: 当前事件循环唯一的初始化锁。
+
+    Callers:
+        - ``services/online_sources/mihuashi/signer.py:ensure_tool``
+    """
+    loop = asyncio.get_running_loop()
+    for closed in [lp for lp in _tool_locks if lp.is_closed()]:
+        del _tool_locks[closed]
+    return _tool_locks.setdefault(loop, asyncio.Lock())
 
 
 async def ensure_tool() -> Signtool:
@@ -576,10 +597,13 @@ async def ensure_tool() -> Signtool:
 
     Returns:
         Signtool: 全局签名器单例.
+
+    Callers:
+        - ``services/online_sources/mihuashi/client.py:api_get``
     """
     global _tool
     if _tool is None:
-        async with _tool_lock:
+        async with _tool_lock():
             if _tool is None:
                 _tool = await _discover()
     return _tool

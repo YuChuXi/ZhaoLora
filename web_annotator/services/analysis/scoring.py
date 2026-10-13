@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -29,6 +30,17 @@ QUALITY_TAGS = [
     "worst quality", "low quality", "normal quality",
     "good quality", "best quality", "masterpiece",
 ]
+
+# 美学模型 CLIP 骨干: 经 ``AESTHETIC_CLIP_MODEL`` 环境变量手动配置, 取 OpenAI CLIP
+# 模型名或本地权重路径.
+AESTHETIC_CLIP_MODEL = os.environ.get("AESTHETIC_CLIP_MODEL", "") or "ViT-L/14"
+# 美学头权重 ckpt 文件: 经 ``AESTHETIC_HEAD_CKPT`` 环境变量手动配置; 留空时从
+# HuggingFace 下载默认权重.
+AESTHETIC_HEAD_CKPT = (
+    Path(os.environ["AESTHETIC_HEAD_CKPT"]) if os.environ.get("AESTHETIC_HEAD_CKPT") else None
+)
+# 质量模型: 经 ``QREALIGN_MODEL`` 环境变量手动配置, 取本地目录或 HuggingFace repo id.
+QREALIGN_MODEL = os.environ.get("QREALIGN_MODEL", "") or "q-future/Q-ReAlign-Lite-4B"
 
 # ---------------------------------------------------------------------------
 # 进度追踪
@@ -183,9 +195,12 @@ def _load_aes_models() -> tuple:
         - ``services/core/device.py:register_model`` 注册的 load 回调
     """
     import clip
-    clip_model, preprocess = clip.load("ViT-L/14", device="cpu")
+    clip_model, preprocess = clip.load(AESTHETIC_CLIP_MODEL, device="cpu")
     clip_model.eval()
-    ckpt_path = hf_hub_download(repo_id="purplesmartai/aesthetic-classifier", filename="v2.ckpt")
+    if AESTHETIC_HEAD_CKPT is not None:
+        ckpt_path = str(AESTHETIC_HEAD_CKPT)
+    else:
+        ckpt_path = hf_hub_download(repo_id="purplesmartai/aesthetic-classifier", filename="v2.ckpt")
     state_dict = torch.load(ckpt_path, map_location="cpu")["state_dict"]
     state_dict = {k.replace("model.", ""): v for k, v in state_dict.items()}
     aes_head = nn.Sequential(
@@ -259,9 +274,9 @@ def _load_q_models() -> tuple:
         from transformers import AutoModelForImageTextToText, AutoProcessor
     except ImportError:
         raise RuntimeError("需要 transformers >= 5.2.0")
-    processor = AutoProcessor.from_pretrained("q-future/Q-ReAlign-Lite-4B")
+    processor = AutoProcessor.from_pretrained(QREALIGN_MODEL)
     model = AutoModelForImageTextToText.from_pretrained(
-        "q-future/Q-ReAlign-Lite-4B", dtype="auto",
+        QREALIGN_MODEL, dtype="auto",
     )
     model = cast("Any", model).to("cpu").eval()
     return model, processor

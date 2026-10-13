@@ -4,8 +4,8 @@
 Anything Model 3 (facebook/sam3)，以文本提示对图片进行概念分割，返回该概念
 所有实例的并集掩码，并据此计算掩码占比、生成用于瀑布流叠加的半透明 PNG。
 
-权重从 ModelScope 直接下载至本地缓存目录
-``~/.cache/modelscope/hub/facebook/sam3``，加载时不再联网。
+模型来源经 ``SAM3_MODEL`` 环境变量配置 (本地目录或 HuggingFace repo id),
+留空时从 HuggingFace 下载官方权重 ``facebook/sam3``。
 
 Callers:
     - ``routes/tag_stats.py:`` : 概念分割排序 API
@@ -36,8 +36,9 @@ if TYPE_CHECKING:
     import torch
     from transformers import Sam3Model, Sam3Processor
 
-# ModelScope 权重下载至本地缓存目录后从该路径加载
-_MODEL_PATH = os.path.expanduser("~/.cache/modelscope/hub/facebook/sam3")
+# SAM3 模型: 经 ``SAM3_MODEL`` 环境变量手动配置, 取本地目录或 HuggingFace repo id;
+# 留空时从 HuggingFace 下载官方权重.
+SAM3_MODEL = os.environ.get("SAM3_MODEL", "") or "facebook/sam3"
 
 # 概念掩码命中阈值与二值化阈值, 与 transformers 官方示例一致
 _SEG_THRESHOLD = 0.5
@@ -67,9 +68,9 @@ def _load_model() -> tuple[Sam3Model, Sam3Processor]:
     """
     from transformers import Sam3Model, Sam3Processor
 
-    model = Sam3Model.from_pretrained(_MODEL_PATH, trust_remote_code=True)
+    model = Sam3Model.from_pretrained(SAM3_MODEL, trust_remote_code=True)
     model.eval()
-    processor = Sam3Processor.from_pretrained(_MODEL_PATH, trust_remote_code=True)
+    processor = Sam3Processor.from_pretrained(SAM3_MODEL, trust_remote_code=True)
     return model, processor
 
 
@@ -98,11 +99,11 @@ def model_ready() -> tuple[bool, str]:
     Callers:
         - ``routes/tag_stats.py:concept_query``
     """
-    if not os.path.isdir(_MODEL_PATH):
-        return False, f"未找到 ModelScope 下载的模型: {_MODEL_PATH}"
+    if Path(SAM3_MODEL).is_dir():
+        return True, f"模型就绪: {SAM3_MODEL}"
     try:
         from transformers import Sam3Model, Sam3Processor  # noqa: F401
-        return True, f"模型就绪: {_MODEL_PATH}"
+        return True, f"模型就绪: {SAM3_MODEL}"
     except Exception as e:
         return False, f"模型不可用: {e}"
 
