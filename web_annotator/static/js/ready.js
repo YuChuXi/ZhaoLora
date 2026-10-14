@@ -1,19 +1,78 @@
 /**
- * ready.js —— 就绪页: 画风/角色双模式生成 lora/dataset/prompt 三件套, 标签页展示与编辑,
- * 导出以编辑后的文本为准; 侧栏蒙版状态与目录。
+ * ready.js —— 就绪页: 配置格式(sd-scripts/diffusion-pipe)与画风/角色双模式生成训练配置,
+ * 标签页展示与编辑, 导出以编辑后的文本为准; 侧栏蒙版状态与目录。
  *
  * 引用：templates/ready.html。
  */
 (function () {
   'use strict';
 
-  // 三件套文件名(与后端 TRAIN_FILE_NAMES 一致), 同时是文本区 id 前缀(file-<name>)与标签页 data-file
-  var FILES = ['lora.toml', 'dataset.toml', 'prompt.txt'];
+  // 配置文件名集合(与后端 services/ready.py:TRAIN_FORMAT_FILES 一致),
+  // 同时是文本区 id 前缀(file-<name>)与标签页 data-file
+  var FILE_SETS = {
+    'sd-scripts': ['lora.toml', 'dataset.toml', 'prompt.txt'],
+    'diffusion-pipe': ['train.toml', 'dataset.toml'],
+  };
+  var _format = 'sd-scripts';  // 配置导出格式: sd-scripts 三件套 / diffusion-pipe 两件套
   var _mode = 'style';         // 训练模式: style=画风(rank 16) / character=角色(rank 32)
-  var _activeFile = FILES[0];  // 当前展示的标签页
+  var _activeFile = 'lora.toml';  // 当前展示的标签页
   var _enabled = {};
   var _resolutions = {};
   var _sideKey = null;
+
+  /**
+   * 按当前格式重建文件标签页与预览文本区(集合随格式变化), 重建后默认激活首个文件。
+   * 与后端 services/ready.py:TRAIN_FORMAT_FILES 一致, 由 FILE_SETS 驱动。引用：bind、onFormat。
+   */
+  function renderFileTabs() {
+    var tabs = document.getElementById('file-tabs');
+    var files = document.getElementById('ready-files');
+    tabs.innerHTML = '';
+    files.innerHTML = '';
+    FILE_SETS[_format].forEach(function (name, i) {
+      var tab = document.createElement('button');
+      tab.className = 'file-tab' + (i === 0 ? ' active' : '');
+      tab.dataset.file = name;
+      tab.textContent = name;
+      tab.addEventListener('click', function () { switchFile(name); });
+      tabs.appendChild(tab);
+      var box = document.createElement('textarea');
+      box.className = 'toml-box' + (i === 0 ? '' : ' hidden');
+      box.id = 'file-' + name;
+      box.dataset.file = name;
+      box.spellcheck = false;
+      box.placeholder = '生成后显示';
+      files.appendChild(box);
+    });
+    _activeFile = FILE_SETS[_format][0];
+  }
+
+  /**
+   * 切换当前展示的文件标签页。引用：renderFileTabs(动态绑定的标签页点击)。
+   * @param {string} name 目标文件名
+   */
+  function switchFile(name) {
+    _activeFile = name;
+    Array.prototype.forEach.call(document.querySelectorAll('#file-tabs .file-tab'), function (t) {
+      t.classList.toggle('active', t.getAttribute('data-file') === name);
+    });
+    Array.prototype.forEach.call(document.querySelectorAll('.toml-box'), function (box) {
+      box.classList.toggle('hidden', box.getAttribute('data-file') !== name);
+    });
+  }
+
+  /**
+   * 响应格式切换段点击: 切换状态、高亮按钮、重渲染文件区并重新生成。引用：bind。
+   * @param {HTMLButtonElement} btn 被点击的格式按钮
+   */
+  function onFormat(btn) {
+    _format = btn.dataset.format;
+    document.querySelectorAll('#format-seg button').forEach(function (b) {
+      b.classList.toggle('active', b === btn);
+    });
+    renderFileTabs();
+    generate(true);
+  }
 
   /**
    * 刷新侧栏工作目录列表：每目录一个条目, 首行为启用勾选/目录/张数·蒙版, 次行为全宽分辨率输入。
@@ -133,19 +192,21 @@
       target_images: target,
       subset_resolutions: subsetRes,
       use_reg: document.getElementById('use-reg').checked,
-      mode: _mode
+      mode: _mode,
+      train_format: _format
     };
   }
 
   /**
-   * 读取三个文本区的编辑内容构造 files; 任一为空时提示并返回 null
+   * 读取当前格式的全部文本区编辑内容构造 files; 任一为空时提示并返回 null
    * (导出以编辑后的文本为准, 不写空文件)。引用：doExport。
    * @returns {object|null} 文件名→文本。
    */
   function collectFiles() {
+    var names = FILE_SETS[_format];
     var files = {};
-    for (var i = 0; i < FILES.length; i++) {
-      var name = FILES[i];
+    for (var i = 0; i < names.length; i++) {
+      var name = names[i];
       var text = document.getElementById('file-' + name).value;
       if (!text.trim()) {
         toast(name + ' 内容为空, 请先生成');
@@ -157,8 +218,8 @@
   }
 
   /**
-   * 生成三件套预览并更新侧栏; 输入变化自动调用时静默(silent=true), 仅按钮手动生成时 toast.
-   * 引用：init、tpl btn-gen、模式切换、autoGenerate。
+   * 生成当前格式的配置预览并更新侧栏; 输入变化自动调用时静默(silent=true), 仅按钮手动生成时 toast.
+   * 文本区按 data.files 键填充(键随格式变化)。引用：init、tpl btn-gen、格式切换、模式切换、autoGenerate。
    * @param {boolean} [silent]
    */
   async function generate(silent) {
@@ -175,9 +236,11 @@
       if (!silent) toast(String(e.message || e));
       return;
     }
-    document.getElementById('file-lora.toml').value = data.lora || '';
-    document.getElementById('file-dataset.toml').value = data.toml || '';
-    document.getElementById('file-prompt.txt').value = data.prompt || '';
+    var dataFiles = data.files || {};
+    Object.keys(dataFiles).forEach(function (name) {
+      var box = document.getElementById('file-' + name);
+      if (box) box.value = dataFiles[name];
+    });
     var subsets = data.subsets || [];
     var repeats = data.subset_repeats || {};
     var totalImages = subsets.reduce(function (sum, s) {
@@ -245,6 +308,11 @@
     copyText().catch(function (e) { toast(String(e.message || e)); });
   });
 
+  // 配置格式切换(sd-scripts/diffusion-pipe): 切换后重渲染文件区并重新生成
+  Array.prototype.forEach.call(document.querySelectorAll('#format-seg button'), function (btn) {
+    btn.addEventListener('click', function () { onFormat(btn); });
+  });
+
   // 训练模式切换(画风/角色): 切换后按新模式重新生成三件套
   Array.prototype.forEach.call(document.querySelectorAll('#mode-seg button'), function (btn) {
     btn.addEventListener('click', function () {
@@ -258,21 +326,10 @@
     });
   });
 
-  // 标签页切换: 仅切换展示的文本区, 各文本区内容(含编辑)独立保留
-  Array.prototype.forEach.call(document.querySelectorAll('#file-tabs .file-tab'), function (tab) {
-    tab.addEventListener('click', function () {
-      _activeFile = tab.getAttribute('data-file');
-      Array.prototype.forEach.call(document.querySelectorAll('#file-tabs .file-tab'), function (t) {
-        t.classList.toggle('active', t === tab);
-      });
-      Array.prototype.forEach.call(document.querySelectorAll('.toml-box'), function (box) {
-        box.classList.toggle('hidden', box.getAttribute('data-file') !== _activeFile);
-      });
-    });
-  });
+  // 标签页切换监听由 renderFileTabs 动态绑定: 仅切换展示的文本区, 各文本区内容(含编辑)独立保留
 
   /**
-   * 按当前参数与编辑后的三件套文本导出整套训练配置(lora/dataset/prompt)到配置路径.
+   * 按当前参数与编辑后的配置文本导出整套训练配置到格式对应的配置路径.
    * 引用: tpl btn-export、exportConfig。
    * @param {boolean} overwrite 目标目录已存在配置时置 true 覆盖写入。
    */
@@ -292,7 +349,7 @@
   }
 
   /**
-   * 按当前参数把数据集导出为整套训练配置(lora/dataset/prompt)到配置路径.
+   * 按当前参数把数据集导出为整套训练配置(文件集合随格式变化)到格式对应的配置路径.
    * 目标目录已存在配置时(409)先提示确认覆盖.
    * 引用: tpl btn-export。
    */
@@ -315,6 +372,7 @@
     exportConfig().catch(function (e) { toast(String((e && e.message) || e)); });
   });
 
+  renderFileTabs();
   API.request(API.apiPath('/ready/dirs'))
     .then(function (data) {
       renderSide(data);

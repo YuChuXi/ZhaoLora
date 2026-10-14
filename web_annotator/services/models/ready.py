@@ -17,6 +17,10 @@ from services.models.dataset import WorkDirInfo
 # 训练模式: style=画风(network rank 16) / character=角色(network rank 32)
 LoraMode = Literal["style", "character"]
 
+# 训练配置导出格式: sd-scripts 三件套(lora.toml/dataset.toml/prompt.txt) /
+# diffusion-pipe 两件套(train.toml/dataset.toml)
+TrainFormat = Literal["sd-scripts", "diffusion-pipe"]
+
 
 class MaskStats(BaseModel):
     """单目录就绪统计: 图片 / 标注 / 蒙版计数与就绪状态.
@@ -56,12 +60,11 @@ class ReadySubset(BaseModel):
 
 
 class ReadyTomlResult(BaseModel):
-    """就绪页生成结果: 子集/蒙版统计与三件套训练配置预览文本."""
+    """就绪页生成结果: 子集/蒙版统计与训练配置预览文本(键随格式变化)."""
 
     root: str
-    toml: str
-    lora: str = Field("", description="lora.toml 预览文本(三项路径字段以数据集根目录占位, 导出时按真实目录覆写)")
-    prompt: str = Field("", description="prompt.txt 预览文本")
+    format: TrainFormat = "sd-scripts"
+    files: dict[str, str] = Field(default_factory=dict, description="配置文件预览文本, 键为文件名(sd-scripts: lora.toml/dataset.toml/prompt.txt; diffusion-pipe: train.toml/dataset.toml); sd-scripts 的 lora.toml 三项路径字段以数据集根目录占位, 导出时按真实目录覆写")
     subsets: list[ReadySubset]
     dirs: list[WorkDirInfo]
     mask_stats: list[MaskStats] = Field(default_factory=list)

@@ -5,12 +5,12 @@
 output_dir = '/home/yuchuxi/Projects/Experiments/Dataset/ZhaoLora/output/guo582'
 
 # 数据集 TOML 路径（分辨率/AR 分桶、caption_prefix、[[directory]] 等见该文件）
-#dataset = '/home/yuchuxi/Projects/Experiments/Dataset/ZhaoLora/configs/ysm_train.toml'
-dataset = '/home/yuchuxi/Projects/Experiments/Dataset/ZhaoLora/configs/guo582.toml'
+#dataset = '/home/yuchuxi/Projects/Experiments/Dataset/ZhaoLora/configs/ysm/dataset.toml'
+dataset = '/home/yuchuxi/Projects/Experiments/Dataset/ZhaoLora/configs/guo582/dataset.toml'
 
 # 验证集列表；每项为 { name, config } 或单独 TOML 路径。空列表时 evaluate() 直接跳过
 eval_datasets = [
-    #4{name = 'eval', config = '/home/yuchuxi/Projects/Experiments/Dataset/ZhaoLora/configs/ysm_eval.toml'},
+    #4{name = 'eval', config = '/home/yuchuxi/Projects/Experiments/Dataset/ZhaoLora/configs/ysm/eval.toml'},
 
 ]
 
