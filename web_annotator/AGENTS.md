@@ -20,9 +20,10 @@ services/                      业务与基础设施
   online_sources/              在线图源（danbooru / pixiv / bilibili / x / gelbooru）
   tagging/                     标签清洗与统计
   models/                      Pydantic 响应模型，按域拆分
-static/js/                     前端模块（IIFE 单例，暴露到 window）
-static/css/annotator.css       统一样式与控件
-templates/                     页面 HTML
+assets/static/js/              前端模块（IIFE 单例，暴露到 window）
+assets/static/css/annotator.css 统一样式与控件
+assets/templates/              页面 HTML
+assets/configs/{sd-scripts,diffusion-pipe}/  训练配置 Jinja2 模板（就绪页导出）
 docs/                          功能说明文档
 ```
 
@@ -109,7 +110,7 @@ docs/                          功能说明文档
 - **禁止兜底逻辑**：数据应在上游被完善处理。定位问题时先整理既有代码找根因，禁止
   "加一个保底"式的补丁。
 - 相同功能必须整合复用，禁止随处复制相似实现；新增功能优先到 `services/` 与
-  `static/js/` 中查找既有实现。
+  `assets/static/js/` 中查找既有实现。
 - 不做与旧代码的兼容补丁，除非用户明确要求。
 
 ### 5.2 Python

@@ -79,7 +79,7 @@ class MihuashiSource(SourceClient):
 
         Callers:
             - ``services/online_sources/framework/base.py:SourceClient.build_search_query``
-            - ``static/js/booru_filter.js:`` : 前端来源选择页面.
+            - ``assets/static/js/booru_filter.js:`` : 前端来源选择页面.
         """
         mode = _MODE_ARTWORKS
         for token in (extra or "").split():

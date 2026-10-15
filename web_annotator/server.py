@@ -178,7 +178,7 @@ def _read_template(name: str) -> HTMLResponse:
         - ``server.py:index_page``
         - ``server.py:dataset_page``
     """
-    template = Path(__file__).parent / "templates" / name
+    template = Path(__file__).parent / "assets" / "templates" / name
     if not template.exists():
         return HTMLResponse(f"<h1>{name} not found</h1>", status_code=404)
     return HTMLResponse(template.read_text(encoding="utf-8"))
@@ -287,7 +287,7 @@ async def _no_browser_cache_middleware(
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 
-static_dir = Path(__file__).parent / "static"
+static_dir = Path(__file__).parent / "assets" / "static"
 if static_dir.is_dir():
     app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 
@@ -321,7 +321,7 @@ def index_page() -> HTMLResponse:
         HTMLResponse: ``index.html`` 渲染结果.
 
     Callers:
-        - ``static/js/nav.js:render`` (业务页"首页"标签链接)
+        - ``assets/static/js/nav.js:render`` (业务页"首页"标签链接)
     """
     return _read_template("index.html")
 
@@ -344,8 +344,8 @@ async def dataset_thumb(request: Request, dataset: str, filename: str) -> FileRe
     """返回数据集的 AVIF 缩略图文件, 缺失时即时生成.
 
     Callers:
-        - ``static/js/index.js:archiveTask``
-        - ``static/js/api.js:thumbnailUrl``
+        - ``assets/static/js/index.js:archiveTask``
+        - ``assets/static/js/api.js:thumbnailUrl``
     """
     store: TaskStore = request.app.state.task_store
     if not store.contains(dataset):
@@ -376,7 +376,7 @@ def dataset_page(dataset: str, page: str) -> HTMLResponse | RedirectResponse:
         HTMLResponse | RedirectResponse: 页面 HTML; ``tagging`` 返回 302 重定向, 未知页抛 404.
 
     Callers:
-        - ``static/js/nav.js:render`` (功能标签链接: 筛选/评分/去重/裁剪/蒙版/标签/标签检查/就绪)
+        - ``assets/static/js/nav.js:render`` (功能标签链接: 筛选/评分/去重/裁剪/蒙版/标签/标签检查/就绪)
     """
     if page == "tagging":
         return RedirectResponse(url=f"/d/{dataset}/tags", status_code=302)

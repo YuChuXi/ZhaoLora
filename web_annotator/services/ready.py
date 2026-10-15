@@ -1,10 +1,16 @@
-"""生成训练用 datasets TOML 片段, 并按子目录统计蒙版状态. """
+"""生成训练用 datasets TOML 片段, 并按子目录统计蒙版状态.
+
+各导出格式的配置文本由 ``assets/configs/{sd-scripts,diffusion-pipe}/`` 下的 Jinja2
+模板渲染, 本模块负责装配数据(路径、重复次数、分组与正则化数据段等)并调用
+``render_template``.
+"""
 
 from __future__ import annotations
 
 import os
 from pathlib import Path
 
+import jinja2
 import tomlkit
 
 from services.core.natural import natural_key
@@ -16,7 +22,34 @@ from services.tagging.clean import tag_key
 from services.tagging.stats import count_tags
 
 
-# ---- Anima-Flux LoRA 固定训练配置(全部由代码构造, 无模板文件) ----
+# ---- 配置模板渲染(assets/ 下 Jinja2 文件) ----
+
+# TOML 为纯文本, 关闭自动转义; trim/lstrip_blocks 使独占一行的控制标签不产生空行
+_JINJA_ENV = jinja2.Environment(
+    loader=jinja2.FileSystemLoader(Path(__file__).resolve().parent.parent / "assets"),
+    trim_blocks=True,
+    lstrip_blocks=True,
+    keep_trailing_newline=True,
+)
+
+
+def render_template(name: str, **context: object) -> str:
+    """渲染 ``assets/`` 目录下的 Jinja2 配置模板.
+
+    Args:
+        name (str): 模板相对路径, 如 ``configs/sd-scripts/dataset.toml.j2``.
+        **context (object): 模板变量(路径、rank、分组数据等).
+
+    Returns:
+        str: 渲染后的配置文本.
+
+    Callers:
+        - ``services/ready.py:build_ready_toml``
+        - ``services/ready.py:build_train_config``
+        - ``services/ready.py:_build_dp_train_config``
+        - ``services/ready.py:_build_dp_dataset_config``
+    """
+    return _JINJA_ENV.get_template(name).render(**context)
 
 def reg_datasets() -> list[tuple[int, str]]:
     """解析环境变量 ``REG_DATASETS`` 得到正则化数据集列表.
@@ -51,75 +84,11 @@ def reg_datasets() -> list[tuple[int, str]]:
         entries.append((int(res_text), path.strip()))
     return entries
 
-# dataset.toml 的 [general] 段
-_GENERAL_CONFIG = {
-    "enable_bucket": True,
-    "min_bucket_reso": 256,
-    "max_bucket_reso": 1536,
-    "bucket_reso_steps": 64,
-    "bucket_no_upscale": True,
-}
-
-# lora.toml 固定字段(模型/编码器路径与训练超参; network_dim/network_alpha 由模式决定,
-# output_name/sample_prompts/dataset_config 由 apply_lora_output_paths 覆写)
-_LORA_CONFIG = {
-    "pretrained_model_name_or_path": "/media/yuchuxi/Data/Servers/ComfyUI/models/diffusion_models/anima-base-v1.0.safetensors",
-    "vae": "/media/yuchuxi/Data/Servers/ComfyUI/models/vae/qwen_image_vae.safetensors",
-    "qwen3": "/media/yuchuxi/Data/Servers/ComfyUI/models/text_encoders/qwen_3_06b_base.safetensors",
-    "qwen3_max_token_length": 1024,
-    "t5_max_token_length": 1024,
-    "timestep_sampling": "flux_shift",
-    "sigmoid_scale": 1.0,
-    "attn_mode": "flash",
-    "prior_loss_weight": 0.5,
-    "resolution": "1536",
-    "output_dir": "./output",
-    "save_model_as": "safetensors",
-    "save_precision": "bf16",
-    "save_every_n_steps": 50,
-    "max_train_steps": 500,
-    "train_batch_size": 2,
-    "gradient_checkpointing": True,
-    "gradient_accumulation_steps": 4,
-    "network_train_unet_only": True,
-    "learning_rate": 1e-05,
-    "unet_lr": 1e-05,
-    "text_encoder_lr": 0,
-    "lr_scheduler": "cosine_with_min_lr",
-    "lr_scheduler_min_lr_ratio": 0.01,
-    "lr_warmup_steps": 50,
-    "optimizer_type": "AdamW",
-    "network_module": "networks.lora_anima",
-    "network_dropout": 0.2,
-    "network_args": ["loraplus_unet_lr_ratio=16"],
-    "sample_at_first": True,
-    "sample_every_n_steps": 50,
-    "log_with": "wandb",
-    "logging_dir": "./logs",
-    "caption_extension": ".txt",
-    "shuffle_caption": True,
-    "keep_tokens_separator": "|||",
-    "caption_tag_dropout_rate": 0.5,
-    "seed": 1337,
-    "mixed_precision": "bf16",
-    "cache_latents": True,
-    "cache_latents_to_disk": True,
-    "max_data_loader_n_workers": 0,
-    "optimizer_args": ["weight_decay=0.001"],
-    "masked_loss": True,
-}
-
 # 各训练模式的网络规模: network_dim = network_alpha = rank
 _LORA_RANKS: dict[LoraMode, int] = {"style": 16, "character": 32}
 
 # sd-scripts 导出文件名集合(三件套); diffusion-pipe 见 DP_FILE_NAMES
 TRAIN_FILE_NAMES = ("lora.toml", "dataset.toml", "prompt.txt")
-
-# prompt.txt 固定采样参数(触发词与高频标签由导出时拼接)
-_PROMPT_SUFFIX = "--n worst quality, low quality, score_1, score_2, score_3, artist name, jpeg artifacts  --w 1024 --h 1024 --l 4  --s 30  --d 42"
-
-
-# ---- diffusion-pipe 训练配置(以项目 configs/chawenjian/train.toml 为蓝本, 全部由代码构造) ----
 
 # diffusion-pipe 导出文件名集合(两件套: 无采样提示词机制, 不导出 prompt.txt)
 DP_FILE_NAMES = ("train.toml", "dataset.toml")
@@ -128,73 +97,6 @@ DP_FILE_NAMES = ("train.toml", "dataset.toml")
 TRAIN_FORMAT_FILES: dict[TrainFormat, tuple[str, ...]] = {
     "sd-scripts": TRAIN_FILE_NAMES,
     "diffusion-pipe": DP_FILE_NAMES,
-}
-
-# diffusion-pipe train.toml 顶层固定字段; output_dir / dataset / [adapter].rank /
-# [monitoring].wandb_tracker_name 由导出位置与数据集派生, 不在此列
-_DP_TRAIN_CONFIG = {
-    "max_steps": 500,
-    "micro_batch_size_per_gpu": 1,
-    "pipeline_stages": 1,
-    "gradient_accumulation_steps": 4,
-    "gradient_clipping": 0,
-    "warmup_steps": 50,
-    "smooth_l1_beta": 1.0,
-    "lr_scheduler": "cosine",
-    "uncond_fraction": 0.1,
-    "eval_every_n_epochs": 1,
-    "eval_before_first_step": True,
-    "eval_micro_batch_size_per_gpu": 1,
-    "eval_gradient_accumulation_steps": 1,
-    "save_every_n_steps": 50,
-    "activation_checkpointing": True,
-    "partition_method": "parameters",
-    "save_dtype": "bfloat16",
-    "caching_batch_size": 1,
-    "map_num_proc": 16,
-    "steps_per_print": 1,
-    "blocks_to_swap": 20,
-    "compile": True,
-}
-
-# diffusion-pipe train.toml 的 [model] 段固定字段
-_DP_MODEL_CONFIG = {
-    "type": "krea2",
-    "diffusion_model": "/media/yuchuxi/Data/Servers/ComfyUI/models/diffusion_models/krea2_raw_bf16.safetensors",
-    "vae": "/media/yuchuxi/Data/Servers/ComfyUI/models/vae/qwen_image_vae.safetensors",
-    "text_encoders": [
-        {"path": "/media/yuchuxi/Data/Servers/ComfyUI/models/text_encoders/qwen3vl_4b_bf16.safetensors", "type": "krea2"},
-    ],
-    "dtype": "bfloat16",
-    "diffusion_model_dtype": "float8",
-    "timestep_sample_method": "logit_normal",
-    "flux_shift": True,
-}
-
-# diffusion-pipe train.toml 的 [adapter] 段固定字段(rank 由训练模式决定)
-_DP_ADAPTER_CONFIG = {
-    "type": "lora",
-    "dtype": "bfloat16",
-    "dropout": 0.1,
-}
-
-# diffusion-pipe train.toml 的 [optimizer] 段固定字段
-_DP_OPTIMIZER_CONFIG = {
-    "type": "adamw8bit",
-    "lr": 1e-4,
-    "weight_decay": 0.001,
-    "betas": [0.9, 0.999],
-}
-
-# diffusion-pipe dataset.toml 顶层固定字段(resolutions 为默认全局列表,
-# 各 [[directory]] 可以目录级 resolutions 覆盖); 取自 configs/chawenjian/dataset.toml 蓝本
-_DP_DATASET_CONFIG = {
-    "resolutions": [512, 1024, 1536],
-    "enable_ar_bucket": True,
-    "min_ar": 0.25,
-    "max_ar": 4.0,
-    "num_ar_buckets": 13,
-    "caption_prefix": "",
 }
 
 
@@ -422,39 +324,31 @@ def build_ready_toml(
         res_rank.setdefault(res, len(res_rank))
     keys = sorted(grouped, key=lambda k: (res_rank[k[0]], not k[1]))
 
-    blocks: list[str] = []
+    # 渲染分组数据: 每组一个 [[datasets]] 块(分辨率 + subset 列表), 交给模板统一排版
+    groups: list[dict] = []
     for key in keys:
         res = key[0]
-        lines = ["[[datasets]]"]
-        if res is not None:
-            lines.append(f"resolution = {res}")
-        for s, repeats in grouped[key]:
-            lines.append("  [[datasets.subsets]]")
-            lines.append(f'  image_dir = "{s.image_dir}"')
-            if s.conditioning_data_dir:
-                lines.append(f'  conditioning_data_dir = "{s.conditioning_data_dir}"')
-            lines.append(f"  num_repeats = {repeats}")
-        blocks.append("\n".join(lines))
+        groups.append({
+            "resolution": res,
+            "subsets": [
+                {
+                    "image_dir": s.image_dir,
+                    "conditioning_data_dir": s.conditioning_data_dir,
+                    "repeats": repeats,
+                }
+                for s, repeats in grouped[key]
+            ],
+        })
 
-    # 正则化数据段与数据集块共用同一文本渲染(缩进、空行风格一致), 统一解析后合并
+    # 正则化数据段: reg 图以类提示词 caption 参与损失, num_repeats 固定 1, 追加在数据块之后
     if use_reg:
         for res, path in reg_datasets():
-            blocks.append(
-                "[[datasets]]\n"
-                f"resolution = {res}\n"
-                "  [[datasets.subsets]]\n"
-                f'  image_dir = "{path}"\n'
-                "  num_repeats = 1"
-            )
+            groups.append({
+                "resolution": res,
+                "subsets": [{"image_dir": path, "conditioning_data_dir": None, "repeats": 1}],
+            })
 
-    # dataset.toml 完整文档: [general] 固定段 + 数据集块 + 可选正则化数据段,
-    # 预览与导出共用同一渲染
-    doc = tomlkit.document()
-    doc["general"] = dict(_GENERAL_CONFIG)
-    aot = tomlkit.aot()
-    aot.extend(tomlkit.parse("\n\n".join(blocks)).get("datasets", []))
-    doc["datasets"] = aot
-    toml = tomlkit.dumps(doc)
+    toml = render_template("configs/sd-scripts/dataset.toml.j2", groups=groups)
     main_ms = next((m for m in mask_stats if m.name == "main"),
                    MaskStats(name="main", mask_status="无"))
     return ReadyTomlResult(
@@ -524,38 +418,12 @@ def apply_lora_output_paths(doc: tomlkit.TOMLDocument, *, root_name: str, out_di
     doc["dataset_config"] = str(out_dir / "dataset.toml")
 
 
-def _fill_table(table: tomlkit.items.Table, config: dict) -> None:
-    """把固定配置字典逐键写入 tomlkit 表, dict 项转为内联表(供数组承载).
-
-    Args:
-        table (tomlkit.items.Table): 目标表, 原地写入.
-        config (dict): 键→值配置字典; 值为 dict 列表时每个 dict 渲染为内联表.
-
-    Returns:
-        None: 原地修改 ``table``.
-
-    Callers:
-        - ``services/ready.py:_build_dp_train_config``
-    """
-    for key, value in config.items():
-        if isinstance(value, list) and value and all(isinstance(v, dict) for v in value):
-            inline_list = []
-            for item in value:
-                inline = tomlkit.inline_table()
-                for ik, iv in item.items():
-                    inline[ik] = iv
-                inline_list.append(inline)
-            table[key] = inline_list
-        else:
-            table[key] = value
-
-
 def _build_dp_train_config(root: Path, *, out_dir: Path | None, mode: LoraMode) -> str:
     """渲染 diffusion-pipe 风格 train.toml 文本.
 
-    固定字段取 ``_DP_TRAIN_CONFIG`` / ``_DP_MODEL_CONFIG`` / ``_DP_ADAPTER_CONFIG`` /
-    ``_DP_OPTIMIZER_CONFIG``(configs/chawenjian/train.toml 蓝本); ``output_dir`` 指向
-    导出目录内 ``output/``, ``dataset`` 指向同目录 ``dataset.toml``,
+    固定段(训练/验证/保存与 ``[model]`` / ``[optimizer]`` / ``[monitoring]``)取自
+    ``assets/configs/diffusion-pipe/train.toml.j2``(configs/chawenjian/train.toml 蓝本);
+    ``output_dir`` 指向导出目录内 ``output/``, ``dataset`` 指向同目录 ``dataset.toml``,
     ``[adapter].rank`` 取 ``_LORA_RANKS[mode]``, ``[monitoring].wandb_tracker_name``
     由数据集名派生.
 
@@ -571,29 +439,13 @@ def _build_dp_train_config(root: Path, *, out_dir: Path | None, mode: LoraMode) 
         - ``services/ready.py:build_train_config``
     """
     out = out_dir or root
-    doc = tomlkit.document()
-    for key, value in _DP_TRAIN_CONFIG.items():
-        doc[key] = value
-    doc["output_dir"] = str(out / "output")
-    doc["dataset"] = str(out / "dataset.toml")
-    doc["eval_datasets"] = []
-    model = tomlkit.table()
-    _fill_table(model, _DP_MODEL_CONFIG)
-    doc["model"] = model
-    adapter = tomlkit.table()
-    _fill_table(adapter, _DP_ADAPTER_CONFIG)
-    adapter["rank"] = _LORA_RANKS[mode]
-    doc["adapter"] = adapter
-    optimizer = tomlkit.table()
-    _fill_table(optimizer, _DP_OPTIMIZER_CONFIG)
-    doc["optimizer"] = optimizer
-    monitoring = tomlkit.table()
-    monitoring["enable_wandb"] = True
-    monitoring["wandb_tracker_name"] = f"{root.name}-krea2"
-    monitoring["wandb_api_key"] = ""
-    monitoring["wandb_run_name"] = ""
-    doc["monitoring"] = monitoring
-    return tomlkit.dumps(doc)
+    return render_template(
+        "configs/diffusion-pipe/train.toml.j2",
+        output_dir=str(out / "output"),
+        dataset=str(out / "dataset.toml"),
+        rank=_LORA_RANKS[mode],
+        wandb_tracker_name=f"{root.name}-krea2",
+    )
 
 
 def _build_dp_dataset_config(
@@ -643,32 +495,26 @@ def _build_dp_dataset_config(
     total = sum(available[n].image_count for n in valid_names)
     repeats = dp_num_repeats(total, target_images)
 
-    doc = tomlkit.document()
-    for key, value in _DP_DATASET_CONFIG.items():
-        doc[key] = value
-    aot = tomlkit.aot()
+    # 渲染数据: 每个启用目录一个 [[directory]] 块, 正则化目录追加在数据目录之后
+    directories: list[dict] = []
     for name in valid_names:
-        table = tomlkit.table()
-        table["path"] = str((root / name).resolve())
-        if subdir_mask_stats(root, name).mask_status == "完整":
-            table["mask_path"] = str((root / "mask" / name).resolve())
-        table["num_repeats"] = repeats
         res_list = list(dict.fromkeys(
             r for r in (subset_resolutions or {}).get(name, [])
             if isinstance(r, int) and r > 0
         ))
-        if res_list:
-            table["resolutions"] = res_list
-        aot.append(table)
+        directories.append({
+            "path": str((root / name).resolve()),
+            "mask_path": str((root / "mask" / name).resolve())
+            if subdir_mask_stats(root, name).mask_status == "完整" else None,
+            "repeats": repeats,
+            "resolutions": res_list or None,
+        })
     if use_reg:
         for res, path in reg_datasets():
-            table = tomlkit.table()
-            table["path"] = path
-            table["num_repeats"] = 1
-            table["resolutions"] = [res]
-            aot.append(table)
-    doc["directory"] = aot
-    return tomlkit.dumps(doc), {name: repeats for name in valid_names}
+            directories.append({"path": path, "mask_path": None, "repeats": 1, "resolutions": [res]})
+
+    return render_template("configs/diffusion-pipe/dataset.toml.j2", directories=directories), \
+        {name: repeats for name in valid_names}
 
 
 def build_train_config(
@@ -683,14 +529,15 @@ def build_train_config(
     use_reg: bool = True,
     trigger_word: str = "",
 ) -> dict[str, str]:
-    """为数据集渲染整套训练配置文本(全部由代码构造, 无模板文件).
+    """为数据集渲染整套训练配置文本(文本由 assets/ 下 Jinja2 模板渲染).
 
     ``train_format`` 为 ``sd-scripts`` 时: dataset.toml 由 ``build_ready_toml`` 完整渲染
-    (``[general]`` 固定段 + 数据集块 + ``use_reg`` 为 True 时附带的正则化数据段), 与就绪页
-    预览同源; lora.toml 由 ``_LORA_CONFIG`` 固定字段构成, ``network_dim`` / ``network_alpha``
-    取 ``_LORA_RANKS[mode]``, 另经 ``apply_lora_output_paths`` 覆写三项路径字段;
-    prompt.txt = 触发词(未设置则省略) + 出现次数最多的 10 个标签(``_top_caption_tags``)
-    + 固定采样参数.
+    (模板 ``assets/configs/sd-scripts/dataset.toml.j2``: ``[general]`` 固定段 + 数据集块 +
+    ``use_reg`` 为 True 时附带的正则化数据段), 与就绪页预览同源; lora.toml 由模板
+    ``assets/configs/sd-scripts/lora.toml.j2`` 渲染, ``network_dim`` / ``network_alpha``
+    取 ``_LORA_RANKS[mode]``, 三项路径字段由导出位置决定(与 ``apply_lora_output_paths``
+    的覆写语义一致); prompt.txt = 触发词(未设置则省略) + 出现次数最多的 10 个标签
+    (``_top_caption_tags``) + 固定采样参数(模板 ``assets/configs/sd-scripts/prompt.txt.j2``).
 
     ``train_format`` 为 ``diffusion-pipe`` 时: train.toml 由 ``_build_dp_train_config``
     渲染, dataset.toml 由 ``_build_dp_dataset_config`` 渲染.
@@ -731,19 +578,21 @@ def build_train_config(
         subset_resolutions=subset_resolutions, use_reg=use_reg,
     ).files["dataset.toml"]
 
-    # lora.toml: 固定字段 + 模式 rank + 导出位置三项路径
+    # lora.toml: 固定字段 + 模式 rank + 导出位置三项路径(与 apply_lora_output_paths 覆写语义一致)
     out = out_dir or root
     rank = _LORA_RANKS[mode]
-    lora_doc = tomlkit.document()
-    for key, value in {**_LORA_CONFIG, "network_dim": rank, "network_alpha": rank}.items():
-        lora_doc[key] = value
-    apply_lora_output_paths(lora_doc, root_name=root.name, out_dir=out)
-    lora = tomlkit.dumps(lora_doc)
+    lora = render_template(
+        "configs/sd-scripts/lora.toml.j2",
+        rank=rank,
+        output_name=f"{root.name}_anima",
+        sample_prompts=str(out / "prompt.txt"),
+        dataset_config=str(out / "dataset.toml"),
+    )
 
     names = dirs if dirs is not None else [d.name for d in list_work_dirs(root)]
     top_tags = _top_caption_tags(root, names, trigger_word)
     head = ", ".join(t for t in [trigger_word, *top_tags] if t)
-    prompt = f"{head},  {_PROMPT_SUFFIX}" if head else _PROMPT_SUFFIX
+    prompt = render_template("configs/sd-scripts/prompt.txt.j2", head=head)
     return {"lora.toml": lora, "dataset.toml": dataset_toml, "prompt.txt": prompt}
 
 

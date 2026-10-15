@@ -16,7 +16,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).parent
 PY_FILES = list(ROOT.rglob("*.py"))
-JS_FILES = list((ROOT / "static" / "js").glob("*.js"))
+JS_FILES = list((ROOT / "assets" / "static" / "js").glob("*.js"))
 
 _CALLER_RE = re.compile(r"Callers:")
 # 唯一标准条目格式: "- ``引用``" 后接可选说明文字; 引用仅限双反引号包裹

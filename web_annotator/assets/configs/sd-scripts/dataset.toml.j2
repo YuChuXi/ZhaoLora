@@ -1,0 +1,24 @@
+[general]
+enable_bucket = true
+min_bucket_reso = 256
+max_bucket_reso = 1536
+bucket_reso_steps = 64
+bucket_no_upscale = true
+
+{% for group in groups %}
+[[datasets]]
+{% if group.resolution is not none %}
+resolution = {{ group.resolution }}
+{% endif %}
+{% for subset in group.subsets %}
+  [[datasets.subsets]]
+  image_dir = "{{ subset.image_dir }}"
+{% if subset.conditioning_data_dir %}
+  conditioning_data_dir = "{{ subset.conditioning_data_dir }}"
+{% endif %}
+  num_repeats = {{ subset.repeats }}
+{% endfor %}
+{% if not loop.last %}
+
+{% endif %}
+{% endfor %}
