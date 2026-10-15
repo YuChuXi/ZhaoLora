@@ -440,12 +440,11 @@ def _build_dp_dataset_config(
 ) -> tuple[str, dict[str, list[int]]]:
     """渲染 diffusion-pipe 风格 dataset.toml 文本并返回各目录逐分辨率 num_repeats.
 
-    每个启用且含图的工作目录一个 ``[[directory]]`` 块: ``resolutions`` 为该目录分辨率
-    列表, ``num_repeats`` 为目录级单值、对该列表每个分辨率桶独立生效(与 sd-scripts
-    块级语义相同: 每图 × 每分辨率 × repeats). 分配与 sd-scripts 同源 —— 总重复次数取
-    ``max(块数, ceil(target/total))`` 后经 ``_alloc_repeats`` 均分(余数优先分给最靠近
-    1024 的分辨率); 分配值全相等时即单块原生形式, 不等时按 repeats 值归并分辨率、
-    以同 ``path`` 多块表达(diffusion-pipe 按块实例化 DirectoryDataset, 无重复路径限制).
+    每个启用且含图的工作目录按分辨率拆为多个 ``[[directory]]`` 块(同 ``path`` 多块,
+    diffusion-pipe 按块实例化 DirectoryDataset, 无重复路径限制): 每块
+    ``resolutions = [单个分辨率]`` 并各带 ``num_repeats``, 逐分辨率差异借此表达;
+    分配与 sd-scripts 同源 —— 子集级总重复次数取 ``max(块数, ceil(target/total))``
+    后经 ``_alloc_repeats`` 均分(余数优先分给最靠近 1024 的分辨率).
     ``mask_path`` 在蒙版状态为「完整」时必带; ``use_reg`` 为 True 时追加 regL
     正则化目录块(num_repeats 固定 1, 目录级 ``resolutions`` 取其蓝本分辨率):
     regL 以类提示词(不含触发词)的 caption 参与同一损失计算, 效果即 kohya 先验
@@ -481,10 +480,10 @@ def _build_dp_dataset_config(
     total = sum(available[n].image_count for n in valid_names)
     per_target = -(-target_images // total) if total else 1
 
-    # 渲染数据: 每目录一个 [[directory]] 块, num_repeats 经 _alloc_repeats 与 sd-scripts
-    # 同源分配; 分配值按 repeats 归并分辨率(全相等时即单块), regL 块追加在后
-    dir_repeats: dict[str, list[int]] = {}
+    # 渲染数据: 每目录按分辨率拆为多个 [[directory]] 块(同 path 多块), 正则化目录
+    # 追加在数据目录之后; num_repeats 逐块取 _alloc_repeats 分配值, 与 sd-scripts 同源
     directories: list[dict] = []
+    dir_repeats: dict[str, list[int]] = {}
     for name in valid_names:
         res_list = list(dict.fromkeys(
             r for r in (subset_resolutions or {}).get(name, [])
@@ -494,15 +493,12 @@ def _build_dp_dataset_config(
         dir_repeats[name] = reps
         mask_path = str((root / "mask" / name).resolve()) \
             if subdir_mask_stats(root, name).mask_status == "完整" else None
-        by_rep: dict[int, list[int]] = {}
         for res, rep in zip(res_list, reps):
-            by_rep.setdefault(rep, []).append(res)
-        for rep, res_group in by_rep.items():
             directories.append({
                 "path": str((root / name).resolve()),
                 "mask_path": mask_path,
                 "repeats": rep,
-                "resolutions": res_group,
+                "resolutions": [res],
             })
     if use_reg:
         for res, path in reg_datasets():
