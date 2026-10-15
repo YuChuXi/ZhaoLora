@@ -93,33 +93,15 @@ TRAIN_FILE_NAMES = ("lora.toml", "dataset.toml", "prompt.txt")
 # diffusion-pipe 导出文件名集合(两件套: 无采样提示词机制, 不导出 prompt.txt)
 DP_FILE_NAMES = ("train.toml", "dataset.toml")
 
+# diffusion-pipe 各目录 resolutions 的默认填充值(configs/chawenjian/dataset.toml 蓝本);
+# 导出时每个 [[directory]] 都显式声明 resolutions, 侧栏留空的目录用它填充
+DP_DEFAULT_RESOLUTIONS = [512, 1024, 1536]
+
 # 各导出格式的文件名集合(预览键与导出请求 files 键校验的唯一依据)
 TRAIN_FORMAT_FILES: dict[TrainFormat, tuple[str, ...]] = {
     "sd-scripts": TRAIN_FILE_NAMES,
     "diffusion-pipe": DP_FILE_NAMES,
 }
-
-
-def dp_num_repeats(total_images: int, target_images: int) -> int:
-    """按目标图片数计算数据目录的统一 num_repeats.
-
-    语义与 sd-scripts 一致(diffusion-pipe 的 [[directory]].num_repeats 为目录级整表
-    重复): 全部启用目录按同一系数重复, 使重复后总图片数 >= 目标图片数.
-
-    Args:
-        total_images (int): 启用目录图片总数; 为 0 时返回 1.
-        target_images (int): 目标图片数, 须 >= 1.
-
-    Returns:
-        int: 各数据目录的 num_repeats, 恒 >= 1.
-
-    Callers:
-        - ``services/ready.py:_build_dp_dataset_config``
-        - ``routes/ready.py:toml``
-    """
-    if total_images <= 0:
-        return 1
-    return max(1, -(-target_images // total_images))
 
 
 def _has_images(d: Path) -> bool:
@@ -455,28 +437,32 @@ def _build_dp_dataset_config(
     target_images: int = 512,
     subset_resolutions: dict[str, list[int]] | None = None,
     use_reg: bool = True,
-) -> tuple[str, dict[str, int]]:
-    """渲染 diffusion-pipe 风格 dataset.toml 文本并返回各目录 num_repeats.
+) -> tuple[str, dict[str, list[int]]]:
+    """渲染 diffusion-pipe 风格 dataset.toml 文本并返回各目录逐分辨率 num_repeats.
 
-    每个启用且含图的工作目录渲染一个 ``[[directory]]`` 块: ``path`` 必带,
-    蒙版状态为「完整」时附 ``mask_path``, ``num_repeats`` 按
-    ``dp_num_repeats`` 统一取值, 目录级 ``resolutions`` 覆盖取
-    ``subset_resolutions[目录名]``(留空则继承顶层默认列表).
-    ``use_reg`` 为 True 时追加 regL 正则化目录块(num_repeats 固定 1, 目录级
-    ``resolutions`` 取其蓝本分辨率): regL 以类提示词(不含触发词)的 caption 参与
-    同一损失计算, 效果即 kohya 先验保持权重 1.0(diffusion-pipe 无独立 reg loss
-    权重旋钮); 触发词与类先验的分离由 regL 自身 caption 保证.
+    每个启用且含图的工作目录一个 ``[[directory]]`` 块: ``resolutions`` 为该目录分辨率
+    列表, ``num_repeats`` 为目录级单值、对该列表每个分辨率桶独立生效(与 sd-scripts
+    块级语义相同: 每图 × 每分辨率 × repeats). 分配与 sd-scripts 同源 —— 总重复次数取
+    ``max(块数, ceil(target/total))`` 后经 ``_alloc_repeats`` 均分(余数优先分给最靠近
+    1024 的分辨率); 分配值全相等时即单块原生形式, 不等时按 repeats 值归并分辨率、
+    以同 ``path`` 多块表达(diffusion-pipe 按块实例化 DirectoryDataset, 无重复路径限制).
+    ``mask_path`` 在蒙版状态为「完整」时必带; ``use_reg`` 为 True 时追加 regL
+    正则化目录块(num_repeats 固定 1, 目录级 ``resolutions`` 取其蓝本分辨率):
+    regL 以类提示词(不含触发词)的 caption 参与同一损失计算, 效果即 kohya 先验
+    保持权重 1.0(diffusion-pipe 无独立 reg loss 权重旋钮); 触发词与类先验的
+    分离由 regL 自身 caption 保证.
 
     Args:
         root (Path): 数据集根目录.
         dirs (list[str] | None): 参与导出的工作目录名列表; None 表示全部, 空列表表示不导出.
-        target_images (int): 目标图片数, 据此计算统一 num_repeats.
-        subset_resolutions (dict[str, list[int]] | None): 目录名→目录级 resolutions 覆盖列表.
+        target_images (int): 目标图片数, 据此计算各目录逐分辨率 num_repeats.
+        subset_resolutions (dict[str, list[int]] | None): 目录名→分辨率列表, 留空以
+            ``DP_DEFAULT_RESOLUTIONS`` 填充.
         use_reg (bool): 是否附带 regL 正则化目录块(datasets/regL).
 
     Returns:
-        tuple[str, dict[str, int]]: dataset.toml 文本 与 各数据目录的 num_repeats(键为目录名,
-        不含正则化目录).
+        tuple[str, dict[str, list[int]]]: dataset.toml 文本 与 各数据目录逐分辨率的
+        num_repeats 列表(键为目录名, 按其分辨率列表顺序, 不含正则化目录).
 
     Callers:
         - ``services/ready.py:build_train_config``
@@ -493,28 +479,37 @@ def _build_dp_dataset_config(
     ordered.extend(sorted((n for n in names if n != "main"), key=natural_key))
     valid_names = [n for n in ordered if _has_images((root / n).resolve())]
     total = sum(available[n].image_count for n in valid_names)
-    repeats = dp_num_repeats(total, target_images)
+    per_target = -(-target_images // total) if total else 1
 
-    # 渲染数据: 每个启用目录一个 [[directory]] 块, 正则化目录追加在数据目录之后
+    # 渲染数据: 每目录一个 [[directory]] 块, num_repeats 经 _alloc_repeats 与 sd-scripts
+    # 同源分配; 分配值按 repeats 归并分辨率(全相等时即单块), regL 块追加在后
+    dir_repeats: dict[str, list[int]] = {}
     directories: list[dict] = []
     for name in valid_names:
         res_list = list(dict.fromkeys(
             r for r in (subset_resolutions or {}).get(name, [])
             if isinstance(r, int) and r > 0
-        ))
-        directories.append({
-            "path": str((root / name).resolve()),
-            "mask_path": str((root / "mask" / name).resolve())
-            if subdir_mask_stats(root, name).mask_status == "完整" else None,
-            "repeats": repeats,
-            "resolutions": res_list or None,
-        })
+        )) or DP_DEFAULT_RESOLUTIONS
+        reps = _alloc_repeats(res_list, max(len(res_list), per_target))
+        dir_repeats[name] = reps
+        mask_path = str((root / "mask" / name).resolve()) \
+            if subdir_mask_stats(root, name).mask_status == "完整" else None
+        by_rep: dict[int, list[int]] = {}
+        for res, rep in zip(res_list, reps):
+            by_rep.setdefault(rep, []).append(res)
+        for rep, res_group in by_rep.items():
+            directories.append({
+                "path": str((root / name).resolve()),
+                "mask_path": mask_path,
+                "repeats": rep,
+                "resolutions": res_group,
+            })
     if use_reg:
         for res, path in reg_datasets():
             directories.append({"path": path, "mask_path": None, "repeats": 1, "resolutions": [res]})
 
-    return render_template("configs/diffusion-pipe/dataset.toml.j2", directories=directories), \
-        {name: repeats for name in valid_names}
+    return render_template("configs/diffusion-pipe/dataset.toml.j2",
+                           directories=directories), dir_repeats
 
 
 def build_train_config(
@@ -528,7 +523,7 @@ def build_train_config(
     subset_resolutions: dict[str, list[int]] | None = None,
     use_reg: bool = True,
     trigger_word: str = "",
-) -> dict[str, str]:
+) -> tuple[dict[str, str], dict[str, list[int]]]:
     """为数据集渲染整套训练配置文本(文本由 assets/ 下 Jinja2 模板渲染).
 
     ``train_format`` 为 ``sd-scripts`` 时: dataset.toml 由 ``build_ready_toml`` 完整渲染
@@ -555,23 +550,24 @@ def build_train_config(
         trigger_word (str): 该数据集触发词, 写入 prompt.txt 正向段开头; 可为空.
 
     Returns:
-        dict[str, str]: 文件名→配置文本, 键与 ``TRAIN_FORMAT_FILES[train_format]`` 一致
-        (sd-scripts: lora.toml / dataset.toml / prompt.txt; diffusion-pipe: train.toml /
-        dataset.toml).
+        tuple[dict[str, str], dict[str, list[int]]]: (文件名→配置文本, 各子集逐分辨率
+        num_repeats). 文件名键与 ``TRAIN_FORMAT_FILES[train_format]`` 一致(sd-scripts:
+        lora.toml / dataset.toml / prompt.txt; diffusion-pipe: train.toml / dataset.toml);
+        num_repeats 仅 diffusion-pipe 返回(键为目录名, 与其分辨率列表一一对应),
+        sd-scripts 返回空 dict(sd-scripts 的 num_repeats 由 ``build_ready_toml`` 计算).
 
     Callers:
         - ``routes/ready.py:toml``
-        - ``routes/ready.py:export``
     """
     if train_format == "diffusion-pipe":
-        dataset_toml, _ = _build_dp_dataset_config(
+        dataset_toml, subset_repeats = _build_dp_dataset_config(
             root, dirs=dirs, target_images=target_images,
             subset_resolutions=subset_resolutions, use_reg=use_reg,
         )
         return {
             "train.toml": _build_dp_train_config(root, out_dir=out_dir, mode=mode),
             "dataset.toml": dataset_toml,
-        }
+        }, subset_repeats
 
     dataset_toml = build_ready_toml(
         root, dirs=dirs, target_images=target_images,
@@ -593,7 +589,7 @@ def build_train_config(
     top_tags = _top_caption_tags(root, names, trigger_word)
     head = ", ".join(t for t in [trigger_word, *top_tags] if t)
     prompt = render_template("configs/sd-scripts/prompt.txt.j2", head=head)
-    return {"lora.toml": lora, "dataset.toml": dataset_toml, "prompt.txt": prompt}
+    return {"lora.toml": lora, "dataset.toml": dataset_toml, "prompt.txt": prompt}, {}
 
 
 

@@ -258,9 +258,14 @@
       var allSame = subsets.every(function (s) {
         return (repeats[s.name] || []).join('+') === first;
       });
-      repStr = allSame ? first : subsets.map(function (s) {
-        return s.name + '×' + (repeats[s.name] || []).join('+');
-      }).join(', ');
+      if (allSame) {
+        repStr = first.indexOf('+') >= 0 ? '(' + first + ')' : first;
+      } else {
+        repStr = subsets.map(function (s) {
+          var rs = (repeats[s.name] || []).join('+');
+          return s.name + '×' + (rs.indexOf('+') >= 0 ? '(' + rs + ')' : rs);
+        }).join(', ');
+      }
     }
     document.getElementById('stat-summary').textContent =
       subsets.length + ' 个 subset · ' + totalImages + ' 张 × ' + repStr + ' = ' + repeated + ' 张';

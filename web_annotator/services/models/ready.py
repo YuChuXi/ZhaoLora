@@ -70,7 +70,7 @@ class ReadyTomlResult(BaseModel):
     mask_stats: list[MaskStats] = Field(default_factory=list)
     mask: str | None = None
     target_images: int = Field(512, ge=1, description="目标图片数, 据此计算各子集各分辨率块 num_repeats 使每个子集重复后图片数 >= 目标折算份额")
-    subset_repeats: dict[str, list[int]] = Field(default_factory=dict, description="各子集每个分辨率块的 num_repeats(键为子集名, 按其分辨率列表顺序)")
+    subset_repeats: dict[str, list[int]] = Field(default_factory=dict, description="各子集每个分辨率上的 num_repeats(键为子集名, 列表与其分辨率列表一一对应; sd-scripts 为块级分配值, diffusion-pipe 以同 path 多块表达同源分配值)")
     mask_status: Literal["完整", "无"] = "无"
     mask_complete: int = 0
     mask_none: int = 0

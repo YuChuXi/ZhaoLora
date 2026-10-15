@@ -18,7 +18,6 @@ from services.ready import (
     apply_lora_output_paths,
     build_ready_toml,
     build_train_config,
-    dp_num_repeats,
     subdir_mask_stats,
 )
 from services.core.work_dir import list_work_dirs
@@ -146,7 +145,7 @@ def toml(request: Request, body: ReadyBody) -> ReadyTomlResult:
         )
         if not result.subsets:
             raise HTTPException(400, "没有可导出的图片目录")
-        result.files = build_train_config(
+        result.files, dp_repeats = build_train_config(
             root,
             mode=body.mode,
             train_format=body.train_format,
@@ -160,10 +159,9 @@ def toml(request: Request, body: ReadyBody) -> ReadyTomlResult:
         raise HTTPException(400, str(e)) from e
     result.format = body.train_format
     if body.train_format == "diffusion-pipe":
-        # diffusion-pipe 的 num_repeats 为目录级统一值, 覆盖 sd-scripts 的分辨率块拆分口径
-        total = sum(s.image_count for s in result.subsets)
-        rep = dp_num_repeats(total, body.target_images)
-        result.subset_repeats = {s.name: [rep] for s in result.subsets}
+        # diffusion-pipe 的 dataset.toml 以同 path 多块表达逐分辨率 num_repeats,
+        # 与 sd-scripts 的块级分配同源, 覆盖 build_ready_toml 按其默认分辨率算出的值
+        result.subset_repeats = dp_repeats
     logger.info("数据集 %s 生成就绪预览(%s / %s 模式): %d 个子集, 目标图片数 %d, 子集分辨率 %s",
                 root.name, body.train_format, body.mode, len(result.subsets), body.target_images,
                 body.subset_resolutions or "默认")

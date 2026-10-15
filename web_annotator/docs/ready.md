@@ -18,8 +18,8 @@
 ### diffusion-pipe 差异
 
 - `train.toml` 以项目 `configs/chawenjian/train.toml` 为蓝本：训练/验证/保存与 `[model]`/`[optimizer]`/`[monitoring]` 段固定，`output_dir` 指向导出目录内 `output/`，`dataset` 指向同目录 `dataset.toml`，`[adapter].rank` 随画风/角色模式，`wandb_tracker_name` 由数据集名派生。
-- `dataset.toml` 为 diffusion-pipe 结构：顶层 `resolutions` 固定 `[512, 1024, 1536]`，每个启用且含图的目录一个 `[[directory]]` 块；侧栏目录分辨率输入映射为该目录的目录级 `resolutions` 覆盖（留空则继承顶层）。
-- `num_repeats` 为目录级统一值 `max(1, ceil(目标图片数 / 启用目录图片总数))`，与 sd-scripts 的分辨率块拆分口径不同。
+- `dataset.toml` 为 diffusion-pipe 结构：无顶层 `resolutions`，每个启用且含图的目录一个 `[[directory]]` 块并逐目录显式声明 `resolutions` 列表；侧栏目录分辨率输入映射为该目录的 `resolutions`（留空以默认 `[512, 1024, 1536]` 填充）。
+- `num_repeats` 与 sd-scripts 同源分配：子集级总重复次数取 `max(块数, ceil(目标图片数 / 启用目录图片总数))`，经同一均分函数按分辨率分配（余数优先分给最靠近 1024 的分辨率）。diffusion-pipe 的 `num_repeats` 为目录级单值、对该目录每个分辨率桶独立生效；分配值全相等时即单块原生形式，不等时按 repeats 值归并分辨率、以同 `path` 多个 `[[directory]]` 块表达（框架按块实例化 `DirectoryDataset`，无重复路径限制）。预览的 `subset_repeats` 两种格式均为逐分辨率列表；重复次数不由用户逐块填写，由「目标图片数 + 各目录分辨率列表」推导。
 - 「正则化」开关两种格式均生效：regL 以类提示词（不含触发词）的 caption 作为普通数据块参与同一损失计算（`num_repeats = 1`，分辨率取配置值），即先验保持；diffusion-pipe 无独立 reg loss 权重旋钮，等价于先验保持权重 1.0。正则化数据集列表由 `.env` 的 `REG_DATASETS` 配置（`分辨率:目录绝对路径` 逗号分隔）；开启开关但未配置时报 400。
 
 ## 界面
