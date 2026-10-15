@@ -1,0 +1,30 @@
+resolutions = [512, 1024, 1536]
+enable_ar_bucket = true
+min_ar = 0.25
+max_ar = 4.0
+num_ar_buckets = 13
+caption_prefix = ""
+
+[[directory]]
+path = "/home/yuchuxi/Projects/Experiments/Dataset/ZhaoLora/datasets/qianhu_s/main"
+mask_path = "/home/yuchuxi/Projects/Experiments/Dataset/ZhaoLora/datasets/qianhu_s/mask/main"
+num_repeats = 2
+resolutions = [512, 1024, 1536]
+
+[[directory]]
+path = "/home/yuchuxi/Projects/Experiments/Dataset/ZhaoLora/datasets/qianhu_s/gpt"
+mask_path = "/home/yuchuxi/Projects/Experiments/Dataset/ZhaoLora/datasets/qianhu_s/mask/gpt"
+num_repeats = 2
+resolutions = [512, 1024, 1536]
+
+[[directory]]
+path = "/home/yuchuxi/Projects/Experiments/Dataset/ZhaoLora/datasets/qianhu_s/octopus"
+mask_path = "/home/yuchuxi/Projects/Experiments/Dataset/ZhaoLora/datasets/qianhu_s/mask/octopus"
+num_repeats = 2
+resolutions = [512, 1024, 1536]
+
+[[directory]]
+path = "/home/yuchuxi/Projects/Experiments/Dataset/ZhaoLora/datasets/qianhu_s/sub"
+mask_path = "/home/yuchuxi/Projects/Experiments/Dataset/ZhaoLora/datasets/qianhu_s/mask/sub"
+num_repeats = 2
+resolutions = [512, 1024, 1536]

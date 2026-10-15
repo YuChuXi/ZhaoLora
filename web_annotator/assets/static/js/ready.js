@@ -1,35 +1,35 @@
 /**
- * ready.js —— 就绪页: 配置格式(sd-scripts/diffusion-pipe)与画风/角色双模式生成训练配置,
- * 标签页展示与编辑, 导出以编辑后的文本为准; 侧栏蒙版状态与目录。
+ * ready.js —— 就绪页: 按配置格式(由 assets/configs/ 下的模板目录决定)与画风/角色双模式
+ * 生成训练配置, 标签页展示与编辑, 导出以编辑后的文本为准; 侧栏蒙版状态与目录。
  *
  * 引用：templates/ready.html。
  */
 (function () {
   'use strict';
 
-  // 配置文件名集合(与后端 services/ready.py:TRAIN_FORMAT_FILES 一致),
-  // 同时是文本区 id 前缀(file-<name>)与标签页 data-file
-  var FILE_SETS = {
-    'sd-scripts': ['lora.toml', 'dataset.toml', 'prompt.txt'],
-    'diffusion-pipe': ['train.toml', 'dataset.toml'],
-  };
-  var _format = 'sd-scripts';  // 配置导出格式: sd-scripts 三件套 / diffusion-pipe 两件套
+  var _format = '';            // 配置导出格式, 取自顶栏格式切换段当前选中项的 data-format
   var _mode = 'style';         // 训练模式: style=画风(rank 16) / character=角色(rank 32)
-  var _activeFile = 'lora.toml';  // 当前展示的标签页
+  var _fileNames = [];         // 当前格式的文件名集合, 取自预览响应(后端按模板目录扫描)
+  var _activeFile = null;      // 当前展示的标签页
   var _enabled = {};
   var _resolutions = {};
   var _sideKey = null;
 
   /**
-   * 按当前格式重建文件标签页与预览文本区(集合随格式变化), 重建后默认激活首个文件。
-   * 与后端 services/ready.py:TRAIN_FORMAT_FILES 一致, 由 FILE_SETS 驱动。引用：bind、onFormat。
+   * 按预览响应给出的文件名集合重建文件标签页与文本区。集合未变化时不重建,
+   * 以保留各文本区的内容(含编辑)与当前标签; 重建后激活首个文件。
+   * 文件名由后端扫描 assets/configs/<格式>/ 下的模板得到, 前端不再另行登记。
+   * 引用：generate、onFormat。
+   * @param {string[]} names 文件名集合
    */
-  function renderFileTabs() {
+  function renderFileTabs(names) {
+    if (names.join('\n') === _fileNames.join('\n')) return;
+    _fileNames = names;
     var tabs = document.getElementById('file-tabs');
     var files = document.getElementById('ready-files');
     tabs.innerHTML = '';
     files.innerHTML = '';
-    FILE_SETS[_format].forEach(function (name, i) {
+    names.forEach(function (name, i) {
       var tab = document.createElement('button');
       tab.className = 'file-tab' + (i === 0 ? ' active' : '');
       tab.dataset.file = name;
@@ -44,7 +44,7 @@
       box.placeholder = '生成后显示';
       files.appendChild(box);
     });
-    _activeFile = FILE_SETS[_format][0];
+    _activeFile = names.length ? names[0] : null;
   }
 
   /**
@@ -62,7 +62,8 @@
   }
 
   /**
-   * 响应格式切换段点击: 切换状态、高亮按钮、重渲染文件区并重新生成。引用：bind。
+   * 响应格式切换段点击: 切换状态、清空文件区(待新格式的预览响应按实际文件集合重建)并重新生成。
+   * 引用：init。
    * @param {HTMLButtonElement} btn 被点击的格式按钮
    */
   function onFormat(btn) {
@@ -70,7 +71,7 @@
     document.querySelectorAll('#format-seg button').forEach(function (b) {
       b.classList.toggle('active', b === btn);
     });
-    renderFileTabs();
+    renderFileTabs([]);
     generate(true);
   }
 
@@ -198,16 +199,16 @@
   }
 
   /**
-   * 读取当前格式的全部文本区编辑内容构造 files; 任一为空时提示并返回 null
+   * 读取当前全部文本区内容构造 files; 任一为空时提示并返回 null
    * (导出以编辑后的文本为准, 不写空文件)。引用：doExport。
    * @returns {object|null} 文件名→文本。
    */
   function collectFiles() {
-    var names = FILE_SETS[_format];
+    var boxes = document.querySelectorAll('.toml-box');
     var files = {};
-    for (var i = 0; i < names.length; i++) {
-      var name = names[i];
-      var text = document.getElementById('file-' + name).value;
+    for (var i = 0; i < boxes.length; i++) {
+      var name = boxes[i].getAttribute('data-file');
+      var text = boxes[i].value;
       if (!text.trim()) {
         toast(name + ' 内容为空, 请先生成');
         return null;
@@ -219,12 +220,14 @@
 
   /**
    * 生成当前格式的配置预览并更新侧栏; 输入变化自动调用时静默(silent=true), 仅按钮手动生成时 toast.
-   * 文本区按 data.files 键填充(键随格式变化)。引用：init、tpl btn-gen、格式切换、模式切换、autoGenerate。
+   * 文件标签页按响应的 files 键重建(键随格式与模板目录变化)。
+   * 引用：init、tpl btn-gen、格式切换、模式切换、autoGenerate。
    * @param {boolean} [silent]
    */
   async function generate(silent) {
     var body = collectBody(silent);
     if (!body) return;
+    var format = _format;
     var data;
     try {
       data = await API.request(API.apiPath('/ready/toml'), {
@@ -236,7 +239,9 @@
       if (!silent) toast(String(e.message || e));
       return;
     }
+    if (format !== _format) return;  // 响应返回前格式已切换, 该结果对应旧格式, 丢弃
     var dataFiles = data.files || {};
+    renderFileTabs(Object.keys(dataFiles));
     Object.keys(dataFiles).forEach(function (name) {
       var box = document.getElementById('file-' + name);
       if (box) box.value = dataFiles[name];
@@ -289,7 +294,7 @@
    */
   async function copyText() {
     var tb = document.getElementById('file-' + _activeFile);
-    var text = tb.value;
+    var text = tb ? tb.value : '';
     if (!text) {
       toast('无可复制内容');
       return;
@@ -313,12 +318,15 @@
     copyText().catch(function (e) { toast(String(e.message || e)); });
   });
 
-  // 配置格式切换(sd-scripts/diffusion-pipe): 切换后重渲染文件区并重新生成
+  // 配置格式取自顶栏格式切换段当前选中项; 切换后重渲染文件区并重新生成
+  var _formatSeg = document.querySelector('#format-seg button.active')
+    || document.querySelector('#format-seg button');
+  _format = _formatSeg ? _formatSeg.dataset.format : '';
   Array.prototype.forEach.call(document.querySelectorAll('#format-seg button'), function (btn) {
     btn.addEventListener('click', function () { onFormat(btn); });
   });
 
-  // 训练模式切换(画风/角色): 切换后按新模式重新生成三件套
+  // 训练模式切换(画风/角色): 切换后按新模式重新生成配置
   Array.prototype.forEach.call(document.querySelectorAll('#mode-seg button'), function (btn) {
     btn.addEventListener('click', function () {
       var next = btn.getAttribute('data-mode');
@@ -377,7 +385,6 @@
     exportConfig().catch(function (e) { toast(String((e && e.message) || e)); });
   });
 
-  renderFileTabs();
   API.request(API.apiPath('/ready/dirs'))
     .then(function (data) {
       renderSide(data);

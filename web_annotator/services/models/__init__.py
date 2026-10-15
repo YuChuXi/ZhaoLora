@@ -50,7 +50,6 @@ from services.models.ready import (
     ReadySubset,
     ReadyTomlResult,
     TrainExportResult,
-    TrainFormat,
 )
 from services.models.tags import (
     TagStatRow,
@@ -161,7 +160,6 @@ __all__ = [
     'ReadySubset',
     'ReadyTomlResult',
     'TrainExportResult',
-    'TrainFormat',
     'TagStatRow',
     'TagStatsResult',
     'TagCleanSample',

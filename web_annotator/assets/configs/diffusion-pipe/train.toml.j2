@@ -21,7 +21,7 @@ steps_per_print = 1
 blocks_to_swap = 20
 compile = true
 output_dir = "{{ output_dir }}"
-dataset = "{{ dataset }}"
+dataset = "{{ export_dir }}/dataset.toml"
 eval_datasets = []
 
 [model]
@@ -42,12 +42,12 @@ rank = {{ rank }}
 
 [optimizer]
 type = "adamw8bit"
-lr = 0.0001
+lr = 0.00005
 weight_decay = 0.001
 betas = [0.9, 0.999]
 
 [monitoring]
 enable_wandb = true
-wandb_tracker_name = "{{ wandb_tracker_name }}"
+wandb_tracker_name = "{{ root_name }}-krea2"
 wandb_api_key = ""
 wandb_run_name = ""

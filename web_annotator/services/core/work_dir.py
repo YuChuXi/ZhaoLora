@@ -194,7 +194,7 @@ def list_work_dirs(root: Path) -> list[WorkDirInfo]:
         - ``routes/ready.py:dirs``
         - ``routes/dedupe.py:dirs``
         - ``routes/tag_stats.py:dirs``
-        - ``services/ready.py:build_ready_toml``
+        - ``services/ready.py:_ExportContext.work_dirs`` / ``exportable_dirs``
         - ``services/tagging/stats.py:resolve_selected_dirs``
     """
     dirs = [d for d in list_image_subdirs(root) if d.name != "."]

@@ -34,7 +34,7 @@ def natural_key(s: str) -> tuple:
         - ``services/analysis/wd14.py:list_image_subdirs``
         - ``services/analysis/birefnet.py:collect_images``
         - ``services/analysis/dedupe.py:collect_paths`` / ``load_records`` / ``find_duplicate_groups``
-        - ``services/ready.py:build_ready_toml``
+        - ``services/ready.py:_selected_names``
         - ``routes/crop.py:list_crop_images``
         - ``routes/tasks.py:list_tasks`` / ``list_candidates``
         - ``routes/tag_stats.py:embedding_query``

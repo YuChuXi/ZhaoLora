@@ -23,7 +23,7 @@ services/                      业务与基础设施
 assets/static/js/              前端模块（IIFE 单例，暴露到 window）
 assets/static/css/annotator.css 统一样式与控件
 assets/templates/              页面 HTML
-assets/configs/{sd-scripts,diffusion-pipe}/  训练配置 Jinja2 模板（就绪页导出）
+assets/configs/                训练配置 Jinja2 模板（子目录名即配置导出格式，就绪页导出用）
 docs/                          功能说明文档
 ```
 

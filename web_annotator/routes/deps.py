@@ -86,6 +86,7 @@ def get_runtime(request: Request) -> DatasetRuntime:
         - ``routes/online_sources.py:search``
         - ``routes/online_sources.py:undownload``
         - ``routes/ready.py:dirs``
+        - ``routes/ready.py:export``
         - ``routes/ready.py:toml``
         - ``routes/scoring.py:dirs``
         - ``routes/scoring.py:results``

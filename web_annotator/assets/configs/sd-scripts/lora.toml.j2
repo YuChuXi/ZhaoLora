@@ -44,6 +44,6 @@ optimizer_args = ["weight_decay=0.001"]
 masked_loss = true
 network_dim = {{ rank }}
 network_alpha = {{ rank }}
-output_name = "{{ output_name }}"
-sample_prompts = "{{ sample_prompts }}"
-dataset_config = "{{ dataset_config }}"
+output_name = "{{ root_name }}_anima"
+sample_prompts = "{{ export_dir }}/prompt.txt"
+dataset_config = "{{ export_dir }}/dataset.toml"
