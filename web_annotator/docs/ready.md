@@ -13,7 +13,7 @@
 
 导出写入 `{格式对应配置根}/{数据集名}/`；相对路径按 `web_annotator/` 目录解析。目标目录已存在配置时需确认覆盖。切换格式后自动重新生成，各文本区编辑内容随重建丢弃。
 
-配置文本由 `web_annotator/assets/{sd-scripts,diffusion-pipe}/` 下的 Jinja2 模板渲染（`services/ready.py:render_template`），代码仅装配数据（路径、重复次数、分组与正则化数据段）。
+配置文本由 `web_annotator/assets/configs/{sd-scripts,diffusion-pipe}/` 下的 Jinja2 模板渲染（`services/ready.py:render_template`），代码仅装配数据（路径、重复次数、分组与正则化数据段）。
 
 ### diffusion-pipe 差异
 
