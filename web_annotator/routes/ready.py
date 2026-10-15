@@ -37,7 +37,7 @@ class ReadyBody(BaseModel):
         description="各子集的分辨率列表(目录名→列表); 未指定或为空的子集生成单块无 resolution",
     )
     use_reg: bool = Field(default=True, description="是否在导出的 dataset.toml 中附带固定正则化数据段")
-    mode: LoraMode = Field("style", description="训练模式: style=画风(network rank 16) / character=角色(network rank 32)")
+    mode: LoraMode = Field("style", description="训练模式: 画风 style / 角色 character(各模式对应的超参由所选格式的模板决定)")
     train_format: str = Field(description="配置导出格式, 取值为 assets/configs/ 下的模板目录名(文件集合由该目录扫描得到)")
 
     @field_validator("train_format")

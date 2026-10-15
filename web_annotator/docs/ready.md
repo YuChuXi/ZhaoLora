@@ -17,7 +17,9 @@
 
 配置文本由 `web_annotator/assets/configs/<格式名>/` 下的 Jinja2 模板渲染（`services/ready.py:_render_files`）：模板目录名即格式名，目录内 `*.j2` 去掉后缀即该格式的配置文件名；每个模板需要哪些变量由其自身声明决定（`jinja2.meta.find_undeclared_variables` 解析其语法树），再从 `services/ready.py:_VARIABLES` 按变量名取数据。因此新增格式或模板文件只需在 `assets/configs/` 新建模板并按 `<格式大写下划线>_CONFIG_ROOT` 约定命名 `.env` 变量，后端代码无需登记格式、模板或环境变量的对应关系；请求体中的 `train_format` 即以模板目录名为准校验。
 
-模板在沙箱环境（`jinja2.sandbox.ImmutableSandboxedEnvironment`）中渲染：只能取用 `_VARIABLES` 中登记的变量，不能经属性链（如 `cycler.__init__.__globals__`）触及进程环境、文件系统或其他对象；变量名未登记时渲染直接失败，不静默留空。环境变量本身从不作为变量暴露，读取只发生在 `export_dir` / `output_dir` 两条路径上，且键名由**本次请求的格式名**推导（`<格式大写下划线>_CONFIG_ROOT` / `_OUTPUT_ROOT`），模板无法跨格式读取他人配置根。
+模板在沙箱环境（`jinja2.sandbox.ImmutableSandboxedEnvironment`）中渲染：只能取用 `_VARIABLES` 中登记的变量，不能经属性链（如 `cycler.__init__.__globals__`）触及进程环境、文件系统或其他对象；变量名未登记时渲染直接失败，不静默留空。环境变量本身从不作为变量暴露，读取只发生在 `export_dir` / `output_dir` / `comfyui_models_root` 三条路径上，且键名由**本次请求的格式名**推导（`<格式大写下划线>_CONFIG_ROOT` / `_OUTPUT_ROOT`）或为固定的 `COMFYUI_MODELS_ROOT`，模板无法跨格式读取他人配置根。
+
+模板内的模型权重路径统一以 `{{ comfyui_models_root }}`（`COMFYUI_MODELS_ROOT`）为前缀，模型目录迁移只需改 `.env`；画风/角色的差异（如网络 rank）由各格式模板自行决定（后端只透传模式名 `mode`），不写死在代码里。
 
 ### diffusion-pipe 差异
 

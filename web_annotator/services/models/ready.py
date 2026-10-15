@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field
 
 from services.models.dataset import WorkDirInfo
 
-# 训练模式: style=画风(network rank 16) / character=角色(network rank 32)
+# 训练模式: 画风 style / 角色 character(各模式对应的超参由格式模板自行决定)
 LoraMode = Literal["style", "character"]
 
 

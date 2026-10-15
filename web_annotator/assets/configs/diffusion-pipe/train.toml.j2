@@ -1,3 +1,4 @@
+{% set rank = {"style": 8, "character": 16}[mode] %}
 max_steps = 500
 micro_batch_size_per_gpu = 1
 pipeline_stages = 1
@@ -26,9 +27,9 @@ eval_datasets = []
 
 [model]
 type = "krea2"
-diffusion_model = "/media/yuchuxi/Data/Servers/ComfyUI/models/diffusion_models/krea2_raw_bf16.safetensors"
-vae = "/media/yuchuxi/Data/Servers/ComfyUI/models/vae/qwen_image_vae.safetensors"
-text_encoders = [{path = "/media/yuchuxi/Data/Servers/ComfyUI/models/text_encoders/qwen3vl_4b_bf16.safetensors", type = "krea2"}]
+diffusion_model = "{{ comfyui_models_root }}/diffusion_models/krea2_raw_bf16.safetensors"
+vae = "{{ comfyui_models_root }}/vae/qwen_image_vae.safetensors"
+text_encoders = [{path = "{{ comfyui_models_root }}/text_encoders/qwen3vl_4b_bf16.safetensors", type = "krea2"}]
 dtype = "bfloat16"
 diffusion_model_dtype = "float8"
 timestep_sample_method = "logit_normal"

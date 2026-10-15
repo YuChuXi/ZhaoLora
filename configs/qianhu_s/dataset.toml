@@ -28,3 +28,13 @@ path = "/home/yuchuxi/Projects/Experiments/Dataset/ZhaoLora/datasets/qianhu_s/su
 mask_path = "/home/yuchuxi/Projects/Experiments/Dataset/ZhaoLora/datasets/qianhu_s/mask/sub"
 num_repeats = 2
 resolutions = [512, 1024, 1536]
+
+[[directory]]
+path = "/home/yuchuxi/Projects/Experiments/Dataset/ZhaoLora/datasets/regL/256_1"
+num_repeats = 1
+resolutions = [1536]
+
+[[directory]]
+path = "/home/yuchuxi/Projects/Experiments/Dataset/ZhaoLora/datasets/regL/256_2"
+num_repeats = 1
+resolutions = [1024]

@@ -39,10 +39,12 @@ from services.tagging.stats import count_tags
 # 配置模板的渲染环境:
 # - 沙箱: 模板只能访问传入的变量与只读能力, 无法经属性链逃逸到 os/filesystem(默认
 #   ``Environment`` 可经 ``cycler.__init__.__globals__`` 之类读到任意对象, 而声明式变量
-#   检查对这类载荷无效), 也不能就地修改传入的列表/字典;
+#   检查对这类载荷无效), 也不能就地修改传入的字典;
+# - ``StrictUndefined``: 取用未提供的变量(或字典不存在的键)直接失败, 不静默渲染成空串;
 # - 关闭自动转义(TOML 为纯文本); trim/lstrip_blocks 使独占一行的控制标签不产生空行
 _JINJA_ENV = ImmutableSandboxedEnvironment(
     loader=jinja2.FileSystemLoader(Path(__file__).resolve().parent.parent / "assets"),
+    undefined=jinja2.StrictUndefined,
     trim_blocks=True,
     lstrip_blocks=True,
     keep_trailing_newline=True,
@@ -185,10 +187,6 @@ def reg_datasets() -> list[tuple[int, str]]:
             raise ValueError(f"REG_DATASETS 条目无效: {part!r}, 须为 分辨率:目录绝对路径")
         entries.append((int(res_text), path.strip()))
     return entries
-
-
-# 各训练模式的网络规模: network_dim = network_alpha = rank
-_LORA_RANKS: dict[LoraMode, int] = {"style": 16, "character": 32}
 
 
 def _has_images(d: Path) -> bool:
@@ -570,19 +568,42 @@ def _directory_entries(ctx: _ExportContext) -> list[dict]:
     return directories
 
 
-def _network_rank(ctx: _ExportContext) -> int:
-    """装配 ``rank`` 变量: 该模式的 LoRA 网络规模(供模板写 network_dim / network_alpha).
+def _training_mode(ctx: _ExportContext) -> str:
+    """装配 ``mode`` 变量: 本次请求的训练模式(画风 / 角色).
+
+    只透传模式名, 各模式对应什么超参(如网络 rank)由模板自行决定.
 
     Args:
         ctx (_ExportContext): 本次生成的输入与派生数据.
 
     Returns:
-        int: 网络规模(画风 16 / 角色 32).
+        str: 模式名(``style`` / ``character``).
 
     Callers:
         - ``services/ready.py:_render_files`` (经 ``_VARIABLES`` 按变量名调用)
     """
-    return _LORA_RANKS[ctx.mode]
+    return ctx.mode
+
+
+def _comfyui_models_root(ctx: _ExportContext) -> str:
+    """装配 ``comfyui_models_root`` 变量: ComfyUI 模型根目录的绝对路径.
+
+    取环境变量 ``COMFYUI_MODELS_ROOT``(见 .env.example), 供模板拼接各权重文件路径
+    (``{{ comfyui_models_root }}/diffusion_models/...``), 使模型根目录迁移只需改 `.env`.
+
+    Args:
+        ctx (_ExportContext): 本次生成的输入与派生数据(未使用).
+
+    Returns:
+        str: 模型根目录的绝对路径.
+
+    Raises:
+        ValueError: 环境变量未配置.
+
+    Callers:
+        - ``services/ready.py:_render_files`` (经 ``_VARIABLES`` 按变量名调用)
+    """
+    return str(_env_root("COMFYUI_MODELS_ROOT"))
 
 
 def _prompt_head(ctx: _ExportContext) -> str:
@@ -662,11 +683,12 @@ def _artifact_dir(ctx: _ExportContext) -> str:
 _VARIABLES: dict[str, Callable[[_ExportContext], object]] = {
     "groups": _group_datasets,
     "directories": _directory_entries,
-    "rank": _network_rank,
+    "mode": _training_mode,
     "head": _prompt_head,
     "root_name": _dataset_name,
     "export_dir": _config_dir,
     "output_dir": _artifact_dir,
+    "comfyui_models_root": _comfyui_models_root,
 }
 
 
