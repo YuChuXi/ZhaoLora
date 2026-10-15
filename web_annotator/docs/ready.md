@@ -17,6 +17,8 @@
 
 配置文本由 `web_annotator/assets/configs/<格式名>/` 下的 Jinja2 模板渲染（`services/ready.py:_render_files`）：模板目录名即格式名，目录内 `*.j2` 去掉后缀即该格式的配置文件名；每个模板需要哪些变量由其自身声明决定（`jinja2.meta.find_undeclared_variables` 解析其语法树），再从 `services/ready.py:_VARIABLES` 按变量名取数据。因此新增格式或模板文件只需在 `assets/configs/` 新建模板并按 `<格式大写下划线>_CONFIG_ROOT` 约定命名 `.env` 变量，后端代码无需登记格式、模板或环境变量的对应关系；请求体中的 `train_format` 即以模板目录名为准校验。
 
+模板在沙箱环境（`jinja2.sandbox.ImmutableSandboxedEnvironment`）中渲染：只能取用 `_VARIABLES` 中登记的变量，不能经属性链（如 `cycler.__init__.__globals__`）触及进程环境、文件系统或其他对象；变量名未登记时渲染直接失败，不静默留空。环境变量本身从不作为变量暴露，读取只发生在 `export_dir` / `output_dir` 两条路径上，且键名由**本次请求的格式名**推导（`<格式大写下划线>_CONFIG_ROOT` / `_OUTPUT_ROOT`），模板无法跨格式读取他人配置根。
+
 ### diffusion-pipe 差异
 
 - `train.toml` 以项目 `configs/chawenjian/train.toml` 为蓝本：训练/验证/保存与 `[model]`/`[optimizer]`/`[monitoring]` 段固定，`dataset` 指向导出目录内的 `dataset.toml`，`output_dir` 取 `{DIFFUSION_PIPE_OUTPUT_ROOT}/{数据集名}`（训练产物与配置分离，避免各数据集在同一目录下用相同的 `epochN`/`stepN` 子目录名互相覆盖），`[adapter].rank` 随画风/角色模式，`wandb_tracker_name` 由数据集名派生。

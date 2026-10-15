@@ -17,6 +17,7 @@ from typing import Callable
 
 import jinja2
 from jinja2.meta import find_undeclared_variables
+from jinja2.sandbox import ImmutableSandboxedEnvironment
 
 from services.core.natural import natural_key
 from services.state.mask import has_mask
@@ -35,8 +36,12 @@ from services.tagging.stats import count_tags
 
 # ---- 模板渲染(assets/ 下的 Jinja2 文件) ----
 
-# TOML 为纯文本, 关闭自动转义; trim/lstrip_blocks 使独占一行的控制标签不产生空行
-_JINJA_ENV = jinja2.Environment(
+# 配置模板的渲染环境:
+# - 沙箱: 模板只能访问传入的变量与只读能力, 无法经属性链逃逸到 os/filesystem(默认
+#   ``Environment`` 可经 ``cycler.__init__.__globals__`` 之类读到任意对象, 而声明式变量
+#   检查对这类载荷无效), 也不能就地修改传入的列表/字典;
+# - 关闭自动转义(TOML 为纯文本); trim/lstrip_blocks 使独占一行的控制标签不产生空行
+_JINJA_ENV = ImmutableSandboxedEnvironment(
     loader=jinja2.FileSystemLoader(Path(__file__).resolve().parent.parent / "assets"),
     trim_blocks=True,
     lstrip_blocks=True,
