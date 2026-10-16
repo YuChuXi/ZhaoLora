@@ -14,10 +14,11 @@
     { page: 'paint', label: '蒙版' },
     { page: 'tags', label: '标签' },
     { page: 'tag-check', label: '标签检查' },
+    { page: 'caption', label: '描述' },
     { page: 'ready', label: '就绪' },
   ];
 
-  var HIDE_DIR = { filter: 0, crop: 0, paint: 0, ready: 1, scoring: 0, dedupe: 0, tags: 0, 'tag-check': 0, video_extract: 1 };
+  var HIDE_DIR = { filter: 0, crop: 0, paint: 0, ready: 1, scoring: 0, dedupe: 0, tags: 0, 'tag-check': 0, caption: 0, video_extract: 1 };
 
   /**
    * @returns {{dataset: string|null, page: string}}
@@ -41,6 +42,7 @@
     if (page === 'dedupe') return API.apiPath('/dedupe/dirs');
     if (page === 'scoring') return API.apiPath('/scoring/dirs');
     if (page === 'tags' || page === 'tag-check') return API.apiPath('/tags/dirs');
+    if (page === 'caption') return API.apiPath('/caption/dirs');
     return API.apiPath('/dirs');
   }
 

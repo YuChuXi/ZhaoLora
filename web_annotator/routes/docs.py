@@ -26,6 +26,7 @@ _DOC_MAP: dict[str, str] = {
     "paint": "paint.md",
     "tags": "tags.md",
     "tag-check": "tag-check.md",
+    "caption": "caption.md",
     "ready": "ready.md",
 }
 
@@ -39,6 +40,7 @@ _NAV: list[tuple[str, str]] = [
     ("paint", "蒙版"),
     ("tags", "标签"),
     ("tag-check", "标签检查"),
+    ("caption", "描述"),
     ("ready", "就绪"),
 ]
 

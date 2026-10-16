@@ -685,6 +685,24 @@ body {
   pointer-events: none;
 }
 
+/* ---- 分段切换控件(一组按钮, 选中项加 .active; 可单选或多选) ---- */
+.mode-seg {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.mode-seg button {
+  background: transparent;
+  color: var(--text-dim);
+  border: none;
+  cursor: pointer;
+  padding: 4px 12px;
+  font-size: 12px;
+  font-family: inherit;
+}
+.mode-seg button.active { background: var(--accent); color: #fff; }
+
 /* ---- 统一模态对话框组件 ---- */
 .modal {
   display: none;

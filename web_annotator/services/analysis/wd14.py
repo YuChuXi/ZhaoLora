@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -14,6 +15,7 @@ from services.models import JobSnapshot, WorkDirInfo
 from services.core.atomic import atomic_write_text
 from services.core.natural import natural_key
 from services.core.scanner import IMAGE_EXTS, collect_images
+from services.dataset.layout import WD14_META_DIRNAME
 from services.online_sources.framework.utils import _GENDER_TAGS
 from services.core.device import register_model
 
@@ -439,6 +441,101 @@ def _load_text(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
+@dataclass(frozen=True)
+class Wd14Tag:
+    """WD14 推理得到的一个标签及其置信度与标签类型.
+
+    Attributes:
+        name (str): 标签名(下划线已转空格).
+        score (float): 置信度, 由阈值过滤后保留.
+        category (str): 标签类型, 取值 ``general`` 或 ``character``.
+
+    Callers:
+        - ``services/analysis/wd14.py:write_meta`` : 序列化来源.
+        - ``services/analysis/wd14.py:load_meta`` : 反序列化产物.
+        - ``services/analysis/caption.py:run_caption`` : 注入提示词的参考候选.
+    """
+
+    name: str
+    score: float
+    category: str
+
+
+def meta_path(root: Path, image_rel: str) -> Path:
+    """返回图片的 WD14 缓存文件路径 ``<root>/.wd14_meta/<子目录>/<stem>.json``.
+
+    缓存按图片相对路径镜像存放, 使不同子目录的同名图片各占一份缓存.
+
+    Args:
+        root (Path): 数据集根目录.
+        image_rel (str): 图片相对数据集根的路径, 如 ``main/foo.png``.
+
+    Returns:
+        Path: 缓存 json 的绝对路径.
+
+    Callers:
+        - ``services/analysis/wd14.py:write_meta``
+        - ``services/analysis/wd14.py:load_meta``
+        - ``services/analysis/caption.py:run_caption``
+    """
+    rel = image_rel.replace("\\", "/").lstrip("/")
+    return root / WD14_META_DIRNAME / Path(rel).with_suffix(".json")
+
+
+def write_meta(root: Path, image_rel: str, threshold: float, tags: list[Wd14Tag]) -> None:
+    """把单张图片的 WD14 推理结果写入缓存 json.
+
+    缓存只记录阈值以上的标签, 供描述页注入参考候选与就绪页统计完整度;
+    父目录按需创建, 写入经原子替换, 避免半截文件.
+
+    Args:
+        root (Path): 数据集根目录.
+        image_rel (str): 图片相对数据集根的路径.
+        threshold (float): 本次推理所用置信度阈值.
+        tags (list[Wd14Tag]): 阈值以上的标签列表, 按置信度降序.
+
+    Returns:
+        None
+
+    Callers:
+        - ``services/analysis/wd14.py:_process_one``
+    """
+    path = meta_path(root, image_rel)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "image": image_rel.replace("\\", "/").lstrip("/"),
+        "threshold": threshold,
+        "tags": [
+            {"tag": tag.name, "score": round(tag.score, 6), "category": tag.category}
+            for tag in tags
+        ],
+    }
+    atomic_write_text(path, json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
+
+
+def load_meta(root: Path, image_rel: str) -> list[Wd14Tag] | None:
+    """读取图片的 WD14 缓存标签.
+
+    Args:
+        root (Path): 数据集根目录.
+        image_rel (str): 图片相对数据集根的路径.
+
+    Returns:
+        list[Wd14Tag] | None: 缓存标签列表; 未打标或缓存缺失时为 None.
+
+    Callers:
+        - ``services/analysis/caption.py:run_caption``
+    """
+    path = meta_path(root, image_rel)
+    if not path.is_file():
+        return None
+    data = json.loads(path.read_text(encoding="utf-8"))
+    return [
+        Wd14Tag(name=str(item["tag"]), score=float(item["score"]), category=str(item["category"]))
+        for item in data.get("tags", [])
+    ]
+
+
 @dataclass
 class TaggingProgress:
     status: str = "idle"  # idle|running|done|error|cancelled
@@ -499,16 +596,18 @@ class TaggingProgress:
 def _process_one(
     src: Path,
     *,
+    root: Path,
     handle: _WD14_HANDLE,
     threshold: float,
     disable_orig_tags: bool,
     force: bool,
     artist_tag: str = "",
 ) -> str:
-    """处理单张图片: WD14 推理 → 合并原标签 → 写入同名 .txt. 
+    """处理单张图片: WD14 推理 → 缓存置信度 → 合并原标签 → 写入同名 .txt. 
 
     Args:
         src: 图片绝对路径.
+        root: 数据集根目录, 用于定位 ``.wd14_meta`` 缓存.
         handle: WD14 模型句柄, 由 ``run_batch`` 持有并透传.
         threshold: 置信度阈值.
         disable_orig_tags: 是否丢弃原标签.
@@ -530,6 +629,19 @@ def _process_one(
     if not disable_orig_tags:
         base = Tags.split_caption(_load_text(out_txt_path))
     wd_scored = _infer_wd14(img, threshold, handle)
+    write_meta(
+        root,
+        src.relative_to(root).as_posix(),
+        threshold,
+        [
+            Wd14Tag(
+                name=name,
+                score=score,
+                category="character" if is_character else "general",
+            )
+            for name, score, is_character in wd_scored
+        ],
+    )
     caption = Tags.merge_for_disk_by_confidence(base, wd_scored, artist_tag=artist_tag)
     atomic_write_text(out_txt_path, caption)
     return "ok"
@@ -539,6 +651,7 @@ def _process_one(
 def run_batch(
     dirs: list[Path],
     *,
+    root: Path,
     handle: _WD14_HANDLE,
     threshold: float,
     disable_orig_tags: bool,
@@ -551,6 +664,7 @@ def run_batch(
 
     Args:
         dirs: 待打标的图片目录列表.
+        root: 数据集根目录, 用于写入 ``.wd14_meta`` 置信度缓存.
         handle: WD14 模型句柄 ``(session, labels)``, 由 ``auto_release`` 注入.
         threshold: 置信度阈值.
         disable_orig_tags: 是否丢弃原标签.
@@ -613,6 +727,7 @@ def run_batch(
         try:
             result = _process_one(
                 src,
+                root=root,
                 handle=handle,
                 threshold=threshold,
                 disable_orig_tags=disable_orig_tags,

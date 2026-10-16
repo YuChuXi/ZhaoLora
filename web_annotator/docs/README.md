@@ -34,6 +34,7 @@
 5. [蒙版](?doc=paint) — 绘制 Alpha（可选）  
 6. [标签](?doc=tags) — WD14 自动生成 + 频率统计  
 7. [标签检查](?doc=tag-check) — 瀑布流检查标签存在性与位置，点击卡片补齐  
-8. [就绪](?doc=ready) — 生成训练用 TOML 片段  
+8. [描述](?doc=caption) — 调用 Ollama 生成自然语言描述，写入 `captions.json`  
+9. [就绪](?doc=ready) — 生成训练用 TOML 片段  
 
 目录与元数据约定见 [目录约定](?doc=layout)。

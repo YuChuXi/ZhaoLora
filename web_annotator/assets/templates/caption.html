@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>描述</title>
+<link rel="stylesheet" href="/static/css/annotator.css">
+<style>
+  /* 描述页对话框: 分节、行布局与查看描述样式 */
+  .dlg-body {
+    padding: 14px 16px; display: flex; flex-direction: column; gap: 14px;
+    font-size: 12px; color: var(--text-dim); overflow: auto;
+  }
+  .dlg-section { display: flex; flex-direction: column; gap: 6px; }
+  .dlg-section + .dlg-section { border-top: 1px solid var(--border); padding-top: 12px; }
+  .dlg-section-title { font-weight: 600; color: var(--text); }
+  .rule-list { display: flex; flex-direction: column; gap: 6px; max-height: 200px; overflow-y: auto; }
+  /* 操作区: 添加条目的控件, 与下方已添加条目列表分区 */
+  .rule-add {
+    display: flex; flex-direction: column; gap: 6px;
+    padding: 8px 10px; background: var(--surface);
+    border: 1px dashed var(--border); border-radius: 4px;
+  }
+  .rule-row { display: flex; align-items: center; gap: 6px; }
+  .rule-row input[type="text"],
+  .rule-row input[type="number"],
+  .rule-row select {
+    background: #0a1a30; color: var(--text); border: 1px solid var(--border);
+    border-radius: 4px; padding: 4px 8px; font-size: 12px; font-family: inherit;
+  }
+  .rule-row .rule-pattern { width: 200px; flex-shrink: 0; }
+  .rule-row .rule-text { flex: 1; min-width: 0; }
+  .rule-row .rule-always {
+    display: flex; align-items: center; gap: 3px; flex-shrink: 0;
+    cursor: pointer; user-select: none;
+  }
+  .rule-row .rule-always input { margin: 0; }
+  .rule-row .rule-threshold { width: 80px; flex-shrink: 0; }
+  .rule-row .rule-threshold:disabled { opacity: .45; }
+  .rule-row .rule-template-sel { width: 150px; flex-shrink: 0; }
+  .rule-row .rule-template-desc { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .rule-row .rule-label { flex-shrink: 0; }
+  .view-caption {
+    background: #0a1a30; color: var(--text); border: 1px solid var(--border);
+    border-radius: 4px; padding: 8px 10px; font-size: 12px; line-height: 1.6;
+    white-space: pre-wrap; word-break: break-word;
+  }
+  .view-caption .view-label { color: var(--text-dim); font-weight: 600; display: block; margin-bottom: 4px; }
+</style>
+</head>
+<body>
+<nav class="app-tabs" id="app-tabs"></nav>
+
+<div class="toolbar">
+  <button class="btn green" type="button" id="btn-open">开始标注</button>
+  <button class="btn danger" type="button" id="btn-cancel" hidden>取消</button>
+  <span class="sep"></span>
+  <div class="job-progress compact" id="progress" hidden>
+    <div class="job-progress-track">
+      <div class="job-progress-fill" id="progress-fill"></div>
+    </div>
+    <span class="job-progress-pct" id="progress-pct">0%</span>
+  </div>
+  <span class="status-seg" id="stat-job"></span>
+  <span class="status-seg" id="stat-model">-</span>
+</div>
+
+<div class="masonry" id="masonry"></div>
+<div class="hint" id="cap-hint">绿色=已有描述 · 点击卡片查看描述 · 描述写入各目录的 captions.json（键为文件名, 值为「粗略/详细」列表）</div>
+<div class="status-bar" id="cap-status">
+  <span class="status-seg">共<b id="stat-total">0</b></span>
+  <span class="status-seg">已描述<b id="stat-described">0</b></span>
+  <span class="status-seg">未描述<b id="stat-missing">0</b></span>
+</div>
+
+<!-- 描述设置与启动: 模式、注入设置、预设提示词与触发词表 -->
+<div class="modal" id="rules-dlg" aria-hidden="true">
+  <div class="modal-panel" role="dialog" aria-labelledby="rules-dlg-title"
+    style="width:min(780px,94vw);height:auto;max-height:min(720px,88vh);">
+    <div class="modal-head">
+      <span class="modal-title" id="rules-dlg-title">描述设置</span>
+    </div>
+    <div class="dlg-body">
+      <div class="dlg-section">
+        <div class="dlg-section-title">描述模式（可同时选择多个；captions.json 中按 粗略 → 详细 的顺序排列）</div>
+        <span class="mode-seg" id="mode-seg"></span>
+      </div>
+      <div class="dlg-section">
+        <div class="dlg-section-title">注入 WD14 参考标签</div>
+        <div class="rule-row">
+          <label class="rule-always"><input type="checkbox" id="inject-general"> 通用标签</label>
+          <span class="rule-label">置信度 ≥</span>
+          <input type="number" id="general-threshold" class="rule-threshold" min="0" max="1" step="0.05">
+        </div>
+        <div class="rule-row">
+          <label class="rule-always"><input type="checkbox" id="inject-character"> 角色标签</label>
+          <span class="rule-label">置信度 ≥</span>
+          <input type="number" id="character-threshold" class="rule-threshold" min="0" max="1" step="0.05">
+        </div>
+      </div>
+      <div class="dlg-section">
+        <div class="dlg-section-title">提示词补充（「匹配标签」命中 WD14 标签时注入；勾选「手动指定」则对该数据集全部图片生效）</div>
+        <div class="rule-add">
+          <div class="rule-row">
+            <select id="rule-template" class="rule-template-sel"></select>
+            <span class="rule-template-desc" id="rule-template-desc"></span>
+            <button class="btn" type="button" id="rule-template-add">按模板添加</button>
+            <button class="btn" type="button" id="rule-add">新增空白提示词</button>
+          </div>
+          <div class="rule-list" id="rule-template-fields"></div>
+        </div>
+        <div class="rule-list" id="rule-list"></div>
+      </div>
+      <div class="dlg-section">
+        <div class="dlg-section-title">触发词：描述表（由模型判断图中是否存在该元素，符合时把触发词加入描述）</div>
+        <div class="rule-add">
+          <div class="rule-row">
+            <button class="btn" type="button" id="trigger-add">新增触发词</button>
+          </div>
+        </div>
+        <div class="rule-list" id="trigger-list"></div>
+      </div>
+      <div class="dlg-section">
+        <label class="rule-always">
+          <input type="checkbox" id="force"> 覆盖已有描述（重新标注已有描述的图片并覆盖其 captions.json 条目）
+        </label>
+      </div>
+      <div class="dlg-section">以上设置保存在浏览器本地，与当前数据集绑定</div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn" type="button" id="rules-close">取消</button>
+      <button class="btn green" type="button" id="btn-start">开始标注</button>
+    </div>
+  </div>
+</div>
+
+<!-- 描述查看 -->
+<div class="modal" id="view-dlg" aria-hidden="true">
+  <div class="modal-panel" role="dialog" aria-labelledby="view-title"
+    style="width:min(760px,94vw);height:auto;max-height:min(720px,88vh);">
+    <div class="modal-head">
+      <span class="modal-title" id="view-title">描述</span>
+    </div>
+    <div class="dlg-body" id="view-body"></div>
+    <div class="modal-foot">
+      <button class="btn" type="button" id="view-close">关闭</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script src="/static/js/ui.js"></script>
+<script src="/static/js/api.js"></script>
+<script src="/static/js/dir_picker.js"></script>
+<script src="/static/js/nav.js"></script>
+<script src="/static/js/masonry.js"></script>
+<script src="/static/js/caption.js"></script>
+</body>
+</html>

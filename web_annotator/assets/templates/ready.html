@@ -33,12 +33,6 @@
     border-radius: 4px; padding: 3px 6px; font-size: 12px;
   }
   .toolbar .status-seg { min-width: 0; flex: 0 1 auto; }
-  .mode-seg { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
-  .mode-seg button {
-    background: transparent; color: var(--text-dim); border: none; cursor: pointer;
-    padding: 4px 12px; font-size: 12px; font-family: inherit;
-  }
-  .mode-seg button.active { background: var(--accent); color: #fff; }
   .file-tabs { display: flex; gap: 4px; padding: 10px 14px 0; }
   .file-tab {
     background: transparent; border: 1px solid var(--border); color: var(--text-dim);
@@ -94,7 +88,7 @@
 
 <div class="ready-main">
   <aside class="ready-side">
-    <h3>工作目录 <span class="legend">img | text | mask</span></h3>
+    <h3>工作目录 <span class="legend">img | text | json | mask</span></h3>
     <div class="dir-list" id="dir-list"></div>
   </aside>
   <div class="ready-content">

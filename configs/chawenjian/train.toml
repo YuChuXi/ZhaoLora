@@ -86,7 +86,7 @@ flux_shift = true
 # ---------- LoRA（train.py: alpha 强制 = rank）----------
 [adapter]
 type = 'lora'
-rank = 16
+rank = 8
 # 未写时继承 [model] 段的 dtype
 dtype = 'bfloat16'
 dropout = 0.1

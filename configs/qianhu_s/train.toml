@@ -38,11 +38,11 @@ flux_shift = true
 type = "lora"
 dtype = "bfloat16"
 dropout = 0.1
-rank = 32
+rank = 16
 
 [optimizer]
 type = "adamw8bit"
-lr = 0.00005
+lr = 0.0001
 weight_decay = 0.001
 betas = [0.9, 0.999]
 

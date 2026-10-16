@@ -35,6 +35,7 @@ from routes.alpha_paint import router as paint_router
 from routes.annotations import router as annotations_router
 from routes.scoring import router as scoring_router
 from routes.birefnet import router as birefnet_router
+from routes.caption import router as caption_router
 from routes.online_sources import router as sources_router
 from routes.crop import router as crop_router
 from routes.dedupe import router as dedupe_router
@@ -136,6 +137,7 @@ _PAGE_TEMPLATES = {
     "paint": "paint.html",
     "tags": "tags.html",
     "tag-check": "tag_check.html",
+    "caption": "caption.html",
     "ready": "ready.html",
     "video_extract": "video_extract.html",
 }
@@ -299,6 +301,7 @@ dataset_api.include_router(crop_router)
 dataset_api.include_router(scoring_router)
 dataset_api.include_router(tagging_router)
 dataset_api.include_router(tag_stats_router)
+dataset_api.include_router(caption_router)
 dataset_api.include_router(dedupe_router)
 dataset_api.include_router(ready_router)
 dataset_api.include_router(sources_router)

@@ -100,6 +100,7 @@ async def start(request: Request, body: StartBody) -> TaggingStartResponse:
 
         run_batch(
             selected,
+            root=root,
             threshold=body.threshold,
             disable_orig_tags=body.disable_orig_tags,
             force=body.force,

@@ -43,6 +43,14 @@ RESERVED_DIR_NAMES = frozenset({
 # 每图裁剪输出记录目录名(datasets/xxx/.crops/{stem}.json, routes/crop.py 读写)
 CROP_META_DIRNAME = ".crops"
 
+# WD14 打标缓存目录名(datasets/xxx/.wd14_meta/{子目录}/{stem}.json); 按图片相对
+# 路径镜像存放, 使不同子目录的同名图片各占一份缓存
+WD14_META_DIRNAME = ".wd14_meta"
+
+# 目录级自然语言描述文件名(datasets/xxx/{子目录}/captions.json); 键为图片文件名,
+# 值为描述列表, 由 diffusion-pipe 直接作为目录级 caption 读取
+CAPTIONS_JSON_FILE = "captions.json"
+
 # 视频目录名(数据集根下, 可为指向外部存储的符号链接)
 VIDEO_DIRNAME = "video"
 

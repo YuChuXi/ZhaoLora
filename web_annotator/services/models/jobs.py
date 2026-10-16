@@ -18,6 +18,7 @@ from __future__ import annotations
 from pydantic import BaseModel, Field
 
 from services.models.archive import ArchivedTask
+from services.models.caption import CaptionResult
 from services.models.dedupe import DedupeScanResult
 from services.models.tags import ConceptQueryResult, EmbeddingQueryResult, TagCleanResult
 
@@ -43,7 +44,7 @@ class JobSubmitResponse(BaseModel):
     job_id: str
 
 
-JobResult = ArchivedTask | DedupeScanResult | TagCleanResult | EmbeddingQueryResult | ConceptQueryResult
+JobResult = ArchivedTask | DedupeScanResult | TagCleanResult | EmbeddingQueryResult | ConceptQueryResult | CaptionResult
 
 class JobSnapshot(BaseModel):
     """长任务进度快照(SSE / 取消回执)."""

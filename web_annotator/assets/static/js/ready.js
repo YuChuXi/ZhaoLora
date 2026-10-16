@@ -126,17 +126,18 @@
 
       var meta = document.createElement('span');
       meta.className = 'dir-meta';
-      meta.title = '图片 | 标注 | 蒙版 (标注与蒙版仅统计有对应图片的)';
+      meta.title = '图片 | 标注(.txt) | 描述(captions.json) | 蒙版 (后三项仅统计有对应图片的)';
       if (m) {
         var dot = document.createElement('span');
         dot.className = 'status ' + (m.ready ? 'ok' : 'none');
         dot.title = m.ready ? '就绪: 标注齐全, 蒙版齐全或全无' : '未就绪: 标注未齐全或蒙版部分存在';
         meta.appendChild(dot);
         meta.appendChild(document.createTextNode(
-          (d.image_count != null ? d.image_count : 0) + ' | ' + (m.text_count || 0) + ' | ' + m.mask_complete
+          (d.image_count != null ? d.image_count : 0) + ' | ' + (m.text_count || 0) +
+          ' | ' + (m.caption_count || 0) + ' | ' + m.mask_complete
         ));
       } else {
-        meta.textContent = (d.image_count != null ? d.image_count : 0) + ' | 0 | 0';
+        meta.textContent = (d.image_count != null ? d.image_count : 0) + ' | 0 | 0 | 0';
       }
       row.appendChild(meta);
 

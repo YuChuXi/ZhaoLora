@@ -74,6 +74,17 @@ from services.models.tags import (
     ConceptQueryItem,
     ConceptQueryResult,
 )
+from services.models.caption import (
+    CAPTION_MODES,
+    CaptionRule,
+    CaptionBody,
+    CaptionListBody,
+    CaptionImageItem,
+    CaptionListResponse,
+    CaptionResult,
+    CaptionDirsResponse,
+    CaptionRuleTemplateInfo,
+)
 from services.models.jobs import (
     AestheticSummary,
     JobSubmitResponse,
@@ -181,6 +192,15 @@ __all__ = [
     'ConceptQueryBody',
     'ConceptQueryItem',
     'ConceptQueryResult',
+    'CAPTION_MODES',
+    'CaptionRule',
+    'CaptionBody',
+    'CaptionListBody',
+    'CaptionImageItem',
+    'CaptionListResponse',
+    'CaptionResult',
+    'CaptionDirsResponse',
+    'CaptionRuleTemplateInfo',
     'AestheticSummary',
     'JobSubmitResponse',
     'JobResult',

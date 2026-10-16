@@ -28,6 +28,7 @@ from services.models import (
     ReadyTomlResult,
     WorkDirInfo,
 )
+from services.analysis.caption import load_captions
 from services.core.scanner import IMAGE_EXTS, scan_images
 from services.core.work_dir import list_work_dirs
 from services.tagging.clean import tag_key
@@ -206,9 +207,10 @@ def _has_images(d: Path) -> bool:
 
 
 def subdir_mask_stats(root: Path, subdir: str = "main") -> MaskStats:
-    """统计指定子目录的就绪状态: 图片 / 标注 / 蒙版计数与就绪判定.
+    """统计指定子目录的就绪状态: 图片 / 标注 / 描述 / 蒙版计数与就绪判定.
 
     标注与蒙版均按图片逐张判定, 仅统计有对应图片的条目;
+    描述计数取该目录 ``captions.json`` 中有条目的图片数;
     整体 mask_status: 全部有蒙版 →「完整」；否则 →「无」;
     ready: 标注全部存在, 且蒙版全部存在或全无.
 
@@ -217,7 +219,8 @@ def subdir_mask_stats(root: Path, subdir: str = "main") -> MaskStats:
         subdir (str): 子目录名, 默认 ``main``.
 
     Returns:
-        MaskStats: 含 main_count / text_count / mask_complete / mask_none / ready 的统计.
+        MaskStats: 含 main_count / text_count / caption_count / mask_complete /
+            mask_none / ready 的统计.
 
     Callers:
         - ``routes/ready.py:dirs``
@@ -228,12 +231,16 @@ def subdir_mask_stats(root: Path, subdir: str = "main") -> MaskStats:
     image_dir = root / subdir
     mask_dir = root / "mask"
     images = scan_images(image_dir, path_prefix=subdir) if image_dir.is_dir() else []
+    captions = load_captions(image_dir) if images else {}
     complete = 0
     none = 0
     text_count = 0
+    caption_count = 0
     for img in images:
         if any(s.endswith(".txt") for s in img.siblings):
             text_count += 1
+        if captions.get(Path(img.path).name):
+            caption_count += 1
         if has_mask(mask_dir, img.path):
             complete += 1
         else:
@@ -245,6 +252,7 @@ def subdir_mask_stats(root: Path, subdir: str = "main") -> MaskStats:
         mask_status=status,
         main_count=total,
         text_count=text_count,
+        caption_count=caption_count,
         mask_complete=complete,
         mask_none=none,
         ready=total > 0 and text_count == total and (complete == total or complete == 0),

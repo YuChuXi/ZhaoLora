@@ -14,7 +14,9 @@ datasets/                         # 任务根（--data-dir）
     mask/                         # Alpha 蒙版（与 main 同 stem）
     head/ foot/ …                 # 部位裁剪输出
     crops/                        # 未命名选区的存放目录
+    .crops/                       # 每图裁剪输出记录
     .thumbnails/                  # 缩略图与色调指纹缓存
+    .wd14_meta/                   # WD14 打标缓存（按图片相对路径镜像）
     .trash/                       # 回收站
     .annotator_state.json         # 选中态与回收站索引
     .aesthetic_scores.json        # 美学分
@@ -35,6 +37,10 @@ datasets/                         # 任务根（--data-dir）
 | 裁剪、蒙版 | `main/` | `foo.png` |
 
 旁路标注为与图像同 stem 的 `.txt`。删除进回收站时，同 stem 的旁路文件一并移动。
+
+自然语言描述写入图片所在目录的 `captions.json`，键为图片文件名（不含目录）、值为
+描述列表；WD14 打标的标签缓存写入任务目录根下的 `.wd14_meta/`，按图片相对路径镜像
+（`main/foo.png` → `.wd14_meta/main/foo.json`）。
 
 ## 目录选择器
 
