@@ -43,6 +43,7 @@ from routes.docs import router as docs_router
 from routes.images import router as images_router
 from routes.meta import datasets_router, jobs_router
 from routes.ready import router as ready_router
+from routes.settings import router as settings_router
 from routes.tag_stats import router as tag_stats_router
 from routes.tagging import router as tagging_router
 from routes.tasks import router as tasks_router
@@ -307,6 +308,7 @@ dataset_api.include_router(ready_router)
 dataset_api.include_router(sources_router)
 dataset_api.include_router(birefnet_router)
 dataset_api.include_router(video_router)
+dataset_api.include_router(settings_router)
 
 app.include_router(dataset_api)
 app.include_router(tasks_router)

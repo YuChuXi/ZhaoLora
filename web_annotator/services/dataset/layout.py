@@ -52,6 +52,10 @@ WD14_META_DIRNAME = ".wd14_meta"
 # 值为描述列表, 由 diffusion-pipe 直接作为目录级 caption 读取
 CAPTIONS_JSON_FILE = "captions.json"
 
+# 数据集级前端设置文件名(datasets/xxx/.annotator_settings.json); 各业务页的
+# 输入参数按页面/组件名分键持久化, 由 routes/settings.py 读写
+SETTINGS_FILENAME = ".annotator_settings.json"
+
 # 视频目录名(数据集根下, 可为指向外部存储的符号链接)
 VIDEO_DIRNAME = "video"
 

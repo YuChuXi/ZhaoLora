@@ -7,7 +7,6 @@
   'use strict';
 
   var _items = [];
-  var _colsKey = 'zhao_tagcheck_cols';
   var _manualCols = 0;
   var _singleIndex = -1;
   var _fitMode = 'contain';
@@ -853,7 +852,8 @@
     }
   }
 
-  function init() {
+  async function init() {
+    await AppSettings.ready();
     Masonry.init('masonry', {
       getData: function () { return _items; },
       onClick: onCardClick,
@@ -892,7 +892,8 @@
     }
 
     var saved = 0;
-    try { saved = parseInt(localStorage.getItem(_colsKey), 10); } catch (e) { saved = 0; }
+    var state = AppSettings.get('tag_check');
+    if (state && typeof state === 'object') saved = state.cols;
     if (!(saved >= 0 && saved <= 16)) saved = 0;
     applyCols(saved);
 
@@ -900,7 +901,9 @@
       colsSlider.addEventListener('input', function () {
         var v = parseInt(this.value, 10);
         if (isNaN(v) || v < 0) v = 0;
-        try { localStorage.setItem(_colsKey, String(v)); } catch (e) {}
+        var s = AppSettings.get('tag_check') || {};
+        s.cols = v;
+        AppSettings.set('tag_check', s);
         applyCols(v);
       });
     }
@@ -1049,9 +1052,14 @@
     runCheck().catch(function (e) { toast('加载失败: ' + String(e.message || e)); });
   }
 
+  function start() {
+    init().catch(function (e) {
+      toast('初始化失败: ' + String(e.message || e));
+    });
+  }
   if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', init);
+    document.addEventListener('DOMContentLoaded', start);
   } else {
-    init();
+    start();
   }
 })();

@@ -19,8 +19,6 @@
   var _origH = 0;
   var _img = null;
   var _scale = 1;
-  var _offsetX = 0;
-  var _offsetY = 0;
   var _crops = []; // {x1,y1,x2,y2,target_w,target_h,zoom,name,saved}
   var _selected = -1;
   var _autoParts = []; // 已添加的部位名，后续每张图自动生成选区
@@ -203,21 +201,20 @@
   }
 
   /**
-   * localStorage 键：crop_part_defaults:{任务名}。
-   * 引用：loadPartDefaults / savePartDefaults。
-   * @returns {string}
+   * 读取「crop」设置键的当前值。
+   * 引用：loadPartDefaults / loadParts / 三个保存函数。
+   * @returns {{part_defaults?:Object, auto_parts?:string[], denied_parts?:string[]}}
    */
-  function defaultsStorageKey() {
-    return 'crop_part_defaults:' + API.dataset();
+  function cropState() {
+    var state = AppSettings.get('crop');
+    return state && typeof state === 'object' && !Array.isArray(state) ? state : {};
   }
 
   /**
    * @returns {Object.<string, {target_w:number, target_h:number, zoom:number}>}
    */
   function loadPartDefaults() {
-    var raw = localStorage.getItem(defaultsStorageKey());
-    if (!raw) return {};
-    var data = JSON.parse(raw);
+    var data = cropState().part_defaults;
     if (!data || typeof data !== 'object' || Array.isArray(data)) return {};
     return data;
   }
@@ -226,7 +223,9 @@
    * @param {Object} map
    */
   function savePartDefaults(map) {
-    localStorage.setItem(defaultsStorageKey(), JSON.stringify(map));
+    var state = cropState();
+    state.part_defaults = map;
+    AppSettings.set('crop', state);
   }
 
   /**
@@ -319,20 +318,11 @@
     }
   }
 
-  function partsStorageKey() {
-    return 'crop_auto_parts:' + API.dataset();
-  }
-
-  function partsDenyKey() {
-    return 'crop_auto_parts_deny:' + API.dataset();
-  }
-
   function loadParts(serverParts) {
     _serverParts = Array.isArray(serverParts) ? serverParts : [];
-    var saved = null;
-    var denied = null;
-    try { saved = JSON.parse(localStorage.getItem(partsStorageKey()) || 'null'); } catch (e) { saved = null; }
-    try { denied = JSON.parse(localStorage.getItem(partsDenyKey()) || 'null'); } catch (e) { denied = null; }
+    var state = cropState();
+    var saved = Array.isArray(state.auto_parts) ? state.auto_parts : null;
+    var denied = Array.isArray(state.denied_parts) ? state.denied_parts : null;
     _deniedParts = Array.isArray(denied) ? denied.filter(function (n) { return typeof n === 'string'; }) : [];
     _autoParts = [];
     var seen = {};
@@ -360,11 +350,15 @@
   }
 
   function saveParts() {
-    localStorage.setItem(partsStorageKey(), JSON.stringify(_autoParts));
+    var state = cropState();
+    state.auto_parts = _autoParts;
+    AppSettings.set('crop', state);
   }
 
   function saveDeniedParts() {
-    localStorage.setItem(partsDenyKey(), JSON.stringify(_deniedParts));
+    var state = cropState();
+    state.denied_parts = _deniedParts;
+    AppSettings.set('crop', state);
   }
 
   function registerAutoPart(name) {
@@ -494,8 +488,6 @@
     _scale = Math.min(cw / _origW, ch / _origH);
     var vw = Math.max(1, Math.floor(_origW * _scale));
     var vh = Math.max(1, Math.floor(_origH * _scale));
-    _offsetX = 0;
-    _offsetY = 0;
     if (canvas.width !== _origW || canvas.height !== _origH) {
       canvas.width = _origW;
       canvas.height = _origH;
@@ -1169,6 +1161,7 @@
   }
 
   async function init() {
+    await AppSettings.ready();
     var cfg = await API.request(API.apiPath('/crop/config'));
     loadParts(cfg.parts || []);
 

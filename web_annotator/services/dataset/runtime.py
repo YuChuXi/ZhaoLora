@@ -36,6 +36,8 @@ class DatasetRuntime:
     mask_dir: Path
     sort_cache: SemanticSortCache
     color_index: ColorIndex | None = None
+    # 设置文件读写锁: 同一数据集的合并写入按数据集串行, 防止并发丢更新
+    settings_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
     @property
     def root(self) -> Path:

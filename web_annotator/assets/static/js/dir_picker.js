@@ -4,9 +4,6 @@
 var DirPicker = (function () {
   'use strict';
 
-  var KEY = 'annotator_work_dirs';
-  var KEY_LEGACY = 'annotator_work_dir';
-
   var _host = null;
   var _btn = null;
   var _menu = null;
@@ -18,43 +15,25 @@ var DirPicker = (function () {
   var _open = false;
 
   /**
-   * 按数据集区分本地存储键。引用：nav.js boot。
-   * @param {string} key
-   */
-  function setStorageKey(key) {
-    if (!key) throw new Error('存储键为空');
-    KEY = key;
-  }
-
-  /**
-   * 从 localStorage 读取已选目录名列表。
+   * 从数据集设置读取已选目录名列表。
    * @returns {string[]}
    */
   function loadSaved() {
-    var raw = localStorage.getItem(KEY);
-    if (raw) {
-      if (raw.charAt(0) === '[') {
-        var arr = JSON.parse(raw);
-        if (Array.isArray(arr) && arr.length) {
-          return arr.filter(function (x) { return typeof x === 'string' && x; });
-        }
-      } else {
-        var parts = raw.split(',').map(function (s) { return s.trim(); }).filter(Boolean);
-        if (parts.length) return parts;
-      }
+    var saved = AppSettings.get('dirs');
+    if (Array.isArray(saved)) {
+      var arr = saved.filter(function (x) { return typeof x === 'string' && x; });
+      if (arr.length) return arr;
     }
-    var legacy = localStorage.getItem(KEY_LEGACY);
-    if (legacy) return [legacy];
     return ['main'];
   }
 
   /**
-   * 持久化已选目录。
+   * 持久化已选目录到数据集设置。
    * @param {string[]} names
    */
   function save(names) {
     var list = names && names.length ? names.slice() : ['main'];
-    localStorage.setItem(KEY, list.join(','));
+    AppSettings.set('dirs', list);
   }
 
   /**
@@ -350,8 +329,6 @@ var DirPicker = (function () {
   }, true);
 
   return {
-    KEY: KEY,
-    setStorageKey: setStorageKey,
     loadSaved: loadSaved,
     save: save,
     getDir: getDir,

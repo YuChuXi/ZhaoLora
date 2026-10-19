@@ -113,16 +113,11 @@
         ' · <a href="/">返回首页</a></p>';
       return;
     }
-    if (typeof DirPicker !== 'undefined' && DirPicker.setStorageKey) {
-      DirPicker.setStorageKey('annotator_work_dirs:' + route.dataset);
+    if (typeof AppSettings !== 'undefined') {
+      await AppSettings.ready();
     }
     render();
     document.dispatchEvent(new CustomEvent('annotator:ready', { detail: { dataset: route.dataset, page: route.page } }));
-  }
-
-  if (typeof API !== 'undefined' && typeof DirPicker !== 'undefined') {
-    var _ds = API.parseDatasetFromPath();
-    if (_ds) DirPicker.setStorageKey('annotator_work_dirs:' + _ds);
   }
 
   if (document.readyState === 'loading') {

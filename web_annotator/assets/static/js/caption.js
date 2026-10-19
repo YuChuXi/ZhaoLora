@@ -14,58 +14,56 @@
   var _templates = [];
 
   /**
-   * 浏览器本地存储键(按数据集区分)。
-   * @param {string} kind 'rules' | 'inject'
-   * @returns {string}
+   * 读取「caption」设置键的当前值。
+   * 引用：loadSaved / loadInject / persistRules / persistInject。
+   * @returns {{rules?:Array<object>, inject?:Object}}
    */
-  function storeKey(kind) {
-    return 'zhao_caption_' + kind + ':' + API.dataset();
+  function captionState() {
+    var state = AppSettings.get('caption');
+    return state && typeof state === 'object' && !Array.isArray(state) ? state : {};
   }
 
   /**
-   * 读取本地保存的数组。
-   * @param {string} kind
+   * 读取已保存的提示词条目列表。
    * @returns {Array<object>}
    */
-  function loadSaved(kind) {
-    var raw = localStorage.getItem(storeKey(kind));
-    if (!raw) return [];
-    var arr = JSON.parse(raw);
+  function loadSaved() {
+    var arr = captionState().rules;
     return Array.isArray(arr) ? arr : [];
   }
 
   /**
-   * 写入本地存储。
-   * @param {string} kind
+   * 写入提示词条目列表。
    * @param {Array<object>} arr
    */
-  function saveSaved(kind, arr) {
-    localStorage.setItem(storeKey(kind), JSON.stringify(arr));
+  function saveSaved(arr) {
+    var state = captionState();
+    state.rules = arr;
+    AppSettings.set('caption', state);
   }
 
   /**
-   * 读取本地保存的 WD14 注入设置(通用/角色标签各自的下限)与 NSFW 增强。
+   * 读取已保存的 WD14 注入设置(通用/角色标签各自的下限)与 NSFW 增强。
    * @returns {{general?: boolean, general_threshold?: string,
    *            character?: boolean, character_threshold?: string,
    *            nsfw?: boolean, nsfw_threshold?: string}|null}
    */
   function loadInject() {
-    var raw = localStorage.getItem(storeKey('inject'));
-    if (!raw) return null;
-    var obj = JSON.parse(raw);
-    return obj && typeof obj === 'object' ? obj : null;
+    return captionState().inject || null;
   }
 
   /** 保存 WD14 注入设置与 NSFW 增强。 */
   function persistInject() {
-    localStorage.setItem(storeKey('inject'), JSON.stringify({
+    var state = captionState();
+    state.inject = {
       general: document.getElementById('inject-general').checked,
       general_threshold: document.getElementById('general-threshold').value,
       character: document.getElementById('inject-character').checked,
       character_threshold: document.getElementById('character-threshold').value,
       nsfw: document.getElementById('inject-nsfw').checked,
       nsfw_threshold: document.getElementById('nsfw-threshold').value,
-    }));
+    };
+    AppSettings.set('caption', state);
   }
 
   /**
@@ -277,7 +275,7 @@
 
   /** 收集并保存当前预设提示词。 */
   function persistRules() {
-    saveSaved('rules', collectRules());
+    saveSaved(collectRules());
   }
 
   /** 保存设置并关闭描述设置对话框。 */
@@ -289,7 +287,7 @@
 
   /** 按本地存储恢复描述设置。 */
   function loadSettings() {
-    loadSaved('rules').forEach(addRuleRow);
+    loadSaved().forEach(addRuleRow);
   }
 
   // ==================== 瀑布流 ====================
@@ -511,7 +509,8 @@
     renderTemplates(data.rule_templates);
   }
 
-  function init() {
+  async function init() {
+    await AppSettings.ready();
     Masonry.init('masonry', {
       getData: function () { return _items; },
       onClick: onCardClick,
@@ -588,9 +587,14 @@
       (data.ready ? '' : '未就绪: ') + (data.info || '');
   }
 
+  function start() {
+    init().catch(function (e) {
+      toast('初始化失败: ' + String(e.message || e));
+    });
+  }
   if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', init);
+    document.addEventListener('DOMContentLoaded', start);
   } else {
-    init();
+    start();
   }
 })();

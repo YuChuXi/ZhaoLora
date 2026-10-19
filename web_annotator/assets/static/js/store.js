@@ -7,13 +7,13 @@ var Store = (function() {
   var _images = [];
   var _listeners = [];
   var _toggleListeners = [];
-  var _sortBy = localStorage.getItem('annotator_sort') || 'name';
+  var _sortBy = 'name';
   var _searchOrder = [];   // 语义搜索排序的有序路径列表（新的排序覆盖旧值）
   var _searchSim = {};     // 路径 -> 相似度，用于卡片标注 S 前缀
 
   function setSort(by) {
     _sortBy = by || 'name';
-    localStorage.setItem('annotator_sort', _sortBy);
+    AppSettings.set('sort', _sortBy);
   }
 
   function getSort() { return _sortBy; }

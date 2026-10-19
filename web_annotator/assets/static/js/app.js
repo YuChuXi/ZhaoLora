@@ -200,12 +200,12 @@
     dlg.setAttribute('aria-hidden', 'true');
   }
 
-  function init() {
+  async function init() {
+    await AppSettings.ready();
     Masonry.init('masonry', { decorate: searchDecorate });
 
     var colsSlider = document.getElementById('cols-slider');
     var colsLabel = document.getElementById('cols-label');
-    var COLS_KEY = 'zhao_filter_cols';
     var _manualCols = 0;
 
     function _autoColumns() {
@@ -237,8 +237,7 @@
       }
     }
 
-    var savedCols = 0;
-    try { savedCols = parseInt(localStorage.getItem(COLS_KEY), 10); } catch (e) { savedCols = 0; }
+    var savedCols = AppSettings.get('cols');
     if (!(savedCols >= 0 && savedCols <= 16)) savedCols = 0;
     if (colsSlider) colsSlider.value = String(savedCols);
     _manualCols = savedCols;
@@ -250,7 +249,7 @@
       colsSlider.addEventListener('input', function() {
         var v = parseInt(this.value, 10);
         if (isNaN(v) || v < 0) v = 0;
-        try { localStorage.setItem(COLS_KEY, String(v)); } catch (e) {}
+        AppSettings.set('cols', v);
         applyCols(v);
       });
     }
@@ -285,6 +284,8 @@
 
     var sortSel = document.getElementById('sort-by');
     if (sortSel) {
+      var savedSort = AppSettings.get('sort');
+      if (savedSort) Store.setSort(savedSort);
       sortSel.value = Store.getSort();
       sortSel.addEventListener('change', function () {
         Store.setSort(sortSel.value);
@@ -344,9 +345,14 @@
     });
   }
 
+  function start() {
+    init().catch(function (e) {
+      toast('初始化失败: ' + String(e.message || e));
+    });
+  }
   if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', init);
+    document.addEventListener('DOMContentLoaded', start);
   } else {
-    init();
+    start();
   }
 })();

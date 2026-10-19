@@ -16,7 +16,8 @@ datasets/                         # 任务根（--data-dir）
     crops/                        # 未命名选区的存放目录
     .crops/                       # 每图裁剪输出记录
     .thumbnails/                  # 缩略图与色调指纹缓存
-    .wd14_meta/                   # WD14 打标缓存（按图片相对路径镜像）
+    .wd14_meta/                   # WD14 推理缓存（{模型指纹}/{子目录}/{stem}.npy）
+    .annotator_settings.json      # 数据集级前端设置（各页输入参数）
     .trash/                       # 回收站
     .annotator_state.json         # 选中态与回收站索引
     .aesthetic_scores.json        # 美学分
@@ -39,12 +40,15 @@ datasets/                         # 任务根（--data-dir）
 旁路标注为与图像同 stem 的 `.txt`。删除进回收站时，同 stem 的旁路文件一并移动。
 
 自然语言描述写入图片所在目录的 `captions.json`，键为图片文件名（不含目录）、值为
-描述列表；WD14 打标的标签缓存写入任务目录根下的 `.wd14_meta/`，按图片相对路径镜像
-（`main/foo.png` → `.wd14_meta/main/foo.json`）。
+描述列表。WD14 打标缓存整条输出概率向量到任务目录根下的 `.wd14_meta/`，按图片相对
+路径镜像（`main/foo.png` → `.wd14_meta/<模型指纹>/main/foo.npy`）；模型指纹由权重与
+标签表的内容哈希共同决定，指纹本身缓存在任务根 `.wd14_model.json` 以免每次启动重读
+权重。各页输入参数按页面/组件名持久化为任务目录根下的 `.annotator_settings.json`。
 
 ## 目录选择器
 
-筛选、去重、美学、标签、清洗等页右上角可多选工作子目录。状态保存在浏览器本地（按任务名区分）。至少勾选一个目录；清空时回落到 `main`。
+筛选、去重、美学、标签、清洗等页右上角可多选工作子目录。已选目录随各页输入参数一并
+持久化到任务目录根下的 `.annotator_settings.json`（按任务区分）。至少勾选一个目录；清空时回落到 `main`。
 
 裁剪、蒙版、就绪页不使用目录多选（固定处理约定目录）。
 
