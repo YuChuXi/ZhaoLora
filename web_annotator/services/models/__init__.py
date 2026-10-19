@@ -113,7 +113,6 @@ from services.models.docs import (
 )
 from services.models.paint import (
     PaintSaveResponse,
-    DefaultAlphaResponse,
     PaintImageItem,
     TemplateItem,
     TemplatesPayload,
@@ -220,7 +219,6 @@ __all__ = [
     'DocsListResponse',
     'DocContentResponse',
     'PaintSaveResponse',
-    'DefaultAlphaResponse',
     'PaintImageItem',
     'TemplateItem',
     'TemplatesPayload',

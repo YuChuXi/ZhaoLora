@@ -2040,6 +2040,14 @@ var BooruFilter = (function () {
       method: 'POST',
       body: JSON.stringify(body),
     });
+    AppSettings.set('booru_batch', {
+      limit: params.limit,
+      conn: params.conn,
+      rate: params.rateRps,
+      anima: body.anima_format,
+      meta_tags: body.include_meta_tags,
+      keep_underscores: body.keep_underscores,
+    });
     toast('已提交批量下载');
     watchBatch(data.job_id);
   }
@@ -2398,8 +2406,25 @@ var BooruFilter = (function () {
     if (!modeEl) return;
 
     var saved = loadUiState();
-    if (saved && _SOURCES[saved.mode]) {
-      modeEl.value = saved.mode;
+    var savedMode = (saved && _SOURCES[saved.mode])
+      ? saved.mode
+      : (AppSettings.get('filter') || {}).mode;
+    if (savedMode && _SOURCES[savedMode]) {
+      modeEl.value = savedMode;
+    }
+
+    var bb = AppSettings.get('booru_batch') || {};
+    var bbText = { limit: 'booru-batch-limit', conn: 'booru-batch-conn', rate: 'booru-batch-rate' };
+    for (var bk in bbText) {
+      if (bb[bk] == null) continue;
+      var el = document.getElementById(bbText[bk]);
+      if (el) el.value = String(bb[bk]);
+    }
+    var bbCheck = { anima: 'booru-batch-anima', meta_tags: 'booru-batch-meta-tags', keep_underscores: 'booru-batch-keep-underscores' };
+    for (var ck in bbCheck) {
+      if (bb[ck] == null) continue;
+      var chk = document.getElementById(bbCheck[ck]);
+      if (chk) chk.checked = !!bb[ck];
     }
 
     syncCheatLink();
@@ -2422,6 +2447,9 @@ var BooruFilter = (function () {
         renderLocal();
       }
       saveUiState();
+      var f = AppSettings.get('filter') || {};
+      f.mode = modeEl.value;
+      AppSettings.set('filter', f);
     });
 
     // 工具栏交互采用事件委托: 渲染后无需重新绑定, 重渲染也保持生效

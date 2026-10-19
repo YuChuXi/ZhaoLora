@@ -279,6 +279,7 @@
           similar_res_ratio: ratio
         }),
       });
+      persistDedupe();
       await watchScan(submitted.job_id);
     } catch (e) {
       main.innerHTML = '<div class="dedupe-empty">扫描失败</div>';
@@ -366,6 +367,25 @@
     }
   }
 
+  /**
+   * 将去重参数写入设置（「dedupe」键）。
+   *
+   * Returns:
+   *   void
+   *
+   * Callers:
+   *   - dedupe.js:scan
+   *   - dedupe.js:dedupe-alg change 监听
+   */
+  function persistDedupe() {
+    AppSettings.set('dedupe', {
+      alg: document.getElementById('dedupe-alg').value,
+      mse: document.getElementById('mse-threshold').value,
+      sim: document.getElementById('sim-threshold').value,
+      ratio: document.getElementById('res-ratio').value,
+    });
+  }
+
   document.getElementById('btn-scan').addEventListener('click', function () {
     scan().catch(function (e) { toast(String(e.message || e)); });
   });
@@ -414,6 +434,7 @@
     }
     syncAlgorithmUI();
     _lastAlg = document.getElementById('dedupe-alg').value;
+    persistDedupe();
   });
   document.getElementById('sim-threshold').addEventListener('input', function () {
     if (_lastAlg === 'fft' || _lastAlg === 'orb') _simValue[_lastAlg] = this.value;
@@ -462,19 +483,43 @@
       '<div class="dedupe-empty">目录已切换</div>';
     updateStats();
   });
-  updateStats();
-  syncAlgorithmUI();
 
-  // 页面加载时恢复未结束的扫描任务
-  API.findActiveJob('dedupe_scan', API.dataset()).then(function (snap) {
+  /**
+   * 页面启动：恢复「dedupe」设置后同步控件, 并重连未结束的扫描任务。
+   *
+   * Returns:
+   *   Promise<void>
+   *
+   * Callers:
+   *   - dedupe.js:IIFE 末尾
+   */
+  async function start() {
+    await AppSettings.ready();
+    var saved = AppSettings.get('dedupe') || {};
+    if (saved.alg) {
+      document.getElementById('dedupe-alg').value = saved.alg;
+      _lastAlg = saved.alg;
+    }
+    if (saved.mse) document.getElementById('mse-threshold').value = saved.mse;
+    if (saved.sim && (saved.alg === 'fft' || saved.alg === 'orb')) {
+      _simValue[saved.alg] = saved.sim;
+    }
+    if (saved.ratio) document.getElementById('res-ratio').value = saved.ratio;
+    updateStats();
+    syncAlgorithmUI();
+
+    var snap = await API.findActiveJob('dedupe_scan', API.dataset());
     if (!snap) return;
     document.getElementById('btn-scan').disabled = true;
-    watchScan(snap.job_id).catch(function (e) {
+    try {
+      await watchScan(snap.job_id);
+    } catch (e) {
       document.getElementById('dedupe-main').innerHTML =
         '<div class="dedupe-empty">扫描失败</div>';
       toast(String(e.message || e));
-    }).finally(function () {
+    } finally {
       document.getElementById('btn-scan').disabled = false;
-    });
-  });
+    }
+  }
+  start().catch(function (e) { toast(String(e.message || e)); });
 })();

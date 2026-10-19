@@ -897,6 +897,23 @@
     if (!(saved >= 0 && saved <= 16)) saved = 0;
     applyCols(saved);
 
+    var tc = AppSettings.get('tag_check') || {};
+    if (tc.position) document.getElementById('check-position').value = tc.position;
+    if (tc.mode) document.getElementById('check-mode').value = tc.mode;
+    if (tc.apply_mask != null) {
+      _applyMask = !!tc.apply_mask;
+      var chkMaskEl = document.getElementById('chk-apply-mask');
+      if (chkMaskEl) chkMaskEl.checked = _applyMask;
+    }
+    var te = tc.emb || {};
+    if (te.engine) document.getElementById('emb-engine').value = te.engine;
+    if (te.operator) document.getElementById('emb-operator').value = te.operator;
+    if (te.threshold) document.getElementById('emb-threshold').value = String(te.threshold);
+    if (te.fuzzy != null) document.getElementById('emb-fuzzy').checked = !!te.fuzzy;
+    if (te.action) document.getElementById('emb-action').value = te.action;
+    embSetEngine(false);
+    embUpdateAction();
+
     if (colsSlider) {
       colsSlider.addEventListener('input', function () {
         var v = parseInt(this.value, 10);
@@ -911,19 +928,47 @@
       if (_manualCols === 0) Masonry.setColumns(autoColumns());
     });
 
+    /**
+     * 将检查参数与向量对话框参数写入设置（「tag_check」键）。
+     *
+     * Returns:
+     *   void
+     *
+     * Callers:
+     *   - tag_check.js:check-position/check-mode/chk-apply-mask change 监听
+     *   - tag_check.js:emb-engine/emb-operator/emb-threshold/emb-fuzzy/emb-action change 监听
+     */
+    function persistTagCheck() {
+      var s = AppSettings.get('tag_check') || {};
+      s.position = document.getElementById('check-position').value;
+      s.mode = document.getElementById('check-mode').value;
+      s.apply_mask = !!document.getElementById('chk-apply-mask').checked;
+      s.emb = {
+        engine: document.getElementById('emb-engine').value,
+        operator: document.getElementById('emb-operator').value,
+        threshold: document.getElementById('emb-threshold').value,
+        fuzzy: !!document.getElementById('emb-fuzzy').checked,
+        action: document.getElementById('emb-action').value,
+      };
+      AppSettings.set('tag_check', s);
+    }
+
     document.getElementById('btn-check').addEventListener('click', function () {
       // 语义排序状态下保留排序, 仅刷新标签状态
       runCheck(_embSortActive).catch(function (e) { toast('检查失败: ' + String(e.message || e)); });
     });
     document.getElementById('check-position').addEventListener('change', function () {
+      persistTagCheck();
       // 语义排序状态下保留排序, 仅刷新标签状态
       runCheck(_embSortActive).catch(function (e) { toast('检查失败: ' + String(e.message || e)); });
     });
+    document.getElementById('check-mode').addEventListener('change', persistTagCheck);
     // 应用蒙板显示开关: 切换后重建瀑布流(重新触发合成/恢复)
     var chkMask = document.getElementById('chk-apply-mask');
     if (chkMask) {
       chkMask.addEventListener('change', function () {
         _applyMask = chkMask.checked;
+        persistTagCheck();
         hideSingle();
         Masonry.render(_items);
       });
@@ -968,8 +1013,17 @@
         closeEmbDlg();
       }
     });
-    document.getElementById('emb-action').addEventListener('change', embUpdateAction);
-    document.getElementById('emb-engine').addEventListener('change', embSetEngine);
+    document.getElementById('emb-action').addEventListener('change', function () {
+      embUpdateAction();
+      persistTagCheck();
+    });
+    document.getElementById('emb-engine').addEventListener('change', function () {
+      embSetEngine();
+      persistTagCheck();
+    });
+    document.getElementById('emb-operator').addEventListener('change', persistTagCheck);
+    document.getElementById('emb-threshold').addEventListener('change', persistTagCheck);
+    document.getElementById('emb-fuzzy').addEventListener('change', persistTagCheck);
     document.getElementById('emb-sort').addEventListener('click', function () {
       embSort().catch(function (e) { toast('排序失败: ' + String(e.message || e)); });
     });

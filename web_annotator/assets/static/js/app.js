@@ -237,7 +237,7 @@
       }
     }
 
-    var savedCols = AppSettings.get('cols');
+    var savedCols = (AppSettings.get('filter') || {}).cols;
     if (!(savedCols >= 0 && savedCols <= 16)) savedCols = 0;
     if (colsSlider) colsSlider.value = String(savedCols);
     _manualCols = savedCols;
@@ -249,7 +249,9 @@
       colsSlider.addEventListener('input', function() {
         var v = parseInt(this.value, 10);
         if (isNaN(v) || v < 0) v = 0;
-        AppSettings.set('cols', v);
+        var f = AppSettings.get('filter') || {};
+        f.cols = v;
+        AppSettings.set('filter', f);
         applyCols(v);
       });
     }
@@ -280,7 +282,14 @@
     });
     document.getElementById('btn-apply').addEventListener('click', handleApplyDelete);
     document.getElementById('btn-restore').addEventListener('click', handleRestore);
-    document.getElementById('chk-show-trash').addEventListener('change', refreshView);
+    var trashChk = document.getElementById('chk-show-trash');
+    trashChk.checked = !!((AppSettings.get('filter') || {}).show_trash);
+    trashChk.addEventListener('change', function () {
+      var f = AppSettings.get('filter') || {};
+      f.show_trash = trashChk.checked;
+      AppSettings.set('filter', f);
+      refreshView();
+    });
 
     var sortSel = document.getElementById('sort-by');
     if (sortSel) {

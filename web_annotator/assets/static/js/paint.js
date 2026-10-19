@@ -10,7 +10,7 @@
   var _cur = null; // { index, item, w, h, rgbImg, alpha, modified }
   var _strip = null; // 横排预览条控制器(Filmstrip)
   var _scale = 1;
-  var _viewW = 0, _viewH = 0, _dpr = 1;
+  var _viewW = 0, _viewH = 0;
   var _brushRadius = 80, _brushPct = 3, _defaultAlpha = 255;
   var _isDrawing = false, _isTouch = false, _paintValue = 0;
   // _mouseOrig: 鼠标视口坐标经 screenToOrig 钳位后的原图坐标, 预览与实际绘制共用的单一事实源
@@ -383,17 +383,31 @@
   if (_bgColorEl) _bgColor = _bgColorEl.value;
   _applyBackdrop();
 
-  // ---- 配置 ----
-  async function loadConfig() {
-    var cfg = await API.request(API.apiPath('/paint/config'));
-    _defaultAlpha = cfg.default_alpha == null ? 255 : cfg.default_alpha;
-    document.getElementById('default-alpha').value = _defaultAlpha;
+  // ---- 设置持久化 ----
+  /** 将画布输入参数写入「paint」设置键。引用: default-alpha/brush-slider/bg-style/bg-color/left-alpha/right-alpha 的 change 监听。 */
+  function persistSettings() {
+    AppSettings.set('paint', {
+      default_alpha: _defaultAlpha,
+      brush_pct: _brushPct,
+      left_alpha: document.getElementById('left-alpha').value,
+      right_alpha: document.getElementById('right-alpha').value,
+      bg_style: _bgStyle,
+      bg_color: _bgColor,
+    });
   }
-  async function saveConfig() {
-    var value = parseInt(document.getElementById('default-alpha').value);
-    _defaultAlpha = Number.isNaN(value) ? 255 : value;
-    await API.request(API.apiPath('/paint/config'), { method: 'POST',
-      body: JSON.stringify({ default_alpha: _defaultAlpha }) });
+
+  /** 按「paint」设置键恢复画布输入参数。引用: start。 */
+  function loadSettings() {
+    var s = AppSettings.get('paint');
+    if (!s || typeof s !== 'object') return;
+    if (s.default_alpha != null) _defaultAlpha = s.default_alpha;
+    if (s.brush_pct != null) _brushPct = s.brush_pct;
+    if (s.left_alpha != null) document.getElementById('left-alpha').value = s.left_alpha;
+    if (s.right_alpha != null) document.getElementById('right-alpha').value = s.right_alpha;
+    if (s.bg_style != null) { _bgStyle = s.bg_style; _bgStyleEl.value = s.bg_style; }
+    if (s.bg_color != null) { _bgColor = s.bg_color; _bgColorEl.value = s.bg_color; }
+    document.getElementById('default-alpha').value = _defaultAlpha;
+    _calcBrush(); _updateBrushUI(); _applyBackdrop();
   }
 
   // ---- 加载 ----
@@ -600,7 +614,6 @@
   function fitCanvas() {
     if (!_cur) return;
     var cw = wrap.clientWidth, ch = wrap.clientHeight;
-    _dpr = window.devicePixelRatio || 1;
     _scale = Math.min(cw / _cur.w, ch / _cur.h);
     _viewW = Math.max(1, Math.floor(_cur.w * _scale));
     _viewH = Math.max(1, Math.floor(_cur.h * _scale));
@@ -1398,11 +1411,13 @@
   });
   document.getElementById('seg-pos').addEventListener('click', function () { _strip.toggle(); });
   document.getElementById('brush-slider').addEventListener('input', function() { _brushPct = parseFloat(this.value); _calcBrush(); _updateBrushUI(); _updateBrushPreview(); if (_lineMode) _updateLinePreview(); });
+  document.getElementById('brush-slider').addEventListener('change', persistSettings);
   document.getElementById('bg-style').addEventListener('change', function() {
     _bgStyle = this.value;
     _applyBackdrop();
+    persistSettings();
   });
-  document.getElementById('bg-color').addEventListener('change', function() { _bgColor = this.value; _applyBackdrop(); });
+  document.getElementById('bg-color').addEventListener('change', function() { _bgColor = this.value; _applyBackdrop(); persistSettings(); });
   document.getElementById('btn-save').addEventListener('click', function() { doSave(true); });
   document.getElementById('btn-clear').addEventListener('click', function() { if (_cur && _cur.alpha) { AlphaGL.clear(); _cur.modified = true; _scheduleRender(); } });
   document.getElementById('btn-fill').addEventListener('click', function() { if (_cur && _cur.alpha) { AlphaGL.fill(255); _cur.modified = true; _scheduleRender(); } });
@@ -1410,9 +1425,14 @@
     var value = parseInt(document.getElementById('default-alpha').value);
     _defaultAlpha = Number.isNaN(value) ? 255 : value;
     if (_cur && _cur.alpha) { AlphaGL.clear(); if (_defaultAlpha > 0) AlphaGL.fill(_defaultAlpha); _cur.modified = true; _scheduleRender(); }
-    saveConfig();
   });
-  document.getElementById('default-alpha').addEventListener('change', function() { saveConfig(); _applyBackdrop(); _updateFloatingHTML(); });
+  document.getElementById('default-alpha').addEventListener('change', function() {
+    var value = parseInt(this.value);
+    _defaultAlpha = Number.isNaN(value) ? 255 : value;
+    persistSettings(); _applyBackdrop(); _updateFloatingHTML();
+  });
+  document.getElementById('left-alpha').addEventListener('change', persistSettings);
+  document.getElementById('right-alpha').addEventListener('change', persistSettings);
   // 快捷交换左右键 Alpha
   document.getElementById('btn-swap-alpha').addEventListener('click', function() {
     var left = document.getElementById('left-alpha');
@@ -1420,6 +1440,7 @@
     var tmp = left.value;
     left.value = right.value;
     right.value = tmp;
+    persistSettings();
   });
 
   // ---- 蒙板模板绑定 ----
@@ -1895,5 +1916,10 @@
     });
   }
 
-  loadConfig().then(function() { Promise.all([loadImages(), _loadTemplates()]); });
+  async function start() {
+    await AppSettings.ready();
+    loadSettings();
+    await Promise.all([loadImages(), _loadTemplates()]);
+  }
+  start().catch(function (e) { toast('初始化失败: ' + String(e.message || e)); });
 })();

@@ -314,13 +314,37 @@
     toast('剪贴板不可用，已选中文本，请按 Ctrl+C');
   }
 
+  /**
+   * 将顶栏与生成参数写入设置（「ready」键）。
+   *
+   * Returns:
+   *   void
+   *
+   * Callers:
+   *   - ready.js:format-seg button click 监听
+   *   - ready.js:mode-seg button click 监听
+   *   - ready.js:target-images change 监听
+   *   - ready.js:use-reg change 监听
+   */
+  function persistReady() {
+    AppSettings.set('ready', {
+      format: _format,
+      variant: _variant,
+      mode: _mode,
+      target_images: document.getElementById('target-images').value,
+      use_reg: !!document.getElementById('use-reg').checked,
+    });
+  }
+
   document.getElementById('btn-gen').addEventListener('click', function () {
     generate(false);
   });
   document.getElementById('target-images').addEventListener('input', autoGenerate);
+  document.getElementById('target-images').addEventListener('change', persistReady);
   document.getElementById('btn-copy').addEventListener('click', function () {
     copyText().catch(function (e) { toast(String(e.message || e)); });
   });
+  document.getElementById('use-reg').addEventListener('change', persistReady);
 
   // 配置格式取自顶栏格式切换段当前选中项; 切换后重渲染文件区并重新生成
   var _formatSeg = document.querySelector('#format-seg button.active')
@@ -328,7 +352,10 @@
   _format = _formatSeg ? _formatSeg.dataset.format : '';
   _variant = _formatSeg ? _formatSeg.dataset.variant : '';
   Array.prototype.forEach.call(document.querySelectorAll('#format-seg button'), function (btn) {
-    btn.addEventListener('click', function () { onFormat(btn); });
+    btn.addEventListener('click', function () {
+      onFormat(btn);
+      persistReady();
+    });
   });
 
   // 训练模式切换(画风/角色): 切换后按新模式重新生成配置
@@ -340,6 +367,7 @@
       Array.prototype.forEach.call(document.querySelectorAll('#mode-seg button'), function (b) {
         b.classList.toggle('active', b === btn);
       });
+      persistReady();
       generate(true);
     });
   });
@@ -390,10 +418,43 @@
     exportConfig().catch(function (e) { toast(String((e && e.message) || e)); });
   });
 
-  API.request(API.apiPath('/ready/dirs'))
-    .then(function (data) {
-      renderSide(data);
-      return generate();
-    })
-    .catch(function (e) { toast(String(e.message || e)); });
+  /**
+   * 页面启动：恢复「ready」设置后加载目录并生成配置。
+   *
+   * Returns:
+   *   Promise<void>
+   *
+   * Callers:
+   *   - ready.js:IIFE 末尾
+   */
+  async function start() {
+    await AppSettings.ready();
+    var saved = AppSettings.get('ready') || {};
+    var fmtBtn = saved.format
+      ? document.querySelector('#format-seg button[data-format="' + saved.format + '"][data-variant="' + saved.variant + '"]')
+      : null;
+    if (fmtBtn) {
+      document.querySelectorAll('#format-seg button').forEach(function (b) {
+        b.classList.toggle('active', b === fmtBtn);
+      });
+      _format = fmtBtn.dataset.format;
+      _variant = fmtBtn.dataset.variant;
+    }
+    var modeBtn = saved.mode
+      ? document.querySelector('#mode-seg button[data-mode="' + saved.mode + '"]')
+      : null;
+    if (modeBtn) {
+      document.querySelectorAll('#mode-seg button').forEach(function (b) {
+        b.classList.toggle('active', b === modeBtn);
+      });
+      _mode = saved.mode;
+    }
+    if (saved.target_images) document.getElementById('target-images').value = String(saved.target_images);
+    if (saved.use_reg != null) document.getElementById('use-reg').checked = !!saved.use_reg;
+
+    var data = await API.request(API.apiPath('/ready/dirs'));
+    renderSide(data);
+    await generate();
+  }
+  start().catch(function (e) { toast(String(e.message || e)); });
 })();

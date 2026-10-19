@@ -19,12 +19,6 @@ class PaintSaveResponse(BaseModel):
     size: list[int]
 
 
-class DefaultAlphaResponse(BaseModel):
-    """默认透明度配置."""
-
-    default_alpha: int
-
-
 class PaintImageItem(ImageThumbItem):
     """蒙版页图片列表项.
 

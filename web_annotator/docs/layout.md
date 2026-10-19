@@ -43,7 +43,13 @@ datasets/                         # 任务根（--data-dir）
 描述列表。WD14 打标缓存整条输出概率向量到任务目录根下的 `.wd14_meta/`，按图片相对
 路径镜像（`main/foo.png` → `.wd14_meta/<模型指纹>/main/foo.npy`）；模型指纹由权重与
 标签表的内容哈希共同决定，指纹本身缓存在任务根 `.wd14_model.json` 以免每次启动重读
-权重。各页输入参数按页面/组件名持久化为任务目录根下的 `.annotator_settings.json`。
+权重。各页输入参数按页面/组件名持久化为任务目录根下的 `.annotator_settings.json`，键为：
+`dirs`（目录选择器选中集）、`sort`（筛选页排序方式）、`filter`（`cols` 列数 / `mode` 图站模式 /
+`show_trash` 回收站开关）、`paint`（笔刷与底色参数）、`caption`（提示词条目与注入/模式选项）、
+`tagging`（WD14 参数）、`tag_stats`（标签统计筛选）、`tag_batch`（批量编辑参数）、
+`scoring`（`sort` / `desc` / `filter`）、`dedupe`（算法与阈值）、`tag_check`（检查参数与 `emb`
+向量对话框参数）、`crop`（部位默认裁切与禁用部位）、`booru_batch`（批量下载参数）、
+`ready`（`format` / `variant` / `mode` / `target_images` / `use_reg`）、`video`（B 帧隐藏开关）。
 
 ## 目录选择器
 

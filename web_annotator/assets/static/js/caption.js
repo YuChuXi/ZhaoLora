@@ -42,17 +42,7 @@
     AppSettings.set('caption', state);
   }
 
-  /**
-   * 读取已保存的 WD14 注入设置(通用/角色标签各自的下限)与 NSFW 增强。
-   * @returns {{general?: boolean, general_threshold?: string,
-   *            character?: boolean, character_threshold?: string,
-   *            nsfw?: boolean, nsfw_threshold?: string}|null}
-   */
-  function loadInject() {
-    return captionState().inject || null;
-  }
-
-  /** 保存 WD14 注入设置与 NSFW 增强。 */
+  /** 保存 WD14 注入设置、NSFW 增强与描述模式/覆盖选项。引用: mode-seg/force 变更监听、closeSettings。 */
   function persistInject() {
     var state = captionState();
     state.inject = {
@@ -63,6 +53,8 @@
       nsfw: document.getElementById('inject-nsfw').checked,
       nsfw_threshold: document.getElementById('nsfw-threshold').value,
     };
+    state.modes = selectedModes();
+    state.force = document.getElementById('force').checked;
     AppSettings.set('caption', state);
   }
 
@@ -285,7 +277,7 @@
     closeDlg('rules-dlg');
   }
 
-  /** 按本地存储恢复描述设置。 */
+  /** 按「caption」设置键恢复提示词条目。 */
   function loadSettings() {
     loadSaved().forEach(addRuleRow);
   }
@@ -484,25 +476,27 @@
   function renderOptions(data) {
     var seg = document.getElementById('mode-seg');
     seg.innerHTML = '';
+    var saved = captionState();
     (data.modes || []).forEach(function (m) {
       var b = document.createElement('button');
       b.type = 'button';
-      b.className = 'active';
+      b.className = saved.modes && saved.modes.indexOf(m) < 0 ? '' : 'active';
       b.dataset.mode = m;
       b.textContent = MODE_LABELS[m] || m;
-      b.addEventListener('click', function () { b.classList.toggle('active'); });
+      b.addEventListener('click', function () { b.classList.toggle('active'); persistInject(); });
       seg.appendChild(b);
     });
-    var saved = loadInject() || {};
-    document.getElementById('inject-general').checked = !!saved.general;
+    var inject = saved.inject || {};
+    document.getElementById('inject-general').checked = !!inject.general;
     document.getElementById('general-threshold').value =
-      saved.general_threshold || data.default_wd14_threshold;
-    document.getElementById('inject-character').checked = !!saved.character;
+      inject.general_threshold || data.default_wd14_threshold;
+    document.getElementById('inject-character').checked = !!inject.character;
     document.getElementById('character-threshold').value =
-      saved.character_threshold || data.default_wd14_threshold;
-    document.getElementById('inject-nsfw').checked = !!saved.nsfw;
+      inject.character_threshold || data.default_wd14_threshold;
+    document.getElementById('inject-nsfw').checked = !!inject.nsfw;
     document.getElementById('nsfw-threshold').value =
-      saved.nsfw_threshold || data.default_wd14_threshold;
+      inject.nsfw_threshold || data.default_wd14_threshold;
+    document.getElementById('force').checked = !!saved.force;
     syncThresholdEnabled('inject-general', 'general-threshold');
     syncThresholdEnabled('inject-character', 'character-threshold');
     syncThresholdEnabled('inject-nsfw', 'nsfw-threshold');
@@ -528,6 +522,7 @@
     document.getElementById('inject-nsfw').addEventListener('change', function () {
       syncThresholdEnabled('inject-nsfw', 'nsfw-threshold');
     });
+    document.getElementById('force').addEventListener('change', persistInject);
     document.getElementById('rule-template').addEventListener('change', renderSentence);
     document.getElementById('rule-add').addEventListener('click', function () {
       var rule = buildFromTemplate();

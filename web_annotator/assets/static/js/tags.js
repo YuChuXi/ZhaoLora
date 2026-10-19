@@ -144,6 +144,16 @@
       exclude: parseTagList(document.getElementById('opt-exclude').value),
       match_mode: document.getElementById('opt-match-mode').value,
     };
+    AppSettings.set('tag_stats', {
+      lower: body.lower,
+      underscores: body.underscores,
+      per_sample: body.per_sample,
+      min_count: body.min_count,
+      section: body.section,
+      include: body.include,
+      exclude: body.exclude,
+      match_mode: body.match_mode,
+    });
     var data = await API.request(API.apiPath('/tags/stats'), {
       method: 'POST',
       body: JSON.stringify(body),
@@ -258,7 +268,42 @@
   /**
    * 绑定页面事件。
    */
-  function init() {
+  async function init() {
+    await AppSettings.ready();
+    // 按数据集恢复统计选项
+    var st = AppSettings.get('tag_stats');
+    if (st && typeof st === 'object') {
+      if (st.lower != null) document.getElementById('opt-lower').checked = !!st.lower;
+      if (st.underscores != null) document.getElementById('opt-underscores').checked = !!st.underscores;
+      if (st.per_sample != null) document.getElementById('opt-per-sample').checked = !!st.per_sample;
+      if (st.min_count != null) document.getElementById('opt-min').value = String(st.min_count);
+      if (st.section != null) document.getElementById('opt-section').value = st.section;
+      if (st.include) document.getElementById('opt-include').value = st.include.join(', ');
+      if (st.exclude) document.getElementById('opt-exclude').value = st.exclude.join(', ');
+      if (st.match_mode != null) document.getElementById('opt-match-mode').value = st.match_mode;
+    }
+    // 按数据集恢复批量编辑参数
+    var batch = AppSettings.get('tag_batch');
+    var addSaved = false;
+    if (batch && typeof batch === 'object') {
+      addSaved = !!batch.add;
+      if (batch.add) {
+        var a = batch.add;
+        document.getElementById('batch-add-separator').value = a.separator_mode;
+        document.getElementById('batch-add-position').value = a.position;
+        document.getElementById('batch-add-mode').value = a.insert_mode;
+        document.getElementById('batch-add-conditional').checked = !!a.conditional;
+        document.getElementById('batch-add-keep-dup').checked = !!a.keep_duplicates;
+        document.getElementById('batch-add-match-mode').value = a.match_mode;
+        document.getElementById('batch-add-inject-pony').checked = !!a.inject_pony_score;
+        document.getElementById('batch-add-inject-quality').checked = !!a.inject_quality_tag;
+        document.getElementById('batch-add-inject-year').checked = !!a.inject_year_tag;
+        document.getElementById('batch-add-position').disabled = (a.separator_mode === 'remove');
+      }
+      if (batch.delete_match_mode) document.getElementById('batch-delete-mode').value = batch.delete_match_mode;
+      if (batch.replace_match_mode) document.getElementById('batch-replace-mode').value = batch.replace_match_mode;
+    }
+
     document.getElementById('btn-refresh').addEventListener('click', function () {
       refresh().catch(function (e) { toast(String(e.message || e)); });
     });
@@ -306,8 +351,8 @@
       var sel = selectedTags();
       document.getElementById('batch-add-tags').value = sel.map(function (t) { return t.tag; }).join(', ');
       document.getElementById('batch-add-result').textContent = '';
-      // 有选中标签时默认设置: 位置 ||| 前、插入方式置底、仅当已有匹配标签时才插入
-      if (sel.length) {
+      // 有选中标签且无保存参数时默认设置: 位置 ||| 前、插入方式置底、仅当已有匹配标签时才插入
+      if (sel.length && !addSaved) {
         document.getElementById('batch-add-position').value = 'before';
         document.getElementById('batch-add-mode').value = 'bottom';
         document.getElementById('batch-add-conditional').checked = true;
@@ -443,6 +488,25 @@
       dry_run: !!dryRun,
       sample_limit: 40,
     };
+    var saved = AppSettings.get('tag_batch') || {};
+    if (mode === 'add') {
+      saved.add = {
+        separator_mode: body.separator_mode,
+        position: body.position,
+        insert_mode: body.insert_mode,
+        conditional: body.conditional,
+        keep_duplicates: body.keep_duplicates,
+        match_mode: body.match_mode,
+        inject_pony_score: body.inject_pony_score,
+        inject_quality_tag: body.inject_quality_tag,
+        inject_year_tag: body.inject_year_tag,
+      };
+    } else if (mode === 'delete') {
+      saved.delete_match_mode = body.match_mode;
+    } else {
+      saved.replace_match_mode = body.match_mode;
+    }
+    AppSettings.set('tag_batch', saved);
     var previewBtn = mode === 'add' ? 'btn-batch-add-preview' : (mode === 'delete' ? 'btn-batch-delete-preview' : 'btn-batch-replace-preview');
     var applyBtn = mode === 'add' ? 'btn-batch-add-apply' : (mode === 'delete' ? 'btn-batch-delete-apply' : 'btn-batch-replace-apply');
     resultEl.textContent = dryRun ? '预览中…' : '写入中…';
@@ -495,5 +559,5 @@
     return String(raw || '').split(/[\n,]+/).map(function (s) { return s.trim(); }).filter(Boolean);
   }
 
-  init();
+  init().catch(function (e) { toast('初始化失败: ' + String(e.message || e)); });
 })();

@@ -9,7 +9,6 @@ from pathlib import Path
 import numpy as np
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import Response
-from pydantic import BaseModel, Field
 from PIL import Image
 
 from routes.deps import get_runtime, resolve_path
@@ -19,7 +18,6 @@ from services.core.thumbnailer import image_size
 from services.state.mask import has_mask, load_mask, mask_out_path, save_mask
 from services.state.mask_templates import load_templates, save_templates
 from services.models import (
-    DefaultAlphaResponse,
     PaintImageItem,
     PaintSaveResponse,
     TemplateItem,
@@ -59,12 +57,6 @@ def _canvas_size(path: Path) -> tuple[int, int]:
         return w, h
     s = _PAINT_CANVAS_MAX / longest
     return max(1, round(w * s)), max(1, round(h * s))
-
-
-class PaintConfigBody(BaseModel):
-    """蒙版页默认 alpha 配置请求体. """
-
-    default_alpha: int = Field(255, ge=0, le=255)
 
 
 def _services(request: Request) -> tuple[Path, Path]:
@@ -313,42 +305,6 @@ async def upload_mask(request: Request, path: str = Query(...)) -> PaintSaveResp
     save_mask(mask_dir, path, np.array(a, dtype=np.uint8))
     logger.info("数据集 %s 保存蒙版: 图片 %s, 尺寸 %sx%s", root.name, path, size[0], size[1])
     return PaintSaveResponse(saved=str(Path(path).with_suffix(".png")), size=list(size))
-
-
-@router.get("/config")
-def get_config(request: Request) -> DefaultAlphaResponse:
-    """读取蒙版页默认 alpha 配置.
-
-    Args:
-        request (Request): FastAPI 请求对象, 由路由参数注入.
-
-    Returns:
-        DefaultAlphaResponse: 当前默认 alpha 值(0-255, 未设置时为 255).
-
-    Callers:
-        - ``static/js/paint.js:loadConfig``
-    """
-    da = getattr(request.app.state, "paint_default_alpha", 255)
-    return DefaultAlphaResponse(default_alpha=da)
-
-
-@router.post("/config")
-def set_config(request: Request, body: PaintConfigBody) -> DefaultAlphaResponse:
-    """写入蒙版页默认 alpha 配置(仅存于内存的 app.state).
-
-    Args:
-        request (Request): FastAPI 请求对象, 由路由参数注入.
-        body (PaintConfigBody): 含待写入的 default_alpha(0-255).
-
-    Returns:
-        DefaultAlphaResponse: 写入后的最新默认 alpha 值.
-
-    Callers:
-        - ``static/js/paint.js:saveConfig``
-    """
-    request.app.state.paint_default_alpha = body.default_alpha
-    logger.info("数据集 %s 更新默认 alpha 为 %d", request.state.runtime.root.name, body.default_alpha)
-    return DefaultAlphaResponse(default_alpha=body.default_alpha)
 
 
 @router.get("/templates", response_model=TemplatesPayload)

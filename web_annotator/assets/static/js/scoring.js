@@ -115,7 +115,7 @@
         renderGallery();
       }
       updateResultBadge(type, data.total || 0);
-    }).catch(function (e) {
+    }).catch(function () {
       if (type === _currentType) {
         document.getElementById('gallery').innerHTML =
           '<div class="gallery-empty">\u6682\u65E0\u8BC4\u5206\u6570\u636E</div>';
@@ -181,6 +181,9 @@
       return 0;
     });
 
+    // 直方图（重建筛选档位并恢复已保存筛选, 须先于筛选值读取）
+    renderHist(sorted);
+
     // 搜索过滤
     var query = (document.getElementById('searchBox').value || '').toLowerCase();
     var scoreFilter = document.getElementById('scoreFilter').value;
@@ -216,9 +219,6 @@
       stats.style.display = '';
       renderStats(sorted);
     }
-
-    // 直方图
-    renderHist(sorted);
   }
 
   function renderStats(results) {
@@ -286,6 +286,9 @@
         sel2.innerHTML += '<option value="' + tags[m] + '">' + tags[m] + ' (' + tagCounts[m] + ')</option>';
       }
     }
+
+    var savedFilter = (AppSettings.get('scoring') || {}).filter;
+    if (savedFilter) document.getElementById('scoreFilter').value = savedFilter;
   }
 
   // -----------------------------------------------------------------------
@@ -328,6 +331,13 @@
   // -----------------------------------------------------------------------
 
   async function initPage() {
+    await AppSettings.ready();
+    var saved = AppSettings.get('scoring') || {};
+    if (saved.sort) _sortKey = saved.sort;
+    if (saved.desc === false) _sortDesc = false;
+    document.getElementById('sortSelect').value = _sortKey;
+    document.getElementById('sortDir').textContent = _sortDesc ? '\u2193' : '\u2191';
+
     var data = await API.request(API.apiPath('/scoring/dirs'));
 
     if (data.aesthetic_ready) {
@@ -392,6 +402,26 @@
     cancelJob().catch(function (e) { toast(String(e.message || e)); });
   });
 
+  /**
+   * 将排序与筛选状态写入设置（「scoring」键）。
+   *
+   * Returns:
+   *   void
+   *
+   * Callers:
+   *   - scoring.js:result-tab click 监听
+   *   - scoring.js:sortSelect change 监听
+   *   - scoring.js:sortDir click 监听
+   *   - scoring.js:scoreFilter change 监听
+   */
+  function persistScoring() {
+    AppSettings.set('scoring', {
+      sort: _sortKey,
+      desc: _sortDesc,
+      filter: document.getElementById('scoreFilter').value,
+    });
+  }
+
   // 类型切换标签
   document.querySelectorAll('.result-tab').forEach(function (tab) {
     tab.addEventListener('click', function () {
@@ -401,6 +431,7 @@
       });
       document.getElementById('searchBox').value = '';
       document.getElementById('scoreFilter').value = 'all';
+      persistScoring();
       if (_results[_currentType]) {
         renderGallery();
       } else {
@@ -413,11 +444,14 @@
   document.getElementById('sortSelect').addEventListener('change', function () {
     _sortKey = this.value;
     _sortDesc = true;
+    document.getElementById('sortDir').textContent = '\u2193';
+    persistScoring();
     renderGallery();
   });
   document.getElementById('sortDir').addEventListener('click', function () {
     _sortDesc = !_sortDesc;
     this.textContent = _sortDesc ? '\u2193' : '\u2191';
+    persistScoring();
     renderGallery();
   });
 
@@ -426,6 +460,7 @@
     renderGallery();
   });
   document.getElementById('scoreFilter').addEventListener('change', function () {
+    persistScoring();
     renderGallery();
   });
 

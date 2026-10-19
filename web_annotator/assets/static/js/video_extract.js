@@ -1102,9 +1102,11 @@ var VideoExtract = (function () {
   function bindHideB() {
     var box = $('ve-hide-b');
     if (!box) return;
+    box.checked = !!((AppSettings.get('video') || {}).hide_b);
     state.hideB = box.checked;
     box.addEventListener('change', function () {
       state.hideB = box.checked;
+      AppSettings.set('video', { hide_b: state.hideB });
       drawChart();
       paintStatus();
       // 开启隐藏 B 帧时, 若当前帧是 B 帧则跳到最近的 I/P 帧(stepFrame 内部调 showFrame)
@@ -1190,6 +1192,7 @@ var VideoExtract = (function () {
    */
   async function init() {
     if (typeof API === 'undefined' || typeof API.dataset !== 'function') return;
+    await AppSettings.ready();
     // 先拉取视频列表(A/D 切换游标与无 path 时自动选中第一个视频)
     try {
       var list = await API.request(API.apiPath('/videos'));

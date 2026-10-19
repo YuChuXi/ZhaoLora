@@ -114,7 +114,6 @@ async def lifespan(app: FastAPI):
     app.state.task_store = store
     app.state.datasets = registry
     app.state.jobs = jobs
-    app.state.paint_default_alpha = 255
     app.state.block_chinese_ua = block_chinese_ua
     app.state.no_browser_cache = no_browser_cache
 

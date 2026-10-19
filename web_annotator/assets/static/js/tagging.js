@@ -12,6 +12,17 @@ var Tagging = (function () {
     return document.getElementById('tagging-modal');
   }
 
+  /**
+   * 读取「tagging」设置键的当前值。
+   * 引用：initModel / startJob。
+   * @returns {{threshold?: number, disable_orig_tags?: boolean,
+   *            force?: boolean, artist_tag?: string}}
+   */
+  function taggingState() {
+    var state = AppSettings.get('tagging');
+    return state && typeof state === 'object' ? state : {};
+  }
+
   function setRunningUi(running) {
     document.getElementById('btn-start').disabled = running || !_modelReady;
     document.getElementById('btn-cancel').disabled = !running;
@@ -105,8 +116,16 @@ var Tagging = (function () {
       warn.textContent = data.model_path || '未找到模型';
       document.getElementById('btn-start').disabled = true;
     }
-    if (data.default_threshold != null) {
+    var saved = taggingState();
+    if (saved.threshold != null) {
+      document.getElementById('threshold').value = String(saved.threshold);
+    } else if (data.default_threshold != null) {
       document.getElementById('threshold').value = String(data.default_threshold);
+    }
+    document.getElementById('chk-disable-orig').checked = !!saved.disable_orig_tags;
+    document.getElementById('chk-force').checked = !!saved.force;
+    if (saved.artist_tag != null) {
+      document.getElementById('artist-tag').value = saved.artist_tag;
     }
   }
 
@@ -133,6 +152,12 @@ var Tagging = (function () {
       method: 'POST',
       body: JSON.stringify(body)
     });
+    var saved = taggingState();
+    saved.threshold = threshold;
+    saved.disable_orig_tags = document.getElementById('chk-disable-orig').checked;
+    saved.force = document.getElementById('chk-force').checked;
+    saved.artist_tag = trigger;
+    AppSettings.set('tagging', saved);
     if (trigger) {
       // 并入而非整串覆盖: 保留标签页已勾选的触发词, 与 tags.js:saveTriggers 的设置语义互补
       API.request('/api/tasks/' + encodeURIComponent(API.dataset()) + '/trigger-word/add', {
@@ -182,7 +207,7 @@ var Tagging = (function () {
     m.setAttribute('aria-hidden', 'true');
   }
 
-  function init() {
+  async function init() {
     if (!document.getElementById('btn-start')) return;
 
     var openBtn = document.getElementById('btn-auto-tag');
@@ -211,6 +236,7 @@ var Tagging = (function () {
       cancelJob().catch(function (e) { toast(String(e.message || e)); });
     });
 
+    await AppSettings.ready();
     initModel().catch(function (e) { toast(String(e.message || e)); });
     resumeActive();
   }
