@@ -40,6 +40,10 @@ class CaptionBody(BaseModel):
     character_threshold: float | None = Field(
         None, ge=0.0, le=1.0, description="角色标签置信度下限; 省略为不注入"
     )
+    nsfw_threshold: float | None = Field(
+        None, ge=0.0, le=1.0,
+        description="NSFW 增强的置信度下限; Explicit 或 Questionable 不低于该值时在提示词追加备注, 省略为不启用",
+    )
     rules: list[CaptionRule] = Field(default_factory=list, description="预设提示词条目")
     force: bool = Field(False, description="是否覆盖 captions.json 中已存在的条目")
 

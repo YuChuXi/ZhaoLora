@@ -129,6 +129,15 @@
           <span class="cap-note">候选交给模型核对画面后取舍; 缓存缺失的图片先补建缓存</span>
         </div>
         <div class="cap-row">
+          <span class="cap-label">NSFW 增强</span>
+          <label class="cap-ck" title="启用后, 当 WD14 判定 Explicit 或 Questionable 的置信度不低于阈值时, 在提示词追加备注">
+            <input type="checkbox" id="inject-nsfw"> 启用</label>
+          <span class="cap-note">≥</span>
+          <input type="number" id="nsfw-threshold" class="cap-num" min="0" max="1" step="0.05"
+            title="置信度阈值: Explicit 或 Questionable 不低于该值时追加备注">
+          <span class="cap-note">命中时在提示词追加「Using explicit slang.」</span>
+        </div>
+        <div class="cap-row">
           <span class="cap-label">已有描述</span>
           <label class="cap-ck" title="重新标注已有描述的图片, 并覆盖其 captions.json 条目">
             <input type="checkbox" id="force"> 覆盖, 重新标注并覆盖原有条目</label>

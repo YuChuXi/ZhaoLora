@@ -44,9 +44,10 @@
   }
 
   /**
-   * 读取本地保存的 WD14 注入设置(通用/角色标签各自的下限)。
+   * 读取本地保存的 WD14 注入设置(通用/角色标签各自的下限)与 NSFW 增强。
    * @returns {{general?: boolean, general_threshold?: string,
-   *            character?: boolean, character_threshold?: string}|null}
+   *            character?: boolean, character_threshold?: string,
+   *            nsfw?: boolean, nsfw_threshold?: string}|null}
    */
   function loadInject() {
     var raw = localStorage.getItem(storeKey('inject'));
@@ -55,13 +56,15 @@
     return obj && typeof obj === 'object' ? obj : null;
   }
 
-  /** 保存 WD14 注入设置。 */
+  /** 保存 WD14 注入设置与 NSFW 增强。 */
   function persistInject() {
     localStorage.setItem(storeKey('inject'), JSON.stringify({
       general: document.getElementById('inject-general').checked,
       general_threshold: document.getElementById('general-threshold').value,
       character: document.getElementById('inject-character').checked,
       character_threshold: document.getElementById('character-threshold').value,
+      nsfw: document.getElementById('inject-nsfw').checked,
+      nsfw_threshold: document.getElementById('nsfw-threshold').value,
     }));
   }
 
@@ -434,8 +437,9 @@
     var rules = collectRules();
     var generalThreshold = readThreshold('inject-general', 'general-threshold');
     var characterThreshold = readThreshold('inject-character', 'character-threshold');
-    if (generalThreshold === false || characterThreshold === false) {
-      toast('注入标签的置信度阈值需在 0~1 之间');
+    var nsfwThreshold = readThreshold('inject-nsfw', 'nsfw-threshold');
+    if (generalThreshold === false || characterThreshold === false || nsfwThreshold === false) {
+      toast('注入标签与 NSFW 增强的置信度阈值需在 0~1 之间');
       return;
     }
     var body = {
@@ -443,6 +447,7 @@
       modes: modes,
       general_threshold: generalThreshold,
       character_threshold: characterThreshold,
+      nsfw_threshold: nsfwThreshold,
       rules: rules,
       force: document.getElementById('force').checked,
     };
@@ -497,8 +502,12 @@
     document.getElementById('inject-character').checked = !!saved.character;
     document.getElementById('character-threshold').value =
       saved.character_threshold || data.default_wd14_threshold;
+    document.getElementById('inject-nsfw').checked = !!saved.nsfw;
+    document.getElementById('nsfw-threshold').value =
+      saved.nsfw_threshold || data.default_wd14_threshold;
     syncThresholdEnabled('inject-general', 'general-threshold');
     syncThresholdEnabled('inject-character', 'character-threshold');
+    syncThresholdEnabled('inject-nsfw', 'nsfw-threshold');
     renderTemplates(data.rule_templates);
   }
 
@@ -516,6 +525,9 @@
     });
     document.getElementById('inject-character').addEventListener('change', function () {
       syncThresholdEnabled('inject-character', 'character-threshold');
+    });
+    document.getElementById('inject-nsfw').addEventListener('change', function () {
+      syncThresholdEnabled('inject-nsfw', 'nsfw-threshold');
     });
     document.getElementById('rule-template').addEventListener('change', renderSentence);
     document.getElementById('rule-add').addEventListener('click', function () {

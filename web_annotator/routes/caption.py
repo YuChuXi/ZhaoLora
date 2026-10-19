@@ -68,9 +68,7 @@ def dirs(request: Request) -> CaptionDirsResponse:
 
 def _build_item(
     root: Path,
-    work_dir: Path,
     dir_name: str,
-    dir_rel: str,
     img_path: str,
     img_stem: str,
     captions: dict[str, list[str]],
@@ -80,9 +78,7 @@ def _build_item(
 
     Args:
         root (Path): 数据集根目录.
-        work_dir (Path): 图片所在目录绝对路径(用于定位 ``captions.json``).
         dir_name (str): 目录名(前端展示用, 根目录为 ``.``).
-        dir_rel (str): 图片所在目录相对数据集根的路径.
         img_path (str): 图片相对数据集根的路径.
         img_stem (str): 图片 stem.
         captions (dict[str, list[str]]): 该工作目录的 ``captions.json`` 内容.
@@ -134,15 +130,13 @@ def list_images(request: Request, body: CaptionListBody) -> CaptionListResponse:
     items: list[CaptionImageItem] = []
     for work in selected:
         if work == root:
-            dir_name, prefix, dir_rel = ".", "", "."
+            dir_name, prefix = ".", ""
         else:
-            dir_name, prefix, dir_rel = work.name, work.name, work.name
+            dir_name, prefix = work.name, work.name
         store = load_captions(work)
         for img in scan_images(work, path_prefix=prefix):
             items.append(
-                _build_item(
-                    root, work, dir_name, dir_rel, img.path, img.stem, store, thumbnailer
-                )
+                _build_item(root, dir_name, img.path, img.stem, store, thumbnailer)
             )
 
     described = sum(1 for it in items if it.captions)
@@ -213,6 +207,7 @@ async def start(request: Request, body: CaptionBody) -> JobSubmitResponse:
             modes=modes,
             general_threshold=payload.general_threshold,
             character_threshold=payload.character_threshold,
+            nsfw_threshold=payload.nsfw_threshold,
             rules=payload.rules,
             force=payload.force,
             progress=prog,
@@ -229,12 +224,13 @@ async def start(request: Request, body: CaptionBody) -> JobSubmitResponse:
         cancel_fn=lambda: setattr(prog, "cancel_requested", True),
     )
     logger.info(
-        "描述标注任务提交 dataset=%s dirs=%s modes=%s 注入通用=%s 注入角色=%s force=%s job_id=%s",
+        "描述标注任务提交 dataset=%s dirs=%s modes=%s 注入通用=%s 注入角色=%s NSFW=%s force=%s job_id=%s",
         rt.name,
         [d.name if d != root else "." for d in selected],
         modes,
         payload.general_threshold,
         payload.character_threshold,
+        payload.nsfw_threshold,
         payload.force,
         job_id,
     )

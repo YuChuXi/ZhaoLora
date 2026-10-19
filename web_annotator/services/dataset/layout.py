@@ -43,8 +43,9 @@ RESERVED_DIR_NAMES = frozenset({
 # 每图裁剪输出记录目录名(datasets/xxx/.crops/{stem}.json, routes/crop.py 读写)
 CROP_META_DIRNAME = ".crops"
 
-# WD14 打标缓存目录名(datasets/xxx/.wd14_meta/{子目录}/{stem}.json); 按图片相对
-# 路径镜像存放, 使不同子目录的同名图片各占一份缓存
+# WD14 推理缓存目录名(datasets/xxx/.wd14_meta/{模型指纹}/{子目录}/{stem}.npy);
+# 缓存整条输出概率向量, 按图片相对路径镜像存放, 使不同子目录的同名图片各占一份;
+# 指纹由权重与标签表内容共同决定, 模型变化即换目录
 WD14_META_DIRNAME = ".wd14_meta"
 
 # 目录级自然语言描述文件名(datasets/xxx/{子目录}/captions.json); 键为图片文件名,

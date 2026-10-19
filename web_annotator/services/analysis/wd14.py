@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import csv
+import hashlib
+import io
 import json
 import os
 from dataclasses import dataclass, field
+from functools import lru_cache
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable, Iterable, cast
 
@@ -12,7 +16,7 @@ import numpy as np
 from PIL import Image
 
 from services.models import JobSnapshot, WorkDirInfo
-from services.core.atomic import atomic_write_text
+from services.core.atomic import atomic_write_bytes, atomic_write_text
 from services.core.natural import natural_key
 from services.core.scanner import IMAGE_EXTS, collect_images
 from services.dataset.layout import WD14_META_DIRNAME
@@ -33,15 +37,102 @@ WD14_ONNX = Path(
 )
 WD14_CSV = WD14_ONNX.with_suffix(".csv")
 
-# WD14 模型句柄: (onnx 会话, [(标签名, 是否角色), ...]), 由 device 管理生命周期
-_WD14_HANDLE = tuple["InferenceSession", list[tuple[str, bool]]]
+# 模型指纹缓存文件(任务根下, 与翻译缓存同级): 权重与标签表的 size/mtime 命中时
+# 直接复用已算出的内容哈希, 避免每次进程启动重读整个权重文件
+_DATA_ROOT = Path(
+    os.environ.get("ANNOTATOR_DATA_DIR", "").strip() or _REPO_ROOT / "datasets"
+)
+_FINGERPRINT_CACHE = _DATA_ROOT / ".wd14_model.json"
+
+# 标签表 category 取值到标签类型的映射; 未登记的取值在加载时直接报错
+_CATEGORY_NAMES = {"0": "general", "4": "character", "9": "rating"}
+# rating 分级类型名: 只表示图片分级, 不参与 txt 标签与描述参考注入
+_RATING = "rating"
+
+
+@dataclass(frozen=True)
+class Wd14Tag:
+    """WD14 推理得到的一个标签及其置信度.
+
+    Attributes:
+        name (str): 标签名(下划线已转空格).
+        score (float): 置信度.
+
+    Callers:
+        - ``services/analysis/wd14.py:Wd14Labels.groups`` : 构造来源.
+        - ``services/analysis/wd14.py:Wd14Cache.groups`` : 读取缓存的产物.
+        - ``services/analysis/wd14.py:Tags.merge_for_disk_by_confidence`` : 合并输入.
+        - ``services/analysis/caption.py:_reference_tags`` : 注入提示词的参考候选.
+    """
+
+    name: str
+    score: float
+
+
+@dataclass(frozen=True)
+class Wd14TagGroups:
+    """WD14 标签按标签表 category 分组的结果.
+
+    分组键取自标签表本身(``general`` / ``character`` / ``rating`` 等), 不预设
+    固定字段; 下游按名称取用, 未出现的类别返回空元组.
+
+    Attributes:
+        by_category (dict[str, tuple[Wd14Tag, ...]]): 类别名到标签列表, 组内按置信度降序.
+
+    Callers:
+        - ``services/analysis/wd14.py:Wd14Labels.groups`` : 构造来源.
+        - ``services/analysis/wd14.py:Wd14Cache.groups`` : 缓存取用产物.
+        - ``services/analysis/wd14.py:Tags.merge_for_disk_by_confidence`` : 合并非 rating 标签.
+        - ``services/analysis/caption.py:_reference_tags`` : 按类别注入.
+    """
+
+    by_category: dict[str, tuple[Wd14Tag, ...]]
+
+    def of(self, category: str) -> tuple[Wd14Tag, ...]:
+        """返回指定类别的标签列表.
+
+        Args:
+            category (str): 标签类型名, 如 ``general`` / ``character`` / ``rating``.
+
+        Returns:
+            tuple[Wd14Tag, ...]: 该类别的标签, 按置信度降序; 无该类时为空的元组.
+
+        Callers:
+            - ``services/analysis/wd14.py:Tags.merge_for_disk_by_confidence``
+            - ``services/analysis/caption.py:_reference_tags``
+        """
+        return self.by_category.get(category, ())
+
+    @property
+    def tags(self) -> tuple[Wd14Tag, ...]:
+        """返回全部非 rating 标签, 按置信度降序.
+
+        Returns:
+            tuple[Wd14Tag, ...]: 通用与角色等可写入 txt 的标签.
+
+        Callers:
+            - ``services/analysis/wd14.py:Tags.merge_for_disk_by_confidence``
+            - ``services/analysis/caption.py:_generate_captions``
+        """
+        return tuple(
+            sorted(
+                (
+                    tag
+                    for name, items in self.by_category.items()
+                    if name != _RATING
+                    for tag in items
+                ),
+                key=lambda tag: tag.score,
+                reverse=True,
+            )
+        )
 
 
 class Tags:
     """WD14 标签工具集, 提供拆分、拼接、等价键比较与置信度合并. 
 
     Callers:
-        - ``services/analysis/wd14.py:_process_one`` : 调用 ``split_caption``、``merge_for_disk_by_confidence``
+        - ``services/analysis/wd14.py:Wd14Cache.refresh`` : 调用 ``split_caption``、``merge_for_disk_by_confidence``
     """
 
     @staticmethod
@@ -56,7 +147,7 @@ class Tags:
 
         Callers:
             - ``services/analysis/wd14.py:Tags.merge_for_disk_by_confidence``
-            - ``services/analysis/wd14.py:_process_one``
+            - ``services/analysis/wd14.py:Wd14Cache.refresh``
         """
         return [x.strip() for x in caption.replace("\n", ",").split(",") if x.strip()]
 
@@ -108,37 +199,37 @@ class Tags:
     @staticmethod
     def merge_for_disk_by_confidence(
         base: list[str],
-        wd_scored: list[tuple[str, float, bool]],
+        groups: Wd14TagGroups,
         *,
         artist_tag: str = "",
     ) -> str:
         """按置信度合并原标签与 WD14 结果, 并按 Anima 格式输出.
 
         头部按 性别 → 角色 → 画师 收纳, 其余通用标签置于 ``|||`` 分隔的正文,
-        与图源下载的 Anima 风格保持一致. 角色标签由 ``is_character`` 标记区分,
+        与图源下载的 Anima 风格保持一致. 角色标签取自 ``character`` 组,
         画师标签由 ``artist_tag`` 显式提供(需带 ``@`` 前缀), 均按等价键去重.
 
         Args:
             base: 原旁路标签文本拆分列表.
-            wd_scored: ``(标签名, 置信度, 是否角色)`` 元组列表.
+            groups: WD14 分组标签; rating 组不写入.
             artist_tag: 画师标签, 需带 ``@`` 前缀; 为空则不写入.
 
         Returns:
             Anima 格式的标签文本.
 
         Callers:
-            - ``services/analysis/wd14.py:_process_one``
+            - ``services/analysis/wd14.py:Wd14Cache.refresh``
         """
         score_by_key: dict[str, float] = {}
         canonical_by_key: dict[str, str] = {}
-        character_key: set[str] = set()
-        for tag, score, is_character in wd_scored:
-            key = Tags.equivalence_key(tag)
-            if key not in score_by_key or score > score_by_key[key]:
-                score_by_key[key] = score
-                canonical_by_key[key] = Tags._canonical_spacing(tag)
-            if is_character:
-                character_key.add(key)
+        for tag in groups.tags:
+            key = Tags.equivalence_key(tag.name)
+            if key not in score_by_key or tag.score > score_by_key[key]:
+                score_by_key[key] = tag.score
+                canonical_by_key[key] = Tags._canonical_spacing(tag.name)
+        character_key = {
+            Tags.equivalence_key(tag.name) for tag in groups.of("character")
+        }
         for raw in base:
             key = Tags.equivalence_key(raw)
             if key not in canonical_by_key:
@@ -268,31 +359,14 @@ def _model_files() -> tuple[Path, Path]:
 
     Callers:
         - ``services/analysis/wd14.py:model_ready``
+        - ``services/analysis/wd14.py:Wd14Labels.load``
         - ``services/analysis/wd14.py:_build_session``
-        - ``services/analysis/wd14.py:_load_model``
     """
     if not WD14_ONNX.is_file():
         raise RuntimeError(f"WD14 模型权重不存在: {WD14_ONNX}")
     if not WD14_CSV.is_file():
         raise RuntimeError(f"WD14 标签表不存在: {WD14_CSV}")
     return WD14_ONNX, WD14_CSV
-
-
-def model_ready() -> tuple[bool, str]:
-    """检查 WD14 模型目录与权重/标签文件是否齐全.
-
-    Returns:
-        ``(ok, message)``. ok 为 True 时表示模型就绪、可加载.
-
-    Callers:
-        - ``routes/tagging.py:dirs``
-        - ``routes/tagging.py:start``
-    """
-    try:
-        onnx_path, _csv_path = _model_files()
-    except RuntimeError as e:
-        return False, str(e)
-    return True, f"模型就绪: {onnx_path}"
 
 
 def _build_session(providers: list[str]) -> "InferenceSession":
@@ -305,8 +379,8 @@ def _build_session(providers: list[str]) -> "InferenceSession":
         InferenceSession: 已初始化的 ONNX 推理会话.
 
     Callers:
-        - ``services/analysis/wd14.py:_load_model``
-        - ``services/analysis/wd14.py:_move_model``
+        - ``services/analysis/wd14.py:Wd14Model.load``
+        - ``services/analysis/wd14.py:Wd14Model.retarget``
     """
     import onnxruntime as ort
 
@@ -314,226 +388,511 @@ def _build_session(providers: list[str]) -> "InferenceSession":
     return ort.InferenceSession(str(onnx_path), providers=providers)
 
 
-def _load_model() -> _WD14_HANDLE:
-    """加载 WD14 ONNX 推理会话与标签表 (会话恒以 CPU 提供程序创建).
+def _model_fingerprint(onnx_path: Path, csv_path: Path) -> str:
+    """返回权重与标签表内容共同决定的模型指纹.
 
-    转移目标设备由 ``device.Model`` 生命周期统一决定 (``_move_model``),
-    加载侧不做设备判断.
-
-    Returns:
-        ``(session, labels)`` — ``labels`` 为 ``(标签名, 是否角色)`` 元组列表,
-        与模型输出索引对齐.
-
-    Callers:
-        - ``services/core/device.py:register_model`` 注册的 load 回调
-    """
-    ok, msg = model_ready()
-    if not ok:
-        raise RuntimeError(msg)
-    import pandas as pd
-
-    _onnx_path, csv_path = _model_files()
-    df = pd.read_csv(csv_path)
-    is_character = (df["category"].astype(str) == "4").tolist()
-    labels: list[tuple[str, bool]] = list(zip(df["name"].tolist(), is_character))
-    return _build_session(["CPUExecutionProvider"]), labels
-
-
-def _move_model(handle: _WD14_HANDLE, device) -> _WD14_HANDLE:
-    """把 WD14 会话转移到目标设备.
-
-    ONNX 会话的执行提供程序创建后不可迁移, 故按目标设备重建会话;
-    会话生效提供程序与目标一致时原样返回 (幂等).
+    指纹按两文件的 SHA-256 计算; 结果连同文件 size 与 mtime_ns 写入任务根的
+    ``.wd14_model.json``, 两文件元信息未变时直接复用, 不重读权重内容.
 
     Args:
-        handle: ``_load_model`` 返回的 ``(session, labels)`` 元组.
-        device: 转移目标设备.
+        onnx_path (Path): ONNX 权重文件.
+        csv_path (Path): 标签表文件.
 
     Returns:
-        完成转移后的 ``(session, labels)`` 元组.
+        str: 指纹前 16 位十六进制串.
 
     Callers:
-        - ``services/core/device.py:register_model`` 注册的 move 回调
+        - ``services/analysis/wd14.py:Wd14Labels.load``
     """
-    session, labels = handle
-    providers = (
-        ["CUDAExecutionProvider", "CPUExecutionProvider"]
-        if device.type == "cuda"
-        else ["CPUExecutionProvider"]
+    files = {
+        "onnx": {
+            "size": onnx_path.stat().st_size,
+            "mtime_ns": onnx_path.stat().st_mtime_ns,
+        },
+        "csv": {
+            "size": csv_path.stat().st_size,
+            "mtime_ns": csv_path.stat().st_mtime_ns,
+        },
+    }
+    if _FINGERPRINT_CACHE.is_file():
+        cached = json.loads(_FINGERPRINT_CACHE.read_text(encoding="utf-8"))
+        if cached.get("files") == files:
+            return str(cached["fingerprint"])
+    digest = hashlib.sha256()
+    for path in (onnx_path, csv_path):
+        with path.open("rb") as f:
+            for chunk in iter(lambda: f.read(8 << 20), b""):
+                digest.update(chunk)
+    fingerprint = digest.hexdigest()[:16]
+    _FINGERPRINT_CACHE.parent.mkdir(parents=True, exist_ok=True)
+    atomic_write_text(
+        _FINGERPRINT_CACHE,
+        json.dumps({"files": files, "fingerprint": fingerprint}, indent=2) + "\n",
     )
-    if session.get_providers() == providers:
-        return handle
-    del session
-    return _build_session(providers), labels
-
-
-def _unload_model(handle: object) -> None:
-    """释放 WD14 ONNX 会话.
-
-    Args:
-        handle: ``_load_model`` 返回的 ``(session, labels)`` 元组.
-
-    Callers:
-        - ``services/core/device.py:register_model`` 注册的 unload 回调
-    """
-    session, _labels = cast("_WD14_HANDLE", handle)
-    del session, _labels
-
-
-_MODEL = register_model(_load_model, _unload_model, _move_model)
-
-
-def _infer_wd14(
-    img: Image.Image,
-    threshold: float,
-    handle: _WD14_HANDLE,
-) -> list[tuple[str, float, bool]]:
-    """对单张图跑 WD14, 返回 (tag, score, is_character).
-
-    Args:
-        img: 待打标图片.
-        threshold: 置信度阈值.
-        handle: WD14 模型句柄 ``(session, labels)``, 由 ``run_batch`` 经 ``auto_release`` 持有.
-
-    Returns:
-        ``[(tag, score, is_character), ...]``, 已按置信度过滤阈值以上.
-
-    Callers:
-        - ``services/analysis/wd14.py:_process_one``
-    """
-    session, labels = handle
-    if img.mode == "RGBA":
-        rgb = Image.new("RGB", img.size, (255, 255, 255))
-        rgb.paste(img, mask=img.split()[3])
-        img = rgb
-    else:
-        img = img.convert("RGB")
-    w, h = img.size
-    max_side = max(w, h)
-    canvas = Image.new("RGB", (max_side, max_side), (255, 255, 255))
-    canvas.paste(img, ((max_side - w) // 2, (max_side - h) // 2))
-    input_img = canvas.resize((448, 448), Image.Resampling.LANCZOS)
-    arr = np.array(input_img).astype(np.float32)
-    arr = arr[:, :, ::-1]
-    input_data = arr[np.newaxis, ...]
-    input_name = session.get_inputs()[0].name
-    # 模型输出声明为稀疏张量, 类型推断为 SparseTensor, 但运行时返回 numpy 数组; 显式转 ndarray.
-    probs = np.asarray(session.run(None, {input_name: input_data})[0])[0]
-    scored: list[tuple[str, float, bool]] = []
-    for i, p in enumerate(probs):
-        if i < len(labels) and float(p) >= threshold:
-            name, is_character = labels[i]
-            if name in ["general", "sensitive", "questionable", "explicit"]:
-                continue
-            scored.append((name.replace("_", " ").strip(), float(p), is_character))
-    scored.sort(key=lambda x: x[1], reverse=True)
-    return scored
-
-
-def _load_text(path: Path) -> str:
-    """读取旁路 txt；不存在则空串. 
-
-    Callers:
-        - ``services/analysis/wd14.py:_process_one``
-    """
-    if not path.is_file():
-        return ""
-    return path.read_text(encoding="utf-8")
+    return fingerprint
 
 
 @dataclass(frozen=True)
-class Wd14Tag:
-    """WD14 推理得到的一个标签及其置信度与标签类型.
+class Wd14Labels:
+    """WD14 标签表与模型身份.
+
+    指纹由权重与标签表内容共同决定, 缓存目录按指纹区分, 使权重或标签表任一
+    变化后的旧缓存不再命中. 标签表与输出向量逐行对齐, 与 ONNX 会话无关,
+    读取缓存只需本对象, 无需加载权重.
 
     Attributes:
-        name (str): 标签名(下划线已转空格).
-        score (float): 置信度, 由阈值过滤后保留.
-        category (str): 标签类型, 取值 ``general`` 或 ``character``.
+        fingerprint (str): 权重与标签表 SHA-256 的前 16 位十六进制串.
+        names (tuple[str, ...]): 标签名, 下划线已转空格.
+        categories (tuple[str, ...]): 标签类型名, 与 ``names`` 逐项对齐.
 
     Callers:
-        - ``services/analysis/wd14.py:write_meta`` : 序列化来源.
-        - ``services/analysis/wd14.py:load_meta`` : 反序列化产物.
-        - ``services/analysis/caption.py:run_caption`` : 注入提示词的参考候选.
+        - ``services/analysis/wd14.py:Wd14Model`` : 持有标签表用于推理后解码.
+        - ``services/analysis/wd14.py:Wd14Cache`` : 定位缓存并解码向量.
     """
 
-    name: str
-    score: float
-    category: str
+    fingerprint: str
+    names: tuple[str, ...]
+    categories: tuple[str, ...]
+
+    @classmethod
+    @lru_cache(maxsize=1)
+    def load(cls) -> "Wd14Labels":
+        """读取标签表并计算模型指纹.
+
+        内容哈希与标签表解析在进程内只执行一次; 返回的实例不可变, 可安全共享.
+
+        Returns:
+            Wd14Labels: 解析后的标签表与指纹.
+
+        Raises:
+            RuntimeError: 权重或标签文件缺失.
+
+        Callers:
+            - ``services/analysis/wd14.py:Wd14Model.load``
+            - ``services/analysis/caption.py:run_caption``
+        """
+        onnx_path, csv_path = _model_files()
+        names: list[str] = []
+        categories: list[str] = []
+        with csv_path.open("r", encoding="utf-8", newline="") as f:
+            for row in csv.DictReader(f):
+                raw = row["category"]
+                if raw not in _CATEGORY_NAMES:
+                    raise RuntimeError(
+                        f"WD14 标签表存在未登记的 category: {raw} ({row['name']})"
+                    )
+                names.append(row["name"].replace("_", " ").strip())
+                categories.append(_CATEGORY_NAMES[raw])
+        return cls(
+            fingerprint=_model_fingerprint(onnx_path, csv_path),
+            names=tuple(names),
+            categories=tuple(categories),
+        )
+
+    def groups(self, scores: np.ndarray, threshold: float) -> Wd14TagGroups:
+        """按置信度阈值把整条概率向量解码为分组标签.
+
+        Args:
+            scores (np.ndarray): 与本标签表对齐的概率向量.
+            threshold (float): 置信度下限, 低于该值的标签丢弃.
+
+        Returns:
+            Wd14TagGroups: 按标签表 category 分组, 组内按置信度降序.
+
+        Callers:
+            - ``services/analysis/wd14.py:Wd14Cache.groups``
+            - ``services/analysis/wd14.py:Wd14Cache.refresh``
+        """
+        idx = np.flatnonzero(scores >= threshold)
+        order = np.argsort(scores[idx])[::-1]
+        buckets: dict[str, list[Wd14Tag]] = {}
+        for i in idx[order]:
+            buckets.setdefault(self.categories[int(i)], []).append(
+                Wd14Tag(self.names[int(i)], float(scores[i]))
+            )
+        return Wd14TagGroups(
+            by_category={name: tuple(items) for name, items in buckets.items()}
+        )
 
 
-def meta_path(root: Path, image_rel: str) -> Path:
-    """返回图片的 WD14 缓存文件路径 ``<root>/.wd14_meta/<子目录>/<stem>.json``.
+class Wd14Model:
+    """WD14 模型句柄: 标签表 + ONNX 推理会话.
 
-    缓存按图片相对路径镜像存放, 使不同子目录的同名图片各占一份缓存.
+    Callers:
+        - ``services/core/device.py:register_model`` : 以本类为 WD14 模型的生命周期载体.
+    """
 
-    Args:
+    def __init__(self, labels: Wd14Labels, session: "InferenceSession") -> None:
+        """初始化模型句柄.
+
+        Args:
+            labels (Wd14Labels): 标签表与模型身份.
+            session (InferenceSession): ONNX 推理会话.
+
+        Callers:
+            - ``services/analysis/wd14.py:Wd14Model.load``
+            - ``services/analysis/wd14.py:Wd14Model.retarget``
+        """
+        self.labels = labels
+        self._session = session
+
+    @classmethod
+    def load(cls) -> "Wd14Model":
+        """加载标签表与会话 (会话恒以 CPU 提供程序创建).
+
+        转移目标设备由 ``device.Model`` 生命周期统一决定 (``retarget``),
+        加载侧不做设备判断.
+
+        Returns:
+            Wd14Model: 模型句柄.
+
+        Raises:
+            RuntimeError: WD14 模型权重或标签表缺失.
+
+        Callers:
+            - ``services/core/device.py:register_model`` 注册的 load 回调
+        """
+        ok, msg = model_ready()
+        if not ok:
+            raise RuntimeError(msg)
+        return cls(Wd14Labels.load(), _build_session(["CPUExecutionProvider"]))
+
+    def retarget(self, device) -> "Wd14Model":
+        """把推理会话转移到目标设备.
+
+        ONNX 会话的执行提供程序创建后不可迁移, 故按目标设备重建会话;
+        会话生效提供程序与目标一致时原样返回 (幂等). 标签表与指纹复用.
+
+        Args:
+            device: 转移目标设备.
+
+        Returns:
+            Wd14Model: 完成转移的模型句柄.
+
+        Callers:
+            - ``services/core/device.py:register_model`` 注册的 move 回调
+        """
+        providers = (
+            ["CUDAExecutionProvider", "CPUExecutionProvider"]
+            if device.type == "cuda"
+            else ["CPUExecutionProvider"]
+        )
+        if self._session.get_providers() != providers:
+            self._session = _build_session(providers)
+        return self
+
+    def close(self) -> None:
+        """释放 ONNX 推理会话.
+
+        Callers:
+            - ``services/core/device.py:register_model`` 注册的 unload 回调
+        """
+        del self._session
+
+    def scores(self, img: Image.Image) -> np.ndarray:
+        """对单张图跑 WD14, 返回整条输出概率向量.
+
+        Args:
+            img (Image.Image): 待打标图片.
+
+        Returns:
+            np.ndarray: 与标签表逐行对齐的概率向量, 已含 rating 与角色标签.
+
+        Callers:
+            - ``services/analysis/wd14.py:Wd14Cache.ensure``
+        """
+        session = self._session
+        if img.mode == "RGBA":
+            rgb = Image.new("RGB", img.size, (255, 255, 255))
+            rgb.paste(img, mask=img.split()[3])
+            img = rgb
+        else:
+            img = img.convert("RGB")
+        w, h = img.size
+        max_side = max(w, h)
+        canvas = Image.new("RGB", (max_side, max_side), (255, 255, 255))
+        canvas.paste(img, ((max_side - w) // 2, (max_side - h) // 2))
+        input_img = canvas.resize((448, 448), Image.Resampling.LANCZOS)
+        arr = np.array(input_img).astype(np.float32)
+        arr = arr[:, :, ::-1]
+        input_data = arr[np.newaxis, ...]
+        input_name = session.get_inputs()[0].name
+        # 模型输出声明为稀疏张量, 类型推断为 SparseTensor, 但运行时返回 numpy 数组; 显式转 ndarray.
+        probs = np.asarray(session.run(None, {input_name: input_data})[0])[0]
+        return probs.astype(np.float32, copy=False)
+
+
+_MODEL = register_model(Wd14Model.load, Wd14Model.close, Wd14Model.retarget)
+
+
+class Wd14Cache:
+    """数据集根目录的 WD14 推理缓存.
+
+    缓存按模型指纹分目录, 每张图保存整条输出概率向量; 取标签的阈值在读取时
+    决定, 因此更换阈值只需重新取用, 不必重新推理.
+
+    Attributes:
         root (Path): 数据集根目录.
-        image_rel (str): 图片相对数据集根的路径, 如 ``main/foo.png``.
+        labels (Wd14Labels): 标签表与模型身份.
+
+    Callers:
+        - ``services/analysis/wd14.py:run_batch`` : 打标主循环.
+        - ``services/analysis/wd14.py:Wd14Cache.populate`` : 描述页补建缓存.
+        - ``services/analysis/caption.py:run_caption`` : 任务级缓存句柄.
+    """
+
+    def __init__(self, root: Path, labels: Wd14Labels) -> None:
+        """初始化目录缓存句柄.
+
+        Args:
+            root (Path): 数据集根目录.
+            labels (Wd14Labels): 标签表与模型身份.
+
+        Callers:
+            - ``services/analysis/wd14.py:run_batch``
+            - ``services/analysis/caption.py:run_caption``
+        """
+        self.root = root
+        self.labels = labels
+        self.dir = root / WD14_META_DIRNAME / labels.fingerprint
+
+    def path(self, src: Path) -> Path:
+        """返回图片的缓存文件路径, 按图片相对数据集根的路径镜像存放.
+
+        Args:
+            src (Path): 图片绝对路径, 须位于数据集根目录内.
+
+        Returns:
+            Path: 缓存 ``.npy`` 文件路径.
+
+        Callers:
+            - ``services/analysis/wd14.py:Wd14Cache.missing``
+            - ``services/analysis/wd14.py:Wd14Cache.ensure``
+            - ``services/analysis/wd14.py:Wd14Cache._scores``
+        """
+        return (self.dir / src.relative_to(self.root)).with_suffix(".npy")
+
+    def missing(self, images: Iterable[Path]) -> list[Path]:
+        """筛出推理缓存缺失的图片.
+
+        Args:
+            images (Iterable[Path]): 待检查的图片绝对路径.
+
+        Returns:
+            list[Path]: 缓存文件不存在的图片列表, 保持输入顺序.
+
+        Callers:
+            - ``services/analysis/wd14.py:Wd14Cache.ensure``
+            - ``services/analysis/wd14.py:Wd14Cache.populate``
+        """
+        return [src for src in images if not self.path(src).is_file()]
+
+    def ensure(
+        self,
+        images: list[Path],
+        *,
+        model: Wd14Model,
+        log: Callable[[str], None],
+        cancel_check: Callable[[], bool],
+        on_progress: Callable[[int, int, Path], None] | None = None,
+    ) -> set[Path]:
+        """为缓存缺失的图片跑推理, 把整条概率向量写入缓存.
+
+        已有缓存的图片不重复推理; 单张失败记入日志后继续, 不中断整批.
+        模型文件缺失属配置错误, 由推理调用链直接抛出.
+
+        Args:
+            images (list[Path]): 待检查的图片绝对路径列表.
+            model (Wd14Model): 模型句柄.
+            log (Callable[[str], None]): 日志回调, 接收单行文本.
+            cancel_check (Callable[[], bool]): 协作取消判定, 返回 True 时中止.
+            on_progress (Callable[[int, int, Path], None] | None): 单张完成回调
+                ``(已完成数, 总数, 图片路径)``.
+
+        Returns:
+            set[Path]: 推理或写入失败的图片集合.
+
+        Callers:
+            - ``services/analysis/wd14.py:Wd14Cache.populate``
+            - ``services/analysis/wd14.py:run_batch``
+        """
+        missing = self.missing(images)
+        if not missing:
+            return set()
+
+        log(f"WD14 缓存缺失 {len(missing)}/{len(images)} 张, 推理补齐…")
+        failed: set[Path] = set()
+        for i, src in enumerate(missing):
+            if cancel_check():
+                log(f"WD14 缓存生成已取消: 完成 {i} 张, 失败 {len(failed)} 张")
+                return failed
+            try:
+                with Image.open(src) as img:
+                    scores = model.scores(img)
+                path = self.path(src)
+                path.parent.mkdir(parents=True, exist_ok=True)
+                buf = io.BytesIO()
+                np.save(buf, scores.astype(np.float16), allow_pickle=False)
+                atomic_write_bytes(path, buf.getvalue())
+            except (OSError, ValueError, RuntimeError) as e:
+                failed.add(src)
+                log(f"WD14 缓存生成失败: {self.rel(src)} — {e}")
+            else:
+                log(f"WD14 缓存 [{i + 1}/{len(missing)}]: {self.rel(src)}")
+            if on_progress:
+                on_progress(i + 1, len(missing), src)
+        log(f"WD14 缓存生成完成: 新建 {len(missing) - len(failed)} 张, 失败 {len(failed)} 张")
+        return failed
+
+    def populate(
+        self,
+        images: list[Path],
+        *,
+        log: Callable[[str], None],
+        cancel_check: Callable[[], bool],
+    ) -> None:
+        """按需加载模型并补齐推理缓存, 不改动任何 ``.txt``.
+
+        供描述页在参考标签注入或标签模式命中需要 WD14 标签时, 先补齐缓存再生成
+        描述. 全部就绪时不加载模型.
+
+        Args:
+            images (list[Path]): 待检查的图片绝对路径列表.
+            log (Callable[[str], None]): 日志回调, 接收单行文本.
+            cancel_check (Callable[[], bool]): 协作取消判定, 返回 True 时中止.
+
+        Returns:
+            None
+
+        Raises:
+            RuntimeError: WD14 模型权重或标签表缺失.
+
+        Callers:
+            - ``services/analysis/caption.py:run_caption``
+        """
+        if not self.missing(images):
+            return
+        with _MODEL as raw_model:
+            self.ensure(
+                images,
+                model=cast(Wd14Model, raw_model),
+                log=log,
+                cancel_check=cancel_check,
+            )
+
+    def _scores(self, src: Path) -> np.ndarray | None:
+        """读取图片的整条 WD14 概率向量.
+
+        Args:
+            src (Path): 图片绝对路径.
+
+        Returns:
+            np.ndarray | None: float32 概率向量; 缓存缺失时为 None.
+
+        Callers:
+            - ``services/analysis/wd14.py:Wd14Cache.groups``
+            - ``services/analysis/wd14.py:Wd14Cache.refresh``
+        """
+        path = self.path(src)
+        if not path.is_file():
+            return None
+        return np.load(path).astype(np.float32)
+
+    def groups(self, src: Path, threshold: float) -> Wd14TagGroups | None:
+        """读取缓存向量并按阈值取出分组标签.
+
+        Args:
+            src (Path): 图片绝对路径.
+            threshold (float): 置信度下限.
+
+        Returns:
+            Wd14TagGroups | None: 按类别分组的标签; 缓存缺失时为 None.
+
+        Callers:
+            - ``services/analysis/caption.py:_generate_captions``
+        """
+        scores = self._scores(src)
+        if scores is None:
+            return None
+        return self.labels.groups(scores, threshold)
+
+    def refresh(
+        self,
+        src: Path,
+        *,
+        threshold: float,
+        disable_orig_tags: bool,
+        artist_tag: str = "",
+    ) -> None:
+        """按阈值从缓存取标签, 合并原标签后刷新图片的同名 ``.txt``.
+
+        Args:
+            src (Path): 图片绝对路径.
+            threshold (float): 置信度下限.
+            disable_orig_tags (bool): 是否丢弃原标签.
+            artist_tag (str): 追加的画师标签 (以 ``@`` 开头).
+
+        Returns:
+            None
+
+        Raises:
+            RuntimeError: 推理缓存缺失.
+
+        Callers:
+            - ``services/analysis/wd14.py:run_batch``
+        """
+        scores = self._scores(src)
+        if scores is None:
+            raise RuntimeError(f"推理缓存缺失: {self.rel(src)}")
+        txt = src.with_suffix(".txt")
+        base = (
+            []
+            if disable_orig_tags
+            else Tags.split_caption(
+                txt.read_text(encoding="utf-8") if txt.is_file() else ""
+            )
+        )
+        groups = self.labels.groups(scores, threshold)
+        caption = Tags.merge_for_disk_by_confidence(
+            base,
+            groups,
+            artist_tag=artist_tag,
+        )
+        atomic_write_text(txt, caption)
+
+    def rel(self, src: Path) -> str:
+        """返回图片相对数据集根的路径, 用于日志与报错.
+
+        Args:
+            src (Path): 图片绝对路径.
+
+        Returns:
+            str: POSIX 风格相对路径.
+
+        Callers:
+            - ``services/analysis/wd14.py:Wd14Cache.ensure``
+            - ``services/analysis/wd14.py:Wd14Cache.refresh``
+            - ``services/analysis/wd14.py:run_batch``
+        """
+        return src.relative_to(self.root).as_posix()
+
+
+def model_ready() -> tuple[bool, str]:
+    """检查 WD14 模型目录与权重/标签文件是否齐全.
 
     Returns:
-        Path: 缓存 json 的绝对路径.
+        ``(ok, message)``. ok 为 True 时表示模型就绪、可加载.
 
     Callers:
-        - ``services/analysis/wd14.py:write_meta``
-        - ``services/analysis/wd14.py:load_meta``
-        - ``services/analysis/caption.py:run_caption``
+        - ``routes/tagging.py:dirs``
+        - ``routes/tagging.py:start``
+        - ``services/analysis/wd14.py:Wd14Model.load``
     """
-    rel = image_rel.replace("\\", "/").lstrip("/")
-    return root / WD14_META_DIRNAME / Path(rel).with_suffix(".json")
-
-
-def write_meta(root: Path, image_rel: str, threshold: float, tags: list[Wd14Tag]) -> None:
-    """把单张图片的 WD14 推理结果写入缓存 json.
-
-    缓存只记录阈值以上的标签, 供描述页注入参考候选与就绪页统计完整度;
-    父目录按需创建, 写入经原子替换, 避免半截文件.
-
-    Args:
-        root (Path): 数据集根目录.
-        image_rel (str): 图片相对数据集根的路径.
-        threshold (float): 本次推理所用置信度阈值.
-        tags (list[Wd14Tag]): 阈值以上的标签列表, 按置信度降序.
-
-    Returns:
-        None
-
-    Callers:
-        - ``services/analysis/wd14.py:_process_one``
-    """
-    path = meta_path(root, image_rel)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    payload = {
-        "image": image_rel.replace("\\", "/").lstrip("/"),
-        "threshold": threshold,
-        "tags": [
-            {"tag": tag.name, "score": round(tag.score, 6), "category": tag.category}
-            for tag in tags
-        ],
-    }
-    atomic_write_text(path, json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
-
-
-def load_meta(root: Path, image_rel: str) -> list[Wd14Tag] | None:
-    """读取图片的 WD14 缓存标签.
-
-    Args:
-        root (Path): 数据集根目录.
-        image_rel (str): 图片相对数据集根的路径.
-
-    Returns:
-        list[Wd14Tag] | None: 缓存标签列表; 未打标或缓存缺失时为 None.
-
-    Callers:
-        - ``services/analysis/caption.py:run_caption``
-    """
-    path = meta_path(root, image_rel)
-    if not path.is_file():
-        return None
-    data = json.loads(path.read_text(encoding="utf-8"))
-    return [
-        Wd14Tag(name=str(item["tag"]), score=float(item["score"]), category=str(item["category"]))
-        for item in data.get("tags", [])
-    ]
+    try:
+        onnx_path, _csv_path = _model_files()
+    except RuntimeError as e:
+        return False, str(e)
+    return True, f"模型就绪: {onnx_path}"
 
 
 @dataclass
@@ -586,6 +945,7 @@ class TaggingProgress:
             line: 日志行文本.
 
         Callers:
+            - ``services/analysis/wd14.py:Wd14Cache.ensure`` (经 ``run_batch`` 传入)
             - ``services/analysis/wd14.py:run_batch``
         """
         self.logs.append(line)
@@ -593,167 +953,12 @@ class TaggingProgress:
             self.logs = self.logs[-300:]
 
 
-def _infer_and_cache(
-    img: Image.Image,
-    *,
-    root: Path,
-    image_rel: str,
-    threshold: float,
-    handle: _WD14_HANDLE,
-) -> list[tuple[str, float, bool]]:
-    """对单张图片跑 WD14 推理, 并把阈值以上的标签写入 ``.wd14_meta`` 缓存.
-
-    Args:
-        img: 待打标图片.
-        root: 数据集根目录, 用于定位 ``.wd14_meta`` 缓存.
-        image_rel: 图片相对数据集根的路径.
-        threshold: 置信度阈值, 低于该值的标签不写入缓存.
-        handle: WD14 模型句柄, 由调用方持有.
-
-    Returns:
-        ``[(tag, score, is_character), ...]``, 与写入缓存的标签一致.
-
-    Callers:
-        - ``services/analysis/wd14.py:_process_one``
-        - ``services/analysis/wd14.py:ensure_meta``
-    """
-    wd_scored = _infer_wd14(img, threshold, handle)
-    write_meta(
-        root,
-        image_rel,
-        threshold,
-        [
-            Wd14Tag(
-                name=name,
-                score=score,
-                category="character" if is_character else "general",
-            )
-            for name, score, is_character in wd_scored
-        ],
-    )
-    return wd_scored
-
-
-def _process_one(
-    src: Path,
-    *,
-    root: Path,
-    handle: _WD14_HANDLE,
-    threshold: float,
-    disable_orig_tags: bool,
-    force: bool,
-    artist_tag: str = "",
-) -> str:
-    """处理单张图片: WD14 推理 → 缓存置信度 → 合并原标签 → 写入同名 .txt. 
-
-    Args:
-        src: 图片绝对路径.
-        root: 数据集根目录, 用于定位 ``.wd14_meta`` 缓存.
-        handle: WD14 模型句柄, 由 ``run_batch`` 持有并透传.
-        threshold: 置信度阈值.
-        disable_orig_tags: 是否丢弃原标签.
-        force: 是否覆盖已存在的 ``.txt``.
-        artist_tag: 追加的画师标签 (以 ``@`` 开头).
-
-    Returns:
-        ``"skip"`` 或 ``"ok"``. 
-
-    Callers:
-        - ``services/analysis/wd14.py:run_batch``
-    """
-    out_txt_path = src.with_suffix(".txt")
-    if not force and out_txt_path.exists():
-        return "skip"
-
-    base: list[str] = []
-    if not disable_orig_tags:
-        base = Tags.split_caption(_load_text(out_txt_path))
-    with Image.open(src) as img:
-        wd_scored = _infer_and_cache(
-            img,
-            root=root,
-            image_rel=src.relative_to(root).as_posix(),
-            threshold=threshold,
-            handle=handle,
-        )
-    caption = Tags.merge_for_disk_by_confidence(base, wd_scored, artist_tag=artist_tag)
-    atomic_write_text(out_txt_path, caption)
-    return "ok"
-
-
-def ensure_meta(
-    root: Path,
-    images: list[Path],
-    *,
-    threshold: float,
-    log: Callable[[str], None],
-    cancel_check: Callable[[], bool],
-) -> None:
-    """为缓存缺失的图片补建 ``.wd14_meta`` 缓存, 只写缓存并保持同名 ``.txt`` 原样.
-
-    供描述页在参考标签注入或标签模式命中需要 WD14 标签时, 先补齐缓存再生成描述.
-    逐个检查缓存文件, 只对缺失的图片跑推理, 已有缓存的原样保留; 全部就绪时不加载
-    模型. 单张推理失败记入日志后继续, 不中断整批; 反序列化与模型文件缺失属配置
-    错误, 由推理调用链直接抛出.
-
-    Args:
-        root: 数据集根目录, 用于定位 ``.wd14_meta`` 缓存.
-        images: 待检查的图片绝对路径列表.
-        threshold: 推理置信度阈值, 低于该值的标签不写入缓存.
-        log: 日志回调, 接收单行文本.
-        cancel_check: 协作取消判定, 返回 True 时中止补建.
-
-    Returns:
-        None
-
-    Raises:
-        RuntimeError: WD14 模型权重或标签表缺失.
-
-    Callers:
-        - ``services/analysis/caption.py:run_caption``
-    """
-    missing = [
-        src
-        for src in images
-        if not meta_path(root, src.relative_to(root).as_posix()).is_file()
-    ]
-    if not missing:
-        return
-
-    log(f"WD14 缓存缺失 {len(missing)}/{len(images)} 张, 加载模型补建 (阈值={threshold})…")
-    created = 0
-    failed = 0
-    with _MODEL as raw_handle:
-        handle = cast("_WD14_HANDLE", raw_handle)
-        for src in missing:
-            if cancel_check():
-                log(f"WD14 缓存补建已取消: 新建 {created} 张, 失败 {failed} 张")
-                return
-            rel = src.relative_to(root).as_posix()
-            try:
-                with Image.open(src) as img:
-                    _infer_and_cache(
-                        img,
-                        root=root,
-                        image_rel=rel,
-                        threshold=threshold,
-                        handle=handle,
-                    )
-            except (OSError, ValueError, RuntimeError) as e:
-                failed += 1
-                log(f"WD14 缓存补建失败: {rel} — {e}")
-                continue
-            created += 1
-            log(f"WD14 缓存补建 [{created}/{len(missing)}]: {rel}")
-    log(f"WD14 缓存补建完成: 新建 {created} 张, 失败 {failed} 张")
-
-
 @_MODEL.auto_release
 def run_batch(
     dirs: list[Path],
     *,
     root: Path,
-    handle: _WD14_HANDLE,
+    handle: Wd14Model,
     threshold: float,
     disable_orig_tags: bool,
     force: bool,
@@ -761,18 +966,24 @@ def run_batch(
     on_update: Callable[[], None] | None = None,
     artist_tag: str = "",
 ) -> None:
-    """批量打标主循环.
+    """批量打标主循环: 先生成推理缓存, 再统一取标签刷新图片 ``.txt``.
+
+    阶段一为缓存缺失的待写图片跑推理并缓存整条概率向量; 阶段二从缓存按阈值
+    取标签、合并原标签后写入 ``.txt``. 缓存与阈值解耦, 更换阈值无需重新推理.
 
     Args:
-        dirs: 待打标的图片目录列表.
-        root: 数据集根目录, 用于写入 ``.wd14_meta`` 置信度缓存.
-        handle: WD14 模型句柄 ``(session, labels)``, 由 ``auto_release`` 注入.
-        threshold: 置信度阈值.
-        disable_orig_tags: 是否丢弃原标签.
-        force: 是否覆盖已存在的 ``.txt``.
-        progress: 进度对象.
-        on_update: 进度变更回调.
-        artist_tag: 追加的画师标签 (以 ``@`` 开头).
+        dirs (list[Path]): 待打标的图片目录列表.
+        root (Path): 数据集根目录, 用于写入 ``.wd14_meta`` 推理缓存.
+        handle (Wd14Model): 模型句柄, 由 ``auto_release`` 注入.
+        threshold (float): 置信度阈值.
+        disable_orig_tags (bool): 是否丢弃原标签.
+        force (bool): 是否覆盖已存在的 ``.txt``.
+        progress (TaggingProgress): 进度对象.
+        on_update (Callable[[], None] | None): 进度变更回调.
+        artist_tag (str): 追加的画师标签 (以 ``@`` 开头).
+
+    Returns:
+        None
 
     Callers:
         - ``routes/tagging.py:start``
@@ -803,51 +1014,88 @@ def run_batch(
             on_update()
         return
 
-    progress.log("加载 WD14 模型…")
+    cache = Wd14Cache(root, handle.labels)
+    pending = [
+        src for src in items if force or not src.with_suffix(".txt").exists()
+    ]
+    progress.skipped = len(items) - len(pending)
+    progress.done = progress.skipped
     progress.phase = "running"
-    progress.message = f"共 {len(items)} 张"
+    progress.message = f"共 {len(pending)} 张待写入, 先生成推理缓存"
+    progress.log(progress.message)
     if on_update:
         on_update()
 
-    for i, src in enumerate(items):
+    def report_cache(done: int, total: int, src: Path) -> None:
+        """把缓存生成进度写入进度对象.
+
+        Args:
+            done (int): 已完成的缓存图片数.
+            total (int): 本次缓存生成的图片总数.
+            src (Path): 刚完成的图片路径.
+
+        Returns:
+            None
+
+        Callers:
+            - ``services/analysis/wd14.py:run_batch`` 的 ``Wd14Cache.ensure`` 回调
+        """
+        progress.current = cache.rel(src)
+        progress.message = f"生成缓存 [{done}/{total}] {progress.current}"
+        if on_update:
+            on_update()
+
+    failed = cache.ensure(
+        pending,
+        model=handle,
+        log=progress.log,
+        cancel_check=lambda: progress.cancel_requested,
+        on_progress=report_cache,
+    )
+    progress.failed = len(failed)
+
+    if progress.cancel_requested:
+        progress.status = "cancelled"
+        progress.phase = "done"
+        progress.current = ""
+        progress.message = f"已取消 (缓存阶段中止, 跳过 {progress.skipped} 张)"
+        progress.log(progress.message)
+        if on_update:
+            on_update()
+        return
+
+    progress.log(f"缓存就绪, 按阈值 {threshold} 生成标签…")
+    for i, src in enumerate(pending):
         if progress.cancel_requested:
             progress.status = "cancelled"
             progress.phase = "done"
+            progress.current = ""
             progress.message = f"已取消 ({progress.ok} 成功 / {progress.skipped} 跳过)"
             progress.log(progress.message)
             if on_update:
                 on_update()
             return
 
-        rel = f"{src.parent.name}/{src.name}"
+        rel = cache.rel(src)
         progress.current = rel
-        progress.message = f"[{i + 1}/{len(items)}] {rel}"
+        progress.message = f"[{i + 1}/{len(pending)}] {rel}"
         if on_update:
             on_update()
 
-        try:
-            result = _process_one(
-                src,
-                root=root,
-                handle=handle,
-                threshold=threshold,
-                disable_orig_tags=disable_orig_tags,
-                force=force,
-                artist_tag=artist_tag,
-            )
-        except (OSError, ValueError, RuntimeError) as e:
-            progress.failed += 1
-            progress.done += 1
-            progress.log(f"[{i + 1}/{len(items)}] 失败: {rel} — {e}")
-            if on_update:
-                on_update()
-            continue
-        if result == "skip":
-            progress.skipped += 1
-            progress.log(f"[{i + 1}/{len(items)}] 跳过(已存在): {rel}")
-        else:
-            progress.ok += 1
-            progress.log(f"[{i + 1}/{len(items)}] 完成: {rel}")
+        if src not in failed:
+            try:
+                cache.refresh(
+                    src,
+                    threshold=threshold,
+                    disable_orig_tags=disable_orig_tags,
+                    artist_tag=artist_tag,
+                )
+            except (OSError, ValueError, RuntimeError) as e:
+                progress.failed += 1
+                progress.log(f"[{i + 1}/{len(pending)}] 失败: {rel} — {e}")
+            else:
+                progress.ok += 1
+                progress.log(f"[{i + 1}/{len(pending)}] 完成: {rel}")
         progress.done += 1
         if on_update:
             on_update()

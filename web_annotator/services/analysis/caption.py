@@ -20,9 +20,15 @@ from pathlib import Path
 from typing import Callable
 
 import httpx
-from jinja2 import Environment, Template
+from jinja2 import Environment, StrictUndefined, Template
 
-from services.analysis.wd14 import DEFAULT_THRESHOLD, Wd14Tag, ensure_meta, load_meta
+from services.analysis.wd14 import (
+    DEFAULT_THRESHOLD,
+    Wd14Cache,
+    Wd14Labels,
+    Wd14Tag,
+    Wd14TagGroups,
+)
 from services.core.atomic import atomic_write_text
 from services.core.scanner import collect_images
 from services.dataset.layout import CAPTIONS_JSON_FILE
@@ -47,8 +53,8 @@ MAX_RETRIES = 3
 # 探测服务可用性的请求超时(秒)
 PROBE_TIMEOUT_SEC = 10.0
 
-# 提示词模板环境: 模块内内嵌模板的解析与渲染入口
-_JINJA_ENV = Environment()
+# 提示词模板环境: 模块内内嵌模板的解析与渲染入口; 未定义变量直接报错, 禁止静默空串
+_JINJA_ENV = Environment(undefined=StrictUndefined)
 
 # 各描述模式的系统提示词模板(内容由用户给定)
 SYSTEM_PROMPT_TEMPLATES: dict[str, Template] = {
@@ -65,12 +71,20 @@ SYSTEM_PROMPT_TEMPLATES: dict[str, Template] = {
     ),
 }
 
+# 描述提示词中参考标签类别的展示行首, 与 ``_reference_tags`` 的类别一一对应;
+# 未登记的类别在渲染时直接报错
+_REFERENCE_LABELS = {
+    "general": "来自 WD14 的 Danbooru 通用标签可供参考",
+    "character": "来自 WD14 的 Danbooru 角色标签可供参考",
+}
+_JINJA_ENV.globals["_REFERENCE_LABELS"] = _REFERENCE_LABELS
+
 # 用户消息模板: 逐行拼接命中的预设提示词与 WD14 参考标签(按标签类型分行并带置信度);
 # 不添加分节标题与列表符号, 行间以单个换行分隔
 _USER_MESSAGE_TEMPLATE = _JINJA_ENV.from_string(
     """{%- set ns = namespace(lines=instructions) -%}
 {%- for category, items in reference -%}
-{%- set label = '来自 WD14 的 Danbooru 通用标签可供参考' if category == 'general' else '来自 WD14 的 Danbooru 角色标签可供参考' -%}
+{%- set label = _REFERENCE_LABELS[category] -%}
 {%- set tags = namespace(text=[]) -%}
 {%- for tag in items -%}
 {%- set tags.text = tags.text + ['"' ~ tag.name ~ '":' ~ ('%.2f'|format(tag.score))] -%}
@@ -79,6 +93,11 @@ _USER_MESSAGE_TEMPLATE = _JINJA_ENV.from_string(
 {%- endfor -%}
 {{ ns.lines | join('\\n') }}"""
 )
+
+# NSFW 增强判定的 rating 分级名: 二者任一达标即在提示词追加备注
+_NSFW_RATING_TAGS = ("explicit", "questionable")
+# NSFW 增强命中的追加备注行
+_NSFW_NOTE = "Using explicit slang."
 
 
 # 预设提示词模板: 键为界面展示名, 值为内嵌 Jinja 模板源码(待填字段即其未声明变量);
@@ -135,16 +154,19 @@ def _needs_wd14(
     rules: list[CaptionRule],
     general_threshold: float | None,
     character_threshold: float | None,
+    nsfw_threshold: float | None,
 ) -> bool:
     """判断本次描述是否需要 WD14 标签.
 
     两类用途都取自 ``.wd14_meta`` 缓存: 参考标签注入(通用或角色任一启用),
-    以及带「匹配标签」的预设提示词(其命中判定基于该图片的缓存标签).
+    NSFW 增强(rating 分级判定), 以及带「匹配标签」的预设提示词(其命中判定
+    基于该图片的缓存标签).
 
     Args:
         rules (list[CaptionRule]): 预设提示词条目.
         general_threshold (float | None): 通用标签置信度下限; None 为不注入.
         character_threshold (float | None): 角色标签置信度下限; None 为不注入.
+        nsfw_threshold (float | None): NSFW 增强的置信度下限; None 为不启用.
 
     Returns:
         bool: 需要 WD14 标签时为 True.
@@ -152,7 +174,11 @@ def _needs_wd14(
     Callers:
         - ``services/analysis/caption.py:run_caption``
     """
-    if general_threshold is not None or character_threshold is not None:
+    if (
+        general_threshold is not None
+        or character_threshold is not None
+        or nsfw_threshold is not None
+    ):
         return True
     return any(rule.pattern.strip() for rule in rules)
 
@@ -245,17 +271,17 @@ def ollama_status() -> tuple[bool, str]:
 
 
 def _reference_tags(
-    tags: list[Wd14Tag] | None,
+    groups: Wd14TagGroups | None,
     general_threshold: float | None,
     character_threshold: float | None,
 ) -> list[tuple[str, list[Wd14Tag]]]:
-    """按各类别的置信度下限挑选参考标签, 并按标签类型分组.
+    """按各类别的置信度下限挑选参考标签, 保持缓存句柄给出的分组.
 
     通用标签与角色标签各自独立: 下限为 None 表示该类别不注入, 否则只保留置信度不低于
     该下限的标签.
 
     Args:
-        tags (list[Wd14Tag] | None): WD14 缓存标签; 未打标时为 None.
+        groups (Wd14TagGroups | None): WD14 分组标签; 未打标时为 None.
         general_threshold (float | None): 通用标签置信度下限; None 为不注入.
         character_threshold (float | None): 角色标签置信度下限; None 为不注入.
 
@@ -266,19 +292,19 @@ def _reference_tags(
     Callers:
         - ``services/analysis/caption.py:run_caption``
     """
-    if not tags:
+    if groups is None:
         return []
-    groups: list[tuple[str, list[Wd14Tag]]] = []
+    picked: list[tuple[str, list[Wd14Tag]]] = []
     for category, threshold in (
         ("general", general_threshold),
         ("character", character_threshold),
     ):
         if threshold is None:
             continue
-        items = [tag for tag in tags if tag.category == category and tag.score >= threshold]
-        if items:
-            groups.append((category, items))
-    return groups
+        selected = [tag for tag in groups.of(category) if tag.score >= threshold]
+        if selected:
+            picked.append((category, selected))
+    return picked
 
 
 def build_user_prompt(
@@ -594,12 +620,14 @@ async def _generate_captions(
     client: httpx.AsyncClient,
     src: Path,
     *,
-    root: Path,
+    cache: Wd14Cache | None,
+    wd14_threshold: float,
     host: str,
     model: str,
     modes: list[str],
     general_threshold: float | None,
     character_threshold: float | None,
+    nsfw_threshold: float | None,
     rules: list[CaptionRule],
     cancel_check: Callable[[], bool],
 ) -> list[str]:
@@ -608,12 +636,15 @@ async def _generate_captions(
     Args:
         client (httpx.AsyncClient): 共用的事件循环内 HTTP 客户端.
         src (Path): 图片绝对路径.
-        root (Path): 数据集根目录(定位 ``.wd14_meta`` 缓存).
+        cache (Wd14Cache | None): 目录级 WD14 缓存句柄; None 表示不取用标签.
+        wd14_threshold (float): 从缓存向量取标签的置信度下限.
         host (str): 服务地址, 含协议与端口.
         model (str): 视觉模型名.
         modes (list[str]): 描述模式列表, 取值属于 ``SYSTEM_PROMPT_TEMPLATES``.
         general_threshold (float | None): 通用标签置信度下限; None 为不注入.
         character_threshold (float | None): 角色标签置信度下限; None 为不注入.
+        nsfw_threshold (float | None): NSFW 增强的置信度下限; rating 分级中
+            Explicit 或 Questionable 不低于该值时在提示词追加备注, None 为不启用.
         rules (list[CaptionRule]): 预设提示词条目.
         cancel_check (Callable[[], bool]): 协作取消判定.
 
@@ -627,13 +658,21 @@ async def _generate_captions(
         RuntimeError: 服务返回错误, 输出循环, 或生成过程中被取消.
 
     Callers:
-        - ``services/analysis/caption.py:run_caption`` (作为协程交给 worker)
+        - ``services/analysis/caption.py:_serve`` (作为协程等待)
     """
-    rel = src.relative_to(root).as_posix()
-    wd_tags = load_meta(root, rel)
+    groups = cache.groups(src, wd14_threshold) if cache else None
+    instructions = _rule_texts(
+        rules,
+        {tag_key(tag.name) for tag in (groups.tags if groups else ())},
+    )
+    if groups is not None and nsfw_threshold is not None and any(
+        tag.name in _NSFW_RATING_TAGS and tag.score >= nsfw_threshold
+        for tag in groups.of("rating")
+    ):
+        instructions.append(_NSFW_NOTE)
     prompt = build_user_prompt(
-        reference=_reference_tags(wd_tags, general_threshold, character_threshold),
-        instructions=_rule_texts(rules, {tag_key(tag.name) for tag in wd_tags or []}),
+        reference=_reference_tags(groups, general_threshold, character_threshold),
+        instructions=instructions,
     )
     image_b64 = base64.b64encode(src.read_bytes()).decode("ascii")
     captions: list[str] = []
@@ -658,8 +697,11 @@ class _CaptionJob:
     Args:
         root (Path): 数据集根目录.
         modes (list[str]): 描述模式列表.
+        cache (Wd14Cache | None): 目录级 WD14 缓存句柄; None 表示不取用标签.
+        wd14_threshold (float): 从缓存向量取标签的置信度下限.
         general_threshold (float | None): 通用标签注入下限; None 为不注入.
         character_threshold (float | None): 角色标签注入下限; None 为不注入.
+        nsfw_threshold (float | None): NSFW 增强的置信度下限; None 为不启用.
         rules (list[CaptionRule]): 预设提示词条目.
         stores (dict[Path, dict[str, list[str]]]): 各工作目录的描述映射.
         progress (CaptionProgress): 进度对象.
@@ -669,8 +711,11 @@ class _CaptionJob:
 
     root: Path
     modes: list[str]
+    cache: Wd14Cache | None
+    wd14_threshold: float
     general_threshold: float | None
     character_threshold: float | None
+    nsfw_threshold: float | None
     rules: list[CaptionRule]
     stores: dict[Path, dict[str, list[str]]]
     progress: CaptionProgress
@@ -729,12 +774,14 @@ async def _serve(
             captions = await _generate_captions(
                 client,
                 src,
-                root=job.root,
+                cache=job.cache,
+                wd14_threshold=job.wd14_threshold,
                 host=host,
                 model=model,
                 modes=job.modes,
                 general_threshold=job.general_threshold,
                 character_threshold=job.character_threshold,
+                nsfw_threshold=job.nsfw_threshold,
                 rules=job.rules,
                 cancel_check=lambda: progress.cancel_requested,
             )
@@ -777,6 +824,7 @@ async def run_caption(
     modes: list[str],
     general_threshold: float | None,
     character_threshold: float | None,
+    nsfw_threshold: float | None,
     rules: list[CaptionRule],
     force: bool,
     progress: CaptionProgress,
@@ -788,9 +836,10 @@ async def run_caption(
     ``force`` 为假时跳过; 单张失败重新入队, 至多 ``MAX_RETRIES`` 次, 仍失败才记入
     失败并继续. 取消后不再取新图, 在途请求在下一个流式数据块处中断.
 
-    参考标签注入与「匹配标签」命中判定都取自 WD14 缓存, 故生成前先对缺失缓存的
-    待处理图片补建 ``.wd14_meta``(见 ``_needs_wd14`` 与 ``ensure_meta``); 推理阈值
-    取 WD14 默认与本次注入下限中更低者.
+    参考标签注入、NSFW 增强与「匹配标签」命中判定都取自 WD14 缓存, 故生成前先对
+    缺失缓存的待处理图片补建 ``.wd14_meta``(见 ``_needs_wd14`` 与
+    ``Wd14Cache.populate``); 缓存保存整条概率向量, 取标签的阈值取默认值与各注入
+    下限中的最低者.
 
     Args:
         root (Path): 数据集根目录.
@@ -798,6 +847,7 @@ async def run_caption(
         modes (list[str]): 描述模式列表, 取值属于 ``SYSTEM_PROMPT_TEMPLATES``.
         general_threshold (float | None): 通用标签置信度下限; None 为不注入.
         character_threshold (float | None): 角色标签置信度下限; None 为不注入.
+        nsfw_threshold (float | None): NSFW 增强的置信度下限; None 为不启用.
         rules (list[CaptionRule]): 预设提示词条目.
         force (bool): 是否覆盖 captions.json 中已存在的条目.
         progress (CaptionProgress): 进度对象.
@@ -824,7 +874,8 @@ async def run_caption(
     _log(
         progress,
         f"开始: dirs={dir_names}, modes={modes}, general_threshold={general_threshold}, "
-        f"character_threshold={character_threshold}, rules={len(rules)}, "
+        f"character_threshold={character_threshold}, nsfw_threshold={nsfw_threshold}, "
+        f"rules={len(rules)}, "
         f"force={force}, total={len(items)}, "
         f"服务={[f'{host} · {model}' for host, model in endpoints]}",
     )
@@ -851,14 +902,15 @@ async def run_caption(
     if on_update:
         on_update()
 
-    if _needs_wd14(rules, general_threshold, character_threshold):
-        enabled = [t for t in (general_threshold, character_threshold) if t is not None]
+    thresholds = [t for t in (general_threshold, character_threshold, nsfw_threshold) if t is not None]
+    wd14_threshold = min([DEFAULT_THRESHOLD, *thresholds])
+    cache: Wd14Cache | None = None
+    if _needs_wd14(rules, general_threshold, character_threshold, nsfw_threshold):
+        cache = Wd14Cache(root, Wd14Labels.load())
         # WD14 推理是 CPU 密集操作, 交给线程执行以免阻塞事件循环; 其内部逐张检查取消
         await asyncio.to_thread(
-            ensure_meta,
-            root,
+            cache.populate,
             pending,
-            threshold=min([DEFAULT_THRESHOLD, *enabled]),
             log=partial(_log, progress),
             cancel_check=lambda: progress.cancel_requested,
         )
@@ -869,8 +921,11 @@ async def run_caption(
     job = _CaptionJob(
         root=root,
         modes=modes,
+        cache=cache,
+        wd14_threshold=wd14_threshold,
         general_threshold=general_threshold,
         character_threshold=character_threshold,
+        nsfw_threshold=nsfw_threshold,
         rules=rules,
         stores=stores,
         progress=progress,
