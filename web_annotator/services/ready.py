@@ -1,11 +1,11 @@
 """生成训练用配置文本, 并按子目录统计蒙版状态.
 
-各导出格式的配置文本由 ``assets/configs/<格式名>/`` 下的 Jinja2 模板渲染: 模板目录名
-即格式名, 目录内 ``*.j2`` 去掉后缀即该格式的配置文件名; 每个模板需要哪些变量由其自身
-声明决定(``jinja2.meta.find_undeclared_variables`` 解析其语法树), 再从 ``_VARIABLES``
-按变量名取数据。因此新增格式或新增模板文件只需在 ``assets/configs/`` 新建模板, 并在
-``.env`` 中按 ``<格式大写下划线>_CONFIG_ROOT`` 约定命名位置变量, 本模块无需登记任何
-格式、模板或环境变量的对应关系。
+各导出格式的配置文本由 ``assets/configs/<格式名>/<变体名>/`` 下的 Jinja2 模板渲染: 顶层
+模板目录名即格式名, 其下子目录名即变体名, 变体目录内 ``*.j2`` 去掉后缀即该变体的配置文件
+名; 每个模板需要哪些变量由其自身声明决定(``jinja2.meta.find_undeclared_variables`` 解析其
+语法树), 再从 ``_VARIABLES`` 按变量名取数据。因此新增格式或变体只需在 ``assets/configs/``
+新建模板, 并在 ``.env`` 中按 ``<格式大写下划线>_CONFIG_ROOT`` 约定命名位置变量, 本模块
+无需登记任何格式、变体、模板或环境变量的对应关系。
 """
 
 from __future__ import annotations
@@ -57,11 +57,20 @@ _APP_DIR = Path(__file__).resolve().parents[1]
 # 各格式模板所在目录(``assets/configs/``); 其下每个子目录即一种配置导出格式
 _TEMPLATE_ROOT = Path(__file__).resolve().parent.parent / "assets" / "configs"
 
-# 各格式的模板清单: 格式名(模板目录名) → {配置文件名: 模板相对路径}. 预览键、导出请求键
-# 校验与前端标签页均以配置文件名集合为准, 故新增模板文件即自动生效, 代码不登记文件名单
-TRAIN_FORMAT_TEMPLATES: dict[str, dict[str, str]] = {
-    d.name: {p.stem: f"configs/{d.name}/{p.name}" for p in sorted(d.glob("*.j2"))}
-    for d in _TEMPLATE_ROOT.iterdir() if d.is_dir()
+# 各格式的模板清单: 格式名(顶层模板目录名) → 变体名(子目录名) → {配置文件名: 模板相对路径}.
+# 预览键、导出请求键校验与前端标签页均以配置文件名集合为准, 故新增模板文件即自动生效,
+# 代码不登记文件名单; 不含 ``*.j2`` 文件的变体子目录不收录
+TRAIN_FORMAT_TEMPLATES: dict[str, dict[str, dict[str, str]]] = {
+    fmt.name: {
+        variant.name: {
+            p.stem: f"configs/{fmt.name}/{variant.name}/{p.name}"
+            for p in sorted(variant.glob("*.j2"))
+        }
+        for variant in sorted(fmt.iterdir())
+        if variant.is_dir() and any(variant.glob("*.j2"))
+    }
+    for fmt in sorted(_TEMPLATE_ROOT.iterdir())
+    if fmt.is_dir()
 }
 
 
@@ -97,7 +106,7 @@ def _format_env_key(train_format: str, kind: str) -> str:
     中按同一约定命名变量(见 .env.example), 本模块不登记格式与环境变量的对应关系.
 
     Args:
-        train_format (str): 配置导出格式, 即模板目录名.
+        train_format (str): 配置导出格式, 即顶层模板目录名.
         kind (str): 变量用途后缀, 如 ``CONFIG_ROOT`` / ``OUTPUT_ROOT``.
 
     Returns:
@@ -110,15 +119,17 @@ def _format_env_key(train_format: str, kind: str) -> str:
     return f"{train_format.upper().replace('-', '_')}_{kind}"
 
 
-def export_dir(root_name: str, train_format: str) -> Path:
-    """返回数据集的配置导出目录 ``{格式对应配置根}/{数据集名}``.
+def export_dir(root_name: str, train_format: str, variant: str) -> Path:
+    """返回该格式该变体的配置导出目录 ``{格式对应配置根}/{数据集名}-{变体}``.
 
-    配置根取 ``{格式名}_CONFIG_ROOT`` 环境变量; 渲染配置与导出写入共用本函数, 保证文本
-    内的路径与真实写入位置一致.
+    配置根取 ``{格式名}_CONFIG_ROOT`` 环境变量; 目录名由数据集名与变体名拼接, 使同一数据
+    集的不同变体导出到互不覆盖的目录。渲染配置与导出写入共用本函数, 保证文本内的路径与
+    真实写入位置一致.
 
     Args:
-        root_name (str): 数据集名, 作为导出目录名.
-        train_format (str): 配置导出格式, 即模板目录名.
+        root_name (str): 数据集名, 与变体名拼接后作为导出目录名.
+        train_format (str): 配置导出格式, 即顶层模板目录名.
+        variant (str): 配置变体, 即格式模板目录下的子目录名.
 
     Returns:
         Path: 配置导出目录的绝对路径.
@@ -130,19 +141,20 @@ def export_dir(root_name: str, train_format: str) -> Path:
         - ``services/ready.py:_config_dir``
         - ``routes/ready.py:export``
     """
-    return _env_root(_format_env_key(train_format, "CONFIG_ROOT")) / root_name
+    return _env_root(_format_env_key(train_format, "CONFIG_ROOT")) / f"{root_name}-{variant}"
 
 
-def output_dir(root_name: str, train_format: str) -> Path:
-    """返回该格式的训练产物目录 ``{格式对应产物根}/{数据集名}``.
+def output_dir(root_name: str, train_format: str, variant: str) -> Path:
+    """返回该格式该变体的训练产物目录 ``{格式对应产物根}/{数据集名}-{变体}``.
 
-    产物根取 ``{格式名}_OUTPUT_ROOT`` 环境变量。目录按数据集名分列, 避免多个数据集在同一
-    产物根下用相同的 epoch/step 子目录名互相覆盖。仅声明 ``output_dir`` 变量的模板会取用
-    本函数, 以相对工作目录写产物的模板不受影响。
+    产物根取 ``{格式名}_OUTPUT_ROOT`` 环境变量。目录按数据集名与变体名拼接后分列, 避免不同
+    数据集或同一数据集的不同变体在同一产物根下用相同的 epoch/step 子目录名互相覆盖。仅声明
+    ``output_dir`` 变量的模板会取用本函数, 以相对工作目录写产物的模板不受影响。
 
     Args:
-        root_name (str): 数据集名, 作为产物目录名.
-        train_format (str): 配置导出格式, 即模板目录名.
+        root_name (str): 数据集名, 与变体名拼接后作为产物目录名.
+        train_format (str): 配置导出格式, 即顶层模板目录名.
+        variant (str): 配置变体, 即格式模板目录下的子目录名.
 
     Returns:
         Path: 训练产物目录的绝对路径.
@@ -153,7 +165,7 @@ def output_dir(root_name: str, train_format: str) -> Path:
     Callers:
         - ``services/ready.py:_artifact_dir``
     """
-    return _env_root(_format_env_key(train_format, "OUTPUT_ROOT")) / root_name
+    return _env_root(_format_env_key(train_format, "OUTPUT_ROOT")) / f"{root_name}-{variant}"
 
 
 def reg_datasets() -> list[tuple[int, str]]:
@@ -441,7 +453,8 @@ class _ExportContext:
     Attributes:
         root (Path): 数据集根目录(已解析).
         mode (LoraMode): 训练模式.
-        train_format (str): 配置导出格式(即模板目录名).
+        train_format (str): 配置导出格式(即顶层模板目录名).
+        variant (str): 配置变体(即格式模板目录下的子目录名).
         dirs (list[str] | None): 参与导出的工作目录名; None 表示全部.
         target_images (int): 目标图片数.
         subset_resolutions (dict[str, list[int]]): 目录名→分辨率列表.
@@ -452,6 +465,7 @@ class _ExportContext:
     root: Path
     mode: LoraMode
     train_format: str
+    variant: str
     dirs: list[str] | None
     target_images: int
     subset_resolutions: dict[str, list[int]]
@@ -649,7 +663,7 @@ def _dataset_name(ctx: _ExportContext) -> str:
 
 
 def _config_dir(ctx: _ExportContext) -> str:
-    """装配 ``export_dir`` 变量: 本格式配置导出的绝对目录.
+    """装配 ``export_dir`` 变量: 本格式该变体配置导出的绝对目录.
 
     供模板引用同目录下的兄弟配置文件(如 ``{{ export_dir }}/dataset.toml``).
 
@@ -665,11 +679,11 @@ def _config_dir(ctx: _ExportContext) -> str:
     Callers:
         - ``services/ready.py:_render_files`` (经 ``_VARIABLES`` 按变量名调用)
     """
-    return str(export_dir(ctx.root.name, ctx.train_format))
+    return str(export_dir(ctx.root.name, ctx.train_format, ctx.variant))
 
 
 def _artifact_dir(ctx: _ExportContext) -> str:
-    """装配 ``output_dir`` 变量: 本格式训练产物的绝对目录.
+    """装配 ``output_dir`` 变量: 本格式该变体训练产物的绝对目录.
 
     仅声明该变量的模板会取用, 因此未配置产物根环境变量的格式不受影响.
 
@@ -685,7 +699,7 @@ def _artifact_dir(ctx: _ExportContext) -> str:
     Callers:
         - ``services/ready.py:_render_files`` (经 ``_VARIABLES`` 按变量名调用)
     """
-    return str(output_dir(ctx.root.name, ctx.train_format))
+    return str(output_dir(ctx.root.name, ctx.train_format, ctx.variant))
 
 
 _VARIABLES: dict[str, Callable[[_ExportContext], object]] = {
@@ -704,7 +718,7 @@ def _declared_variables(template_path: str) -> set[str]:
     """解析模板语法树, 得到其声明使用且未在模板内部定义的变量名集合.
 
     Args:
-        template_path (str): 模板相对 ``assets/`` 的路径, 如 ``configs/<格式>/lora.toml.j2``.
+        template_path (str): 模板相对 ``assets/`` 的路径, 如 ``configs/<格式>/<变体>/lora.toml.j2``.
 
     Returns:
         set[str]: 变量名集合.
@@ -717,7 +731,7 @@ def _declared_variables(template_path: str) -> set[str]:
 
 
 def _render_files(ctx: _ExportContext) -> dict[str, str]:
-    """渲染该格式模板目录下的全部模板.
+    """渲染该格式与变体模板目录下的全部模板.
 
     每个模板需要哪些变量由其自身声明决定, 再按 ``_VARIABLES`` 取对应数据, 故新增模板
     文件即自动纳入渲染, 本模块不登记模板名单; 渲染结果即导出写入的文本(导出不再改写
@@ -736,7 +750,7 @@ def _render_files(ctx: _ExportContext) -> dict[str, str]:
         - ``services/ready.py:build_ready``
     """
     files: dict[str, str] = {}
-    for name, path in TRAIN_FORMAT_TEMPLATES[ctx.train_format].items():
+    for name, path in TRAIN_FORMAT_TEMPLATES[ctx.train_format][ctx.variant].items():
         needed = _declared_variables(path)
         unknown = needed - _VARIABLES.keys()
         if unknown:
@@ -755,6 +769,7 @@ def build_ready(
     *,
     mode: LoraMode,
     train_format: str,
+    variant: str,
     dirs: list[str] | None = None,
     target_images: int = 512,
     subset_resolutions: dict[str, list[int]] | None = None,
@@ -764,9 +779,9 @@ def build_ready(
     """生成指定格式的整套训练配置文本, 并汇总子集与蒙版统计.
 
     ``dirs`` 指定参与导出的工作目录名列表; 为 None 时表示全部目录, 为空列表时表示一个
-    目录都不导出(返回空 subsets)。配置文件集合与文本内容完全由 ``assets/configs/<格式>``
-    下的模板决定, 渲染时即按 ``export_dir`` 写出引用同目录文件的绝对路径, 因此预览文本
-    与导出写入的文本一致, 导出不再改写任何字段。
+    目录都不导出(返回空 subsets)。配置文件集合与文本内容完全由
+    ``assets/configs/<格式>/<变体>`` 下的模板决定, 渲染时即按 ``export_dir`` 写出引用同目录
+    文件的绝对路径, 因此预览文本与导出写入的文本一致, 导出不再改写任何字段。
 
     某目录蒙版状态为「完整」时, 「是否携带蒙版目录」在配置中体现为: 数据块按
     (分辨率, 是否携带) 分组以免两类子集混入同一块, 目录项则带 ``mask_path``。
@@ -774,7 +789,8 @@ def build_ready(
     Args:
         root (Path): 数据集根目录.
         mode (LoraMode): 训练模式, 决定网络 rank(画风 style=16, 角色 character=32).
-        train_format (str): 配置导出格式(即模板目录名).
+        train_format (str): 配置导出格式(即顶层模板目录名).
+        variant (str): 配置变体(即格式模板目录下的子目录名).
         dirs (list[str] | None): 参与导出的工作目录名; None 表示全部, 空列表表示不导出.
         target_images (int): 目标图片数, 据此计算各目录的 num_repeats.
         subset_resolutions (dict[str, list[int]] | None): 目录名→分辨率列表; 留空按该格式
@@ -795,6 +811,7 @@ def build_ready(
         root=root.resolve(),
         mode=mode,
         train_format=train_format,
+        variant=variant,
         dirs=dirs,
         target_images=target_images,
         subset_resolutions=subset_resolutions or {},
@@ -818,6 +835,7 @@ def build_ready(
     return ReadyTomlResult(
         root=str(ctx.root),
         format=train_format,
+        variant=variant,
         files=files,
         subsets=subsets,
         dirs=ctx.work_dirs(),

@@ -61,7 +61,8 @@ class ReadyTomlResult(BaseModel):
     """就绪页生成结果: 子集/蒙版统计与训练配置预览文本(文件集合随导出格式变化)."""
 
     root: str
-    format: str = Field(description="本次生成的配置导出格式(即 assets/configs/ 下的模板目录名)")
+    format: str = Field(description="本次生成的配置导出格式(即 assets/configs/ 下的顶层模板目录名)")
+    variant: str = Field(description="本次生成的配置变体(即格式模板目录下的子目录名)")
     files: dict[str, str] = Field(default_factory=dict, description="配置文件预览文本, 键为该格式的全部配置文件名(由模板目录扫描得到), 文本即导出写入的内容")
     subsets: list[ReadySubset]
     dirs: list[WorkDirInfo]

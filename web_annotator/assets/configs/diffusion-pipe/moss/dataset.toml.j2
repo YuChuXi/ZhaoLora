@@ -1,0 +1,20 @@
+resolutions = [512, 1024, 1536]
+enable_ar_bucket = true
+min_ar = 0.25
+max_ar = 4.0
+num_ar_buckets = 13
+caption_prefix = ""
+{% for directory in directories %}
+{% for repeats, group in directory.resolution_repeats | sort(attribute='repeats') | groupby('repeats') %}
+
+[[directory]]
+path = "{{ directory.path }}"
+{% if directory.mask_path %}
+mask_path = "{{ directory.mask_path }}"
+{% endif %}
+num_repeats = {{ repeats }}
+{% if group[0].resolution is not none %}
+resolutions = [{{ group | map(attribute='resolution') | sort | join(', ') }}]
+{% endif %}
+{% endfor %}
+{% endfor %}

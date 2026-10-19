@@ -1,0 +1,44 @@
+diff --git a/comfy/ldm/modules/attention.py b/comfy/ldm/modules/attention.py
+index 4d6cf8598..1f0f6ad2f 100644
+--- a/comfy/ldm/modules/attention.py
++++ b/comfy/ldm/modules/attention.py
+@@ -474,6 +474,7 @@ except:
+     pass
+ 
+ @wrap_attn
++@torch.compiler.disable
+ def attention_xformers(q, k, v, heads, mask=None, attn_precision=None, skip_reshape=False, skip_output_reshape=False, **kwargs):
+     b = q.shape[0]
+     dim_head = q.shape[-1]
+@@ -511,18 +512,19 @@ def attention_xformers(q, k, v, heads, mask=None, attn_precision=None, skip_resh
+         # add a singleton heads dimension
+         if mask.ndim == 3:
+             mask = mask.unsqueeze(1)
+-        # pad to a multiple of 8
+-        pad = 8 - mask.shape[-1] % 8
+-        # the xformers docs says that it's allowed to have a mask of shape (1, Nq, Nk)
+-        # but when using separated heads, the shape has to be (B, H, Nq, Nk)
+-        # in flux, this matrix ends up being over 1GB
+-        # here, we create a mask with the same batch/head size as the input mask (potentially singleton or full)
+-        mask_out = torch.empty([mask.shape[0], mask.shape[1], q.shape[1], mask.shape[-1] + pad], dtype=q.dtype, device=q.device)
+-
+-        mask_out[..., :mask.shape[-1]] = mask
+-        # doesn't this remove the padding again??
+-        mask = mask_out[..., :mask.shape[-1]]
+-        mask = mask.expand(b, heads, -1, -1)
++        # xformers tensor attn_bias is additive; bool masks (True=attend) must become 0/-inf
++        if mask.dtype == torch.bool:
++            mask = torch.zeros_like(mask, dtype=q.dtype).masked_fill_(~mask, float('-inf'))
++        # cutlass 要求 attn_bias 除末维外每个 stride 均为 8 的倍数（128 位向量化加载，见 xformers ops/fmha/cutlass.py: alignment = 128 // finfo(dtype).bits）：
++        # 末维补零至 8 的整数倍再切片回去，使底层行 stride 由 N 抬升为对齐值；补零区在切片之外不参与计算
++        pad = (8 - mask.shape[-1] % 8) % 8
++        if pad:
++            padded = mask.new_zeros((*mask.shape[:-1], mask.shape[-1] + pad))
++            padded[..., :mask.shape[-1]] = mask
++            mask = padded[..., :mask.shape[-1]]
++        # query/head 维为单例时以 expand 广播（单例维 stride 为 0，满足对齐要求），
++        # 避免物化 (B, H, Nq, Nk) 全尺寸矩阵——其随序列长度平方增长且被 autograd 持有至反向（krea2 1536 桶下单层 ~180MB、30 层累计 ~10.5GB）
++        mask = mask.expand(b, heads, q.shape[1], -1)
+ 
+     out = xformers.ops.memory_efficient_attention(q, k, v, attn_bias=mask, scale=kwargs.get("scale", None))
+ 

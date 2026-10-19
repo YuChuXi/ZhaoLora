@@ -7,7 +7,7 @@ from pathlib import Path
 
 import tomlkit
 from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, model_validator
 from tomlkit.exceptions import ParseError
 
 from routes.deps import get_runtime
@@ -39,36 +39,43 @@ class ReadyBody(BaseModel):
     use_reg: bool = Field(default=True, description="是否在导出的 dataset.toml 中附带固定正则化数据段")
     mode: LoraMode = Field("style", description="训练模式: 画风 style / 角色 character(各模式对应的超参由所选格式的模板决定)")
     train_format: str = Field(description="配置导出格式, 取值为 assets/configs/ 下的模板目录名(文件集合由该目录扫描得到)")
+    variant: str = Field(description="配置变体, 取值为格式模板目录下的子目录名(与该格式共同决定文件集合)")
 
-    @field_validator("train_format")
-    @classmethod
-    def _check_train_format(cls, value: str) -> str:
-        """校验格式名恰为某模板目录名, 使可用格式完全由 ``assets/configs/`` 决定.
+    @model_validator(mode="after")
+    def _check_format_variant(self) -> "ReadyBody":
+        """校验 (train_format, variant) 组合恰为某个已收录的格式与变体.
 
-        Args:
-            value (str): 请求携带的格式名.
+        可用格式即 ``assets/configs/`` 下的顶层模板目录, 可用变体即该格式目录下含 ``*.j2``
+        的子目录, 使两者完全由模板目录结构决定.
 
         Returns:
-            str: 校验通过的格式名.
+            ReadyBody: 校验通过的原模型实例.
 
         Raises:
-            ValueError: 该名称没有对应模板目录.
+            ValueError: 格式名无对应模板目录, 或该格式下不存在该变体子目录.
 
         Callers:
             - ``routes/ready.py:toml`` / ``export`` (经请求体校验触发)
         """
-        if value not in TRAIN_FORMAT_TEMPLATES:
+        if self.train_format not in TRAIN_FORMAT_TEMPLATES:
             raise ValueError(
-                f"未知配置格式 {value!r}; 可用: {', '.join(sorted(TRAIN_FORMAT_TEMPLATES))}"
+                f"未知配置格式 {self.train_format!r}; 可用: "
+                f"{', '.join(sorted(TRAIN_FORMAT_TEMPLATES))}"
             )
-        return value
+        variants = TRAIN_FORMAT_TEMPLATES[self.train_format]
+        if self.variant not in variants:
+            raise ValueError(
+                f"格式 {self.train_format!r} 下未知配置变体 {self.variant!r}; 可用: "
+                f"{', '.join(sorted(variants))}"
+            )
+        return self
 
 
 class ReadyExportBody(ReadyBody):
     """就绪页导出请求: 在 ReadyBody 基础上要求携带编辑后的整套配置文本.
 
-    ``files`` 键必须恰为 ``TRAIN_FORMAT_TEMPLATES[train_format]`` 的键集合; 导出逐字段以编辑后的
-    文本为准, 原样写入 ``{格式对应配置根}/{数据集名}/``.
+    ``files`` 键必须恰为 ``TRAIN_FORMAT_TEMPLATES[train_format][variant]`` 的键集合; 导出逐字段以编辑后的
+    文本为准, 原样写入 ``{格式对应配置根}/{数据集名}-{变体}/``.
     引用: ``POST /ready/export``.
     """
 
@@ -76,7 +83,7 @@ class ReadyExportBody(ReadyBody):
 
     @model_validator(mode="after")
     def _check_file_names(self) -> "ReadyExportBody":
-        """校验 files 键集合恰为当前格式的配置文件名集合, 防止静默漏写或多写.
+        """校验 files 键集合恰为当前格式与变体的配置文件名集合, 防止静默漏写或多写.
 
         Returns:
             ReadyExportBody: 校验通过的原模型实例.
@@ -84,8 +91,9 @@ class ReadyExportBody(ReadyBody):
         Raises:
             ValueError: files 键缺失或存在未知键.
         """
-        if set(self.files) != set(TRAIN_FORMAT_TEMPLATES[self.train_format]):
-            raise ValueError(f"files 键必须恰为 {sorted(TRAIN_FORMAT_TEMPLATES[self.train_format])}")
+        expected = TRAIN_FORMAT_TEMPLATES[self.train_format][self.variant]
+        if set(self.files) != set(expected):
+            raise ValueError(f"files 键必须恰为 {sorted(expected)}")
         return self
 
 
@@ -140,7 +148,7 @@ def toml(request: Request, body: ReadyBody) -> ReadyTomlResult:
 
     Args:
         request (Request): FastAPI 请求对象, 由路由参数注入.
-        body (ReadyBody): 就绪页生成参数(dirs / target_images / subset_resolutions / use_reg / mode / train_format).
+        body (ReadyBody): 就绪页生成参数(dirs / target_images / subset_resolutions / use_reg / mode / train_format / variant).
 
     Returns:
         ReadyTomlResult: 子集/蒙版统计与配置文件预览文本(files).
@@ -157,6 +165,7 @@ def toml(request: Request, body: ReadyBody) -> ReadyTomlResult:
             root,
             mode=body.mode,
             train_format=body.train_format,
+            variant=body.variant,
             dirs=body.dirs,
             target_images=body.target_images,
             subset_resolutions=body.subset_resolutions,
@@ -177,14 +186,14 @@ def toml(request: Request, body: ReadyBody) -> ReadyTomlResult:
 def export(
     request: Request, body: ReadyExportBody, overwrite: bool = False
 ) -> TrainExportResult:
-    """按编辑后的配置文本导出整套训练配置到 ``{格式对应配置根}/{数据集名}/``.
+    """按编辑后的配置文本导出整套训练配置到 ``{格式对应配置根}/{数据集名}-{变体}/``.
 
     导出目录与渲染训练配置时所用的一致(``export_dir``), 配置文本内的路径因此无需改写;
     ``files`` 的文本即最终写入内容, 逐字段以用户编辑后为准, 写入前仅校验 .toml 的语法.
 
     Args:
         request (Request): FastAPI 请求对象, 由路由参数注入.
-        body (ReadyExportBody): 就绪页导出参数(dirs / target_images / subset_resolutions / use_reg / mode / train_format / files).
+        body (ReadyExportBody): 就绪页导出参数(dirs / target_images / subset_resolutions / use_reg / mode / train_format / variant / files).
         overwrite (bool): 目标目录已存在可视化配置时, 需置 True 才覆盖写入, 否则返回 409.
 
     Returns:
@@ -198,7 +207,7 @@ def export(
         - ``static/js/ready.js:doExport``
     """
     root = get_runtime(request).root
-    file_names = TRAIN_FORMAT_TEMPLATES[body.train_format]
+    file_names = TRAIN_FORMAT_TEMPLATES[body.train_format][body.variant]
     if not exportable_dirs(root, body.dirs):
         raise HTTPException(400, "没有可导出的图片目录")
     for name in file_names:
@@ -210,7 +219,7 @@ def export(
             raise HTTPException(400, f"编辑后的 {name} 不是合法 TOML: {e}") from e
 
     try:
-        out_dir = export_dir(root.name, body.train_format)
+        out_dir = export_dir(root.name, body.train_format, body.variant)
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
     if not overwrite and out_dir.exists() and any(out_dir.iterdir()):

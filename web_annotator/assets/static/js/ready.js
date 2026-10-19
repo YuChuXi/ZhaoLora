@@ -8,6 +8,7 @@
   'use strict';
 
   var _format = '';            // 配置导出格式, 取自顶栏格式切换段当前选中项的 data-format
+  var _variant = '';            // 配置变体, 取自顶栏格式切换段当前选中项的 data-variant
   var _mode = 'style';         // 训练模式: style=画风(rank 16) / character=角色(rank 32)
   var _fileNames = [];         // 当前格式的文件名集合, 取自预览响应(后端按模板目录扫描)
   var _activeFile = null;      // 当前展示的标签页
@@ -68,6 +69,7 @@
    */
   function onFormat(btn) {
     _format = btn.dataset.format;
+    _variant = btn.dataset.variant;
     document.querySelectorAll('#format-seg button').forEach(function (b) {
       b.classList.toggle('active', b === btn);
     });
@@ -195,7 +197,8 @@
       subset_resolutions: subsetRes,
       use_reg: document.getElementById('use-reg').checked,
       mode: _mode,
-      train_format: _format
+      train_format: _format,
+      variant: _variant
     };
   }
 
@@ -323,6 +326,7 @@
   var _formatSeg = document.querySelector('#format-seg button.active')
     || document.querySelector('#format-seg button');
   _format = _formatSeg ? _formatSeg.dataset.format : '';
+  _variant = _formatSeg ? _formatSeg.dataset.variant : '';
   Array.prototype.forEach.call(document.querySelectorAll('#format-seg button'), function (btn) {
     btn.addEventListener('click', function () { onFormat(btn); });
   });

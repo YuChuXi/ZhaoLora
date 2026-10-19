@@ -56,9 +56,10 @@
 <nav class="app-tabs" id="app-tabs"></nav>
 <div class="toolbar">
   <span class="mode-seg" id="format-seg"
-    title="配置导出格式: sd-scripts(写入 SD_SCRIPTS_CONFIG_ROOT) / diffusion-pipe(写入 DIFFUSION_PIPE_CONFIG_ROOT), 切换后重新生成">
-    <button class="active" data-format="sd-scripts" title="sd-scripts(Anima) 训练配置, 文件集合取自 assets/configs/sd-scripts/">sd-scripts</button>
-    <button data-format="diffusion-pipe" title="diffusion-pipe 训练配置, 文件集合取自 assets/configs/diffusion-pipe/">diffusion-pipe</button>
+    title="配置导出格式与变体: sd-scripts 写入 SD_SCRIPTS_CONFIG_ROOT, diffusion-pipe 写入 DIFFUSION_PIPE_CONFIG_ROOT, 切换后重新生成">
+    <button class="active" data-format="sd-scripts" data-variant="anima" title="sd-scripts(Anima) 训练配置, 文件集合取自 assets/configs/sd-scripts/anima/">sd-scripts(anima)</button>
+    <button data-format="diffusion-pipe" data-variant="krea2" title="diffusion-pipe(krea2) 训练配置, 文件集合取自 assets/configs/diffusion-pipe/krea2/">diffusion-pipe(krea2)</button>
+    <button data-format="diffusion-pipe" data-variant="moss" title="diffusion-pipe(moss) 训练配置, 文件集合取自 assets/configs/diffusion-pipe/moss/">diffusion-pipe(moss)</button>
   </span>
   <span class="sep"></span>
   <span class="mode-seg" id="mode-seg"
