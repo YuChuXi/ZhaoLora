@@ -1,106 +1,53 @@
-
-output_dir = '/home/yuchuxi/Projects/Experiments/Dataset/ZhaoLora/output/chawenjian'
-dataset = '/home/yuchuxi/Projects/Experiments/Dataset/ZhaoLora/configs/chawenjian/dataset.toml'
-eval_datasets = [
-]
-
-# ---------- 训练 ----------
-# 最大优化步数；全局步 = micro_batch × 梯度累积 × GPU 数，step 达到该值时训练结束，最终模型保存为 stepN/（train.py: max_steps）
-# 与 epochs 至少配置一项；学习率调度周期与训练终止位置一致，同时配置 epochs 时取二者较小值（train.py: total_steps）
 max_steps = 500
-# 每张 GPU 每次前向/反向的样本数（DeepSpeed train_micro_batch_size_per_gpu）
 micro_batch_size_per_gpu = 1
-# 流水线并行段数；1 = 单卡持有完整模型，大于 1 时将层切分到多卡（train.py: pipeline_stages）
 pipeline_stages = 1
-# 梯度累积步数；有效 batch = micro_batch × 本值 × GPU 数（train.py: global_batch_size）
 gradient_accumulation_steps = 4
-# 梯度裁剪最大范数；0 表示不裁剪。gradient_release 优化器时强制为 0
 gradient_clipping = 0
-# 学习率线性 warmup 步数；与 lr_scheduler 串联（默认 lr_scheduler='constant'，warmup 后保持常数 LR）
 warmup_steps = 50
-# 损失函数 β 阈值：以 smooth_l1_loss 替代默认 MSE（models/base.py），误差绝对值小于 β 时按二次函数计算、否则按线性函数计算，抑制离群样本对损失的支配
 smooth_l1_beta = 1.0
-# 学习率调度器；cosine, linear, constant
-lr_scheduler = 'cosine'
-# 训练时每个样本以该概率将 caption 置空，作为无条件分支参与训练（train.py: UNCOND_FRACTION）
+lr_scheduler = "cosine"
 uncond_fraction = 0.1
-
-
-# ---------- 验证 ----------
-# 每 N 个 epoch 训练轮次结束后运行 eval；需 eval_datasets 非空（train.py: eval_every_n_epochs）
 eval_every_n_epochs = 1
-# 按全局 step 触发 eval（与 eval_every_n_epochs 二选一或并用）
-#eval_every_n_steps = 500
-# 按样本数触发 eval，启动时换算为 eval_every_n_steps
-#eval_every_n_examples = 2048000
-# 首个训练步之前先运行一次 eval；从 checkpoint 恢复时不执行
 eval_before_first_step = true
-# eval 时每张 GPU 的 micro batch 大小；可小于训练值，减少 eval 集因批次整除被丢弃的样本
 eval_micro_batch_size_per_gpu = 1
-# eval 的梯度累积步数（PipelineDataLoader 长度会乘此值）
 eval_gradient_accumulation_steps = 1
-
-# ---------- 保存与其它 ----------
-# 每 N 个 epoch 保存可推理 LoRA 到 epochN/（必须设此项或 save_every_n_steps/examples 之一）
-#save_every_n_epochs = 1
 save_every_n_steps = 50
-#save_every_n_examples = 4096000   # 启动时除以 global_batch_size 得到 save_every_n_steps
-#checkpoint_every_n_epochs = 1     # DeepSpeed 全状态 checkpoint（可 --resume_from_checkpoint）
-#checkpoint_every_n_minutes = 120
-# 激活检查点：反向传播时不保存中间激活、改为重计算，以计算时间换显存；取值 'unsloth' 时自动启用 reentrant（train.py: activation_checkpointing）
 activation_checkpointing = true
-# 启用 reentrant 版本激活检查点；流水线并行下部分模型需要（train.py: use_reentrant）
-#reentrant_activation_checkpointing = true
-
-# 多 GPU 流水线时按参数量或 manual+partition_split 切层（train.py: partition_method）
-partition_method = 'parameters'
-#partition_method = 'manual'
-#partition_split = [10]   # 长度须为 pipeline_stages - 1
-
-# 保存 LoRA/权重的 dtype（set_config_defaults 转为 torch dtype）
-save_dtype = 'bfloat16'
-# 缓存 latent / text embedding 时 map 的 batch 大小
+partition_method = "parameters"
+save_dtype = "bfloat16"
 caching_batch_size = 1
-# 数据集 map 并行进程数，覆盖默认 min(8, cpu_count)（train.py: NUM_PROC）
 map_num_proc = 16
-# DeepSpeed 每隔多少 step 打印 loss（ds_config steps_per_print）
 steps_per_print = 1
-# 将 N 个 Transformer 层换出 GPU（CPU 内存暂存、前向/反向时换入），降低显存峰值；要求 pipeline_stages=1 且为 LoRA 训练（train.py: blocks_to_swap）
 blocks_to_swap = 20
-# 对 pipeline 模块启用 torch.compile 编译优化（train.py: PipelineModule wrap）；xformers attention 调用经 compiler.disable 排除在编译外（ComfyUI attention.py）
 compile = true
+output_dir = "/media/yuchuxi/Data/Servers/ComfyUI/models/loras/output/chawenjian"
+dataset = "/home/yuchuxi/Projects/Experiments/Dataset/ZhaoLora/configs/chawenjian/dataset.toml"
+eval_datasets = []
 
 [model]
-type = 'krea2'
-diffusion_model = '/media/yuchuxi/Data/Servers/ComfyUI/models/diffusion_models/krea2_raw_bf16.safetensors'
-vae = '/media/yuchuxi/Data/Servers/ComfyUI/models/vae/qwen_image_vae.safetensors'
-text_encoders = [
-    {path = '/media/yuchuxi/Data/Servers/ComfyUI/models/text_encoders/qwen3vl_4b_bf16.safetensors', type = 'krea2'}
-]
-dtype = 'bfloat16'
-diffusion_model_dtype = 'float8'
-timestep_sample_method = 'logit_normal'
+type = "krea2"
+diffusion_model = "/media/yuchuxi/Data/Servers/ComfyUI/models/diffusion_models/krea2_raw_bf16.safetensors"
+vae = "/media/yuchuxi/Data/Servers/ComfyUI/models/vae/qwen_image_vae.safetensors"
+text_encoders = [{path = "/media/yuchuxi/Data/Servers/ComfyUI/models/text_encoders/qwen3vl_4b_bf16.safetensors", type = "krea2"}]
+dtype = "bfloat16"
+diffusion_model_dtype = "float8"
+timestep_sample_method = "logit_normal"
 flux_shift = true
 
-
-# ---------- LoRA（train.py: alpha 强制 = rank）----------
 [adapter]
-type = 'lora'
-rank = 8
-# 未写时继承 [model] 段的 dtype
-dtype = 'bfloat16'
+type = "lora"
+dtype = "bfloat16"
 dropout = 0.1
+rank = 16
 
-# ---------- 优化器 ----------
 [optimizer]
-type = 'adamw8bit'
-lr = 1e-4
+type = "adamw8bit"
+lr = 0.0001
 weight_decay = 0.001
 betas = [0.9, 0.999]
 
-
 [monitoring]
 enable_wandb = true
-wandb_tracker_name = 'chawenjian-krea2'
-wandb_api_key = ''
-wandb_run_name = '' 
+wandb_tracker_name = "chawenjian-krea2"
+wandb_api_key = ""
+wandb_run_name = ""

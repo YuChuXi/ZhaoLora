@@ -9,7 +9,7 @@ Callers:
 
 from __future__ import annotations
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field
 
 from services.models.dataset import ImageThumbItem, WorkDirInfo
 
@@ -18,30 +18,15 @@ CAPTION_MODES = ("coarse", "detailed")
 
 
 class CaptionRule(BaseModel):
-    """预设提示词条目: 按 WD14 标签命中触发, 或手动指定为对该数据集全部图片生效.
+    """预设提示词条目: 按 WD14 标签命中触发, 留空则对该数据集全部图片生效.
 
     ``pattern`` 为逗号分隔的多个标签模式, 每个模式支持 ``*`` 通配; 图片的 WD14
-    缓存标签(等价键: 小写、下划线转空格)命中任一模式即注入 ``text``. ``always``
-    为手动指定: 勾选后不再看 ``pattern``, 全部图片都注入 ``text``; 两者必须择一.
+    缓存标签(等价键: 小写、下划线转空格)命中任一模式即注入 ``text``; ``pattern``
+    为空串时不再做标签判定, 全部图片都注入 ``text``.
     """
 
     text: str = Field(..., description="补充给模型的提示词文本")
-    pattern: str = Field("", description="逗号分隔的标签匹配模式, 支持 * 通配")
-    always: bool = Field(False, description="手动指定: 对该数据集全部图片无条件生效")
-
-    @model_validator(mode="after")
-    def _require_trigger(self) -> "CaptionRule":
-        """校验触发方式二选一.
-
-        Returns:
-            CaptionRule: 校验通过的自身.
-
-        Raises:
-            ValueError: 既未填写匹配标签也未勾选「手动指定」.
-        """
-        if not self.always and not self.pattern.strip():
-            raise ValueError("提示词须填写匹配标签, 或勾选「手动指定」")
-        return self
+    pattern: str = Field("", description="逗号分隔的标签匹配模式, 支持 * 通配; 空串=全部图片生效")
 
 
 class CaptionBody(BaseModel):
@@ -56,7 +41,6 @@ class CaptionBody(BaseModel):
         None, ge=0.0, le=1.0, description="角色标签置信度下限; 省略为不注入"
     )
     rules: list[CaptionRule] = Field(default_factory=list, description="预设提示词条目")
-    triggers: dict[str, str] = Field(default_factory=dict, description="触发词 → 中文说明, 由模型判断是否加入描述")
     force: bool = Field(False, description="是否覆盖 captions.json 中已存在的条目")
 
 
@@ -96,8 +80,7 @@ class CaptionRuleTemplateInfo(BaseModel):
     """预设提示词模板: 供描述页一键生成条目."""
 
     label: str = Field(..., description="界面展示名")
-    fields: list[str] = Field(default_factory=list, description="模板自身声明的待填字段名")
-    text: str = Field(..., description="模板源码, 前端按 Jinja 变量语法替换取值")
+    text: str = Field(..., description="模板源码, 其中的 Jinja 变量即前端的待填空位")
 
 
 class CaptionDirsResponse(BaseModel):

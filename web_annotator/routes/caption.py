@@ -14,7 +14,6 @@ from services.analysis.caption import (
     CaptionProgress,
     load_captions,
     ollama_status,
-    rule_template_fields,
     run_caption,
 )
 from services.analysis.wd14 import DEFAULT_THRESHOLD
@@ -60,11 +59,7 @@ def dirs(request: Request) -> CaptionDirsResponse:
         ready=ok,
         info=info,
         rule_templates=[
-            CaptionRuleTemplateInfo(
-                label=label,
-                fields=rule_template_fields(source),
-                text=source,
-            )
+            CaptionRuleTemplateInfo(label=label, text=source)
             for label, source in RULE_TEMPLATES.items()
         ],
         default_wd14_threshold=DEFAULT_THRESHOLD,
@@ -168,7 +163,7 @@ async def start(request: Request, body: CaptionBody) -> JobSubmitResponse:
 
     Args:
         request (Request): FastAPI 请求对象, 由路由参数注入.
-        body (CaptionBody): 描述参数, 含目录、模式、注入范围、预设提示词与触发词表.
+        body (CaptionBody): 描述参数, 含目录、模式、注入范围与预设提示词.
 
     Returns:
         JobSubmitResponse: 含 job_id, 前端据以订阅 SSE 进度.
@@ -196,8 +191,8 @@ async def start(request: Request, body: CaptionBody) -> JobSubmitResponse:
     prog = CaptionProgress()
     payload = body
 
-    def run(emit: EmitFn) -> CaptionResult:
-        """工作线程: 逐张调用 Ollama 生成描述并写入 captions.json.
+    async def run(emit: EmitFn) -> CaptionResult:
+        """在事件循环中逐张调用 Ollama 生成描述并写入 captions.json.
 
         Args:
             emit (EmitFn): 任务事件推送回调.
@@ -212,14 +207,13 @@ async def start(request: Request, body: CaptionBody) -> JobSubmitResponse:
             """推送描述进度快照到 SSE 通道."""
             emit(prog.snapshot())
 
-        result = run_caption(
+        result = await run_caption(
             root,
             selected,
             modes=modes,
             general_threshold=payload.general_threshold,
             character_threshold=payload.character_threshold,
             rules=payload.rules,
-            triggers=payload.triggers,
             force=payload.force,
             progress=prog,
             on_update=on_update,

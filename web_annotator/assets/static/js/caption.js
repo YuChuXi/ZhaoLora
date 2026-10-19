@@ -15,7 +15,7 @@
 
   /**
    * 浏览器本地存储键(按数据集区分)。
-   * @param {string} kind 'rules' | 'triggers' | 'inject'
+   * @param {string} kind 'rules' | 'inject'
    * @returns {string}
    */
   function storeKey(kind) {
@@ -111,67 +111,68 @@
   // ==================== 描述设置 ====================
 
   /**
-   * 追加一行预设提示词。
-   * @param {{text?: string, pattern?: string, always?: boolean}} [rule]
+   * 创建文本输入框。
+   * @param {string} placeholder 占位提示
+   * @param {string} [value] 初始值
+   * @returns {HTMLInputElement}
+   */
+  function mkText(placeholder, value) {
+    var el = document.createElement('input');
+    el.type = 'text';
+    el.placeholder = placeholder;
+    el.value = value || '';
+    return el;
+  }
+
+  /**
+   * 创建条目删除按钮(平时低调, 悬停转为强调色)。
+   * @param {Function} onDelete 点击回调
+   * @returns {HTMLButtonElement}
+   */
+  function mkDel(onDelete) {
+    var btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'cap-del';
+    btn.textContent = '✕';
+    btn.title = '删除该条';
+    btn.addEventListener('click', onDelete);
+    return btn;
+  }
+
+  /**
+   * 追加一行提示词条目。
+   * @param {{text?: string, pattern?: string}} [rule]
    */
   function addRuleRow(rule) {
     rule = rule || {};
     var row = document.createElement('div');
-    row.className = 'rule-row';
+    row.className = 'cap-table';
 
-    var pattern = document.createElement('input');
-    pattern.type = 'text';
-    pattern.className = 'rule-pattern';
-    pattern.placeholder = '匹配标签, 如 *tail*';
-    pattern.title = '逗号分隔的标签模式, * 为通配; 留空则对所有图片生效';
-    pattern.value = rule.pattern || '';
+    var pattern = mkText('如 *tail*', rule.pattern);
+    pattern.title = '逗号分隔的标签模式, * 为通配; 留空则对该数据集全部图片生效';
 
-    var always = document.createElement('label');
-    always.className = 'rule-always';
-    always.title = '手动指定: 对该数据集全部图片生效';
-    var cb = document.createElement('input');
-    cb.type = 'checkbox';
-    cb.checked = !!rule.always;
-    always.appendChild(cb);
-    always.appendChild(document.createTextNode('手动指定'));
-
-    var text = document.createElement('input');
-    text.type = 'text';
-    text.className = 'rule-text';
-    text.placeholder = '提示词内容, 如 尾巴的动作要详细描述';
-    text.value = rule.text || '';
-
-    var del = document.createElement('button');
-    del.className = 'btn danger';
-    del.type = 'button';
-    del.textContent = '✕';
-    del.title = '删除该条';
-    del.addEventListener('click', function () {
-      row.remove();
-      persistRules();
-    });
+    var text = mkText('提示词内容, 如 尾巴的动作要详细描述', rule.text);
 
     row.appendChild(pattern);
-    row.appendChild(always);
     row.appendChild(text);
-    row.appendChild(del);
+    row.appendChild(mkDel(function () { row.remove(); persistRules(); }));
     document.getElementById('rule-list').appendChild(row);
   }
 
   /**
-   * 收集当前全部预设提示词(内容为空的行丢弃)。
-   * @returns {Array<{text: string, pattern: string, always: boolean}>}
+   * 收集当前全部提示词条目(内容为空的行丢弃)。
+   * @returns {Array<{text: string, pattern: string}>}
    */
   function collectRules() {
-    var rows = document.querySelectorAll('#rule-list .rule-row');
+    var rows = document.querySelectorAll('#rule-list .cap-table');
     var out = [];
     for (var i = 0; i < rows.length; i++) {
-      var text = rows[i].querySelector('.rule-text').value.trim();
+      var inputs = rows[i].querySelectorAll('input[type="text"]');
+      var text = inputs[1].value.trim();
       if (!text) continue;
       out.push({
         text: text,
-        pattern: rows[i].querySelector('.rule-pattern').value.trim(),
-        always: rows[i].querySelector('.rule-always input').checked,
+        pattern: inputs[0].value.trim(),
       });
     }
     return out;
@@ -180,7 +181,7 @@
   // ==================== 提示词模板 ====================
 
   /**
-   * 返回当前选中的模板。
+   * 返回当前选中的模板(下拉首项「自定义」返回 null)。
    * @returns {object|null}
    */
   function currentTemplate() {
@@ -191,33 +192,35 @@
     return null;
   }
 
-  /** 按当前模板渲染待填字段输入框(字段由模板自身声明), 并显示模板源码。 */
-  function renderTemplateFields() {
-    var box = document.getElementById('rule-template-fields');
-    box.innerHTML = '';
+  /** 渲染模板句式: 句式原样显示, 其中的 {{ 字段 }} 空位替换为待填输入框。 */
+  function renderSentence() {
+    var box = document.getElementById('rule-fields');
     var tpl = currentTemplate();
-    document.getElementById('rule-template-desc').textContent = tpl ? tpl.text : '';
-    if (!tpl) return;
-    tpl.fields.forEach(function (name) {
-      var row = document.createElement('div');
-      row.className = 'rule-row';
-      var label = document.createElement('span');
-      label.className = 'rule-label';
-      label.textContent = name;
-      var input = document.createElement('input');
-      input.type = 'text';
-      input.className = 'rule-text';
-      input.dataset.field = name;
-      input.placeholder = '填写' + name;
-      input.value = '';
-      row.appendChild(label);
-      row.appendChild(input);
-      box.appendChild(row);
-    });
+    box.textContent = '';
+    box.classList.toggle('empty', !tpl);
+    if (!tpl) {
+      box.textContent = '自定义条目: 添加后在下表直接填写提示词内容';
+      return;
+    }
+    var re = /\{\{\s*([^}]+?)\s*\}\}/g;
+    var last = 0;
+    var m;
+    while ((m = re.exec(tpl.text)) !== null) {
+      box.appendChild(document.createTextNode(tpl.text.slice(last, m.index)));
+      var blank = document.createElement('input');
+      blank.type = 'text';
+      blank.className = 'cap-blank';
+      blank.dataset.field = m[1];
+      blank.placeholder = m[1];
+      blank.title = '填写「' + m[1] + '」';
+      box.appendChild(blank);
+      last = re.lastIndex;
+    }
+    box.appendChild(document.createTextNode(tpl.text.slice(last)));
   }
 
   /**
-   * 用字段取值渲染模板源码(Jinja 变量语法 {{ 变量名 }})。
+   * 用空位取值还原模板句式(Jinja 变量语法 {{ 字段 }})。
    * @param {string} source
    * @param {Object<string, string>} values
    * @returns {string}
@@ -229,44 +232,44 @@
   }
 
   /**
-   * 按当前模板与字段取值生成一条提示词条目(触发方式由用户在条目上设置)。
-   * @returns {{text: string}|null}
+   * 按句式行的空位取值生成一条条目(触发方式由用户在条目上设置)。
+   * @returns {{text: string}|null} null 表示有空位未填
    */
   function buildFromTemplate() {
     var tpl = currentTemplate();
-    if (!tpl) {
-      toast('请选择模板');
-      return null;
-    }
+    if (!tpl) return { text: '' };
     var values = {};
-    var inputs = document.querySelectorAll('#rule-template-fields input');
-    for (var i = 0; i < inputs.length; i++) {
-      var name = inputs[i].dataset.field;
-      var value = inputs[i].value.trim();
+    var blanks = document.querySelectorAll('#rule-fields .cap-blank');
+    for (var i = 0; i < blanks.length; i++) {
+      var value = blanks[i].value.trim();
       if (!value) {
-        toast('请填写「' + name + '」');
+        toast('请填写「' + blanks[i].dataset.field + '」');
         return null;
       }
-      values[name] = value;
+      values[blanks[i].dataset.field] = value;
     }
     return { text: renderTemplate(tpl.text, values) };
   }
 
   /**
-   * 渲染模板下拉框并显示首个模板的字段。
+   * 渲染模板下拉框(首项为「自定义」)并显示所选模板的句式空位。
    * @param {Array<object>} templates /caption/dirs 返回的模板列表
    */
   function renderTemplates(templates) {
     _templates = templates || [];
     var sel = document.getElementById('rule-template');
     sel.innerHTML = '';
+    var custom = document.createElement('option');
+    custom.value = '';
+    custom.textContent = '自定义（无模板）';
+    sel.appendChild(custom);
     _templates.forEach(function (tpl) {
       var option = document.createElement('option');
       option.value = tpl.label;
       option.textContent = tpl.label;
       sel.appendChild(option);
     });
-    renderTemplateFields();
+    renderSentence();
   }
 
   /** 收集并保存当前预设提示词。 */
@@ -274,77 +277,16 @@
     saveSaved('rules', collectRules());
   }
 
-  /** 保存三处设置并关闭描述设置对话框。 */
+  /** 保存设置并关闭描述设置对话框。 */
   function closeSettings() {
     persistRules();
-    persistTriggers();
     persistInject();
     closeDlg('rules-dlg');
-  }
-
-  /**
-   * 追加一行触发词。
-   * @param {{word?: string, zh?: string}} [item]
-   */
-  function addTriggerRow(item) {
-    item = item || {};
-    var row = document.createElement('div');
-    row.className = 'rule-row';
-
-    var word = document.createElement('input');
-    word.type = 'text';
-    word.className = 'rule-pattern';
-    word.placeholder = '触发词, 如 spiked halo behind head';
-    word.value = item.word || '';
-
-    var zh = document.createElement('input');
-    zh.type = 'text';
-    zh.className = 'rule-text';
-    zh.placeholder = '中文说明, 如 角色脑后的金属带刺圆环';
-    zh.value = item.zh || '';
-
-    var del = document.createElement('button');
-    del.className = 'btn danger';
-    del.type = 'button';
-    del.textContent = '✕';
-    del.title = '删除该条';
-    del.addEventListener('click', function () {
-      row.remove();
-      persistTriggers();
-    });
-
-    row.appendChild(word);
-    row.appendChild(zh);
-    row.appendChild(del);
-    document.getElementById('trigger-list').appendChild(row);
-  }
-
-  /**
-   * 收集当前触发词表(触发词为空的行丢弃)。
-   * @returns {Object<string, string>} 触发词 → 中文说明
-   */
-  function collectTriggers() {
-    var rows = document.querySelectorAll('#trigger-list .rule-row');
-    var out = {};
-    for (var i = 0; i < rows.length; i++) {
-      var word = rows[i].querySelector('.rule-pattern').value.trim();
-      if (!word) continue;
-      out[word] = rows[i].querySelector('.rule-text').value.trim();
-    }
-    return out;
-  }
-
-  /** 收集并保存当前触发词表。 */
-  function persistTriggers() {
-    saveSaved('triggers', collectTriggers());
   }
 
   /** 按本地存储恢复描述设置。 */
   function loadSettings() {
     loadSaved('rules').forEach(addRuleRow);
-    loadSaved('triggers').forEach(function (t) {
-      addTriggerRow({ word: t.word, zh: t.zh });
-    });
   }
 
   // ==================== 瀑布流 ====================
@@ -374,7 +316,7 @@
     body.innerHTML = '';
     if (!img.captions || !img.captions.length) {
       var empty = document.createElement('div');
-      empty.className = 'dlg-section-title';
+      empty.className = 'cap-sec-title';
       empty.textContent = '该图片尚无描述';
       body.appendChild(empty);
     } else {
@@ -422,12 +364,12 @@
   }
 
   /**
-   * 更新工具栏进度条。
+   * 更新进度条与日志控制台。
    * @param {object} s 任务快照
    */
   function updateProgress(s) {
     var running = s.status === 'running' || s.status === 'queued';
-    document.getElementById('progress').hidden = !running;
+    document.getElementById('job-progress').hidden = !running;
     var fill = document.getElementById('progress-fill');
     fill.classList.toggle('indeterminate', s.status === 'queued');
     if (s.status === 'running') fill.style.width = Math.min(100, s.pct || 0) + '%';
@@ -435,11 +377,17 @@
       ? '…'
       : (Math.min(100, Math.round(s.pct || 0)) + '%');
     if (s.message) document.getElementById('stat-job').textContent = s.message;
+    var box = document.getElementById('log-box');
+    if (s.logs && s.logs.length) {
+      box.hidden = false;
+      box.textContent = s.logs.join('\n');
+      box.scrollTop = box.scrollHeight;
+    }
   }
 
   /** 重置任务相关界面控件。 */
   function resetJobUi() {
-    document.getElementById('progress').hidden = true;
+    document.getElementById('job-progress').hidden = true;
     document.getElementById('btn-cancel').hidden = true;
     document.getElementById('btn-start').disabled = false;
   }
@@ -484,12 +432,6 @@
       return;
     }
     var rules = collectRules();
-    for (var i = 0; i < rules.length; i++) {
-      if (!rules[i].always && !rules[i].pattern) {
-        toast('第 ' + (i + 1) + ' 条提示词需填写「匹配标签」或勾选「手动指定」');
-        return;
-      }
-    }
     var generalThreshold = readThreshold('inject-general', 'general-threshold');
     var characterThreshold = readThreshold('inject-character', 'character-threshold');
     if (generalThreshold === false || characterThreshold === false) {
@@ -502,11 +444,10 @@
       general_threshold: generalThreshold,
       character_threshold: characterThreshold,
       rules: rules,
-      triggers: collectTriggers(),
       force: document.getElementById('force').checked,
     };
     document.getElementById('btn-start').disabled = true;
-    document.getElementById('progress').hidden = false;
+    document.getElementById('job-progress').hidden = false;
     document.getElementById('progress-fill').style.width = '0%';
     try {
       var res = await API.request(API.apiPath('/caption/start'), {
@@ -570,21 +511,22 @@
 
     loadSettings();
 
-    document.getElementById('rule-add').addEventListener('click', function () { addRuleRow(); });
     document.getElementById('inject-general').addEventListener('change', function () {
       syncThresholdEnabled('inject-general', 'general-threshold');
     });
     document.getElementById('inject-character').addEventListener('change', function () {
       syncThresholdEnabled('inject-character', 'character-threshold');
     });
-    document.getElementById('rule-template').addEventListener('change', renderTemplateFields);
-    document.getElementById('rule-template-add').addEventListener('click', function () {
+    document.getElementById('rule-template').addEventListener('change', renderSentence);
+    document.getElementById('rule-add').addEventListener('click', function () {
       var rule = buildFromTemplate();
       if (!rule) return;
       addRuleRow(rule);
+      Array.prototype.forEach.call(document.querySelectorAll('#rule-fields .cap-blank'), function (b) {
+        b.value = '';
+      });
       persistRules();
     });
-    document.getElementById('trigger-add').addEventListener('click', function () { addTriggerRow(); });
     document.getElementById('btn-open').addEventListener('click', function () { openDlg('rules-dlg'); });
     document.getElementById('rules-close').addEventListener('click', closeSettings);
     document.getElementById('view-close').addEventListener('click', function () { closeDlg('view-dlg'); });

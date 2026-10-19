@@ -6,40 +6,63 @@
 <title>描述</title>
 <link rel="stylesheet" href="/static/css/annotator.css">
 <style>
-  /* 描述页对话框: 分节、行布局与查看描述样式 */
-  .dlg-body {
-    padding: 14px 16px; display: flex; flex-direction: column; gap: 14px;
-    font-size: 12px; color: var(--text-dim); overflow: auto;
+  /* 描述页对话框: 分节、参数行、条目表与描述查看 */
+  .cap-body {
+    padding: 14px 16px; display: flex; flex-direction: column; gap: 12px;
+    font-size: 12px; color: var(--text-dim);
   }
-  .dlg-section { display: flex; flex-direction: column; gap: 6px; }
-  .dlg-section + .dlg-section { border-top: 1px solid var(--border); padding-top: 12px; }
-  .dlg-section-title { font-weight: 600; color: var(--text); }
-  .rule-list { display: flex; flex-direction: column; gap: 6px; max-height: 200px; overflow-y: auto; }
-  /* 操作区: 添加条目的控件, 与下方已添加条目列表分区 */
-  .rule-add {
+  /* 分节: 短标题在左, 说明以小字附在其右(不作标题的一部分) */
+  .cap-sec { display: flex; flex-direction: column; gap: 8px; }
+  .cap-sec + .cap-sec { border-top: 1px solid var(--border); padding-top: 12px; }
+  .cap-sec-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+  .cap-sec-title { font-weight: 600; color: var(--text); }
+  .cap-note { font-size: 11px; color: var(--text-dim); }
+  .modal-head .cap-note { margin-left: auto; }
+  /* 参数行: 左侧标签列对齐, 控件与说明同行 */
+  .cap-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .cap-label { flex: 0 0 88px; color: var(--text-dim); }
+  .cap-ck { display: flex; align-items: center; gap: 4px; cursor: pointer; user-select: none; }
+  .cap-ck input { margin: 0; }
+  .cap-num { width: 62px; }
+  /* 条目表: 表头与数据行同用一套列宽, 保证列对齐 */
+  .cap-table { display: grid; grid-template-columns: 180px minmax(0, 1fr) 24px; gap: 6px; align-items: center; }
+  .cap-head { font-size: 11px; color: var(--text-dim); }
+  .cap-head span { padding: 0 8px; }
+  .cap-list { display: flex; flex-direction: column; gap: 4px; }
+  /* 新增区: 浅底块, 与下方条目列表分区 */
+  .cap-add {
     display: flex; flex-direction: column; gap: 6px;
     padding: 8px 10px; background: var(--surface);
-    border: 1px dashed var(--border); border-radius: 4px;
+    border: 1px solid var(--border); border-radius: 6px;
   }
-  .rule-row { display: flex; align-items: center; gap: 6px; }
-  .rule-row input[type="text"],
-  .rule-row input[type="number"],
-  .rule-row select {
+  .cap-add-foot { display: flex; justify-content: flex-end; }
+  .cap-body input[type="text"],
+  .cap-body input[type="number"],
+  .cap-body select {
     background: #0a1a30; color: var(--text); border: 1px solid var(--border);
     border-radius: 4px; padding: 4px 8px; font-size: 12px; font-family: inherit;
   }
-  .rule-row .rule-pattern { width: 200px; flex-shrink: 0; }
-  .rule-row .rule-text { flex: 1; min-width: 0; }
-  .rule-row .rule-always {
-    display: flex; align-items: center; gap: 3px; flex-shrink: 0;
-    cursor: pointer; user-select: none;
+  .cap-sel { align-self: flex-start; }
+  /* 模板句式: 只把空位替换为输入框, 句式其余部分原样显示 */
+  .cap-sentence { line-height: 2.2; color: var(--text); word-break: break-word; }
+  .cap-sentence.empty { font-size: 11px; color: var(--text-dim); line-height: 1.6; }
+  .cap-blank {
+    width: 110px; margin: 0 2px; vertical-align: middle;
+    border-bottom-color: var(--accent) !important;
   }
-  .rule-row .rule-always input { margin: 0; }
-  .rule-row .rule-threshold { width: 80px; flex-shrink: 0; }
-  .rule-row .rule-threshold:disabled { opacity: .45; }
-  .rule-row .rule-template-sel { width: 150px; flex-shrink: 0; }
-  .rule-row .rule-template-desc { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .rule-row .rule-label { flex-shrink: 0; }
+  .cap-del {
+    background: transparent; border: none; color: var(--text-dim);
+    font-size: 13px; line-height: 1; cursor: pointer; padding: 0;
+  }
+  .cap-del:hover { color: var(--accent); }
+  /* 运行日志控制台: 任务产生日志后常驻可回看, 与打标页日志同款等宽字体 */
+  .cap-log {
+    max-height: 180px; overflow: auto; padding: 8px 16px;
+    background: var(--surface); border-bottom: 1px solid var(--border);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 12px; line-height: 1.45; color: #c8d4e0; white-space: pre-wrap;
+  }
+  /* 描述查看 */
   .view-caption {
     background: #0a1a30; color: var(--text); border: 1px solid var(--border);
     border-radius: 4px; padding: 8px 10px; font-size: 12px; line-height: 1.6;
@@ -55,15 +78,17 @@
   <button class="btn green" type="button" id="btn-open">开始标注</button>
   <button class="btn danger" type="button" id="btn-cancel" hidden>取消</button>
   <span class="sep"></span>
-  <div class="job-progress compact" id="progress" hidden>
-    <div class="job-progress-track">
-      <div class="job-progress-fill" id="progress-fill"></div>
-    </div>
-    <span class="job-progress-pct" id="progress-pct">0%</span>
-  </div>
   <span class="status-seg" id="stat-job"></span>
   <span class="status-seg" id="stat-model">-</span>
 </div>
+
+<div class="job-progress compact" id="job-progress" hidden>
+  <div class="job-progress-track">
+    <div class="job-progress-fill" id="progress-fill"></div>
+  </div>
+  <span class="job-progress-pct" id="progress-pct">0%</span>
+</div>
+<div class="cap-log" id="log-box" hidden></div>
 
 <div class="masonry" id="masonry"></div>
 <div class="hint" id="cap-hint">绿色=已有描述 · 点击卡片查看描述 · 描述写入各目录的 captions.json（键为文件名, 值为「粗略/详细」列表）</div>
@@ -73,59 +98,60 @@
   <span class="status-seg">未描述<b id="stat-missing">0</b></span>
 </div>
 
-<!-- 描述设置与启动: 模式、注入设置、预设提示词与触发词表 -->
+<!-- 描述设置与启动: 生成设置、提示词补充 -->
 <div class="modal" id="rules-dlg" aria-hidden="true">
   <div class="modal-panel" role="dialog" aria-labelledby="rules-dlg-title"
-    style="width:min(780px,94vw);height:auto;max-height:min(720px,88vh);">
+    style="width:min(800px,94vw);height:auto;max-height:min(720px,88vh);">
     <div class="modal-head">
       <span class="modal-title" id="rules-dlg-title">描述设置</span>
+      <span class="cap-note">以下设置保存在浏览器本地, 与当前数据集绑定</span>
     </div>
-    <div class="dlg-body">
-      <div class="dlg-section">
-        <div class="dlg-section-title">描述模式（可同时选择多个；captions.json 中按 粗略 → 详细 的顺序排列）</div>
-        <span class="mode-seg" id="mode-seg"></span>
-      </div>
-      <div class="dlg-section">
-        <div class="dlg-section-title">注入 WD14 参考标签</div>
-        <div class="rule-row">
-          <label class="rule-always"><input type="checkbox" id="inject-general"> 通用标签</label>
-          <span class="rule-label">置信度 ≥</span>
-          <input type="number" id="general-threshold" class="rule-threshold" min="0" max="1" step="0.05">
+    <div class="modal-body cap-body">
+      <section class="cap-sec">
+        <div class="cap-sec-head"><span class="cap-sec-title">生成设置</span></div>
+        <div class="cap-row">
+          <span class="cap-label">描述模式</span>
+          <span class="mode-seg" id="mode-seg"></span>
+          <span class="cap-note">写入 captions.json 时按此顺序排列</span>
         </div>
-        <div class="rule-row">
-          <label class="rule-always"><input type="checkbox" id="inject-character"> 角色标签</label>
-          <span class="rule-label">置信度 ≥</span>
-          <input type="number" id="character-threshold" class="rule-threshold" min="0" max="1" step="0.05">
+        <div class="cap-row">
+          <span class="cap-label">WD14 参考标签</span>
+          <label class="cap-ck" title="注入 Danbooru 通用标签(取自 WD14 缓存中置信度不低于阈值的标签)">
+            <input type="checkbox" id="inject-general"> 通用</label>
+          <span class="cap-note">≥</span>
+          <input type="number" id="general-threshold" class="cap-num" min="0" max="1" step="0.05"
+            title="置信度阈值: 只注入不低于该值的通用标签">
+          <label class="cap-ck" title="注入 Danbooru 角色标签(取自 WD14 缓存中置信度不低于阈值的标签)">
+            <input type="checkbox" id="inject-character"> 角色</label>
+          <span class="cap-note">≥</span>
+          <input type="number" id="character-threshold" class="cap-num" min="0" max="1" step="0.05"
+            title="置信度阈值: 只注入不低于该值的角色标签">
+          <span class="cap-note">候选交给模型核对画面后取舍; 缓存缺失的图片先补建缓存</span>
         </div>
-      </div>
-      <div class="dlg-section">
-        <div class="dlg-section-title">提示词补充（「匹配标签」命中 WD14 标签时注入；勾选「手动指定」则对该数据集全部图片生效）</div>
-        <div class="rule-add">
-          <div class="rule-row">
-            <select id="rule-template" class="rule-template-sel"></select>
-            <span class="rule-template-desc" id="rule-template-desc"></span>
-            <button class="btn" type="button" id="rule-template-add">按模板添加</button>
-            <button class="btn" type="button" id="rule-add">新增空白提示词</button>
+        <div class="cap-row">
+          <span class="cap-label">已有描述</span>
+          <label class="cap-ck" title="重新标注已有描述的图片, 并覆盖其 captions.json 条目">
+            <input type="checkbox" id="force"> 覆盖, 重新标注并覆盖原有条目</label>
+        </div>
+      </section>
+
+      <section class="cap-sec">
+        <div class="cap-sec-head">
+          <span class="cap-sec-title">提示词补充</span>
+          <span class="cap-note">「匹配标签」命中 WD14 标签时注入; 留空则对该数据集全部图片生效</span>
+        </div>
+        <div class="cap-add">
+          <select id="rule-template" class="cap-sel" title="内嵌模板: 选模板后其空格即成待填字段"></select>
+          <div class="cap-sentence" id="rule-fields"></div>
+          <div class="cap-add-foot">
+            <button class="btn green" type="button" id="rule-add" title="按当前句式生成一条提示词条目">添加</button>
           </div>
-          <div class="rule-list" id="rule-template-fields"></div>
         </div>
-        <div class="rule-list" id="rule-list"></div>
-      </div>
-      <div class="dlg-section">
-        <div class="dlg-section-title">触发词：描述表（由模型判断图中是否存在该元素，符合时把触发词加入描述）</div>
-        <div class="rule-add">
-          <div class="rule-row">
-            <button class="btn" type="button" id="trigger-add">新增触发词</button>
-          </div>
+        <div class="cap-head cap-table">
+          <span>匹配标签</span><span>提示词内容</span><span></span>
         </div>
-        <div class="rule-list" id="trigger-list"></div>
-      </div>
-      <div class="dlg-section">
-        <label class="rule-always">
-          <input type="checkbox" id="force"> 覆盖已有描述（重新标注已有描述的图片并覆盖其 captions.json 条目）
-        </label>
-      </div>
-      <div class="dlg-section">以上设置保存在浏览器本地，与当前数据集绑定</div>
+        <div class="cap-list" id="rule-list"></div>
+      </section>
     </div>
     <div class="modal-foot">
       <button class="btn" type="button" id="rules-close">取消</button>
@@ -141,7 +167,7 @@
     <div class="modal-head">
       <span class="modal-title" id="view-title">描述</span>
     </div>
-    <div class="dlg-body" id="view-body"></div>
+    <div class="modal-body cap-body" id="view-body"></div>
     <div class="modal-foot">
       <button class="btn" type="button" id="view-close">关闭</button>
     </div>

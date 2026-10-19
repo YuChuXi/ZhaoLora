@@ -1,4 +1,5 @@
-"""长任务编排: asyncio.Lock 串行, 整段 asyncio.to_thread, Server-Sent Events 推送进度.
+"""长任务编排: asyncio.Lock 串行, 同步任务交给线程执行, 协程任务直接在事件循环执行,
+Server-Sent Events 推送进度.
 
 Callers:
     - ``routes/meta.py:find_active_job``
@@ -17,9 +18,10 @@ Callers:
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 import uuid
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
 
 from services.models import JobResult, JobSnapshot
@@ -30,7 +32,10 @@ logger = logging.getLogger(__name__)
 TERMINAL = frozenset({"done", "error", "cancelled"})
 
 EmitFn = Callable[[JobSnapshot], None]
-RunFn = Callable[[EmitFn], JobResult | None]
+RunFn = (
+    Callable[[EmitFn], JobResult | None]
+    | Callable[[EmitFn], Awaitable[JobResult | None]]
+)
 
 
 @dataclass
@@ -138,7 +143,8 @@ class JobManager:
             kind: 任务类型标识(aesthetic / tagging / dedupe_scan / tag_clean).
             dataset: 数据集名称.
             group: 互斥分组名, 同组内任务串行执行.
-            run: 同步可调用对象, 签名 ``run(emit)``；``emit(JobSnapshot)`` 可从工作线程调用.
+            run: 同步或异步可调用对象, 签名 ``run(emit)``; ``emit(JobSnapshot)`` 在同步
+                任务中可从工作线程调用.
             cancel_fn: 协作取消回调.
 
         Returns:
@@ -257,7 +263,7 @@ class JobManager:
 
         Args:
             job: 任务对象.
-            run: 同步可调用对象, 签名 ``run(emit)``.
+            run: 同步或异步可调用对象, 签名 ``run(emit)``.
 
         Returns:
             None
@@ -309,7 +315,10 @@ class JobManager:
                 return run(emit)
 
             try:
-                result = await asyncio.to_thread(thread_main)
+                if inspect.iscoroutinefunction(run):
+                    result = await run(emit)
+                else:
+                    result = await asyncio.to_thread(thread_main)
             except Exception as e:
                 self._publish(
                     job,

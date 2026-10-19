@@ -593,6 +593,47 @@ class TaggingProgress:
             self.logs = self.logs[-300:]
 
 
+def _infer_and_cache(
+    img: Image.Image,
+    *,
+    root: Path,
+    image_rel: str,
+    threshold: float,
+    handle: _WD14_HANDLE,
+) -> list[tuple[str, float, bool]]:
+    """对单张图片跑 WD14 推理, 并把阈值以上的标签写入 ``.wd14_meta`` 缓存.
+
+    Args:
+        img: 待打标图片.
+        root: 数据集根目录, 用于定位 ``.wd14_meta`` 缓存.
+        image_rel: 图片相对数据集根的路径.
+        threshold: 置信度阈值, 低于该值的标签不写入缓存.
+        handle: WD14 模型句柄, 由调用方持有.
+
+    Returns:
+        ``[(tag, score, is_character), ...]``, 与写入缓存的标签一致.
+
+    Callers:
+        - ``services/analysis/wd14.py:_process_one``
+        - ``services/analysis/wd14.py:ensure_meta``
+    """
+    wd_scored = _infer_wd14(img, threshold, handle)
+    write_meta(
+        root,
+        image_rel,
+        threshold,
+        [
+            Wd14Tag(
+                name=name,
+                score=score,
+                category="character" if is_character else "general",
+            )
+            for name, score, is_character in wd_scored
+        ],
+    )
+    return wd_scored
+
+
 def _process_one(
     src: Path,
     *,
@@ -624,27 +665,87 @@ def _process_one(
     if not force and out_txt_path.exists():
         return "skip"
 
-    img = Image.open(src)
     base: list[str] = []
     if not disable_orig_tags:
         base = Tags.split_caption(_load_text(out_txt_path))
-    wd_scored = _infer_wd14(img, threshold, handle)
-    write_meta(
-        root,
-        src.relative_to(root).as_posix(),
-        threshold,
-        [
-            Wd14Tag(
-                name=name,
-                score=score,
-                category="character" if is_character else "general",
-            )
-            for name, score, is_character in wd_scored
-        ],
-    )
+    with Image.open(src) as img:
+        wd_scored = _infer_and_cache(
+            img,
+            root=root,
+            image_rel=src.relative_to(root).as_posix(),
+            threshold=threshold,
+            handle=handle,
+        )
     caption = Tags.merge_for_disk_by_confidence(base, wd_scored, artist_tag=artist_tag)
     atomic_write_text(out_txt_path, caption)
     return "ok"
+
+
+def ensure_meta(
+    root: Path,
+    images: list[Path],
+    *,
+    threshold: float,
+    log: Callable[[str], None],
+    cancel_check: Callable[[], bool],
+) -> None:
+    """为缓存缺失的图片补建 ``.wd14_meta`` 缓存, 只写缓存并保持同名 ``.txt`` 原样.
+
+    供描述页在参考标签注入或标签模式命中需要 WD14 标签时, 先补齐缓存再生成描述.
+    逐个检查缓存文件, 只对缺失的图片跑推理, 已有缓存的原样保留; 全部就绪时不加载
+    模型. 单张推理失败记入日志后继续, 不中断整批; 反序列化与模型文件缺失属配置
+    错误, 由推理调用链直接抛出.
+
+    Args:
+        root: 数据集根目录, 用于定位 ``.wd14_meta`` 缓存.
+        images: 待检查的图片绝对路径列表.
+        threshold: 推理置信度阈值, 低于该值的标签不写入缓存.
+        log: 日志回调, 接收单行文本.
+        cancel_check: 协作取消判定, 返回 True 时中止补建.
+
+    Returns:
+        None
+
+    Raises:
+        RuntimeError: WD14 模型权重或标签表缺失.
+
+    Callers:
+        - ``services/analysis/caption.py:run_caption``
+    """
+    missing = [
+        src
+        for src in images
+        if not meta_path(root, src.relative_to(root).as_posix()).is_file()
+    ]
+    if not missing:
+        return
+
+    log(f"WD14 缓存缺失 {len(missing)}/{len(images)} 张, 加载模型补建 (阈值={threshold})…")
+    created = 0
+    failed = 0
+    with _MODEL as raw_handle:
+        handle = cast("_WD14_HANDLE", raw_handle)
+        for src in missing:
+            if cancel_check():
+                log(f"WD14 缓存补建已取消: 新建 {created} 张, 失败 {failed} 张")
+                return
+            rel = src.relative_to(root).as_posix()
+            try:
+                with Image.open(src) as img:
+                    _infer_and_cache(
+                        img,
+                        root=root,
+                        image_rel=rel,
+                        threshold=threshold,
+                        handle=handle,
+                    )
+            except (OSError, ValueError, RuntimeError) as e:
+                failed += 1
+                log(f"WD14 缓存补建失败: {rel} — {e}")
+                continue
+            created += 1
+            log(f"WD14 缓存补建 [{created}/{len(missing)}]: {rel}")
+    log(f"WD14 缓存补建完成: 新建 {created} 张, 失败 {failed} 张")
 
 
 @_MODEL.auto_release

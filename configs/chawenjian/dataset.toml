@@ -1,24 +1,32 @@
 resolutions = [512, 1024, 1536]
-
 enable_ar_bucket = true
 min_ar = 0.25
 max_ar = 4.0
 num_ar_buckets = 13
-
-# caption txt 已含 @chawenjian 触发词，无需前缀
-caption_prefix = ''
-# txt 含 ||| 保持分隔符，diffusion-pipe 的 shuffle 不理解该分隔符，禁用
-# shuffle_tags = true
-# cache_shuffle_num = 4
-# cache_shuffle_delimiter = ", "
+caption_prefix = ""
 
 [[directory]]
-path = '/home/yuchuxi/Projects/Experiments/Dataset/ZhaoLora/datasets/chawenjian/main'
-mask_path = '/home/yuchuxi/Projects/Experiments/Dataset/ZhaoLora/datasets/chawenjian/mask/main'
+path = "/home/yuchuxi/Projects/Experiments/Dataset/ZhaoLora/datasets/chawenjian/main"
+mask_path = "/home/yuchuxi/Projects/Experiments/Dataset/ZhaoLora/datasets/chawenjian/mask/main"
+num_repeats = 1
+resolutions = [512, 1024, 1536]
 
 [[directory]]
-path = '/home/yuchuxi/Projects/Experiments/Dataset/ZhaoLora/datasets/chawenjian/head'
+path = "/home/yuchuxi/Projects/Experiments/Dataset/ZhaoLora/datasets/chawenjian/foot"
+num_repeats = 1
+resolutions = [512, 1024, 1536]
 
 [[directory]]
-path = '/home/yuchuxi/Projects/Experiments/Dataset/ZhaoLora/datasets/chawenjian/foot'
+path = "/home/yuchuxi/Projects/Experiments/Dataset/ZhaoLora/datasets/chawenjian/head"
+num_repeats = 1
+resolutions = [512, 1024, 1536]
 
+[[directory]]
+path = "/home/yuchuxi/Projects/Experiments/Dataset/ZhaoLora/datasets/regL/256_1"
+num_repeats = 1
+resolutions = [1536]
+
+[[directory]]
+path = "/home/yuchuxi/Projects/Experiments/Dataset/ZhaoLora/datasets/regL/256_2"
+num_repeats = 1
+resolutions = [1024]

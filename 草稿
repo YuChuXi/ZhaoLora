@@ -102,7 +102,7 @@ long hair, hair between eyes, hair flower, braided bangs, grey hair, dress, whit
             - 粗略模式: "You are currently performing text annotation for an image dataset. You must confidently and concisely describe the focal point of the image using dense English. Additionally, you should add and filter content based on the user's provided remarks."
             - 详细模式: "You are currently performing text annotation for an image dataset. You must confidently and thoroughly describe the image content using dense English formatting, detailing the attributes, relationships, and spatial arrangement of all entities. Additionally, you should add and filter content based on the user's provided remarks."
         - 可选注入wd14通用/角色 tag
-        - 支持用户预设几条提示词补充, 按tag匹配触发和手动指定, 让模型知道自己该干嘛, 其中部分是可以模板化的或程序化生成的例如:
+        - 支持用户预设几条提示词补充, 按tag匹配触发(匹配标签留空则全部图片生效), 让模型知道自己该干嘛, 其中部分是可以模板化的或程序化生成的例如:
             - *tail* -> 尾巴的动作要详细描述
             - 这是一个角色数据集, 主角是"欠狐(qianhu)", 故不需要详细描述主角本身, 使用角色名即可. 主角的特征是狐娘萝莉, 黑色毛发, 大耳朵大尾巴, 供你辨别.
             - 这是一个画风数据集, 艺术家是"guo582", 故不需要详细描述画风本身, 使用艺术家名即可. 
@@ -110,7 +110,7 @@ long hair, hair between eyes, hair flower, braided bangs, grey hair, dress, whit
             - 数据集存在"角色三视图", "模糊背景"的负面偏见, 因此务必在符合的图片中明确标注.
 
         - 支持配置触发词:描述表, 由模型主动判断是否添加, 例如
-            - "spiked halo behind head":角色脑后的金属带刺圆环
+            - 触发词 "spiked halo behind head" 代表角色脑后的金属带刺圆环, 当画面中可见时添加
         - 模型 10.47.20.131:ollama qwen38-27b-heretic:q4_k_m
     - 使用diffusion-pipe的jsonl格式输出
 
