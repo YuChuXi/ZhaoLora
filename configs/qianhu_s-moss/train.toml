@@ -18,10 +18,10 @@ save_dtype = "bfloat16"
 caching_batch_size = 1
 map_num_proc = 16
 steps_per_print = 1
-blocks_to_swap = 20
+blocks_to_swap = 0
 compile = true
-output_dir = "/media/yuchuxi/Data/Servers/ComfyUI/models/loras/output/qianhu_s"
-dataset = "/home/yuchuxi/Projects/Experiments/Dataset/ZhaoLora/configs/qianhu_s/dataset.toml"
+output_dir = "/media/yuchuxi/Data/Servers/ComfyUI/models/loras/output/qianhu_s-moss"
+dataset = "/home/yuchuxi/Projects/Experiments/Dataset/ZhaoLora/configs/qianhu_s-moss/dataset.toml"
 eval_datasets = []
 
 [model]
@@ -32,13 +32,16 @@ text_encoders = [{path = "/media/yuchuxi/Data/Servers/ComfyUI/models/text_encode
 dtype = "bfloat16"
 diffusion_model_dtype = "float8"
 timestep_sample_method = "logit_normal"
-shift = 3
+#shift = 3
 
 [adapter]
 type = "lora"
 dtype = "bfloat16"
 dropout = 0.1
 rank = 16
+# 仅训练骨干块的注意力投影(q/k/v/o), 剔除全部 FFN 与文本分支(text_embedder);
+# base.py 原样透传给 peft, 字符串形式按 re.fullmatch 匹配模块全名
+exclude_modules = ".*(text_embedder).*"
 
 [optimizer]
 type = "adamw8bit"

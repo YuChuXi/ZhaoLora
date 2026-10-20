@@ -59,45 +59,37 @@ _JINJA_ENV = Environment(undefined=StrictUndefined)
 # 各描述模式的系统提示词模板(内容由用户给定)
 SYSTEM_PROMPT_TEMPLATES: dict[str, Template] = {
     "coarse": _JINJA_ENV.from_string(
-        "You are currently performing text annotation for an image dataset. "
-        "You must confidently and concisely describe the focal point of the image using dense English. "
-        "Additionally, you should add and filter content based on the user's provided remarks."
+        "You are currently performing captioning for an image dataset. "
+        "Using unbroken, compactly formatted English, you need to confidently and concisely "
+        "describe the focal point of the image. "
+        "Transcribe embedded text using its original language and enclose it in quotation marks. "
+        "Additionally, you need to add and filter content based on the notes provided by the user."
     ),
     "detailed": _JINJA_ENV.from_string(
-        "You are currently performing text annotation for an image dataset. "
-        "You must confidently and thoroughly describe the image content using dense English formatting, "
-        "detailing the attributes, relationships, and spatial arrangement of all entities. "
-        "Additionally, you should add and filter content based on the user's provided remarks."
+        "You are currently performing captioning for an image dataset. "
+        "Using unbroken, compactly formatted English, you need to confidently and thoroughly "
+        "describe the image content, specifying the attributes, degrees, interrelationships, "
+        "and layout of all entities. "
+        "Transcribe embedded text using its original language and enclose it in quotation marks. "
+        "Additionally, you need to add and filter content based on the notes provided by the user."
     ),
 }
 
-# 描述提示词中参考标签类别的展示行首, 与 ``_reference_tags`` 的类别一一对应;
-# 未登记的类别在渲染时直接报错
-_REFERENCE_LABELS = {
-    "general": "来自 WD14 的 Danbooru 通用标签可供参考",
-    "character": "来自 WD14 的 Danbooru 角色标签可供参考",
-}
-_JINJA_ENV.globals["_REFERENCE_LABELS"] = _REFERENCE_LABELS
-
-# 用户消息模板: 逐行拼接命中的预设提示词与 WD14 参考标签(按标签类型分行并带置信度);
-# 不添加分节标题与列表符号, 行间以单个换行分隔
+# 用户消息模板: 每行一条, 预设提示词在前、NSFW 备注次之、WD14 参考标签在后;
+# 标签行首与 NSFW 备注等提示词正文全部内联于此; 不添加分节标题与列表符号.
+# 每行固定以换行收尾, 末尾多余换行由 ``build_user_prompt`` 去掉.
+# 模板变量: instructions=命中的预设提示词文本, reference=WD14 参考标签分组, nsfw=是否输出 NSFW 备注
 _USER_MESSAGE_TEMPLATE = _JINJA_ENV.from_string(
-    """{%- set ns = namespace(lines=instructions) -%}
-{%- for category, items in reference -%}
-{%- set label = _REFERENCE_LABELS[category] -%}
-{%- set tags = namespace(text=[]) -%}
-{%- for tag in items -%}
-{%- set tags.text = tags.text + ['"' ~ tag.name ~ '":' ~ ('%.2f'|format(tag.score))] -%}
-{%- endfor -%}
-{%- set ns.lines = ns.lines + [label ~ ': ' ~ (tags.text | join(', '))] -%}
-{%- endfor -%}
-{{ ns.lines | join('\\n') }}"""
+    "{% for text in instructions %}{{ text }}\n{% endfor %}"
+    "{% if nsfw %}Using explicit slang.\n{% endif %}"
+    "{% for category, items in reference %}"
+    "{% if category == 'general' %}来自 WD14 的 Danbooru 通用标签可供参考{% else %}来自 WD14 的 Danbooru 角色标签可供参考{% endif %}: "
+    "{% for tag in items %}\"{{ tag.name }}\":{{ '%.2f'|format(tag.score) }}{{ ', ' if not loop.last }}{% endfor %}\n"
+    "{% endfor %}"
 )
 
-# NSFW 增强判定的 rating 分级名: 二者任一达标即在提示词追加备注
+# NSFW 增强判定的 rating 分级名: 二者任一达标即触发用户消息模板的 nsfw 分支
 _NSFW_RATING_TAGS = ("explicit", "questionable")
-# NSFW 增强命中的追加备注行
-_NSFW_NOTE = "Using explicit slang."
 
 
 # 预设提示词模板: 键为界面展示名, 值为内嵌 Jinja 模板源码(待填字段即其未声明变量);
@@ -311,15 +303,17 @@ def build_user_prompt(
     *,
     reference: list[tuple[str, list[Wd14Tag]]],
     instructions: list[str],
+    nsfw: bool,
 ) -> str:
     """组装单张图片的用户提示词.
 
-    按「预设提示词 → WD14 参考标签」顺序逐行拼接: 预设提示词文本原样成行,
-    参考标签每类一行并带置信度; 不添加任何分节标题或列表符号.
+    按「预设提示词 → NSFW 备注 → WD14 参考标签」顺序逐行拼接; 全部行文正文内联于
+    ``_USER_MESSAGE_TEMPLATE``; 不添加任何分节标题或列表符号.
 
     Args:
         reference (list[tuple[str, list[Wd14Tag]]]): WD14 参考标签, 按标签类型分组.
         instructions (list[str]): 命中的预设提示词文本.
+        nsfw (bool): 是否输出 NSFW 备注行.
 
     Returns:
         str: 逐行拼接的提示词全文.
@@ -330,34 +324,8 @@ def build_user_prompt(
     return _USER_MESSAGE_TEMPLATE.render(
         reference=reference,
         instructions=instructions,
-    )
-
-
-def _clean_answer(raw: str) -> str:
-    """把模型回答整理为单行描述文本.
-
-    仅去除代码围栏与首尾空白, 并把换行折叠为空格; 描述内容本身原样保留.
-
-    Args:
-        raw (str): 模型回答全文.
-
-    Returns:
-        str: 折叠为单行的描述文本.
-
-    Raises:
-        ValueError: 回答为空(去除围栏与空白后无内容).
-
-    Callers:
-        - ``services/analysis/caption.py:run_caption``
-    """
-    text = raw.strip()
-    if text.startswith("```"):
-        lines = [line for line in text.splitlines() if not line.strip().startswith("```")]
-        text = "\n".join(lines).strip()
-    caption = " ".join(text.split())
-    if not caption:
-        raise ValueError("模型回答为空")
-    return caption
+        nsfw=nsfw,
+    ).rstrip("\n")
 
 
 class RepeatedOutputError(RuntimeError):
@@ -484,6 +452,7 @@ async def _chat_caption(
     Raises:
         httpx.HTTPError: 请求失败或响应状态码非 2xx.
         RepeatedOutputError: 输出出现周期性重复.
+        ValueError: 服务返回的回答为空.
         RuntimeError: 服务返回 error 字段, 或生成过程中被取消.
 
     Callers:
@@ -520,7 +489,10 @@ async def _chat_caption(
                     raise RepeatedOutputError("检测到模型输出循环")
             if obj.get("done"):
                 break
-    return "".join(parts)
+    content = "".join(parts).strip()
+    if not content:
+        raise ValueError("模型回答为空")
+    return content
 
 
 def load_captions(directory: Path) -> dict[str, list[str]]:
@@ -665,14 +637,14 @@ async def _generate_captions(
         rules,
         {tag_key(tag.name) for tag in (groups.tags if groups else ())},
     )
-    if groups is not None and nsfw_threshold is not None and any(
+    nsfw = groups is not None and nsfw_threshold is not None and any(
         tag.name in _NSFW_RATING_TAGS and tag.score >= nsfw_threshold
         for tag in groups.of("rating")
-    ):
-        instructions.append(_NSFW_NOTE)
+    )
     prompt = build_user_prompt(
         reference=_reference_tags(groups, general_threshold, character_threshold),
         instructions=instructions,
+        nsfw=nsfw,
     )
     image_b64 = base64.b64encode(src.read_bytes()).decode("ascii")
     captions: list[str] = []
@@ -686,7 +658,7 @@ async def _generate_captions(
             user_prompt=prompt,
             cancel_check=cancel_check,
         )
-        captions.append(_clean_answer(raw))
+        captions.append(raw)
     return captions
 
 
