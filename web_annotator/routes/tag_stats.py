@@ -14,6 +14,7 @@ from services.core.atomic import atomic_write_text
 from services.core.jobs import EmitFn
 from services.core.natural import natural_key
 from services.core.thumbnailer import image_size
+from services.dataset.workdir import WorkDir
 from services.models import (
     JobSnapshot,
     JobSubmitResponse,
@@ -409,11 +410,8 @@ async def batch_edit(ds: DatasetDep, body: BatchEditBody) -> JobSubmitResponse:
 
 
 def _build_check_item(
+    work: WorkDir,
     img_path_rel: str,
-    stem: str,
-    work_dir: Path,
-    dir_name: str,
-    root: Path,
     thumbnailer,
     tag: str,
     position: str,
@@ -424,11 +422,8 @@ def _build_check_item(
     标签存在性与位置, 并计算缩略图 hash 与图片宽高。
 
     Args:
+        work (WorkDir): 图片所在工作目录。
         img_path_rel (str): 图片相对数据集根的路径(如 ``main/foo.png``)。
-        stem (str): 图片 stem。
-        work_dir (Path): 图片所在的绝对路径目录。
-        dir_name (str): 目录名(用于前端展示)。
-        root (Path): 数据集根目录。
         thumbnailer (Thumbnailer): 缩略图管理器。
         tag (str): 待检查的标签。
         position (str): 位置选项。
@@ -439,13 +434,15 @@ def _build_check_item(
     Callers:
         - ``routes/tag_stats.py:check``
         - ``routes/tag_stats.py:edit_one``
+        - ``routes/tag_stats.py:delete_one``
     """
-    txt_path = work_dir / (stem + ".txt")
+    stem = Path(img_path_rel).stem
+    txt_path = work.path / (stem + ".txt")
     raw = ""
     if txt_path.is_file():
         raw = txt_path.read_text(encoding="utf-8")
     exists, position_ok = check_tag_in_caption(raw, tag, position)
-    abs_img = root / img_path_rel
+    abs_img = work.path / Path(img_path_rel).name
     w, h = image_size(abs_img) if abs_img.is_file() else (0, 0)
     return TagCheckItem(
         path=img_path_rel,
@@ -453,7 +450,7 @@ def _build_check_item(
         width=w,
         height=h,
         thumbnail_hash=thumbnailer.hash_for(img_path_rel),
-        dir=dir_name,
+        dir=work.name,
         exists=exists,
         position_ok=position_ok,
         caption_preview=raw.strip().replace("\n", " "),
@@ -489,9 +486,7 @@ def check(ds: DatasetDep, body: TagCheckBody) -> TagCheckResponse:
     for work in works:
         for img in work.images():
             items.append(
-                _build_check_item(
-                    img.rel, img.stem, work.path, work.name, root, thumbnailer, tag, body.position
-                )
+                _build_check_item(work, img.rel, thumbnailer, tag, body.position)
             )
 
     ok_count = sum(1 for it in items if it.position_ok)
@@ -553,10 +548,8 @@ def edit_one(ds: DatasetDep, body: TagEditOneBody) -> TagCheckItem:
     new_caption = add_tag_to_caption(raw, tag, body.position)
     atomic_write_text(txt_path, new_caption + "\n")
 
-    stem = img_abs.stem
-    work_dir = img_abs.parent
     rel = body.path.replace("\\", "/").lstrip("/")
-    dir_name = rel.split("/")[0] if "/" in rel else "."
+    work = rt.work_of(rel)
     logger.info(
         "单图加标签 dataset=%s path=%s tag=%s position=%s",
         rt.name,
@@ -564,9 +557,7 @@ def edit_one(ds: DatasetDep, body: TagEditOneBody) -> TagCheckItem:
         tag,
         body.position,
     )
-    return _build_check_item(
-        rel, stem, work_dir, dir_name, root, rt.thumbnailer, tag, body.check_position
-    )
+    return _build_check_item(work, rel, rt.thumbnailer, tag, body.check_position)
 
 
 class TagDeleteOneBody(BaseModel):
@@ -609,19 +600,15 @@ def delete_one(ds: DatasetDep, body: TagDeleteOneBody) -> TagCheckItem:
     new_caption = delete_tag_from_caption(raw, tag)
     atomic_write_text(txt_path, new_caption + "\n")
 
-    stem = img_abs.stem
-    work_dir = img_abs.parent
     rel = body.path.replace("\\", "/").lstrip("/")
-    dir_name = rel.split("/")[0] if "/" in rel else "."
+    work = rt.work_of(rel)
     logger.info(
         "单图删标签 dataset=%s path=%s tag=%s",
         rt.name,
         rel,
         tag,
     )
-    return _build_check_item(
-        rel, stem, work_dir, dir_name, root, rt.thumbnailer, tag, "any"
-    )
+    return _build_check_item(work, rel, rt.thumbnailer, tag, "any")
 
 
 # ==================== 向量重排序 API ====================

@@ -98,7 +98,7 @@ def select_all(ds: DatasetDep, body: SelectAllBody) -> SelectAllResponse:
     Callers:
         - ``static/js/store.js:selectAll``
     """
-    names = body.dirs or parse_dir_names(None, body.dir)
+    names = body.dirs or ([body.dir] if body.dir else None)
     works = ds.select_or_main(names)
 
     all_paths: list[str] = []

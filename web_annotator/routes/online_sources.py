@@ -7,7 +7,7 @@ import logging
 import os
 from pathlib import Path
 
-from services.dataset.workdir import IMAGE_EXTS, VIDEO_DIRNAME
+from services.dataset.workdir import IMAGE_EXTS
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
@@ -167,7 +167,7 @@ async def search(ds: DatasetDep, body: SearchBody) -> BooruSearchResult:
     for post in raw_posts:
         if post.is_video:
             # 视频帖产物在数据集根 video 目录, 以 BV 前缀判定 (BBDown 命名 {bvid}_{标题}...)
-            video_dir = root / VIDEO_DIRNAME
+            video_dir = ds.video_dir
             post.downloaded = video_dir.is_dir() and any(video_dir.glob(f"{post.id}_*"))
         else:
             post.downloaded = is_downloaded(out_dir, post.filename)
@@ -362,7 +362,7 @@ async def _submit_video_download(
         - ``routes/online_sources.py:download``
     """
     mgr = jobs(request)
-    video_dir = ds.root / VIDEO_DIRNAME
+    video_dir = ds.video_dir
 
     def run(emit: EmitFn) -> None:
         """工作线程入口。
@@ -665,7 +665,7 @@ async def refresh_metadata(
         import asyncio as _asyncio
         loop = _asyncio.new_event_loop()
         try:
-            loop.run_until_complete(_run_refresh(ds.root / body.dir if body.dir else ds.root, emit))
+            loop.run_until_complete(_run_refresh(ds.work_dir(body.dir).path if body.dir else ds.root, emit))
         finally:
             loop.close()
 

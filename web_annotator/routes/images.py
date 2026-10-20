@@ -229,13 +229,9 @@ async def similar_images(
 ) -> SimilarResponse:
     """按色调相似度返回若干张图(不含自身, 候选为同目录未删图). """
     rel = path.replace("\\", "/").lstrip("/")
-    query_file = _resolve_image(ds.root, ds.trash_dir, rel)
+    query_file = _resolve_image(ds, rel)
 
-    parts = rel.split("/")
-    try:
-        work = ds.work_dir(parts[0] if len(parts) > 1 else "main")
-    except ValueError as e:
-        raise HTTPException(400, str(e)) from e
+    work = ds.work_of(rel)
 
     state = ds.state_manager.get()
     selected = set(state.selected.keys())

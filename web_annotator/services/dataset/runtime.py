@@ -121,6 +121,15 @@ class Dataset:
         return self.root / "mask"
 
     @property
+    def video_dir(self) -> Path:
+        """视频目录.
+
+        Returns:
+            Path: ``root/video``; 可为指向外部存储的符号链接.
+        """
+        return self.root / VIDEO_DIRNAME
+
+    @property
     def crops_dir(self) -> Path:
         """未命名选区的裁剪输出目录.
 

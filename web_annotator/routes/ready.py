@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field, model_validator
 from tomlkit.exceptions import ParseError
 
 from routes.deps import DatasetDep
+from services.dataset.runtime import Dataset
 from services.models import LoraMode, ReadyDirsResponse, ReadyTomlResult, TrainExportResult
 from services.ready import (
     TRAIN_FORMAT_TEMPLATES,

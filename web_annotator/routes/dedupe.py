@@ -308,7 +308,7 @@ def apply_delete(ds: DatasetDep, body: ApplyBody) -> DedupeMoveResponse:
     if not body.paths:
         raise HTTPException(400, "未选择任何图片")
 
-    names = _names(body.dirs, body.dir)
+    names = body.dirs or ([body.dir] if body.dir else None)
     works = ds.select_or_main(names)
 
     alive: set[str] = set()

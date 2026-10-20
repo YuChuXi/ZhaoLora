@@ -271,7 +271,7 @@ async def start_analysis(request: Request, ds: DatasetDep, path: str = Query(...
     """
     resolve_path(ds.root, path)
     store, _ = _stores(ds)
-    _w, _h, _dur, total = probe_video(ds.root / path.lstrip("/"))
+    _w, _h, _dur, total = probe_video(resolve_path(ds.root, path.lstrip("/")))
     if total <= 0:
         raise HTTPException(400, "视频无法读取或总帧数为 0")
 
