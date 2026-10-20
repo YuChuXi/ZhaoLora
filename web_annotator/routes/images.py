@@ -44,17 +44,27 @@ def _color_index(ds: Dataset) -> ColorIndex:
     return ds.color_index
 
 
-def _resolve_image(root: Path, trash_dir: Path, rel: str) -> Path:
-    """在数据集根或回收站中解析图片路径. 
+def _resolve_image(ds: Dataset, rel: str) -> Path:
+    """在数据集根或回收站中解析图片路径.
+
+    Args:
+        ds (Dataset): 当前数据集.
+        rel (str): 数据集根相对路径.
+
+    Returns:
+        Path: 图片绝对路径.
+
+    Raises:
+        HTTPException: 两处均不存在时返回 404.
 
     Callers:
         - ``routes/images.py:get_image``
         - ``routes/images.py:similar_images``
     """
-    main = resolve_path(root, rel)
+    main = resolve_path(ds.root, rel)
     if main.is_file():
         return main
-    trash = resolve_path(trash_dir, rel)
+    trash = resolve_path(ds.trash_dir, rel)
     if trash.is_file():
         return trash
     raise HTTPException(404, "文件不存在")
@@ -207,7 +217,7 @@ def list_images(
 @router.get("/image")
 def get_image(ds: DatasetDep, path: str = Query(...)) -> FileResponse:
     """返回原图文件(预览用). """
-    file_path = _resolve_image(ds.root, ds.trash_dir, path)
+    file_path = _resolve_image(ds, path)
     return FileResponse(file_path)
 
 

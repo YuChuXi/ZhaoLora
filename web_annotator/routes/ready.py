@@ -96,12 +96,12 @@ class ReadyExportBody(ReadyBody):
         return self
 
 
-def _trigger_word(request: Request, root: Path) -> str:
+def _trigger_word(request: Request, ds: Dataset) -> str:
     """查询数据集触发词(note 页任务卡设置).
 
     Args:
         request (Request): FastAPI 请求对象, 由路由参数注入.
-        root (Path): 数据集根目录, 以目录名匹配任务清单.
+        ds (Dataset): 当前数据集, 以名称匹配任务清单.
 
     Returns:
         str: 触发词; 未设置时为空串.
@@ -112,7 +112,7 @@ def _trigger_word(request: Request, root: Path) -> str:
     """
     store = request.app.state.task_store
     return next(
-        (t.trigger_word for t in store.list_entries() if t.name == root.name), ""
+        (t.trigger_word for t in store.list_entries() if t.name == ds.name), ""
     )
 
 
@@ -133,7 +133,7 @@ def dirs(ds: DatasetDep) -> ReadyDirsResponse:
     """
     root = ds.root
     dirs = [w.to_info() for w in ds.work_dirs()]
-    mask_stats = [subdir_mask_stats(root, d.name) for d in dirs]
+    mask_stats = [subdir_mask_stats(ds, w) for w in ds.work_dirs()]
     main_mask = next((m for m in mask_stats if m.name == "main"), None)
     return ReadyDirsResponse(
         root=str(root),
@@ -170,7 +170,7 @@ def toml(request: Request, ds: DatasetDep, body: ReadyBody) -> ReadyTomlResult:
     root = ds.root
     try:
         result = build_ready(
-            root,
+            ds,
             mode=body.mode,
             train_format=body.train_format,
             variant=body.variant,
@@ -178,7 +178,7 @@ def toml(request: Request, ds: DatasetDep, body: ReadyBody) -> ReadyTomlResult:
             target_images=body.target_images,
             subset_resolutions=body.subset_resolutions,
             use_reg=body.use_reg,
-            trigger_word=_trigger_word(request, root),
+            trigger_word=_trigger_word(request, ds),
         )
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
@@ -216,7 +216,7 @@ def export(
     """
     root = ds.root
     file_names = TRAIN_FORMAT_TEMPLATES[body.train_format][body.variant]
-    if not exportable_dirs(root, body.dirs):
+    if not exportable_dirs(ds, body.dirs):
         raise HTTPException(400, "没有可导出的图片目录")
     for name in file_names:
         if not name.endswith(".toml"):

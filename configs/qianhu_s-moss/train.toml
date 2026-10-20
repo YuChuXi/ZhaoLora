@@ -38,7 +38,7 @@ timestep_sample_method = "logit_normal"
 type = "lora"
 dtype = "bfloat16"
 dropout = 0.1
-rank = 16
+rank = 32
 # 仅训练骨干块的注意力投影(q/k/v/o), 剔除全部 FFN 与文本分支(text_embedder);
 # base.py 原样透传给 peft, 字符串形式按 re.fullmatch 匹配模块全名
 exclude_modules = ".*(text_embedder).*"

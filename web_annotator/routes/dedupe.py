@@ -47,26 +47,6 @@ class ApplyBody(BaseModel):
     dir: str | None = None
 
 
-def _names(dirs: list[str] | None, legacy: str | None) -> list[str]:
-    """解析目录名列表, 优先采用多目录字段 ``dirs``, 为空时回退到单目录字段 ``legacy``.
-
-    Args:
-        dirs (list[str] | None): 多目录字段; 非空时直接采用.
-        legacy (str | None): 单目录字段; ``dirs`` 为空时回退到此值.
-
-    Returns:
-        list[str]: 非空目录名列表, 全部为空时返回 ``["main"]``.
-    Callers:
-        - ``routes/dedupe.py:apply_delete``
-        - ``routes/dedupe.py:scan_duplicates``
-    """
-    if dirs:
-        return list(dirs)
-    if legacy:
-        return [legacy]
-    return ["main"]
-
-
 def similarity_histogram(values, algorithm: str) -> str | None:
     """两两相似度直方图, 以 base64 data URL 返回(MSE 用对数横轴).
 
@@ -181,7 +161,7 @@ async def scan_duplicates(request: Request, ds: DatasetDep, body: ScanBody) -> J
         - ``static/js/dedupe.js:scan``
     """
     thumbnailer = ds.thumbnailer
-    names = _names(body.dirs, body.dir)
+    names = body.dirs or ([body.dir] if body.dir else None)
     works = ds.select_or_main(names)
 
     mse = body.mse_threshold

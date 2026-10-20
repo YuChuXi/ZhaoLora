@@ -815,7 +815,7 @@ def build_ready(
         variant=variant,
         files=files,
         subsets=subsets,
-        dirs=ctx.work_dirs(),
+        dirs=[w.name for w in ctx.work_dirs()],
         mask_stats=mask_stats,
         mask=str(ctx.dataset.mask_dir) if main_stats.mask_status == "完整" else None,
         target_images=target_images,
