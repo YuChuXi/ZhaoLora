@@ -12,7 +12,7 @@ from fastapi.responses import FileResponse
 
 from routes.deps import DatasetDep, parse_dir_names, resolve_path
 from services.dataset.runtime import Dataset
-from services.dataset.workdir import WorkDir
+from services.dataset.workdir import WorkDir, resolve_under
 from services.online_sources.framework.base import SOURCES, file_stem as source_file_stem
 from services.analysis.similarity import ColorIndex, fingerprint_file
 from services.models import (
@@ -61,10 +61,10 @@ def _resolve_image(ds: Dataset, rel: str) -> Path:
         - ``routes/images.py:get_image``
         - ``routes/images.py:similar_images``
     """
-    main = resolve_path(ds.root, rel)
+    main = resolve_path(ds, rel)
     if main.is_file():
         return main
-    trash = resolve_path(ds.trash_dir, rel)
+    trash = resolve_under(ds.trash_dir, rel)
     if trash.is_file():
         return trash
     raise HTTPException(404, "文件不存在")

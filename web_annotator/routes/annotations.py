@@ -41,23 +41,22 @@ class RestoreBody(BaseModel):
     paths: list[str] = Field(default_factory=list)
 
 
-def _rel_under(root: Path, rel: str) -> str:
+def _rel_under(ds: Dataset, rel: str) -> str:
     """校验相对路径并返回 posix 相对路径。
 
     Args:
-        root (Path): 允许访问的根目录。
+        ds (Dataset): 当前数据集。
         rel (str): 待校验的相对路径。
 
     Returns:
-        str: 相对 root 的 posix 相对路径。
+        str: 相对数据集根的 posix 相对路径。
 
     Callers:
         - ``routes/annotations.py:toggle``
         - ``routes/annotations.py:apply_delete``
         - ``routes/annotations.py:restore``
     """
-    path = resolve_path(root, rel)
-    return path.relative_to(root.resolve()).as_posix()
+    return resolve_path(ds, rel).relative_to(ds.root).as_posix()
 
 
 @router.post("/toggle")
@@ -74,7 +73,7 @@ def toggle(ds: DatasetDep, body: ToggleBody) -> ToggleResponse:
     Callers:
         - ``static/js/store.js:toggle``
     """
-    path = _rel_under(ds.root, body.path)
+    path = _rel_under(ds, body.path)
     selected = ds.state_manager.toggle(path)
     return ToggleResponse(path=path, selected=selected)
 
@@ -166,7 +165,7 @@ def apply_delete(ds: DatasetDep) -> CountResponse:
     root = ds.root
     state_mgr = ds.state_manager
     state = state_mgr.get()
-    selected = [_rel_under(root, p) for p in state.selected]
+    selected = [_rel_under(ds, p) for p in state.selected]
     if not selected:
         return CountResponse(moved=0)
 
@@ -209,7 +208,7 @@ def restore(ds: DatasetDep, body: RestoreBody) -> CountResponse:
     root = ds.root
     state_mgr = ds.state_manager
     trashed = state_mgr.get().trashed
-    to_restore = [_rel_under(root, p) for p in body.paths if p in trashed]
+    to_restore = [_rel_under(ds, p) for p in body.paths if p in trashed]
     if not to_restore:
         return CountResponse(restored=0)
     restored = state_mgr.restore(to_restore)

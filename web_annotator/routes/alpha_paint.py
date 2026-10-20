@@ -59,24 +59,6 @@ def _canvas_size(path: Path) -> tuple[int, int]:
     return max(1, round(w * s)), max(1, round(h * s))
 
 
-def _services(ds: Dataset) -> tuple[Path, Path]:
-    """获取当前数据集的根目录与蒙版目录路径.
-
-    Args:
-        ds (Dataset): 当前数据集.
-
-    Returns:
-        tuple[Path, Path]: ``(root, mask_dir)``, 数据集根与 mask 目录绝对路径.
-    Callers:
-        - ``routes/alpha_paint.py:get_existing_mask``
-        - ``routes/alpha_paint.py:list_paint_images``
-        - ``routes/alpha_paint.py:serve_mask_preview``
-        - ``routes/alpha_paint.py:serve_original_image``
-        - ``routes/alpha_paint.py:upload_mask``
-    """
-    return ds.root, ds.mask_dir
-
-
 @router.get("/images")
 def list_paint_images(ds: DatasetDep, dir: str = "main") -> list[PaintImageItem]:
     """列出指定子目录下图片及 mask 是否存在.
@@ -94,7 +76,7 @@ def list_paint_images(ds: DatasetDep, dir: str = "main") -> list[PaintImageItem]
         - ``static/js/paint.js:loadImages``
         - ``static/js/paint.js:refreshAfterMaskDone``
     """
-    _, mask_dir = _services(ds)
+    mask_dir = ds.mask_dir
     subdir = (dir or "main").strip().strip("/")
     try:
         images = ds.work_dir(subdir).images()
@@ -137,8 +119,7 @@ def serve_original_image(ds: DatasetDep, path: str = Query(...)) -> Response:
         - ``static/js/paint.js:_loadEntry`` (经 ``_fetchBlob('/paint/image', ...)``)
         - ``routes/alpha_paint.py:serve_mask_preview`` (无蒙板时退回此接口)
     """
-    root, _ = _services(ds)
-    src = resolve_path(root, path)
+    src = resolve_path(ds, path)
     if not src.is_file():
         raise HTTPException(404, f"Image not found: {path}")
     rgba = Image.open(src).convert("RGBA")
@@ -170,8 +151,8 @@ def get_existing_mask(ds: DatasetDep, path: str = Query(...)) -> Response:
         - ``static/js/paint.js:_loadEntry`` (经 ``_fetchBlob('/paint/mask', ...)``)
         - ``static/js/paint.js:reloadCurrentMask`` (经 ``_fetchBlob('/paint/mask', ...)``)
     """
-    root, mask_dir = _services(ds)
-    src = resolve_path(root, path)
+    mask_dir = ds.mask_dir
+    src = resolve_path(ds, path)
     if not src.is_file():
         raise HTTPException(404, "Image not found")
     mask_path = mask_out_path(mask_dir, path)
@@ -244,8 +225,8 @@ def serve_mask_preview(ds: DatasetDep, path: str = Query(...)) -> Response:
     Callers:
         - ``static/js/tag_check.js:imageSrc``
     """
-    root, mask_dir = _services(ds)
-    src = resolve_path(root, path)
+    mask_dir = ds.mask_dir
+    src = resolve_path(ds, path)
     if not src.is_file():
         raise HTTPException(404, f"Image not found: {path}")
     with Image.open(src) as im:
@@ -289,8 +270,8 @@ async def upload_mask(request: Request, ds: DatasetDep, path: str = Query(...)) 
     Callers:
         - ``static/js/paint.js:doSave``
     """
-    root, mask_dir = _services(ds)
-    src = resolve_path(root, path)
+    mask_dir = ds.mask_dir
+    src = resolve_path(ds, path)
     if not src.is_file():
         raise HTTPException(404, f"Image not found: {path}")
     body = await request.body()

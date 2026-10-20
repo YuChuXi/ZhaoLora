@@ -536,7 +536,7 @@ def edit_one(ds: DatasetDep, body: TagEditOneBody) -> TagCheckItem:
         raise HTTPException(400, "标签不能为空")
 
     tag = body.tag.strip()
-    img_abs = resolve_path(root, body.path)
+    img_abs = resolve_path(rt, body.path)
     if not img_abs.is_file():
         raise HTTPException(404, "图片不存在")
 
@@ -588,7 +588,7 @@ def delete_one(ds: DatasetDep, body: TagDeleteOneBody) -> TagCheckItem:
         raise HTTPException(400, "标签不能为空")
 
     tag = body.tag.strip()
-    img_abs = resolve_path(root, body.path)
+    img_abs = resolve_path(rt, body.path)
     if not img_abs.is_file():
         raise HTTPException(404, "图片不存在")
 
@@ -847,7 +847,7 @@ def embedding_batch_tag(ds: DatasetDep, body: EmbeddingBatchTagBody) -> Embeddin
 
     changed = 0
     for rel in body.paths:
-        img_abs = resolve_path(root, rel)
+        img_abs = resolve_path(rt, rel)
         if not img_abs.is_file():
             continue
         txt_path = img_abs.with_suffix(".txt")

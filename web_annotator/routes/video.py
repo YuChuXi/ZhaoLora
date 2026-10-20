@@ -120,7 +120,7 @@ async def video_cover(
         - ``static/js/booru_filter.js:`` 视频卡片封面
     """
     root = ds.root
-    video_path = resolve_path(root, path)
+    video_path = resolve_path(ds, path)
     cover_dir = root / COVER_DIRNAME
     try:
         cover = await asyncio.to_thread(ensure_cover, video_path, cover_dir, path)
@@ -144,9 +144,9 @@ async def video_detail(
         - ``static/js/video_extract.js:`` 加载视频详情
     """
     root = ds.root
-    resolve_path(root, path)  # 校验路径合法
+    resolve_path(ds, path)  # 校验路径合法
     store, _ = _stores(ds)
-    w, h, dur, total = probe_video(root / path.lstrip("/"))
+    w, h, dur, total = probe_video(resolve_path(ds, path))
     return VideoDetail(
         path=path,
         name=Path(path).name,
@@ -171,7 +171,7 @@ async def video_frame(
     Callers:
         - ``static/js/video_extract.js:`` 缩略图条
     """
-    resolve_path(ds.root, path)
+    resolve_path(ds, path)
     store, _ = _stores(ds)
     try:
         data = await asyncio.to_thread(
@@ -202,7 +202,7 @@ async def video_segment(
     Callers:
         - ``static/js/video_extract.js:`` 主预览 WebCodecs 解码
     """
-    resolve_path(ds.root, path)
+    resolve_path(ds, path)
     store, _ = _stores(ds)
     if end < start:
         raise HTTPException(400, "end 不能小于 start")
@@ -228,7 +228,7 @@ async def save_frame(ds: DatasetDep, body: FrameSaveBody) -> FrameSaveResponse:
     Callers:
         - ``static/js/video_extract.js:`` 左键/存帧按钮
     """
-    resolve_path(ds.root, body.path)
+    resolve_path(ds, body.path)
     store, _ = _stores(ds)
     try:
         await asyncio.to_thread(store.save_frame, body.path, body.index)
@@ -249,7 +249,7 @@ async def delete_frame(ds: DatasetDep, body: FrameSaveBody) -> FrameSaveResponse
     Callers:
         - ``static/js/video_extract.js:`` 右键/删帧按钮
     """
-    resolve_path(ds.root, body.path)
+    resolve_path(ds, body.path)
     store, _ = _stores(ds)
     await asyncio.to_thread(store.remove_frame, body.path, body.index)
     saved = store.saved_indices(body.path)
@@ -269,9 +269,9 @@ async def start_analysis(request: Request, ds: DatasetDep, path: str = Query(...
     Callers:
         - ``static/js/video_extract.js:`` 帧类型分析按钮
     """
-    resolve_path(ds.root, path)
+    resolve_path(ds, path)
     store, _ = _stores(ds)
-    _w, _h, _dur, total = probe_video(resolve_path(ds.root, path.lstrip("/")))
+    _w, _h, _dur, total = probe_video(resolve_path(ds, path.lstrip("/")))
     if total <= 0:
         raise HTTPException(400, "视频无法读取或总帧数为 0")
 

@@ -15,7 +15,6 @@ from fastapi import Depends, HTTPException, Request
 
 from services.dataset.runtime import Dataset, DatasetRegistry
 from services.core.jobs import JobManager
-from services.dataset.workdir import resolve_under
 
 
 def current_dataset(request: Request) -> Dataset:
@@ -112,38 +111,26 @@ def parse_dir_names(dirs: str | None = None, dir: str | None = None) -> list[str
     return ["main"]
 
 
-def resolve_path(root: Path, rel: str) -> Path:
-    """在 ``root`` 下解析相对路径；失败时返回 HTTP 400. 
+def resolve_path(ds: Dataset, rel: str) -> Path:
+    """在数据集根下解析相对路径；失败时返回 HTTP 400.
 
     Args:
-        root: 允许访问的根目录. 
-        rel: 相对路径. 
+        ds (Dataset): 当前数据集.
+        rel (str): 相对数据集根的路径.
 
     Returns:
-        规范化绝对路径. 
+        Path: 规范化绝对路径.
 
     Callers:
-        - ``routes/alpha_paint.py:get_existing_mask``
-        - ``routes/alpha_paint.py:serve_mask_preview``
-        - ``routes/alpha_paint.py:serve_original_image``
-        - ``routes/alpha_paint.py:upload_mask``
+        - ``routes/alpha_paint.py:`` 各图片端点
         - ``routes/annotations.py:_rel_under``
         - ``routes/birefnet.py:mask_generate``
-        - ``routes/crop.py:save_crops``
-        - ``routes/crop.py:serve_original_image``
+        - ``routes/crop.py:get_crop_state`` / `serve_original_image` / `save_crops`
         - ``routes/images.py:_resolve_image``
-        - ``routes/tag_stats.py:delete_one``
-        - ``routes/tag_stats.py:edit_one``
-        - ``routes/tag_stats.py:embedding_batch_tag``
-        - ``routes/video.py:delete_frame``
-        - ``routes/video.py:save_frame``
-        - ``routes/video.py:start_analysis``
-        - ``routes/video.py:video_cover``
-        - ``routes/video.py:video_detail``
-        - ``routes/video.py:video_frame``
-        - ``routes/video.py:video_segment``
+        - ``routes/tag_stats.py:edit_one`` / `delete_one` / `embedding_batch_tag`
+        - ``routes/video.py:`` 各视频端点
     """
     try:
-        return resolve_under(root, rel)
+        return ds.resolve(rel)
     except ValueError as e:
         raise HTTPException(400, str(e)) from e

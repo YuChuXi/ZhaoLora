@@ -227,7 +227,7 @@ def get_crop_state(ds: DatasetDep, path: str = Query(...)) -> CropImageState:
     Callers:
         - ``static/js/crop.js:loadIndex``
     """
-    resolve_path(ds.root, path)
+    resolve_path(ds, path)
     stem = Path(path).stem
     source_dir = ds.work_of(path).prefix
     meta = _read_crop_meta(ds, stem)
@@ -258,7 +258,7 @@ def serve_original_image(ds: DatasetDep, path: str = Query(...)) -> Response:
     Callers:
         - ``static/js/crop.js:loadIndex``
     """
-    src = resolve_path(ds.root, path)
+    src = resolve_path(ds, path)
     if not src.is_file():
         raise HTTPException(404, f"Image not found: {path}")
 
@@ -327,7 +327,7 @@ def save_crops(ds: DatasetDep, body: SaveCropsBody) -> CropSaveResponse:
         - ``static/js/crop.js:saveAndNext``
     """
     rel = body.path
-    src = resolve_path(ds.root, rel)
+    src = resolve_path(ds, rel)
     if not src.is_file():
         raise HTTPException(404, f"Image not found: {rel}")
     source = ds.work_of(rel)

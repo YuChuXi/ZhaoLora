@@ -65,7 +65,7 @@ async def mask_generate(request: Request, ds: DatasetDep, body: MaskGenerateBody
         raise HTTPException(400, f"未知生成方式: {body.mode}")
 
     if body.path:
-        src = resolve_path(ds.root, body.path)
+        src = resolve_path(ds, body.path)
         if not src.is_file() or src.suffix.lower() not in IMAGE_EXTS:
             raise HTTPException(400, f"无效图片路径: {body.path}")
         images = [(body.path, src)]

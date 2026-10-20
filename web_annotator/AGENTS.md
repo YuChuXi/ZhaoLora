@@ -68,7 +68,7 @@ docs/                          功能说明文档
 - `DatasetDep`：路由依赖注入的数据集对象（中间件写入 `request.state.runtime`）。
 - `RegistryDep`：路由依赖注入的数据集注册表。
 - `jobs(request)`：取全局 JobManager。
-- `resolve_path(root, rel)`：在根下安全解析相对路径，失败返回 400。
+- `resolve_path(ds, rel)`：在数据集根下安全解析相对路径，失败返回 400。
 - `registry(request)`：取数据集注册表。
 
 全局管理器在 `server.py:lifespan` 装配并注册到 `app.state`（`task_store` / `datasets` / `jobs`）。

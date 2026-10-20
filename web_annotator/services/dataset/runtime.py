@@ -212,6 +212,25 @@ class Dataset:
             raise ValueError(f"目录不存在: {raw}")
         return work
 
+    def resolve(self, rel: str) -> Path:
+        """把数据集根相对路径解析为绝对路径.
+
+        Args:
+            rel (str): 相对数据集根的路径, 如 ``main/foo.png``.
+
+        Returns:
+            Path: 规范化绝对路径.
+
+        Raises:
+            ValueError: 路径为空、绝对路径或越出数据集根.
+
+        Callers:
+            - ``routes/deps.py:resolve_path``
+        """
+        from services.dataset.workdir import resolve_under
+
+        return resolve_under(self.root, rel)
+
     def work_of(self, rel: str) -> WorkDir:
         """返回数据集根相对路径所属的工作目录.
 
