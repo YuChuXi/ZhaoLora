@@ -11,7 +11,8 @@ import time
 from pathlib import Path
 
 from services.core.atomic import atomic_write_text, locked
-from services.dataset.workdir import IMAGE_EXTS, TRASH_DIRNAME, resolve_under, sidecar_paths
+from services.dataset.sidecar import sidecar_paths
+from services.dataset.workdir import IMAGE_EXTS, TRASH_DIRNAME, resolve_under
 from services.models import AnnotatorState
 
 STATE_FILENAME = ".annotator_state.json"
@@ -258,7 +259,7 @@ class StateManager:
 
         旁路文件指同目录下同 stem、非图像后缀的文件 (``.txt`` 标签、
         ``.npz`` 蒙板嵌入等); 来源元数据指数据源注册表判定的
-        ``.{来源}_meta/{pid}.json``; 本地源产物指 ``SIDECAR_SOURCES`` 登记的
+        ``.{来源}_meta/{pid}.json``; 本地源产物指经 ``sidecar.register_sidecar``
         ``.wd14_meta/<模型指纹>/<stem>.npy`` 等。三者随图片同进同出回收站,
         保证永久删除时不残留孤儿元数据、恢复时数据完整。
 

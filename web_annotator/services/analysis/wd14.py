@@ -17,6 +17,7 @@ from PIL import Image
 
 from services.models import JobSnapshot
 from services.core.atomic import atomic_write_bytes, atomic_write_text
+from services.dataset.sidecar import SidecarSource, register_sidecar
 from services.dataset.workdir import WD14_META_DIRNAME, WorkDir
 from services.online_sources.framework.utils import _GENDER_TAGS
 from services.core.device import register_model
@@ -34,6 +35,9 @@ WD14_ONNX = Path(
     or _REPO_ROOT / "wd14_tagger_model" / "SmilingWolf_wd-vit-large-tagger-v3" / "model.onnx"
 )
 WD14_CSV = WD14_ONNX.with_suffix(".csv")
+
+# 把推理缓存登记为本地源: 产物随图片移入回收站/恢复/取消下载同步处理
+register_sidecar(SidecarSource("wd14", WD14_META_DIRNAME))
 
 # 模型指纹缓存文件(任务根下, 与翻译缓存同级): 权重与标签表的 size/mtime 命中时
 # 直接复用已算出的内容哈希, 避免每次进程启动重读整个权重文件

@@ -15,7 +15,7 @@ from urllib.parse import urlparse
 from services.core.atomic import atomic_write_text
 from services.core.natural import natural_key
 from services.core.video_scanner import VIDEO_EXTS
-from services.dataset.workdir import sidecar_paths
+from services.dataset.sidecar import sidecar_paths
 from services.models import BooruDownloadResult, BooruPost, BooruUndownloadResult
 from services.online_sources.framework.base import (
     ProgressFn,
