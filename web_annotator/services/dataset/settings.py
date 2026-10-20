@@ -1,8 +1,10 @@
-"""数据集级前端设置存储.
+"""前端设置存储(全局缺省层与数据集覆盖层共用).
 
-各业务页的输入参数(目录选择、排序、列数、阈值等)按数据集持久化为
-``datasets/xxx/.annotator_settings.json``: 顶层键为页面/组件名, 值为任意
-JSON 结构; 读取返回全量, 写入按键合并, 同键整体替换.
+各业务页的输入参数按页面/组件名持久化为 ``.annotator_settings.json``:
+全局缺省层在任务根 ``datasets/`` 下(跨任务通用的参数习惯), 数据集层在
+``datasets/xxx/`` 下(任务特有的目录选择、描述规则、裁剪部位). 顶层键为
+页面/组件名, 值为任意 JSON 结构; 读取返回单层全量, 写入按键合并, 同键
+整体替换; 两层按键合并后的生效值由 ``routes/settings.py`` 返回.
 """
 
 from __future__ import annotations
@@ -15,10 +17,11 @@ from services.dataset.layout import SETTINGS_FILENAME
 
 
 def load_settings(root: Path) -> dict:
-    """读取数据集级设置全量.
+    """读取单层设置全量.
 
     Args:
-        root (Path): 数据集根目录(``datasets/xxx``).
+        root (Path): 设置文件所在根目录(全局层为任务根 ``datasets/``,
+            数据集层为 ``datasets/xxx``).
 
     Returns:
         dict: 键到任意 JSON 值的映射; 文件不存在时为空映射.
@@ -40,10 +43,11 @@ def load_settings(root: Path) -> dict:
 
 
 def update_settings(root: Path, patch: dict) -> dict:
-    """按键合并写入设置并返回合并后的全量.
+    """按键合并写入单层设置并返回合并后的全量.
 
     Args:
-        root (Path): 数据集根目录(``datasets/xxx``).
+        root (Path): 设置文件所在根目录(全局层为任务根 ``datasets/``,
+            数据集层为 ``datasets/xxx``).
         patch (dict): 本次写入的键值映射, 键须为非空字符串, 值须可 JSON 序列化;
             同键整体替换, 未提及的键保持不变.
 

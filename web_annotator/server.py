@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import re
@@ -44,6 +45,7 @@ from routes.images import router as images_router
 from routes.meta import datasets_router, jobs_router
 from routes.ready import router as ready_router
 from routes.settings import router as settings_router
+from routes.settings import global_router as global_settings_router
 from routes.tag_stats import router as tag_stats_router
 from routes.tagging import router as tagging_router
 from routes.tasks import router as tasks_router
@@ -114,6 +116,7 @@ async def lifespan(app: FastAPI):
     app.state.task_store = store
     app.state.datasets = registry
     app.state.jobs = jobs
+    app.state.settings_lock = asyncio.Lock()
     app.state.block_chinese_ua = block_chinese_ua
     app.state.no_browser_cache = no_browser_cache
 
@@ -310,6 +313,7 @@ dataset_api.include_router(video_router)
 dataset_api.include_router(settings_router)
 
 app.include_router(dataset_api)
+app.include_router(global_settings_router)
 app.include_router(tasks_router)
 app.include_router(archived_router)
 app.include_router(datasets_router)

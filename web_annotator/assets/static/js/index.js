@@ -567,6 +567,175 @@
     loadDoc('');
   });
 
+  // ---- 旧版浏览器设置导入(设置已改为服务端两层结构, 一次性入口) ----
+
+  // 旧全局键: 目录选择/排序/两处列数; 任务键带任务名后缀: 描述规则与裁剪部位
+  var LEGACY_FIXED_KEYS = ['annotator_work_dirs', 'annotator_work_dir', 'annotator_sort', 'zhao_filter_cols', 'zhao_tagcheck_cols'];
+  var LEGACY_PREFIXES = ['zhao_caption_rules:', 'zhao_caption_inject:', 'crop_part_defaults:', 'crop_auto_parts:', 'crop_auto_parts_deny:'];
+
+  /**
+   * 解析 JSON 文本, 损坏内容返回 null(导入时跳过并保留原键).
+   * @param {string|null} text
+   * @returns {*}
+   */
+  function readJson(text) {
+    if (text == null) return null;
+    try {
+      return JSON.parse(text);
+    } catch (e) {
+      return null;
+    }
+  }
+
+  /**
+   * 扫描 localStorage 中实际残留的旧设置键.
+   * @returns {string[]}
+   */
+  function legacyKeys() {
+    var out = [];
+    LEGACY_FIXED_KEYS.forEach(function (k) {
+      if (localStorage.getItem(k) != null) out.push(k);
+    });
+    for (var i = 0; i < localStorage.length; i++) {
+      var k = localStorage.key(i);
+      for (var p = 0; p < LEGACY_PREFIXES.length; p++) {
+        if (k.indexOf(LEGACY_PREFIXES[p]) === 0) { out.push(k); break; }
+      }
+    }
+    return out;
+  }
+
+  /**
+   * 将浏览器 localStorage 中的旧版设置导入服务端: 全局参数合并写入全局缺省层,
+   * 描述规则与裁剪部位按任务名分别合并写入对应任务的数据集层, 全部成功后
+   * 清除旧键; 任一步失败即中止并保留旧键, 可重试(重复写入同值无害).
+   *
+   * Returns:
+   *   Promise<number>: 覆盖到的任务数; 无旧数据时为 0.
+   *
+   * Callers:
+   *   - ``static/js/index.js:btn-import-legacy`` click 监听
+   */
+  async function importLegacy() {
+    var keys = legacyKeys();
+    if (!keys.length) return 0;
+
+    var raw = {};
+    keys.forEach(function (k) { raw[k] = localStorage.getItem(k); });
+
+    // 全局参数: 目录选择(work_dirs 优先, 回落旧版单目录键)、排序、两处列数
+    var dirsRaw = raw['annotator_work_dirs'] != null ? raw['annotator_work_dirs'] : raw['annotator_work_dir'];
+    var globalPatch = {};
+    if (dirsRaw != null) {
+      var dirs = dirsRaw.split(',').map(function (s) { return s.trim(); }).filter(Boolean);
+      if (dirs.length) globalPatch.dirs = dirs;
+    }
+    if (raw['annotator_sort'] != null) globalPatch.sort = raw['annotator_sort'];
+    var cols = parseInt(raw['zhao_filter_cols'], 10);
+    if (cols >= 0) globalPatch.filter = { cols: cols };
+    var tagCols = parseInt(raw['zhao_tagcheck_cols'], 10);
+    if (tagCols >= 0) globalPatch.tag_check = { cols: tagCols };
+
+    // 任务键按后缀分组为数据集层 patch 的子键
+    var tasks = {};
+    LEGACY_PREFIXES.forEach(function (prefix) {
+      for (var k in raw) {
+        if (k.indexOf(prefix) !== 0) continue;
+        var name = k.slice(prefix.length);
+        var v = readJson(raw[k]);
+        if (!v) continue;
+        var p = tasks[name] || (tasks[name] = {});
+        if (prefix === 'zhao_caption_rules:') p.rules = v;
+        else if (prefix === 'zhao_caption_inject:') p.inject = v;
+        else if (prefix === 'crop_part_defaults:') p.part_defaults = v;
+        else if (prefix === 'crop_auto_parts:') p.auto_parts = v;
+        else p.denied_parts = v;
+      }
+    });
+
+    if (Object.keys(globalPatch).length) {
+      var g = await API.request('/api/settings');
+      var gs = (g && g.settings) || {};
+      // 列数是 filter/tag_check 的子键, 合并进全局层现值避免覆盖其余子键
+      if (globalPatch.filter) {
+        var f = (gs.filter && typeof gs.filter === 'object') ? gs.filter : {};
+        f.cols = globalPatch.filter.cols;
+        globalPatch.filter = f;
+      }
+      if (globalPatch.tag_check) {
+        var t = (gs.tag_check && typeof gs.tag_check === 'object') ? gs.tag_check : {};
+        t.cols = globalPatch.tag_check.cols;
+        globalPatch.tag_check = t;
+      }
+      await API.request('/api/settings', { method: 'PUT', body: JSON.stringify(globalPatch) });
+    }
+
+    // 已归档或已删除任务的旧键无处可写, 随本次导入一并丢弃
+    var known = {};
+    var list = await API.request('/api/tasks');
+    ((list && list.tasks) || []).forEach(function (t) { known[t.name] = true; });
+
+    var n = 0;
+    var names = Object.keys(tasks);
+    for (var i = 0; i < names.length; i++) {
+      if (!known[names[i]]) continue;
+      var base = await API.request('/api/d/' + encodeURIComponent(names[i]) + '/settings');
+      var st = (base && base.settings) || {};
+      // caption/crop 仅存于数据集层, 合并视图取到的即数据集层现值
+      var tp = tasks[names[i]];
+      if (tp.rules != null || tp.inject != null) {
+        var c = (st.caption && typeof st.caption === 'object') ? st.caption : {};
+        if (tp.rules != null) c.rules = tp.rules;
+        if (tp.inject != null) c.inject = tp.inject;
+        st.caption = c;
+      }
+      if (tp.part_defaults != null || tp.auto_parts != null || tp.denied_parts != null) {
+        var cr = (st.crop && typeof st.crop === 'object') ? st.crop : {};
+        if (tp.part_defaults != null) cr.part_defaults = tp.part_defaults;
+        if (tp.auto_parts != null) cr.auto_parts = tp.auto_parts;
+        if (tp.denied_parts != null) cr.denied_parts = tp.denied_parts;
+        st.crop = cr;
+      }
+      var patch = {};
+      if (st.caption) patch.caption = st.caption;
+      if (st.crop) patch.crop = st.crop;
+      if (Object.keys(patch).length) {
+        await API.request('/api/d/' + encodeURIComponent(names[i]) + '/settings', {
+          method: 'PUT', body: JSON.stringify(patch),
+        });
+      }
+      n++;
+    }
+
+    keys.forEach(function (k) { localStorage.removeItem(k); });
+    return n;
+  }
+
+  /**
+   * 残留旧设置时展示导入按钮并绑定导入流程, 成功后隐藏按钮.
+   *
+   * Returns:
+   *   void
+   *
+   * Callers:
+   *   - ``static/js/index.js:init``
+   */
+  function bindImportLegacy() {
+    var btn = document.getElementById('btn-import-legacy');
+    if (!btn || !legacyKeys().length) return;
+    btn.hidden = false;
+    btn.addEventListener('click', function () {
+      btn.disabled = true;
+      importLegacy().then(function (n) {
+        btn.hidden = true;
+        toast(n > 0 ? '已导入 ' + n + ' 个任务的旧设置' : '旧设置已导入');
+      }).catch(function (e) {
+        toast('导入失败: ' + String(e.message || e));
+        btn.disabled = false;
+      });
+    });
+  }
+
   window.addEventListener('popstate', function () {
     loadDoc(currentSlug());
   });
@@ -598,6 +767,7 @@
 
     setupDragDrop();
     await Promise.all([loadDoc(currentSlug()), loadTasks(), loadCandidates()]);
+    bindImportLegacy();
     reconnectArchive();
   }
 
