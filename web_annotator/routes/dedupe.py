@@ -7,7 +7,7 @@ import logging
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from routes.deps import get_runtime, jobs
+from routes.deps import DatasetDep, jobs
 from services.analysis.dedupe import (
     extract_fft_features,
     extract_orb_features,
@@ -22,8 +22,6 @@ from services.models import (
     JobSnapshot,
     JobSubmitResponse,
 )
-from services.core.scanner import scan_images
-from services.core.work_dir import list_work_dirs, resolve_subdirs
 
 logger = logging.getLogger(__name__)
 
@@ -149,11 +147,11 @@ def similarity_histogram(values, algorithm: str) -> str | None:
 
 
 @router.get("/dirs")
-def dirs(request: Request) -> DirsResponse:
+def dirs(ds: DatasetDep) -> DirsResponse:
     """列出可扫描工作目录, 默认 ``main``.
 
     Args:
-        request (Request): FastAPI 请求对象, 由路由参数注入.
+        ds (Dataset): 当前数据集, 由路由依赖注入.
 
     Returns:
         DirsResponse: 含工作目录列表与默认目录名.
@@ -161,12 +159,11 @@ def dirs(request: Request) -> DirsResponse:
     Callers:
         - ``static/js/nav.js:dirsApi``
     """
-    rt = get_runtime(request)
-    return DirsResponse(dirs=list_work_dirs(rt.root), default="main")
+    return DirsResponse(dirs=[w.to_info() for w in ds.work_dirs()], default="main")
 
 
 @router.post("/scan")
-async def scan_duplicates(request: Request, body: ScanBody) -> JobSubmitResponse:
+async def scan_duplicates(request: Request, ds: DatasetDep, body: ScanBody) -> JobSubmitResponse:
     """提交去重扫描长任务, 返回 job_id.
 
     扫描任务结束事件的 ``result`` 字段含分组结果(DedupeScanResult).
@@ -174,25 +171,18 @@ async def scan_duplicates(request: Request, body: ScanBody) -> JobSubmitResponse
 
     Args:
         request (Request): FastAPI 请求对象, 由路由参数注入.
+        ds (Dataset): 当前数据集, 由路由依赖注入.
         body (ScanBody): 扫描参数, 含目录/算法/阈值/分辨率比.
 
     Returns:
         JobSubmitResponse: 含 ``job_id``, 前端经 SSE 监听任务进度与最终结果.
 
-    Raises:
-        HTTPException: 目录名非法或不存在时返回 400.
-
     Callers:
         - ``static/js/dedupe.js:scan``
     """
-    rt = get_runtime(request)
-    root = rt.root
-    thumbnailer = rt.thumbnailer
+    thumbnailer = ds.thumbnailer
     names = _names(body.dirs, body.dir)
-    try:
-        pairs = resolve_subdirs(root, names)
-    except ValueError as e:
-        raise HTTPException(400, str(e)) from e
+    works = ds.select_or_main(names)
 
     mse = body.mse_threshold
     ratio = body.similar_res_ratio
@@ -220,10 +210,10 @@ async def scan_duplicates(request: Request, body: ScanBody) -> JobSubmitResponse
             )
         )
         records = []
-        for sub, work in pairs:
-            part = load_records(work)
+        for work in works:
+            part = load_records(work.path)
             for r in part:
-                r.rel = f"{sub}/{r.rel}" if not r.rel.startswith(sub + "/") else r.rel
+                r.rel = f"{work.name}/{r.rel}" if not r.rel.startswith(work.name + "/") else r.rel
             records.extend(part)
 
         if algorithm in ("fft", "orb"):
@@ -281,8 +271,8 @@ async def scan_duplicates(request: Request, body: ScanBody) -> JobSubmitResponse
         histogram = similarity_histogram(vals, algorithm)
 
         result = DedupeScanResult(
-            dirs=[s for s, _ in pairs],
-            dir=pairs[0][0],
+            dirs=[w.name for w in works],
+            dir=works[0].name,
             image_count=len(records),
             group_count=len(groups),
             duplicate_image_count=sum(g.size for g in groups),
@@ -304,10 +294,10 @@ async def scan_duplicates(request: Request, body: ScanBody) -> JobSubmitResponse
         )
         return result
 
-    job_id = await jobs(request).submit(kind="dedupe_scan", group="compute", dataset=rt.name, run=run)
+    job_id = await jobs(request).submit(kind="dedupe_scan", group="compute", dataset=ds.name, run=run)
     logger.info(
         "去重扫描任务提交 dataset=%s algorithm=%s dirs=%s",
-        request.state.runtime.root.name,
+        ds.name,
         algorithm,
         names,
     )
@@ -315,40 +305,35 @@ async def scan_duplicates(request: Request, body: ScanBody) -> JobSubmitResponse
 
 
 @router.post("/apply")
-def apply_delete(request: Request, body: ApplyBody) -> DedupeMoveResponse:
+def apply_delete(ds: DatasetDep, body: ApplyBody) -> DedupeMoveResponse:
     """将手选路径移入回收站(与筛选页同一套 trash 机制).
 
     仅删除当前 ``body.dirs`` 中实际存在的图片; 忽略非法路径与未在存活集合中的路径.
     删除成功后清空色彩索引缓存, 等待下次访问重建.
 
     Args:
-        request (Request): FastAPI 请求对象, 由路由参数注入.
+        ds (Dataset): 当前数据集, 由路由依赖注入.
         body (ApplyBody): 含待删除路径列表与目录字段.
 
     Returns:
         DedupeMoveResponse: 实际删除的图片数、路径列表与目录列表.
 
     Raises:
-        HTTPException: 路径列表为空或全部非法时返回 400; 目录名非法也返回 400.
+        HTTPException: 路径列表为空或全部非法时返回 400.
 
     Callers:
         - ``static/js/dedupe.js:applyDelete``
     """
-    rt = get_runtime(request)
-    root = rt.root
-    state_mgr = rt.state_manager
+    state_mgr = ds.state_manager
     if not body.paths:
         raise HTTPException(400, "未选择任何图片")
 
     names = _names(body.dirs, body.dir)
-    try:
-        pairs = resolve_subdirs(root, names)
-    except ValueError as e:
-        raise HTTPException(400, str(e)) from e
+    works = ds.select_or_main(names)
 
     alive: set[str] = set()
-    for sub, work in pairs:
-        alive |= {img.path for img in scan_images(work, path_prefix=sub)}
+    for work in works:
+        alive |= {img.rel for img in work.images()}
 
     paths: list[str] = []
     seen: set[str] = set()
@@ -365,18 +350,18 @@ def apply_delete(request: Request, body: ApplyBody) -> DedupeMoveResponse:
         raise HTTPException(400, "没有可删除的有效路径")
 
     moved = state_mgr.apply_delete(paths)
-    idx = rt.color_index
+    idx = ds.color_index
     if idx is not None:
         idx.clear()
 
     logger.info(
         "去重删除完成 dataset=%s moved=%d count=%d",
-        request.state.runtime.root.name,
+        ds.name,
         moved,
         len(paths),
     )
     return DedupeMoveResponse(
         moved=moved,
         paths=paths,
-        dirs=[s for s, _ in pairs],
+        dirs=[w.name for w in works],
     )

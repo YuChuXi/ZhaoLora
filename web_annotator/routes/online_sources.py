@@ -7,7 +7,7 @@ import logging
 import os
 from pathlib import Path
 
-from services.dataset.layout import VIDEO_DIRNAME
+from services.dataset.workdir import IMAGE_EXTS, VIDEO_DIRNAME
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
@@ -26,8 +26,9 @@ from services.online_sources import (
     remove_download,
 )
 from services.online_sources.framework.http import HttpClient, NetworkError as _NetworkError
-from routes.deps import get_runtime, jobs
+from routes.deps import DatasetDep, jobs
 from services.core.jobs import EmitFn
+from services.dataset.runtime import Dataset
 from services.models import (
     BatchParamsBody,
     BatchStartBody,
@@ -40,8 +41,7 @@ from services.models import (
     JobSubmitResponse,
 )
 from services.core.natural import natural_key
-from services.core.scanner import IMAGE_EXTS
-from services.core.work_dir import resolve_subdir
+from services.online_sources.framework.base import SOURCES
 
 logger = logging.getLogger(__name__)
 
@@ -119,11 +119,11 @@ async def tag_suggest(
 
 
 @router.post("/search")
-async def search(request: Request, body: SearchBody) -> BooruSearchResult:
+async def search(ds: DatasetDep, body: SearchBody) -> BooruSearchResult:
     """搜索图站并标记本地下载状态。
 
     Args:
-        request (Request): FastAPI 请求对象, 由路由参数注入。
+        ds (Dataset): 当前数据集, 由依赖注入提供。
         body (SearchBody): 搜索参数, 含来源、标签、分页、排序等。
 
     Returns:
@@ -138,9 +138,9 @@ async def search(request: Request, body: SearchBody) -> BooruSearchResult:
     if order and src.valid_orders and order not in src.valid_orders:
         raise HTTPException(400, f"不支持的排序: {body.order}")
     query = src.build_search_query(body.tags, order=order, extra=body.extra or "")
-    root = get_runtime(request).root
+    root = ds.root
     try:
-        _, out_dir = resolve_subdir(root, body.dir)
+        out_dir = ds.work_dir(body.dir).path
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
 
@@ -175,7 +175,7 @@ async def search(request: Request, body: SearchBody) -> BooruSearchResult:
 
     logger.info(
         "数据集 %s 发起搜索: 来源=%s 标签=%r 第%d页 命中%d条",
-        request.state.runtime.root.name, source, body.tags.strip(), body.page, len(posts),
+        ds.name, source, body.tags.strip(), body.page, len(posts),
     )
     return BooruSearchResult(
         source=source,
@@ -262,7 +262,7 @@ async def _cancel_on_disconnect(request: Request, task: asyncio.Task) -> None:
 
 @router.post("/download")
 async def download(
-    request: Request, body: DownloadBody
+    request: Request, ds: DatasetDep, body: DownloadBody
 ) -> BooruDownloadResult | JobSubmitResponse:
     """下载帖子: 图片帖同步, 视频帖提交长任务。
 
@@ -272,6 +272,7 @@ async def download(
 
     Args:
         request (Request): FastAPI 请求对象, 由路由参数注入。
+        ds (Dataset): 当前数据集, 由依赖注入提供。
         body (DownloadBody): 下载参数, 含来源、帖子 id、目录、是否覆盖、帖子原始数据。
 
     Returns:
@@ -285,17 +286,17 @@ async def download(
         get_source(source)
     except ValueError:
         raise HTTPException(400, f"不支持的源: {body.source}")
-    root = get_runtime(request).root
+    root = ds.root
     if not body.post:
         raise HTTPException(400, "缺少帖子数据 post")
     post = BooruPost.model_validate(body.post)
 
     if post.is_video:
-        logger.info("数据集 %s 提交视频下载: 帖子id=%s", request.state.runtime.root.name, post.id)
-        return await _submit_video_download(request, source, post, root)
+        logger.info("数据集 %s 提交视频下载: 帖子id=%s", ds.name, post.id)
+        return await _submit_video_download(request, ds, source, post)
 
     try:
-        name, out_dir = resolve_subdir(root, body.dir)
+        work = ds.work_dir(body.dir)
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
 
@@ -303,7 +304,7 @@ async def download(
         download_post(
             source,
             post,
-            out_dir,
+            work.path,
             overwrite=body.overwrite,
         )
     )
@@ -322,12 +323,12 @@ async def download(
         logger.warning("下载上游异常: %s: %s", type(e).__name__, e)
         raise HTTPException(502, f"下载失败: {e}") from e
     rel = local_rel_path(root, result.path)
-    thumb = get_runtime(request).thumbnailer
+    thumb = ds.thumbnailer
     await thumb.ensure_async(rel)
-    logger.info("数据集 %s 下载完成: 帖子id=%s -> %s", request.state.runtime.root.name, result.id, rel)
+    logger.info("数据集 %s 下载完成: 帖子id=%s -> %s", ds.name, result.id, rel)
     return result.model_copy(
         update={
-            "dir": name,
+            "dir": work.name,
             "filename": Path(result.path).name,
             "rel_path": rel,
             "thumbnail_hash": thumb.hash_for(rel),
@@ -338,7 +339,7 @@ async def download(
 
 
 async def _submit_video_download(
-    request: Request, source: str, post: BooruPost, root: Path
+    request: Request, ds: Dataset, source: str, post: BooruPost
 ) -> JobSubmitResponse:
     """提交视频下载长任务, 经 ``download_post`` 写入数据集 ``video`` 目录。
 
@@ -350,9 +351,9 @@ async def _submit_video_download(
 
     Args:
         request (Request): 请求对象。
+        ds (Dataset): 当前数据集。
         source (str): 来源名。
         post (BooruPost): 视频帖 (``is_video`` 为真)。
-        root (Path): 数据集根目录。
 
     Returns:
         JobSubmitResponse: 任务提交结果, 前端据 ``job_id`` 监听进度。
@@ -360,9 +361,8 @@ async def _submit_video_download(
     Callers:
         - ``routes/online_sources.py:download``
     """
-    rt = get_runtime(request)
     mgr = jobs(request)
-    video_dir = root / VIDEO_DIRNAME
+    video_dir = ds.root / VIDEO_DIRNAME
 
     def run(emit: EmitFn) -> None:
         """工作线程入口。
@@ -416,18 +416,18 @@ async def _submit_video_download(
     job_id = await mgr.submit(
         kind="video_download",
         group="network",
-        dataset=rt.name,
+        dataset=ds.name,
         run=run,
     )
     return JobSubmitResponse(ok=True, job_id=job_id)
 
 
 @router.post("/undownload")
-def undownload(request: Request, body: DownloadBody) -> BooruUndownloadResult:
+def undownload(ds: DatasetDep, body: DownloadBody) -> BooruUndownloadResult:
     """删除工作目录中该帖已下载文件。
 
     Args:
-        request (Request): FastAPI 请求对象, 由路由参数注入。
+        ds (Dataset): 当前数据集, 由依赖注入提供。
         body (DownloadBody): 取消下载参数, 含来源、文件名、目录。
 
     Returns:
@@ -441,34 +441,33 @@ def undownload(request: Request, body: DownloadBody) -> BooruUndownloadResult:
         get_source(source)
     except ValueError:
         raise HTTPException(400, f"不支持的源: {body.source}")
-    root = get_runtime(request).root
     try:
-        name, out_dir = resolve_subdir(root, body.dir)
+        work = ds.work_dir(body.dir)
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
 
     try:
-        result = remove_download(source, body.filename.strip(), out_dir)
+        result = remove_download(source, body.filename.strip(), work.path)
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
 
     # 用 remove_download 返回的真实文件名清理缩略图缓存
-    thumb = get_runtime(request).thumbnailer
+    thumb = ds.thumbnailer
     for img in result.images:
-        path = thumb.get_path(f"{name}/{img}")
+        path = thumb.get_path(f"{work.name}/{img}")
         if path.is_file():
             path.unlink()
 
     logger.info(
         "数据集 %s 取消下载: 帖子文件名=%s 移除%d个文件",
-        request.state.runtime.root.name, body.filename.strip(), len(result.images),
+        ds.name, body.filename.strip(), len(result.images),
     )
-    return result.model_copy(update={"dir": name})
+    return result.model_copy(update={"dir": work.name})
 
 
 @router.post("/batch/start")
 async def batch_start(
-    request: Request, body: BatchStartBody
+    request: Request, ds: DatasetDep, body: BatchStartBody
 ) -> JobSubmitResponse:
     """提交批量下载长任务。
 
@@ -476,6 +475,7 @@ async def batch_start(
 
     Args:
         request (Request): FastAPI 请求对象, 由路由参数注入。
+        ds (Dataset): 当前数据集, 由依赖注入提供。
         body (BatchStartBody): 批量下载参数, 含来源、标签、分页、连接、限速等。
 
     Returns:
@@ -490,14 +490,13 @@ async def batch_start(
     if order and src.valid_orders and order not in src.valid_orders:
         raise HTTPException(400, f"不支持的排序: {body.order}")
 
-    rt = get_runtime(request)
     mgr = jobs(request)
-    existing = mgr.find_active(dataset=rt.name, kind="online_batch")
+    existing = mgr.find_active(dataset=ds.name, kind="online_batch")
     if existing is not None:
         raise HTTPException(409, "批量下载已在进行中")
 
     try:
-        _, out_dir = resolve_subdir(rt.root, body.dir)
+        out_dir = ds.work_dir(body.dir).path
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
 
@@ -505,13 +504,13 @@ async def batch_start(
         limit=body.limit,
         conn=body.conn,
         rate_rps=body.rate_rps,
-        dataset=rt.name,
+        dataset=ds.name,
     )
-    thumb = rt.thumbnailer
+    thumb = ds.thumbnailer
     tags = body.tags
     extra = body.extra or ""
     start_page = body.page
-    root = rt.root
+    root = ds.root
     anima_format = bool(body.anima_format)
     include_meta_tags = bool(body.include_meta_tags)
     keep_underscores = bool(body.keep_underscores)
@@ -549,7 +548,7 @@ async def batch_start(
     job_id = await mgr.submit(
         kind="online_batch",
         group="network",
-        dataset=rt.name,
+        dataset=ds.name,
         run=run,
         cancel_fn=lambda: setattr(prog, "cancel_requested", True),
     )
@@ -557,17 +556,18 @@ async def batch_start(
     register_progress(job_id, prog)
     logger.info(
         "数据集 %s 启动批量下载: job=%s 来源=%s 标签=%r 目标%d个",
-        request.state.runtime.root.name, job_id, source, body.tags, body.limit,
+        ds.name, job_id, source, body.tags, body.limit,
     )
     return JobSubmitResponse(ok=True, job_id=job_id)
 
 
 @router.post("/batch/params")
-def batch_params(request: Request, body: BatchParamsBody) -> JobSubmitResponse:
+def batch_params(request: Request, ds: DatasetDep, body: BatchParamsBody) -> JobSubmitResponse:
     """运行中更新数量 / 连接 / 限速。
 
     Args:
         request (Request): FastAPI 请求对象, 由路由参数注入。
+        ds (Dataset): 当前数据集, 由依赖注入提供。
         body (BatchParamsBody): 参数更新体, 含 limit/conn/rate_rps 可选字段。
 
     Returns:
@@ -576,8 +576,7 @@ def batch_params(request: Request, body: BatchParamsBody) -> JobSubmitResponse:
     Callers:
         - ``static/js/booru_filter.js:pushBatchParams``
     """
-    rt = get_runtime(request)
-    job = jobs(request).find_active(dataset=rt.name, kind="online_batch")
+    job = jobs(request).find_active(dataset=ds.name, kind="online_batch")
     if job is None:
         raise HTTPException(404, "没有进行中的批量任务")
     prog = get_progress(job.id)
@@ -591,7 +590,7 @@ def batch_params(request: Request, body: BatchParamsBody) -> JobSubmitResponse:
         prog.rate_rps = body.rate_rps
     logger.info(
         "数据集 %s 更新批量参数: job=%s limit=%s conn=%s rate_rps=%s",
-        request.state.runtime.root.name, job.id, prog.limit, prog.conn, prog.rate_rps,
+        ds.name, job.id, prog.limit, prog.conn, prog.rate_rps,
     )
     return JobSubmitResponse(ok=True, job_id=job.id)
 
@@ -606,11 +605,11 @@ class RegenerateCaptionsBody(BaseModel):
 
 
 @router.post("/regenerate-captions")
-async def regenerate_captions(request: Request, body: RegenerateCaptionsBody) -> dict:
+async def regenerate_captions(ds: DatasetDep, body: RegenerateCaptionsBody) -> dict:
     """从 .danbooru_meta / .gelbooru_meta 批量重生成旁路 .txt。
 
     Args:
-        request (Request): FastAPI 请求对象, 由路由参数注入。
+        ds (Dataset): 当前数据集, 由依赖注入提供。
         body (RegenerateCaptionsBody): 重生成参数, 含目录、格式、元数据开关。
 
     Returns:
@@ -619,9 +618,8 @@ async def regenerate_captions(request: Request, body: RegenerateCaptionsBody) ->
     Callers:
         - ``static/js/booru_filter.js:regenerateCaptions``
     """
-    rt = get_runtime(request)
     try:
-        _, out_dir = resolve_subdir(rt.root, body.dir)
+        out_dir = ds.work_dir(body.dir).path
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
 
@@ -631,7 +629,7 @@ async def regenerate_captions(request: Request, body: RegenerateCaptionsBody) ->
         include_meta_tags=body.include_meta_tags,
         keep_underscores=body.keep_underscores,
     )
-    logger.info("数据集 %s 重生成 caption: 共%d对", request.state.runtime.root.name, count)
+    logger.info("数据集 %s 重生成 caption: 共%d对", ds.name, count)
     return {"ok": True, "count": count}
 
 
@@ -642,11 +640,14 @@ class RefreshMetadataBody(BaseModel):
 
 
 @router.post("/refresh-metadata")
-async def refresh_metadata(request: Request, body: RefreshMetadataBody) -> JobSubmitResponse:
+async def refresh_metadata(
+    request: Request, ds: DatasetDep, body: RefreshMetadataBody
+) -> JobSubmitResponse:
     """扫描现有图片, 根据文件名 ID 重新拉取 booru 元数据(长任务)。
 
     Args:
         request (Request): FastAPI 请求对象, 由路由参数注入。
+        ds (Dataset): 当前数据集, 由依赖注入提供。
         body (RefreshMetadataBody): 刷新参数, 含工作子目录。
 
     Returns:
@@ -655,9 +656,8 @@ async def refresh_metadata(request: Request, body: RefreshMetadataBody) -> JobSu
     Callers:
         - ``static/js/booru_filter.js:refreshMetadata``
     """
-    rt = get_runtime(request)
     try:
-        resolve_subdir(rt.root, body.dir)  # 仅校验目录合法
+        ds.work_dir(body.dir)  # 仅校验目录合法
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
 
@@ -665,7 +665,7 @@ async def refresh_metadata(request: Request, body: RefreshMetadataBody) -> JobSu
         import asyncio as _asyncio
         loop = _asyncio.new_event_loop()
         try:
-            loop.run_until_complete(_run_refresh(rt.root / body.dir if body.dir else rt.root, emit))
+            loop.run_until_complete(_run_refresh(ds.root / body.dir if body.dir else ds.root, emit))
         finally:
             loop.close()
 
@@ -707,6 +707,6 @@ async def refresh_metadata(request: Request, body: RefreshMetadataBody) -> JobSu
         emit(JobSnapshot(status="done", phase="done", total=total, done=total, pct=100,
                          message=", ".join(parts)))
 
-    job_id = await jobs(request).submit(kind="refresh_meta", group="compute", dataset=rt.name, run=run)
-    logger.info("数据集 %s 刷新元数据: job=%s 目录=%s", request.state.runtime.root.name, job_id, body.dir)
+    job_id = await jobs(request).submit(kind="refresh_meta", group="compute", dataset=ds.name, run=run)
+    logger.info("数据集 %s 刷新元数据: job=%s 目录=%s", ds.name, job_id, body.dir)
     return JobSubmitResponse(ok=True, job_id=job_id)

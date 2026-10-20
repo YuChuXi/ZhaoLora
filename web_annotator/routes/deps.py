@@ -9,11 +9,49 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from fastapi import HTTPException, Request
+from typing import Annotated
 
-from services.dataset.runtime import DatasetRegistry, DatasetRuntime
+from fastapi import Depends, HTTPException, Request
+
+from services.dataset.runtime import Dataset, DatasetRegistry
 from services.core.jobs import JobManager
-from services.core.work_dir import resolve_under
+from services.dataset.workdir import resolve_under
+
+
+def current_dataset(request: Request) -> Dataset:
+    """返回当前请求绑定的数据集, 作为路由依赖注入.
+
+    Args:
+        request (Request): FastAPI 请求对象.
+
+    Returns:
+        Dataset: 当前数据集对象.
+
+    Raises:
+        HTTPException: 请求未经数据集路由绑定时返回 500.
+    """
+    rt = getattr(request.state, "runtime", None)
+    if rt is None:
+        raise HTTPException(500, "请求未绑定数据集")
+    return rt
+
+
+DatasetDep = Annotated[Dataset, Depends(current_dataset)]
+
+
+def current_registry(request: Request) -> DatasetRegistry:
+    """返回进程内数据集注册表, 作为全站路由的依赖注入.
+
+    Args:
+        request (Request): FastAPI 请求对象.
+
+    Returns:
+        DatasetRegistry: 数据集注册表.
+    """
+    return request.app.state.datasets
+
+
+RegistryDep = Annotated[DatasetRegistry, Depends(current_registry)]
 
 
 def registry(request: Request) -> DatasetRegistry:
@@ -53,70 +91,25 @@ def jobs(request: Request) -> JobManager:
     return request.app.state.jobs
 
 
-def get_runtime(request: Request) -> DatasetRuntime:
-    """返回当前请求已绑定的数据集运行时. 
+def parse_dir_names(dirs: str | None = None, dir: str | None = None) -> list[str]:
+    """从查询参数 ``dirs=a,b`` 或 ``dir=a`` 解析目录名列表.
 
-    由 server 中间件根据 ``/api/d/{dataset}/...`` 或 ``/d/{dataset}/...``
-    写入 ``request.state.runtime``. 
+    Args:
+        dirs (str | None): 逗号分隔的目录名, 优先.
+        dir (str | None): 单个目录名, ``dirs`` 为空时使用.
+
+    Returns:
+        list[str]: 目录名列表; 均未提供时返回 ``["main"]``.
 
     Callers:
-        - ``routes/alpha_paint.py:_services``
-        - ``routes/alpha_paint.py:list_paint_images``
-        - ``routes/alpha_paint.py:serve_mask_preview``
-        - ``routes/annotations.py:_root``
-        - ``routes/annotations.py:_state``
-        - ``routes/annotations.py:apply_delete``
-        - ``routes/annotations.py:restore``
-        - ``routes/birefnet.py:mask_generate``
-        - ``routes/crop.py:_layout``
-        - ``routes/crop.py:_main_dir``
-        - ``routes/crop.py:list_crop_images``
-        - ``routes/dedupe.py:apply_delete``
-        - ``routes/dedupe.py:dirs``
-        - ``routes/dedupe.py:scan_duplicates``
-        - ``routes/images.py:_color_index``
-        - ``routes/images.py:_services``
-        - ``routes/images.py:list_dirs``
-        - ``routes/online_sources.py:_submit_video_download``
-        - ``routes/online_sources.py:batch_params``
-        - ``routes/online_sources.py:batch_start``
-        - ``routes/online_sources.py:download``
-        - ``routes/online_sources.py:refresh_metadata``
-        - ``routes/online_sources.py:regenerate_captions``
-        - ``routes/online_sources.py:search``
-        - ``routes/online_sources.py:undownload``
-        - ``routes/ready.py:dirs``
-        - ``routes/ready.py:export``
-        - ``routes/ready.py:toml``
-        - ``routes/scoring.py:dirs``
-        - ``routes/scoring.py:results``
-        - ``routes/scoring.py:start``
-        - ``routes/tag_stats.py:_root``
-        - ``routes/tag_stats.py:batch_edit``
-        - ``routes/tag_stats.py:check``
-        - ``routes/tag_stats.py:clean``
-        - ``routes/tag_stats.py:concept_query``
-        - ``routes/tag_stats.py:delete_one``
-        - ``routes/tag_stats.py:edit_one``
-        - ``routes/tag_stats.py:embedding_batch_tag``
-        - ``routes/tag_stats.py:embedding_history``
-        - ``routes/tag_stats.py:embedding_query``
-        - ``routes/tagging.py:dirs``
-        - ``routes/tagging.py:start``
-        - ``routes/video.py:_services``
-        - ``routes/video.py:_stores``
-        - ``routes/video.py:delete_frame``
-        - ``routes/video.py:save_frame``
-        - ``routes/video.py:start_analysis``
-        - ``routes/video.py:video_cover``
-        - ``routes/video.py:video_detail``
-        - ``routes/video.py:video_frame``
-        - ``routes/video.py:video_segment``
+        - ``routes/images.py:list_images``
+        - ``routes/annotations.py:select_all`` / `get_state`
     """
-    rt = getattr(request.state, "runtime", None)
-    if rt is None:
-        raise HTTPException(500, "请求未绑定数据集")
-    return rt
+    if dirs and dirs.strip():
+        return [x.strip() for x in dirs.split(",") if x.strip()]
+    if dir and dir.strip():
+        return [dir.strip()]
+    return ["main"]
 
 
 def resolve_path(root: Path, rel: str) -> Path:

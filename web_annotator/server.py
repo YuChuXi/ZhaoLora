@@ -54,7 +54,7 @@ from routes.video import router as video_router
 from services.dataset.runtime import DatasetRegistry
 from services.core.jobs import JobManager
 from services.core.logging import setup_logging
-from services.dataset.layout import LOG_DIRNAME
+from services.dataset.workdir import LOG_DIRNAME
 from services.state.tasks import TaskStore
 
 # 访问日志专用 logger, 经根日志器统一格式化输出.
@@ -196,7 +196,7 @@ async def bind_dataset_middleware(
 ) -> Response:
     """从路径解析任务名；须在清单中, 再按需加载运行时.
 
-    写入 ``request.state.runtime``, 由下游 ``routes/deps.py:get_runtime`` 读取.
+    写入 ``request.state.runtime``, 由下游 ``routes/deps.py:DatasetDep`` 注入.
 
     Args:
         request: 当前 HTTP 请求; 路径匹配 ``/d/{name}/...`` 时触发数据集绑定.

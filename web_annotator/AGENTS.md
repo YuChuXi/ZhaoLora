@@ -58,13 +58,15 @@ docs/                          功能说明文档
 
 ### 2.3 任务运行时 —— `services/dataset/runtime.py`
 
-- `DatasetRegistry`：按名惰性缓存 `DatasetRuntime`，`ensure(name)` 解析布局并提交缩略图
+- `DatasetRegistry`：按名惰性缓存 `Dataset`，`ensure(name)` 打开数据集并提交缩略图
   填充任务（async）。
-- `DatasetRuntime`：一个已登记任务的句柄，聚合 `layout` / `thumbnailer` / `state_manager`。
+- `Dataset`：数据集对象，持有 `root` 与派生目录，提供 `work_dirs()` / `work_dir(name)` /
+  `select(names)`，并聚合 `thumbnailer` / `state_manager` / `sort_cache`。
 
 ### 2.4 请求级依赖 —— `routes/deps.py`
 
-- `get_runtime(request)`：取当前请求绑定数据集运行时（中间件写入 `request.state.runtime`）。
+- `DatasetDep`：路由依赖注入的数据集对象（中间件写入 `request.state.runtime`）。
+- `RegistryDep`：路由依赖注入的数据集注册表。
 - `jobs(request)`：取全局 JobManager。
 - `resolve_path(root, rel)`：在根下安全解析相对路径，失败返回 400。
 - `registry(request)`：取数据集注册表。

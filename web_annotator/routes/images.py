@@ -7,12 +7,13 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import FileResponse
 
-from routes.deps import get_runtime, resolve_path
-from services.core.scanner import scan_images
-from services.online_sources.framework.base import file_stem as source_file_stem
+from routes.deps import DatasetDep, parse_dir_names, resolve_path
+from services.dataset.runtime import Dataset
+from services.dataset.workdir import WorkDir
+from services.online_sources.framework.base import SOURCES, file_stem as source_file_stem
 from services.analysis.similarity import ColorIndex, fingerprint_file
 from services.models import (
     DirsResponse,
@@ -20,26 +21,27 @@ from services.models import (
     SimilarItem,
     SimilarResponse,
 )
-from services.core.work_dir import list_work_dirs, parse_dir_names, resolve_subdir, resolve_subdirs
 from services.analysis.scoring import load_score_json
-from services.core.thumbnailer import Thumbnailer, image_size
-from services.state.annotator import StateManager
+from services.core.thumbnailer import image_size
 
 router = APIRouter(tags=["images"])
 
 
-def _services(request: Request) -> tuple[Path, Thumbnailer, StateManager]:
-    """引用: 本模块列表与相似接口. """
-    rt = get_runtime(request)
-    return rt.root, rt.thumbnailer, rt.state_manager
+def _color_index(ds: Dataset) -> ColorIndex:
+    """取数据集的颜色索引, 首次调用时创建.
 
+    Args:
+        ds (Dataset): 当前数据集.
 
-def _color_index(request: Request) -> ColorIndex:
-    """引用: ``similar_images``. """
-    rt = get_runtime(request)
-    if rt.color_index is None:
-        rt.color_index = ColorIndex()
-    return rt.color_index
+    Returns:
+        ColorIndex: 数据集级颜色索引.
+
+    Callers:
+        - ``routes/images.py:similar_images``
+    """
+    if ds.color_index is None:
+        ds.color_index = ColorIndex()
+    return ds.color_index
 
 
 def _resolve_image(root: Path, trash_dir: Path, rel: str) -> Path:
@@ -58,14 +60,14 @@ def _resolve_image(root: Path, trash_dir: Path, rel: str) -> Path:
     raise HTTPException(404, "文件不存在")
 
 
-def _posted_at_index(work: Path) -> dict[str, str]:
+def _posted_at_index(work: WorkDir) -> dict[str, str]:
     """收集工作目录下各在线来源 meta 目录的发布时间索引.
 
     meta JSON 按帖子 pid 命名 (``.{来源}_meta/{pid}.json``), 经来源注册的
     ``file_stem`` 映射换算为下载文件 stem 后建立索引.
 
     Args:
-        work (Path): 工作目录.
+        work (WorkDir): 工作目录.
 
     Returns:
         dict[str, str]: 下载文件 stem -> ISO8601 发布时间; 无发布时间的帖子不在索引中,
@@ -75,10 +77,10 @@ def _posted_at_index(work: Path) -> dict[str, str]:
         - ``routes/images.py:list_images``
     """
     index: dict[str, str] = {}
-    for meta_dir in work.glob(".*_meta"):
+    for name, src in SOURCES.items():
+        meta_dir = work.path / src.meta_subdir
         if not meta_dir.is_dir():
             continue
-        source = meta_dir.name[1:-len("_meta")]
         for meta_file in meta_dir.glob("*.json"):
             try:
                 posted_at = json.loads(meta_file.read_text(encoding="utf-8")).get("posted_at", "")
@@ -86,95 +88,96 @@ def _posted_at_index(work: Path) -> dict[str, str]:
                 # meta 损坏视为缺失, 列表接口继续而非中断
                 continue
             if posted_at:
-                index[source_file_stem(source, meta_file.stem)] = posted_at
+                index[source_file_stem(name, meta_file.stem)] = posted_at
     return index
 
 
 @router.get("/dirs")
-def list_dirs(request: Request) -> DirsResponse:
+def list_dirs(ds: DatasetDep) -> DirsResponse:
     """列出工作子目录. 引用: 筛选页 DirPicker. """
-    root = get_runtime(request).root
-    return DirsResponse(dirs=list_work_dirs(root), default="main")
+    return DirsResponse(dirs=[w.to_info() for w in ds.work_dirs()], default="main")
 
 
 @router.get("/images")
 def list_images(
-    request: Request,
+    ds: DatasetDep,
     show_trash: bool = Query(False),
     dirs: str = Query(""),
     dir: str = Query("main"),
 ) -> list[FilterImageItem]:
     """列出指定子目录图片(dirs=main,head 或 dir=main). 路径相对数据集根. """
-    root, thumbnailer, state_mgr = _services(request)
-    names = parse_dir_names(dirs, dir)
-    try:
-        pairs = resolve_subdirs(root, names)
-    except ValueError as e:
-        raise HTTPException(400, str(e)) from e
+    works = ds.select_or_main(parse_dir_names(dirs, dir))
 
-    state = state_mgr.get()
+    state = ds.state_manager.get()
     selected = set(state.selected.keys())
     trashed_state = set(state.trashed.keys())
-    scores = load_score_json(root, ".aesthetic_scores.json")
-    quality_scores = load_score_json(root, ".quality_scores.json")
+    scores = load_score_json(ds.root, ".aesthetic_scores.json")
+    quality_scores = load_score_json(ds.root, ".quality_scores.json")
     result: list[FilterImageItem] = []
     seen: set[str] = set()
 
-    for sub, work in pairs:
+    for work in works:
+        sub = work.name
         prefix = sub + "/"
         posted = _posted_at_index(work)
-        for img in scan_images(work, path_prefix=sub):
-            rel = img.path
+        for img in work.images():
+            rel = img.rel
             if rel in trashed_state or rel in seen:
                 continue
             seen.add(rel)
-            w, h = image_size(root / rel)
+            w, h = image_size(img.abs)
             result.append(
                 FilterImageItem(
-                    **img.model_dump(),
+                    path=rel,
+                    stem=img.stem,
+                    suffix=img.suffix,
+                    size=img.size,
+                    siblings=img.sibling_rels,
                     width=w,
                     height=h,
                     selected=rel in selected,
                     trashed=False,
-                    thumbnail_hash=thumbnailer.hash_for(rel),
+                    thumbnail_hash=ds.thumbnailer.hash_for(rel),
                     dir=sub,
                     aesthetic=scores.get(rel),
                     quality=quality_scores.get(rel),
-                    posted_at=posted.get(Path(rel).stem, ""),
+                    posted_at=posted.get(img.stem, ""),
                 )
             )
 
         if not show_trash:
             continue
 
-        trash_dir = state_mgr.trash_dir
-        trash_work = trash_dir / sub
-        if trash_work.is_dir():
-            for img in scan_images(trash_work, path_prefix=sub):
-                if img.path in seen:
+        trash_work = work.trashed()
+        if trash_work.path.is_dir():
+            for img in trash_work.images():
+                if img.rel in seen:
                     continue
-                seen.add(img.path)
-                tp = trash_dir / img.path
-                w, h = image_size(tp)
+                seen.add(img.rel)
+                w, h = image_size(img.abs)
                 result.append(
                     FilterImageItem(
-                        **img.model_dump(),
+                        path=img.rel,
+                        stem=img.stem,
+                        suffix=img.suffix,
+                        size=img.size,
+                        siblings=img.sibling_rels,
                         width=w,
                         height=h,
-                        selected=img.path in selected,
+                        selected=img.rel in selected,
                         trashed=True,
-                        thumbnail_hash=thumbnailer.hash_for(img.path),
+                        thumbnail_hash=ds.thumbnailer.hash_for(img.rel),
                         dir=sub,
-                        aesthetic=scores.get(img.path),
-                        quality=quality_scores.get(img.path),
-                        posted_at=posted.get(Path(img.path).stem, ""),
+                        aesthetic=scores.get(img.rel),
+                        quality=quality_scores.get(img.rel),
+                        posted_at=posted.get(img.stem, ""),
                     )
                 )
         else:
             for rel in trashed_state:
                 if not rel.startswith(prefix) or rel in seen:
                     continue
-                tp = trash_dir / rel
+                tp = ds.trash_dir / rel
                 if not tp.is_file():
                     continue
                 seen.add(rel)
@@ -190,7 +193,7 @@ def list_images(
                         height=h,
                         selected=rel in selected,
                         trashed=True,
-                        thumbnail_hash=thumbnailer.hash_for(rel),
+                        thumbnail_hash=ds.thumbnailer.hash_for(rel),
                         dir=sub,
                         aesthetic=scores.get(rel),
                         quality=quality_scores.get(rel),
@@ -202,46 +205,40 @@ def list_images(
 
 
 @router.get("/image")
-def get_image(request: Request, path: str = Query(...)) -> FileResponse:
+def get_image(ds: DatasetDep, path: str = Query(...)) -> FileResponse:
     """返回原图文件(预览用). """
-    root, _, state_mgr = _services(request)
-    file_path = _resolve_image(root, state_mgr.trash_dir, path)
+    file_path = _resolve_image(ds.root, ds.trash_dir, path)
     return FileResponse(file_path)
 
 
 @router.get("/images/similar")
 async def similar_images(
-    request: Request,
+    ds: DatasetDep,
     path: str = Query(...),
     limit: int = Query(8, ge=1, le=24),
 ) -> SimilarResponse:
     """按色调相似度返回若干张图(不含自身, 候选为同目录未删图). """
-    root, thumbnailer, state_mgr = _services(request)
     rel = path.replace("\\", "/").lstrip("/")
-    query_file = _resolve_image(root, state_mgr.trash_dir, rel)
+    query_file = _resolve_image(ds.root, ds.trash_dir, rel)
 
     parts = rel.split("/")
-    sub = parts[0] if len(parts) > 1 else "main"
     try:
-        _, work = resolve_subdir(root, sub)
+        work = ds.work_dir(parts[0] if len(parts) > 1 else "main")
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
 
-    state = state_mgr.get()
+    state = ds.state_manager.get()
     selected = set(state.selected.keys())
     trashed_state = set(state.trashed.keys())
-    candidates = [
-        img.path for img in scan_images(work, path_prefix=sub)
-        if img.path not in trashed_state
-    ]
+    candidates = [img.rel for img in work.images() if img.rel not in trashed_state]
 
-    idx = _color_index(request)
-    idx.set_cache_dir(thumbnailer.thumb_dir)
+    idx = _color_index(ds)
+    idx.set_cache_dir(ds.thumbnailer.thumb_dir)
 
-    thumb_map = {c: thumbnailer.get_path(c) for c in candidates}
-    idx.ensure_many(root, candidates, thumb_map)
+    thumb_map = {c: ds.thumbnailer.get_path(c) for c in candidates}
+    idx.ensure_many(ds.root, candidates, thumb_map)
 
-    q_thumb = thumbnailer.get_path(rel) if (root / rel).is_file() else None
+    q_thumb = ds.thumbnailer.get_path(rel) if (ds.root / rel).is_file() else None
     if q_thumb is not None and q_thumb.is_file():
         q = fingerprint_file(q_thumb)
     else:
@@ -249,7 +246,7 @@ async def similar_images(
     if q is None:
         return SimilarResponse(path=rel, similar=[])
 
-    main_q = root / rel
+    main_q = ds.root / rel
     if main_q.is_file():
         idx.put(rel, main_q.stat().st_mtime, q)
 
@@ -257,8 +254,8 @@ async def similar_images(
 
     out: list[SimilarItem] = []
     for sim_rel, dist in hits:
-        await thumbnailer.ensure_async(sim_rel)
-        w, h = image_size(root / sim_rel)
+        await ds.thumbnailer.ensure_async(sim_rel)
+        w, h = image_size(ds.root / sim_rel)
         out.append(
             SimilarItem(
                 path=sim_rel,
@@ -267,7 +264,7 @@ async def similar_images(
                 height=h,
                 selected=sim_rel in selected,
                 trashed=sim_rel in trashed_state,
-                thumbnail_hash=thumbnailer.hash_for(sim_rel),
+                thumbnail_hash=ds.thumbnailer.hash_for(sim_rel),
                 distance=round(dist, 6),
             )
         )
