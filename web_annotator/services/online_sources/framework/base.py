@@ -18,7 +18,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from services.core.atomic import atomic_write_text
-from services.core.scanner import IMAGE_EXTS
+from services.dataset.workdir import IMAGE_EXTS
 from services.online_sources.framework.http import HttpClient
 from services.online_sources.framework.utils import (
     _GENDER_TAGS,

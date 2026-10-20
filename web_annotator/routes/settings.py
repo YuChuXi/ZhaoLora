@@ -12,9 +12,9 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter
 
-from routes.deps import get_runtime
+from routes.deps import DatasetDep, RegistryDep
 from services.dataset.settings import load_settings, update_settings
 
 router = APIRouter(tags=["settings"])
@@ -22,11 +22,14 @@ global_router = APIRouter(tags=["settings"])
 
 
 @router.get("/settings")
-async def read_settings(request: Request) -> dict:
+async def read_settings(ds: DatasetDep) -> dict:
     """返回当前数据集的设置全量(全局缺省层与数据集层按键合并).
 
     两层在独立线程先后读取后按键合并, 数据集键覆盖全局同键; caption/crop
     仅存于数据集层, 其余键通常仅存于全局层, 合并结果即各键的生效值.
+
+    Args:
+        ds (DatasetDep): 当前数据集对象.
 
     Returns:
         dict: ``{"settings": {键: 任意 JSON 值}}``; 两层均无记录时为空映射.
@@ -34,23 +37,22 @@ async def read_settings(request: Request) -> dict:
     Callers:
         - ``static/js/settings.js:ready`` : 页面启动时加载.
     """
-    rt = get_runtime(request)
-    reg = request.app.state.datasets
+    root, task_root = ds.root, ds.task_root
 
     def merged() -> dict:
-        data = load_settings(reg.task_root)
-        data.update(load_settings(rt.root))
+        data = load_settings(task_root)
+        data.update(load_settings(root))
         return data
 
     return {"settings": await asyncio.to_thread(merged)}
 
 
 @router.put("/settings")
-async def write_settings(request: Request, patch: dict[str, Any]) -> dict:
+async def write_settings(ds: DatasetDep, patch: dict[str, Any]) -> dict:
     """按键合并写入数据集层设置, 返回数据集层合并后的全量.
 
     Args:
-        request: 当前 HTTP 请求, 经中间件绑定数据集运行时.
+        ds (DatasetDep): 当前数据集对象.
         patch (dict[str, Any]): 键到任意 JSON 值的映射, 同键整体替换.
 
     Returns:
@@ -62,14 +64,13 @@ async def write_settings(request: Request, patch: dict[str, Any]) -> dict:
     Callers:
         - ``static/js/settings.js:set`` : 保存目录选择、描述规则、裁剪部位.
     """
-    rt = get_runtime(request)
-    async with rt.settings_lock:
-        data = await asyncio.to_thread(update_settings, rt.root, patch)
+    async with ds.settings_lock:
+        data = await asyncio.to_thread(update_settings, ds.root, patch)
     return {"settings": data}
 
 
 @global_router.get("/api/settings")
-async def read_global_settings(request: Request) -> dict:
+async def read_global_settings(reg: RegistryDep) -> dict:
     """返回全局缺省层的设置全量.
 
     Returns:
@@ -78,16 +79,15 @@ async def read_global_settings(request: Request) -> dict:
     Callers:
         - ``static/js/index.js:importLegacy`` : 导入旧设置前读取现值合并.
     """
-    reg = request.app.state.datasets
     return {"settings": await asyncio.to_thread(load_settings, reg.task_root)}
 
 
 @global_router.put("/api/settings")
-async def write_global_settings(request: Request, patch: dict[str, Any]) -> dict:
+async def write_global_settings(reg: RegistryDep, patch: dict[str, Any]) -> dict:
     """按键合并写入全局缺省层设置, 返回全局层合并后的全量.
 
     Args:
-        request: 当前 HTTP 请求.
+        reg (RegistryDep): 数据集注册表.
         patch (dict[str, Any]): 键到任意 JSON 值的映射, 同键整体替换.
 
     Returns:
@@ -100,7 +100,6 @@ async def write_global_settings(request: Request, patch: dict[str, Any]) -> dict
         - ``static/js/settings.js:set`` : 保存各页输入参数习惯.
         - ``static/js/index.js:importLegacy`` : 导入旧版全局参数.
     """
-    reg = request.app.state.datasets
-    async with request.app.state.settings_lock:
+    async with reg.settings_lock:
         data = await asyncio.to_thread(update_settings, reg.task_root, patch)
     return {"settings": data}

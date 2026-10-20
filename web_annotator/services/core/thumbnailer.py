@@ -14,7 +14,7 @@ from pathlib import Path
 
 from PIL import Image, UnidentifiedImageError
 
-from services.dataset.layout import NON_BROWSABLE_DIRS
+from services.dataset.workdir import NON_BROWSABLE_DIRS
 
 THUMB_DIRNAME = ".thumbnails"
 DEFAULT_SIZE = 1280  # 长边像素(与 server --thumbnail-size 默认一致)

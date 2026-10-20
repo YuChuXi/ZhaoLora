@@ -12,10 +12,9 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from routes.deps import jobs, registry
-from services.dataset.runtime import DatasetRuntime
+from services.dataset.runtime import Dataset
 from services.models import (
     JobSubmitResponse,
-    ScannedImage,
     TaskCard,
     TaskCandidatesResponse,
     TaskListResponse,
@@ -24,9 +23,7 @@ from services.models import (
     SetTriggerWordBody,
 )
 from services.core.natural import natural_key
-from services.core.scanner import scan_images
-from services.core.work_dir import total_image_count
-from services.dataset.layout import PACKED_DIR
+from services.dataset.workdir import PACKED_DIR, WorkImage
 from services.state.archiver import archive_task, restore_task
 from services.state.tasks import TaskStore, validate_task_name
 
@@ -69,13 +66,13 @@ def _store(request: Request) -> TaskStore:
 
 
 async def _preview_hashes(
-    rt: DatasetRuntime, images: list[ScannedImage], limit: int = 4
+    rt: Dataset, images: list[WorkImage], limit: int = 4
 ) -> list[str]:
     """从 images 随机取最多 limit 张缩略图 hash, 缺失缩略图并发生成。
 
     Args:
-        rt (DatasetRuntime): 数据集运行时(用于 thumbnailer)。
-        images (list[ScannedImage]): 已扫描的图片列表(由调用方传入, 避免重复扫描)。
+        rt (Dataset): 数据集对象(用于 thumbnailer)。
+        images (list[WorkImage]): 已扫描的图片列表(由调用方传入, 避免重复扫描)。
         limit (int): 最多选取的图片数。
 
     Returns:
@@ -87,12 +84,12 @@ async def _preview_hashes(
     if not images:
         return []
     picks = images if len(images) <= limit else random.sample(images, limit)
-    missing = [img.path for img in picks if not rt.thumbnailer.exists(img.path)]
+    missing = [img.rel for img in picks if not rt.thumbnailer.exists(img.rel)]
     if missing:
         await asyncio.gather(
             *(rt.thumbnailer.ensure_async(rel) for rel in missing)
         )
-    return [rt.thumbnailer.hash_for(img.path) for img in picks]
+    return [rt.thumbnailer.hash_for(img.rel) for img in picks]
 
 
 @router.get("")
@@ -125,9 +122,9 @@ async def list_tasks(
         report_ready = False
         if not entry.archived and (task_dir / "main").is_dir():
             rt = await reg.ensure(name)
-            images = scan_images(rt.main_dir, path_prefix="main")
+            images = rt.work_dir("main").images()
             previews = await _preview_hashes(rt, images, 4)
-            image_count = total_image_count(rt.root)
+            image_count = rt.image_count()
             report_ready = (rt.root / "aesthetic_report.html").is_file()
         items.append(
             TaskCard(
@@ -442,7 +439,7 @@ async def archive_task_route(request: Request, name: str) -> JobSubmitResponse:
         Callers:
             - ``services/core/jobs.py:JobManager._execute``
         """
-        meta = archive_task(task_dir, name, store.root, rt.thumbnailer, emit)
+        meta = archive_task(rt, store.root, emit)
         store.set_archived(
             name,
             archived_at=meta.archived_at,

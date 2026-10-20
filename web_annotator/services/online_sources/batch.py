@@ -18,7 +18,7 @@ from typing import Any
 from services.online_sources.framework.base import get_source
 from services.online_sources.framework.media import download_post, local_rel_path
 from services.online_sources.framework.utils import is_downloaded
-from services.dataset.layout import VIDEO_DIRNAME
+from services.dataset.workdir import VIDEO_DIRNAME
 from services.models import JobSnapshot
 
 # 连续空页判定抓完的阈值: 会话式来源(如 B 站)的风控空心响应与真实末页结构
