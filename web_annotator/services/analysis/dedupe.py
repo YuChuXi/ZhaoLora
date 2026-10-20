@@ -15,7 +15,7 @@ import numpy as np
 from PIL import Image, ImageFile, UnidentifiedImageError
 
 from services.core.natural import natural_key
-from services.core.scanner import IMAGE_EXTS
+from services.dataset.workdir import IMAGE_EXTS
 from services.core.device import cuda_device
 
 if TYPE_CHECKING:  # torch 惰性导入, 仅用于类型注解

@@ -2,7 +2,7 @@
 
 Callers:
     - ``routes/images.py:`` : 相似图片查询
-    - ``services/dataset/runtime.py:DatasetRuntime`` : 数据集颜色索引
+    - ``services/dataset/runtime.py:Dataset`` : 数据集颜色索引
 """
 
 from __future__ import annotations
@@ -126,7 +126,7 @@ class ColorIndex:
     ``similar_matrix`` 矩阵比对返回最近邻. 
 
     Callers:
-        - ``services/dataset/runtime.py:DatasetRuntime``
+        - ``services/dataset/runtime.py:Dataset``
         - ``routes/images.py:_color_index``
     """
 

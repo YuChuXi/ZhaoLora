@@ -30,8 +30,7 @@ from services.analysis.wd14 import (
     Wd14TagGroups,
 )
 from services.core.atomic import atomic_write_text
-from services.core.scanner import collect_images
-from services.dataset.layout import CAPTIONS_JSON_FILE
+from services.dataset.workdir import CAPTIONS_JSON_FILE, WorkDir
 from services.models import CaptionImageItem, CaptionResult, CaptionRule, JobSnapshot
 from services.tagging.clean import make_tag_matcher, tag_key
 
@@ -790,8 +789,7 @@ async def _serve(
 
 
 async def run_caption(
-    root: Path,
-    dirs: list[Path],
+    works: list[WorkDir],
     *,
     modes: list[str],
     general_threshold: float | None,
@@ -814,8 +812,7 @@ async def run_caption(
     下限中的最低者.
 
     Args:
-        root (Path): 数据集根目录.
-        dirs (list[Path]): 待描述的工作目录列表.
+        works (list[WorkDir]): 待描述的工作目录列表.
         modes (list[str]): 描述模式列表, 取值属于 ``SYSTEM_PROMPT_TEMPLATES``.
         general_threshold (float | None): 通用标签置信度下限; None 为不注入.
         character_threshold (float | None): 角色标签置信度下限; None 为不注入.
@@ -834,11 +831,12 @@ async def run_caption(
     Callers:
         - ``routes/caption.py:start``
     """
-    items = collect_images(dirs)
+    root = works[0].dataset.root
+    items = [p for work in works for p in work.image_files()]
     endpoints, error = parse_endpoints(ENDPOINTS_RAW)
     if error:
         raise ValueError(error)
-    dir_names = [d.name for d in dirs]
+    dir_names = [w.name for w in works]
     progress.total = len(items)
     progress.done = progress.ok = progress.failed = progress.skipped = 0
     progress.status = progress.phase = "running"
@@ -862,7 +860,7 @@ async def run_caption(
             on_update()
         return CaptionResult(dirs=dir_names)
 
-    stores = {work: load_captions(work) for work in dirs}
+    stores = {work.path: load_captions(work.path) for work in works}
     pending: list[Path] = []
     for src in items:
         if not force and stores[src.parent].get(src.name):

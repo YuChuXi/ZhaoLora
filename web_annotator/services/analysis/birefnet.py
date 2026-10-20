@@ -16,8 +16,6 @@ from PIL import Image
 from torchvision import transforms
 
 from services.models import JobSnapshot
-from services.core.natural import natural_key
-from services.core.scanner import IMAGE_EXTS
 from services.core.device import register_model
 
 logger = logging.getLogger(__name__)
@@ -158,31 +156,6 @@ def _remap_mask(mask: np.ndarray, lo: int, hi: int) -> np.ndarray:
     return np.clip(f * (hi - lo) + lo, 0, 255).astype(np.uint8)
 
 
-def collect_images(data_dir: Path, subdir: str = "main") -> list[str]:
-    """收集指定子目录下所有图片的相对数据集根路径(含子目录前缀). 
-
-    Args:
-        data_dir: 数据集根目录. 
-        subdir: 子目录名, 默认 ``main``. 
-
-    Returns:
-        相对数据集根的路径列表, 如 ``main/foo.png`` / ``head/foo.png``. 
-
-    Callers:
-        - ``routes/birefnet.py:mask_generate``
-    """
-    subdir = (subdir or "main").strip().strip("/")
-    target = data_dir / subdir
-    if not target.is_dir():
-        return []
-    paths: list[str] = []
-    for img in sorted(target.iterdir(), key=lambda p: natural_key(p.name)):
-        if not img.is_file() or img.suffix.lower() not in IMAGE_EXTS:
-            continue
-        paths.append(f"{subdir}/{img.name}")
-    return paths
-
-
 @dataclass
 class BirefnetProgress:
     """BiRefNet 蒙版生成进度. """
@@ -212,8 +185,7 @@ class BirefnetProgress:
 
 @_MODEL.auto_release
 def run_birefnet_mask(
-    image_rel_paths: list[str],
-    data_dir: Path,
+    images: list[tuple[str, Path]],
     mask_dir: Path,
     *,
     handle: tuple,
@@ -228,8 +200,7 @@ def run_birefnet_mask(
     """对图片列表生成 BiRefNet 蒙版, 输出到 mask_dir(保留子目录结构).
 
     Args:
-        image_rel_paths: 相对数据集根的路径列表(含子目录前缀).
-        data_dir: 数据集根目录.
+        images: ``(相对数据集根路径, 绝对路径)`` 列表.
         mask_dir: 蒙版输出目录.
         handle: BiRefNet 模型本体, 由 ``auto_release`` 注入.
         mask_expand: 蒙版扩展像素数 (0-200).
@@ -244,22 +215,21 @@ def run_birefnet_mask(
     Callers:
         - ``routes/birefnet.py:mask_generate``
     """
-    if not image_rel_paths:
+    if not images:
         return 0, 0
 
     model, transform = handle
     mask_dir.mkdir(parents=True, exist_ok=True)
 
     if progress is not None:
-        progress.total = len(image_rel_paths)
+        progress.total = len(images)
         progress.done = 0
         progress.failed = 0
 
-    for rel_path in image_rel_paths:
+    for rel_path, src_path in images:
         if progress is not None and progress.cancel_requested:
             break
 
-        src_path = data_dir / rel_path
         out_path = mask_dir / Path(rel_path).with_suffix(".png")
 
         if skip_existing and out_path.is_file():
@@ -287,4 +257,4 @@ def run_birefnet_mask(
         if progress is not None and on_progress is not None:
             on_progress()
 
-    return (progress.done if progress else 0, len(image_rel_paths))
+    return (progress.done if progress else 0, len(images))

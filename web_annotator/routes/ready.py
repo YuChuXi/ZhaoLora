@@ -10,7 +10,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field, model_validator
 from tomlkit.exceptions import ParseError
 
-from routes.deps import get_runtime
+from routes.deps import DatasetDep
 from services.models import LoraMode, ReadyDirsResponse, ReadyTomlResult, TrainExportResult
 from services.ready import (
     TRAIN_FORMAT_TEMPLATES,
@@ -19,7 +19,6 @@ from services.ready import (
     exportable_dirs,
     subdir_mask_stats,
 )
-from services.core.work_dir import list_work_dirs
 from services.core.atomic import atomic_write_text
 
 logger = logging.getLogger(__name__)
@@ -118,14 +117,22 @@ def _trigger_word(request: Request, root: Path) -> str:
 
 
 @router.get("/dirs")
-def dirs(request: Request) -> ReadyDirsResponse:
-    """
-    可导出工作目录与各目录蒙版统计.
+def dirs(ds: DatasetDep) -> ReadyDirsResponse:
+    """可导出工作目录与各目录蒙版统计.
 
     每目录蒙版状态仅「无」或「完整」. 引用: ready.js.
+
+    Args:
+        ds (Dataset): 当前请求绑定的数据集对象.
+
+    Returns:
+        ReadyDirsResponse: 数据集根、工作目录列表与各目录蒙版统计.
+
+    Callers:
+        - ``static/js/ready.js:start``
     """
-    root = get_runtime(request).root
-    dirs = list_work_dirs(root)
+    root = ds.root
+    dirs = [w.to_info() for w in ds.work_dirs()]
     mask_stats = [subdir_mask_stats(root, d.name) for d in dirs]
     main_mask = next((m for m in mask_stats if m.name == "main"), None)
     return ReadyDirsResponse(
@@ -140,7 +147,7 @@ def dirs(request: Request) -> ReadyDirsResponse:
 
 
 @router.post("/toml", response_model=ReadyTomlResult)
-def toml(request: Request, body: ReadyBody) -> ReadyTomlResult:
+def toml(request: Request, ds: DatasetDep, body: ReadyBody) -> ReadyTomlResult:
     """生成训练配置的预览文本(文件集合随 train_format 变化).
 
     配置文件文本与子集/蒙版统计由 ``build_ready`` 一次生成: 渲染时即按 ``export_dir``
@@ -148,6 +155,7 @@ def toml(request: Request, body: ReadyBody) -> ReadyTomlResult:
 
     Args:
         request (Request): FastAPI 请求对象, 由路由参数注入.
+        ds (Dataset): 当前请求绑定的数据集对象.
         body (ReadyBody): 就绪页生成参数(dirs / target_images / subset_resolutions / use_reg / mode / train_format / variant).
 
     Returns:
@@ -159,7 +167,7 @@ def toml(request: Request, body: ReadyBody) -> ReadyTomlResult:
     Callers:
         - ``static/js/ready.js:generate``
     """
-    root = get_runtime(request).root
+    root = ds.root
     try:
         result = build_ready(
             root,
@@ -184,7 +192,7 @@ def toml(request: Request, body: ReadyBody) -> ReadyTomlResult:
 
 @router.post("/export", response_model=TrainExportResult)
 def export(
-    request: Request, body: ReadyExportBody, overwrite: bool = False
+    ds: DatasetDep, body: ReadyExportBody, overwrite: bool = False
 ) -> TrainExportResult:
     """按编辑后的配置文本导出整套训练配置到 ``{格式对应配置根}/{数据集名}-{变体}/``.
 
@@ -192,7 +200,7 @@ def export(
     ``files`` 的文本即最终写入内容, 逐字段以用户编辑后为准, 写入前仅校验 .toml 的语法.
 
     Args:
-        request (Request): FastAPI 请求对象, 由路由参数注入.
+        ds (Dataset): 当前请求绑定的数据集对象.
         body (ReadyExportBody): 就绪页导出参数(dirs / target_images / subset_resolutions / use_reg / mode / train_format / variant / files).
         overwrite (bool): 目标目录已存在可视化配置时, 需置 True 才覆盖写入, 否则返回 409.
 
@@ -206,7 +214,7 @@ def export(
     Callers:
         - ``static/js/ready.js:doExport``
     """
-    root = get_runtime(request).root
+    root = ds.root
     file_names = TRAIN_FORMAT_TEMPLATES[body.train_format][body.variant]
     if not exportable_dirs(root, body.dirs):
         raise HTTPException(400, "没有可导出的图片目录")

@@ -3,11 +3,10 @@
 from __future__ import annotations
 
 import logging
-from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request
 
-from routes.deps import get_runtime, jobs
+from routes.deps import DatasetDep, jobs
 from services.analysis.caption import (
     RULE_TEMPLATES,
     SYSTEM_PROMPT_TEMPLATES,
@@ -18,9 +17,8 @@ from services.analysis.caption import (
 )
 from services.analysis.wd14 import DEFAULT_THRESHOLD
 from services.core.jobs import EmitFn
-from services.core.scanner import scan_images
 from services.core.thumbnailer import image_size
-from services.core.work_dir import list_work_dirs
+from services.dataset.workdir import WorkImage
 from services.models import (
     CaptionBody,
     CaptionDirsResponse,
@@ -31,7 +29,6 @@ from services.models import (
     CaptionRuleTemplateInfo,
     JobSubmitResponse,
 )
-from services.tagging.stats import resolve_selected_dirs
 
 logger = logging.getLogger(__name__)
 
@@ -39,11 +36,11 @@ router = APIRouter(prefix="/caption", tags=["caption"])
 
 
 @router.get("/dirs")
-def dirs(request: Request) -> CaptionDirsResponse:
+def dirs(ds: DatasetDep) -> CaptionDirsResponse:
     """列出可描述的工作目录与描述服务状态.
 
     Args:
-        request (Request): FastAPI 请求对象, 由路由参数注入.
+        ds (Dataset): 当前数据集, 由路由依赖注入.
 
     Returns:
         CaptionDirsResponse: 含工作目录列表、服务就绪状态与可用模式/注入范围.
@@ -52,10 +49,9 @@ def dirs(request: Request) -> CaptionDirsResponse:
         - ``static/js/nav.js:dirsApi``
         - ``static/js/caption.js:init``
     """
-    rt = get_runtime(request)
     ok, info = ollama_status()
     return CaptionDirsResponse(
-        dirs=list_work_dirs(rt.root),
+        dirs=[w.to_info() for w in ds.work_dirs()],
         ready=ok,
         info=info,
         rule_templates=[
@@ -67,20 +63,14 @@ def dirs(request: Request) -> CaptionDirsResponse:
 
 
 def _build_item(
-    root: Path,
-    dir_name: str,
-    img_path: str,
-    img_stem: str,
+    img: WorkImage,
     captions: dict[str, list[str]],
     thumbnailer,
 ) -> CaptionImageItem:
     """构建描述页单张图片条目.
 
     Args:
-        root (Path): 数据集根目录.
-        dir_name (str): 目录名(前端展示用, 根目录为 ``.``).
-        img_path (str): 图片相对数据集根的路径.
-        img_stem (str): 图片 stem.
+        img (WorkImage): 图片及其工作目录.
         captions (dict[str, list[str]]): 该工作目录的 ``captions.json`` 内容.
         thumbnailer: 缩略图管理器.
 
@@ -90,25 +80,24 @@ def _build_item(
     Callers:
         - ``routes/caption.py:list_images``
     """
-    abs_img = root / img_path
-    width, height = image_size(abs_img) if abs_img.is_file() else (0, 0)
+    width, height = image_size(img.abs) if img.abs.is_file() else (0, 0)
     return CaptionImageItem(
-        path=img_path,
-        stem=img_stem,
+        path=img.rel,
+        stem=img.stem,
         width=width,
         height=height,
-        thumbnail_hash=thumbnailer.hash_for(img_path),
-        dir=dir_name,
-        captions=captions.get(Path(img_path).name, []),
+        thumbnail_hash=thumbnailer.hash_for(img.rel),
+        dir=img.work.name,
+        captions=captions.get(img.abs.name, []),
     )
 
 
 @router.post("/list")
-def list_images(request: Request, body: CaptionListBody) -> CaptionListResponse:
+def list_images(ds: DatasetDep, body: CaptionListBody) -> CaptionListResponse:
     """列出所选目录内图片及其 ``captions.json`` 现状.
 
     Args:
-        request (Request): FastAPI 请求对象, 由路由参数注入.
+        ds (Dataset): 当前数据集, 由路由依赖注入.
         body (CaptionListBody): 目录列表请求.
 
     Returns:
@@ -120,42 +109,35 @@ def list_images(request: Request, body: CaptionListBody) -> CaptionListResponse:
     Callers:
         - ``static/js/caption.js:refresh``
     """
-    rt = get_runtime(request)
-    root = rt.root
-    selected = resolve_selected_dirs(root, body.dirs)
+    selected = ds.select(body.dirs)
     if not selected:
         raise HTTPException(400, "请选择目录")
 
-    thumbnailer = rt.thumbnailer
+    thumbnailer = ds.thumbnailer
     items: list[CaptionImageItem] = []
     for work in selected:
-        if work == root:
-            dir_name, prefix = ".", ""
-        else:
-            dir_name, prefix = work.name, work.name
-        store = load_captions(work)
-        for img in scan_images(work, path_prefix=prefix):
-            items.append(
-                _build_item(root, dir_name, img.path, img.stem, store, thumbnailer)
-            )
+        store = load_captions(work.path)
+        for img in work.images():
+            items.append(_build_item(img, store, thumbnailer))
 
     described = sum(1 for it in items if it.captions)
     return CaptionListResponse(
         items=items,
         total=len(items),
         described=described,
-        dirs=[d.name if d != root else "." for d in selected],
+        dirs=[w.name for w in selected],
     )
 
 
 @router.post("/start")
-async def start(request: Request, body: CaptionBody) -> JobSubmitResponse:
+async def start(ds: DatasetDep, request: Request, body: CaptionBody) -> JobSubmitResponse:
     """提交批量描述标注长任务, 返回 job_id.
 
     进度经 SSE 推送(见 ``GET /api/jobs/{job_id}/events``); 任务完成时快照的
     ``result`` 为 ``CaptionResult``.
 
     Args:
+        ds (Dataset): 当前数据集, 由路由依赖注入.
         request (Request): FastAPI 请求对象, 由路由参数注入.
         body (CaptionBody): 描述参数, 含目录、模式、注入范围与预设提示词.
 
@@ -168,13 +150,11 @@ async def start(request: Request, body: CaptionBody) -> JobSubmitResponse:
     Callers:
         - ``static/js/caption.js:startJob``
     """
-    rt = get_runtime(request)
-    root = rt.root
     ok, msg = ollama_status()
     if not ok:
         raise HTTPException(400, msg)
 
-    selected = resolve_selected_dirs(root, body.dirs)
+    selected = ds.select(body.dirs)
     if not selected:
         raise HTTPException(400, "请选择目录")
 
@@ -202,7 +182,6 @@ async def start(request: Request, body: CaptionBody) -> JobSubmitResponse:
             emit(prog.snapshot())
 
         result = await run_caption(
-            root,
             selected,
             modes=modes,
             general_threshold=payload.general_threshold,
@@ -219,14 +198,14 @@ async def start(request: Request, body: CaptionBody) -> JobSubmitResponse:
     job_id = await jobs(request).submit(
         kind="caption",
         group="compute",
-        dataset=rt.name,
+        dataset=ds.name,
         run=run,
         cancel_fn=lambda: setattr(prog, "cancel_requested", True),
     )
     logger.info(
         "描述标注任务提交 dataset=%s dirs=%s modes=%s 注入通用=%s 注入角色=%s NSFW=%s force=%s job_id=%s",
-        rt.name,
-        [d.name if d != root else "." for d in selected],
+        ds.name,
+        [w.name for w in selected],
         modes,
         payload.general_threshold,
         payload.character_threshold,

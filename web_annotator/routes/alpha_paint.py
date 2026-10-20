@@ -11,10 +11,10 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import Response
 from PIL import Image
 
-from routes.deps import get_runtime, resolve_path
+from routes.deps import DatasetDep, resolve_path
 from services.core.atomic import atomic_write_bytes
-from services.core.scanner import scan_images
 from services.core.thumbnailer import image_size
+from services.dataset.runtime import Dataset
 from services.state.mask import has_mask, load_mask, mask_out_path, save_mask
 from services.state.mask_templates import load_templates, save_templates
 from services.models import (
@@ -59,11 +59,11 @@ def _canvas_size(path: Path) -> tuple[int, int]:
     return max(1, round(w * s)), max(1, round(h * s))
 
 
-def _services(request: Request) -> tuple[Path, Path]:
+def _services(ds: Dataset) -> tuple[Path, Path]:
     """获取当前数据集的根目录与蒙版目录路径.
 
     Args:
-        request (Request): FastAPI 请求对象, 由路由参数注入.
+        ds (Dataset): 当前数据集.
 
     Returns:
         tuple[Path, Path]: ``(root, mask_dir)``, 数据集根与 mask 目录绝对路径.
@@ -74,18 +74,17 @@ def _services(request: Request) -> tuple[Path, Path]:
         - ``routes/alpha_paint.py:serve_original_image``
         - ``routes/alpha_paint.py:upload_mask``
     """
-    rt = get_runtime(request)
-    return rt.root, rt.mask_dir
+    return ds.root, ds.mask_dir
 
 
 @router.get("/images")
-def list_paint_images(request: Request, dir: str = "main") -> list[PaintImageItem]:
+def list_paint_images(ds: DatasetDep, dir: str = "main") -> list[PaintImageItem]:
     """列出指定子目录下图片及 mask 是否存在.
 
     按 has_mask 升序排序(未绘制在前), 便于切帧.
 
     Args:
-        request (Request): FastAPI 请求对象, 由路由参数注入.
+        ds (Dataset): 当前数据集, 由依赖注入提供.
         dir (str): 子目录名, 默认 ``main``.
 
     Returns:
@@ -95,21 +94,23 @@ def list_paint_images(request: Request, dir: str = "main") -> list[PaintImageIte
         - ``static/js/paint.js:loadImages``
         - ``static/js/paint.js:refreshAfterMaskDone``
     """
-    root, mask_dir = _services(request)
-    thumbnailer = get_runtime(request).thumbnailer
+    _, mask_dir = _services(ds)
     subdir = (dir or "main").strip().strip("/")
-    images = scan_images(root / subdir, path_prefix=subdir)
+    try:
+        images = ds.work_dir(subdir).images()
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
     result: list[PaintImageItem] = []
     for img in images:
-        w, h = _canvas_size(root / img.path)
+        w, h = _canvas_size(img.abs)
         result.append(
             PaintImageItem(
-                path=img.path,
+                path=img.rel,
                 stem=img.stem,
-                has_mask=has_mask(mask_dir, img.path),
+                has_mask=has_mask(mask_dir, img.rel),
                 width=w,
                 height=h,
-                thumbnail_hash=thumbnailer.hash_for(img.path),
+                thumbnail_hash=ds.thumbnailer.hash_for(img.rel),
             )
         )
     result.sort(key=lambda x: (1 if x.has_mask else 0))
@@ -117,13 +118,13 @@ def list_paint_images(request: Request, dir: str = "main") -> list[PaintImageIte
 
 
 @router.get("/image")
-def serve_original_image(request: Request, path: str = Query(...)) -> Response:
+def serve_original_image(ds: DatasetDep, path: str = Query(...)) -> Response:
     """提供原图 AVIF 预览(透明区域衬白底, 长边压缩到 _PAINT_PREVIEW_MAX).
 
     原图尺寸由 ``/paint/images`` 列表携带, 前端据此按原分辨率绘制蒙版.
 
     Args:
-        request (Request): FastAPI 请求对象, 由路由参数注入.
+        ds (Dataset): 当前数据集, 由依赖注入提供.
         path (str): 相对数据集根的图片路径(含子目录名).
 
     Returns:
@@ -136,7 +137,7 @@ def serve_original_image(request: Request, path: str = Query(...)) -> Response:
         - ``static/js/paint.js:_loadEntry`` (经 ``_fetchBlob('/paint/image', ...)``)
         - ``routes/alpha_paint.py:serve_mask_preview`` (无蒙板时退回此接口)
     """
-    root, _ = _services(request)
+    root, _ = _services(ds)
     src = resolve_path(root, path)
     if not src.is_file():
         raise HTTPException(404, f"Image not found: {path}")
@@ -152,11 +153,11 @@ def serve_original_image(request: Request, path: str = Query(...)) -> Response:
 
 
 @router.get("/mask")
-def get_existing_mask(request: Request, path: str = Query(...)) -> Response:
+def get_existing_mask(ds: DatasetDep, path: str = Query(...)) -> Response:
     """返回原始蒙版(蒙版置入 A 通道的无损 PNG, RGB 恒白); 不存在或尺寸不符则 404.
 
     Args:
-        request (Request): FastAPI 请求对象, 由路由参数注入.
+        ds (Dataset): 当前数据集, 由依赖注入提供.
         path (str): 相对数据集根的图片路径(含子目录名).
 
     Returns:
@@ -169,7 +170,7 @@ def get_existing_mask(request: Request, path: str = Query(...)) -> Response:
         - ``static/js/paint.js:_loadEntry`` (经 ``_fetchBlob('/paint/mask', ...)``)
         - ``static/js/paint.js:reloadCurrentMask`` (经 ``_fetchBlob('/paint/mask', ...)``)
     """
-    root, mask_dir = _services(request)
+    root, mask_dir = _services(ds)
     src = resolve_path(root, path)
     if not src.is_file():
         raise HTTPException(404, "Image not found")
@@ -223,7 +224,7 @@ def compose_mask_preview(base: Path, alpha: np.ndarray, max_size: int = _PAINT_P
 
 
 @router.get("/mask-preview")
-def serve_mask_preview(request: Request, path: str = Query(...)) -> Response:
+def serve_mask_preview(ds: DatasetDep, path: str = Query(...)) -> Response:
     """返回应用蒙板后的透明抠图: 底图 RGB + 蒙板 alpha, AVIF 编码.
 
     优先使用缩略图作为底图; 合成结果缓存到缩略图目录(``<hash>_mask.avif``),
@@ -231,7 +232,7 @@ def serve_mask_preview(request: Request, path: str = Query(...)) -> Response:
     自动失效重生成。无缩略图时退回原图; 无蒙板时退回原图预览(白底)。
 
     Args:
-        request (Request): FastAPI 请求对象, 由路由参数注入.
+        ds (Dataset): 当前数据集, 由依赖注入提供.
         path (str): 相对数据集根的图片路径(含子目录名).
 
     Returns:
@@ -243,8 +244,7 @@ def serve_mask_preview(request: Request, path: str = Query(...)) -> Response:
     Callers:
         - ``static/js/tag_check.js:imageSrc``
     """
-    root, mask_dir = _services(request)
-    thumbnailer = get_runtime(request).thumbnailer
+    root, mask_dir = _services(ds)
     src = resolve_path(root, path)
     if not src.is_file():
         raise HTTPException(404, f"Image not found: {path}")
@@ -252,11 +252,11 @@ def serve_mask_preview(request: Request, path: str = Query(...)) -> Response:
         size = im.size
     alpha = load_mask(mask_dir, path, size)
     if alpha is None:
-        return serve_original_image(request, path=path)
-    base = thumbnailer.get_path(path)
+        return serve_original_image(ds, path=path)
+    base = ds.thumbnailer.get_path(path)
     if not base.is_file():
         base = src
-    cache_path = thumbnailer.thumb_dir / f"{thumbnailer.hash_for(path)}_mask.avif"
+    cache_path = ds.thumbnailer.thumb_dir / f"{ds.thumbnailer.hash_for(path)}_mask.avif"
     mask_file = mask_out_path(mask_dir, path)
     base_mtime = base.stat().st_mtime
     mask_mtime = mask_file.stat().st_mtime
@@ -269,7 +269,7 @@ def serve_mask_preview(request: Request, path: str = Query(...)) -> Response:
 
 
 @router.post("/upload-mask")
-async def upload_mask(request: Request, path: str = Query(...)) -> PaintSaveResponse:
+async def upload_mask(request: Request, ds: DatasetDep, path: str = Query(...)) -> PaintSaveResponse:
     """接收蒙版 RGBA PNG 并写入 mask 目录(取 A 通道).
 
     前端 canvas 导出 RGBA, 蒙版在 alpha 通道(笔刷绘制时 RGB 恒黑),
@@ -277,6 +277,7 @@ async def upload_mask(request: Request, path: str = Query(...)) -> PaintSaveResp
 
     Args:
         request (Request): FastAPI 请求对象, 由路由参数注入, body 为 RGBA PNG 字节.
+        ds (Dataset): 当前数据集, 由依赖注入提供.
         path (str): 相对数据集根的图片路径(含子目录名).
 
     Returns:
@@ -288,7 +289,7 @@ async def upload_mask(request: Request, path: str = Query(...)) -> PaintSaveResp
     Callers:
         - ``static/js/paint.js:doSave``
     """
-    root, mask_dir = _services(request)
+    root, mask_dir = _services(ds)
     src = resolve_path(root, path)
     if not src.is_file():
         raise HTTPException(404, f"Image not found: {path}")
@@ -303,16 +304,16 @@ async def upload_mask(request: Request, path: str = Query(...)) -> PaintSaveResp
     if a.size != size:
         a = a.resize(size, Image.Resampling.LANCZOS)
     save_mask(mask_dir, path, np.array(a, dtype=np.uint8))
-    logger.info("数据集 %s 保存蒙版: 图片 %s, 尺寸 %sx%s", root.name, path, size[0], size[1])
+    logger.info("数据集 %s 保存蒙版: 图片 %s, 尺寸 %sx%s", ds.name, path, size[0], size[1])
     return PaintSaveResponse(saved=str(Path(path).with_suffix(".png")), size=list(size))
 
 
 @router.get("/templates", response_model=TemplatesPayload)
-def get_templates(request: Request) -> TemplatesPayload:
+def get_templates(ds: DatasetDep) -> TemplatesPayload:
     """读取当前数据集的蒙板模板全量集(含各模板 base64 图案).
 
     Args:
-        request (Request): FastAPI 请求对象, 由路由参数注入.
+        ds (Dataset): 当前数据集, 由依赖注入提供.
 
     Returns:
         TemplatesPayload: 模板全量集; 未创建过模板时为空列表.
@@ -324,16 +325,15 @@ def get_templates(request: Request) -> TemplatesPayload:
     Callers:
         - ``static/js/paint.js:_loadTemplates``
     """
-    root, _ = _services(request)
-    return TemplatesPayload(templates=[TemplateItem(**t) for t in load_templates(root)])
+    return TemplatesPayload(templates=[TemplateItem(**t) for t in load_templates(ds.root)])
 
 
 @router.put("/templates", response_model=TemplatesPayload)
-def set_templates(request: Request, body: TemplatesPayload) -> TemplatesPayload:
+def set_templates(ds: DatasetDep, body: TemplatesPayload) -> TemplatesPayload:
     """全量覆盖写入当前数据集的蒙板模板(按数据集持久化到 ``.mask_templates.json``).
 
     Args:
-        request (Request): FastAPI 请求对象, 由路由参数注入.
+        ds (Dataset): 当前数据集, 由依赖注入提供.
         body (TemplatesPayload): 待写入的模板全量集(≤10).
 
     Returns:
@@ -345,7 +345,6 @@ def set_templates(request: Request, body: TemplatesPayload) -> TemplatesPayload:
     Callers:
         - ``static/js/paint.js:_saveTemplates``
     """
-    root, _ = _services(request)
-    save_templates(root, [t.model_dump() for t in body.templates])
-    logger.info("数据集 %s 全量覆盖 %d 个蒙版模板", root.name, len(body.templates))
+    save_templates(ds.root, [t.model_dump() for t in body.templates])
+    logger.info("数据集 %s 全量覆盖 %d 个蒙版模板", ds.name, len(body.templates))
     return body

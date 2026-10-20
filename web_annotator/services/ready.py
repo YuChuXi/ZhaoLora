@@ -26,11 +26,10 @@ from services.models import (
     MaskStats,
     ReadySubset,
     ReadyTomlResult,
-    WorkDirInfo,
 )
 from services.analysis.caption import load_captions
-from services.core.scanner import IMAGE_EXTS, scan_images
-from services.core.work_dir import list_work_dirs
+from services.dataset.runtime import Dataset
+from services.dataset.workdir import WorkDir
 from services.tagging.clean import tag_key
 from services.tagging.stats import count_tags
 
@@ -202,24 +201,47 @@ def reg_datasets() -> list[tuple[int, str]]:
     return entries
 
 
-def _has_images(d: Path) -> bool:
-    """目录内是否至少有一张图.
+def _selected(dataset: Dataset, dirs: list[str] | None) -> list[WorkDir]:
+    """按 ``main`` 优先 + 自然序挑出参与导出的工作目录.
 
     Args:
-        d (Path): 待检查的目录.
+        dataset (Dataset): 当前数据集.
+        dirs (list[str] | None): 参与导出的目录名; None 表示全部.
 
     Returns:
-        bool: 目录内存在图片文件则为 True.
+        list[WorkDir]: 命中的工作目录; 目录名不在数据集中时跳过.
+
     Callers:
-        - ``services/ready.py:_selected_names``
+        - ``services/ready.py:exportable_dirs``
+        - ``services/ready.py:_build_plan``
     """
-    if not d.is_dir():
-        return False
-    return any(p.is_file() and p.suffix.lower() in IMAGE_EXTS for p in d.iterdir())
+    work_dirs = dataset.work_dirs()
+    if dirs is None:
+        return work_dirs
+    available = {w.name: w for w in work_dirs}
+    ordered = ["main"] if "main" in dirs else []
+    ordered.extend(sorted((n for n in dirs if n != "main" and n in available), key=natural_key))
+    return [available[n] for n in ordered]
 
 
-def subdir_mask_stats(root: Path, subdir: str = "main") -> MaskStats:
-    """统计指定子目录的就绪状态: 图片 / 标注 / 描述 / 蒙版计数与就绪判定.
+def exportable_dirs(dataset: Dataset, dirs: list[str] | None = None) -> list[str]:
+    """返回参与导出且有图片的工作目录名(``main`` 优先, 其余按自然序).
+
+    Args:
+        dataset (Dataset): 当前数据集.
+        dirs (list[str] | None): 参与导出的工作目录名; None 表示全部.
+
+    Returns:
+        list[str]: 目录名列表; 无可导出目录时为空.
+
+    Callers:
+        - ``routes/ready.py:export``
+    """
+    return [w.name for w in _selected(dataset, dirs)]
+
+
+def subdir_mask_stats(dataset: Dataset, work: WorkDir) -> MaskStats:
+    """统计一个工作目录的就绪状态: 图片 / 标注 / 描述 / 蒙版计数与就绪判定.
 
     标注与蒙版均按图片逐张判定, 仅统计有对应图片的条目;
     描述计数取该目录 ``captions.json`` 中有条目的图片数;
@@ -227,8 +249,8 @@ def subdir_mask_stats(root: Path, subdir: str = "main") -> MaskStats:
     ready: 标注全部存在, 且蒙版全部存在或全无.
 
     Args:
-        root (Path): 数据集根目录.
-        subdir (str): 子目录名, 默认 ``main``.
+        dataset (Dataset): 当前数据集.
+        work (WorkDir): 待统计的工作目录.
 
     Returns:
         MaskStats: 含 main_count / text_count / caption_count / mask_complete /
@@ -238,29 +260,25 @@ def subdir_mask_stats(root: Path, subdir: str = "main") -> MaskStats:
         - ``routes/ready.py:dirs``
         - ``services/ready.py:_build_plan``
     """
-    root = root.resolve()
-    subdir = (subdir or "main").strip().strip("/")
-    image_dir = root / subdir
-    mask_dir = root / "mask"
-    images = scan_images(image_dir, path_prefix=subdir) if image_dir.is_dir() else []
-    captions = load_captions(image_dir) if images else {}
+    images = work.images()
+    captions = load_captions(work.path) if images else {}
     complete = 0
     none = 0
     text_count = 0
     caption_count = 0
     for img in images:
-        if any(s.endswith(".txt") for s in img.siblings):
+        if any(s.suffix == ".txt" for s in img.siblings):
             text_count += 1
-        if captions.get(Path(img.path).name):
+        if captions.get(img.abs.name):
             caption_count += 1
-        if has_mask(mask_dir, img.path):
+        if has_mask(dataset.mask_dir, img.rel):
             complete += 1
         else:
             none += 1
     total = complete + none
     status = "完整" if total > 0 and none == 0 else "无"
     return MaskStats(
-        name=subdir,
+        name=work.name,
         mask_status=status,
         main_count=total,
         text_count=text_count,
@@ -308,15 +326,14 @@ def _alloc_repeats(res_list: list[int | None], total_repeats: int) -> list[int]:
     return reps
 
 
-def _top_caption_tags(root: Path, names: list[str], trigger_word: str) -> list[str]:
+def _top_caption_tags(works: list[WorkDir], trigger_word: str) -> list[str]:
     """统计参与导出子集标注文件中出现次数最多的标签(按样本去重计数).
 
     标签解析与归一化口径与标签统计页一致(``count_tags``), 触发词自身从结果中
     排除以免与单独写入的触发词重复.
 
     Args:
-        root (Path): 数据集根目录, 标注文件位于各子集目录旁路 ``.txt``.
-        names (list[str]): 参与导出的工作目录名.
+        works (list[WorkDir]): 参与导出的工作目录.
         trigger_word (str): 该数据集触发词, 用于排除自身.
 
     Returns:
@@ -325,7 +342,7 @@ def _top_caption_tags(root: Path, names: list[str], trigger_word: str) -> list[s
     Callers:
         - ``services/ready.py:_prompt_head``
     """
-    result = count_tags([root / n for n in names], per_sample=True)
+    result = count_tags([w.path for w in works], per_sample=True)
     trigger_key = tag_key(trigger_word) if trigger_word else None
     return [
         r.tag for r in result.tags
@@ -365,44 +382,6 @@ class _DirPlan:
         return self.stats.name
 
 
-def _selected_names(root: Path, available: dict[str, WorkDirInfo], dirs: list[str] | None) -> list[str]:
-    """按 ``main`` 优先 + 自然序挑出参与导出的目录名, 仅保留实际存在且有图片的目录.
-
-    Args:
-        root (Path): 数据集根目录(已解析).
-        available (dict[str, WorkDirInfo]): 数据集内含图片的工作目录, 键为目录名.
-        dirs (list[str] | None): 参与导出的目录名; None 表示全部.
-
-    Returns:
-        list[str]: 目录名列表.
-
-    Callers:
-        - ``services/ready.py:exportable_dirs``
-        - ``services/ready.py:_build_plan``
-    """
-    names = [n for n in dirs if n in available] if dirs is not None else list(available)
-    ordered = ["main"] if "main" in names else []
-    ordered.extend(sorted((n for n in names if n != "main"), key=natural_key))
-    return [n for n in ordered if _has_images((root / n).resolve())]
-
-
-def exportable_dirs(root: Path, dirs: list[str] | None = None) -> list[str]:
-    """返回参与导出且有图片的工作目录名(``main`` 优先, 其余按自然序).
-
-    Args:
-        root (Path): 数据集根目录.
-        dirs (list[str] | None): 参与导出的工作目录名; None 表示全部.
-
-    Returns:
-        list[str]: 目录名列表; 无可导出目录时为空.
-
-    Callers:
-        - ``routes/ready.py:export``
-    """
-    root = root.resolve()
-    return _selected_names(root, {d.name: d for d in list_work_dirs(root)}, dirs)
-
-
 def _build_plan(ctx: "_ExportContext") -> list[_DirPlan]:
     """构造函数无关的目录计划: 每个参与导出的目录一项.
 
@@ -421,25 +400,24 @@ def _build_plan(ctx: "_ExportContext") -> list[_DirPlan]:
     Callers:
         - ``services/ready.py:_ExportContext.plan``
     """
-    available = {d.name: d for d in ctx.work_dirs()}
-    selected = [available[n] for n in _selected_names(ctx.root, available, ctx.dirs)]
-    total = sum(d.image_count for d in selected)
+    selected = _selected(ctx.dataset, ctx.dirs)
+    total = sum(len(w.image_files()) for w in selected)
     per_target = -(-ctx.target_images // total) if total else 1
 
     plan: list[_DirPlan] = []
-    for work_dir in selected:
+    for work in selected:
         # 目录内同一分辨率只保留首个, 重复值无独立语义
         resolutions: list[int | None] = list(dict.fromkeys(
-            r for r in ctx.subset_resolutions.get(work_dir.name, [])
+            r for r in ctx.subset_resolutions.get(work.name, [])
             if isinstance(r, int) and r > 0
         )) or [None]
-        stats = subdir_mask_stats(ctx.root, work_dir.name)
+        stats = subdir_mask_stats(ctx.dataset, work)
         plan.append(_DirPlan(
             stats=stats,
-            image_dir=str((ctx.root / work_dir.name).resolve()),
-            mask_dir=str((ctx.root / "mask" / work_dir.name).resolve())
+            image_dir=str(work.path.resolve()),
+            mask_dir=str((ctx.dataset.mask_dir / work.name).resolve())
             if stats.mask_status == "完整" else None,
-            image_count=work_dir.image_count,
+            image_count=len(work.image_files()),
             resolutions=resolutions,
             repeats=_alloc_repeats(resolutions, max(len(resolutions), per_target)),
         ))
@@ -451,7 +429,7 @@ class _ExportContext:
     """单次配置生成的输入与派生数据(模板变量取值的唯一来源).
 
     Attributes:
-        root (Path): 数据集根目录(已解析).
+        dataset (Dataset): 当前数据集.
         mode (LoraMode): 训练模式.
         train_format (str): 配置导出格式(即顶层模板目录名).
         variant (str): 配置变体(即格式模板目录下的子目录名).
@@ -462,7 +440,7 @@ class _ExportContext:
         trigger_word (str): 数据集触发词.
     """
 
-    root: Path
+    dataset: Dataset
     mode: LoraMode
     train_format: str
     variant: str
@@ -471,22 +449,21 @@ class _ExportContext:
     subset_resolutions: dict[str, list[int]]
     use_reg: bool
     trigger_word: str
-    _work_dirs: list[WorkDirInfo] | None = field(default=None, repr=False)
+    _work_dirs: list[WorkDir] | None = field(default=None, repr=False)
     _plan: list[_DirPlan] | None = field(default=None, repr=False)
 
-    def work_dirs(self) -> list[WorkDirInfo]:
-        """数据集内含图片的工作目录(``main`` 置顶), 记忆化以避免重复扫描.
+    def work_dirs(self) -> list[WorkDir]:
+        """数据集内含图片的工作目录(``main`` 置顶).
 
         Returns:
-            list[WorkDirInfo]: 工作目录列表.
+            list[WorkDir]: 工作目录列表.
 
         Callers:
-            - ``services/ready.py:_build_plan``
             - ``services/ready.py:_prompt_head``
             - ``services/ready.py:build_ready``
         """
         if self._work_dirs is None:
-            self._work_dirs = list_work_dirs(self.root)
+            self._work_dirs = self.dataset.work_dirs()
         return self._work_dirs
 
     def plan(self) -> list[_DirPlan]:
@@ -642,8 +619,8 @@ def _prompt_head(ctx: _ExportContext) -> str:
     Callers:
         - ``services/ready.py:_render_files`` (经 ``_VARIABLES`` 按变量名调用)
     """
-    names = ctx.dirs if ctx.dirs is not None else [d.name for d in ctx.work_dirs()]
-    top = _top_caption_tags(ctx.root, names, ctx.trigger_word)
+    works = _selected(ctx.dataset, ctx.dirs)
+    top = _top_caption_tags(works, ctx.trigger_word)
     return ", ".join(t for t in [ctx.trigger_word, *top] if t)
 
 

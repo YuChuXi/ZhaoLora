@@ -5,17 +5,15 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-from routes.deps import get_runtime, jobs, resolve_path
+from routes.deps import DatasetDep, jobs, resolve_path
 from services.analysis.scoring import load_score_json
 from services.core.atomic import atomic_write_text
 from services.core.jobs import EmitFn
 from services.core.natural import natural_key
-from services.core.scanner import scan_images
 from services.core.thumbnailer import image_size
-from services.core.work_dir import list_work_dirs
 from services.models import (
     JobSnapshot,
     JobSubmitResponse,
@@ -41,7 +39,7 @@ from services.models import (
     ConceptQueryResult,
 )
 from services.tagging.clean import add_tag_to_caption, batch_edit_tags, check_tag_in_caption, clean_txt_dirs, delete_tag_from_caption, split_header_body, join_tags_line
-from services.tagging.stats import count_tags, load_translation_map, resolve_selected_dirs, translate_missing_tags
+from services.tagging.stats import count_tags, load_translation_map, translate_missing_tags
 from services.analysis.reranker import (
     rerank,
     model_ready as reranker_model_ready,
@@ -60,22 +58,6 @@ class TagDirsResponse(BaseModel):
     """工作子目录列表."""
 
     dirs: list[WorkDirInfo]
-
-
-def _root(request: Request) -> Path:
-    """返回当前请求绑定的数据集根目录。
-
-    Args:
-        request (Request): FastAPI 请求对象, 由路由参数注入。
-
-    Returns:
-        Path: 数据集根目录的绝对路径。
-    Callers:
-        - ``routes/tag_stats.py:dirs``
-        - ``routes/tag_stats.py:stats``
-        - ``routes/tag_stats.py:translate_missing``
-    """
-    return get_runtime(request).root
 
 
 class StatsBody(BaseModel):
@@ -113,11 +95,11 @@ class CleanBody(BaseModel):
 
 
 @router.get("/dirs")
-def dirs(request: Request) -> TagDirsResponse:
+def dirs(ds: DatasetDep) -> TagDirsResponse:
     """列出工作子目录(含图片的一级子目录)。
 
     Args:
-        request (Request): FastAPI 请求对象, 由路由参数注入。
+        ds (DatasetDep): 当前数据集运行时依赖。
 
     Returns:
         TagDirsResponse: 工作子目录列表。
@@ -125,16 +107,15 @@ def dirs(request: Request) -> TagDirsResponse:
     Callers:
         - ``static/js/nav.js:dirsApi``
     """
-    root = _root(request)
-    return TagDirsResponse(dirs=list_work_dirs(root))
+    return TagDirsResponse(dirs=[w.to_info() for w in ds.work_dirs()])
 
 
 @router.post("/stats")
-def stats(request: Request, body: StatsBody) -> TagStatsResult:
+def stats(ds: DatasetDep, body: StatsBody) -> TagStatsResult:
     """统计标签频率。
 
     Args:
-        request (Request): FastAPI 请求对象, 由路由参数注入。
+        ds (DatasetDep): 当前数据集运行时依赖。
         body (StatsBody): 统计参数, 含目录、采样、过滤等选项。
 
     Returns:
@@ -144,8 +125,8 @@ def stats(request: Request, body: StatsBody) -> TagStatsResult:
         - ``static/js/tags.js:refresh``
         - ``static/js/tag_check.js:loadTags``
     """
-    root = _root(request)
-    selected = resolve_selected_dirs(root, body.dirs)
+    root = ds.root
+    selected = ds.select(body.dirs)
     if not selected:
         raise HTTPException(400, "请选择目录")
     if body.min_count < 1:
@@ -157,7 +138,7 @@ def stats(request: Request, body: StatsBody) -> TagStatsResult:
 
     zh_map = load_translation_map(root)
     result = count_tags(
-        selected,
+        [w.path for w in selected],
         zh_map=zh_map,
         lower=body.lower,
         underscores=body.underscores,
@@ -171,14 +152,14 @@ def stats(request: Request, body: StatsBody) -> TagStatsResult:
     )
     logger.info(
         "标签统计 dataset=%s dirs=%s min_count=%d section=%s",
-        request.state.runtime.root.name,
+        ds.name,
         len(selected),
         body.min_count,
         body.section,
     )
     return result.model_copy(
         update={
-            "dirs": [p.name if p != root else "." for p in selected],
+            "dirs": [w.name for w in selected],
             "zh_cache_size": len(zh_map),
         }
     )
@@ -191,11 +172,11 @@ class TranslateMissingBody(BaseModel):
 
 
 @router.post("/translate-missing")
-async def translate_missing(request: Request, body: TranslateMissingBody) -> dict:
+async def translate_missing(ds: DatasetDep, body: TranslateMissingBody) -> dict:
     """异步批量翻译标签, 保存到共享缓存。
 
     Args:
-        request (Request): FastAPI 请求对象, 由路由参数注入。
+        ds (DatasetDep): 当前数据集运行时依赖。
         body (TranslateMissingBody): 待翻译标签列表。
 
     Returns:
@@ -204,7 +185,7 @@ async def translate_missing(request: Request, body: TranslateMissingBody) -> dic
     Callers:
         - ``static/js/tags.js:translateMissing``
     """
-    root = _root(request)
+    root = ds.root
     result = await translate_missing_tags(body.tags, root)
     logger.info(
         "补译缺失标签 dataset=%s 目标=%d 已翻译=%d",
@@ -216,7 +197,7 @@ async def translate_missing(request: Request, body: TranslateMissingBody) -> dic
 
 
 @router.post("/clean")
-async def clean(request: Request, body: CleanBody) -> JobSubmitResponse:
+async def clean(ds: DatasetDep, body: CleanBody) -> JobSubmitResponse:
     """提交标签清洗长任务。
 
     返回 job_id；结束事件的 result 为清洗结果。
@@ -228,10 +209,10 @@ async def clean(request: Request, body: CleanBody) -> JobSubmitResponse:
     Returns:
         JobSubmitResponse: 含 job_id, 前端据以订阅 SSE 进度。
     """
-    rt = get_runtime(request)
+    rt = ds
     root = rt.root
-    selected = resolve_selected_dirs(root, body.dirs)
-    if not selected:
+    works = rt.select(body.dirs)
+    if not works:
         raise HTTPException(400, "请选择目录")
 
     scores = load_score_json(root, ".aesthetic_scores.json") if body.inject_pony_score else {}
@@ -259,7 +240,7 @@ async def clean(request: Request, body: CleanBody) -> JobSubmitResponse:
             )
         )
         result = clean_txt_dirs(
-            selected,
+            [w.path for w in works],
             drop=payload.drop,
             drop_contains=payload.drop_contains,
             promote=payload.promote,
@@ -275,7 +256,7 @@ async def clean(request: Request, body: CleanBody) -> JobSubmitResponse:
         )
         result = result.model_copy(
             update={
-                "dirs": [p.name if p != root else "." for p in selected],
+                "dirs": [w.name for w in works],
             }
         )
         emit(
@@ -321,7 +302,7 @@ class BatchEditBody(BaseModel):
 
 
 @router.post("/batch-edit")
-async def batch_edit(request: Request, body: BatchEditBody) -> JobSubmitResponse:
+async def batch_edit(ds: DatasetDep, body: BatchEditBody) -> JobSubmitResponse:
     """批量删除/添加标签。
 
     返回 job_id；结束事件的 result 为清洗结果。
@@ -336,10 +317,10 @@ async def batch_edit(request: Request, body: BatchEditBody) -> JobSubmitResponse
     Callers:
         - ``static/js/tags.js:runBatchEdit``
     """
-    rt = get_runtime(request)
+    rt = ds
     root = rt.root
-    selected = resolve_selected_dirs(root, body.dirs)
-    if not selected:
+    works = rt.select(body.dirs)
+    if not works:
         raise HTTPException(400, "请选择目录")
     if (
         not body.delete_tags and not body.add_tags and not body.replace_pairs
@@ -379,7 +360,7 @@ async def batch_edit(request: Request, body: BatchEditBody) -> JobSubmitResponse
             )
         )
         result = batch_edit_tags(
-            selected,
+            [w.path for w in works],
             delete_tags=payload.delete_tags,
             add_tags=payload.add_tags,
             replace_pairs=[(p[0], p[1]) for p in payload.replace_pairs if len(p) >= 2],
@@ -480,7 +461,7 @@ def _build_check_item(
 
 
 @router.post("/check")
-def check(request: Request, body: TagCheckBody) -> TagCheckResponse:
+def check(ds: DatasetDep, body: TagCheckBody) -> TagCheckResponse:
     """批量检查目录内图片旁路 ``.txt`` 中标签的存在与位置。
 
     Args:
@@ -493,27 +474,23 @@ def check(request: Request, body: TagCheckBody) -> TagCheckResponse:
     Callers:
         - ``static/js/tag_check.js:runCheck``
     """
-    rt = get_runtime(request)
+    rt = ds
     root = rt.root
     if body.position not in TAG_CHECK_POSITIONS:
         raise HTTPException(400, f"position 非法: {body.position}")
 
     tag = body.tag.strip()
-    selected = resolve_selected_dirs(root, body.dirs)
-    if not selected:
+    works = rt.select(body.dirs)
+    if not works:
         raise HTTPException(400, "请选择目录")
 
     thumbnailer = rt.thumbnailer
     items: list[TagCheckItem] = []
-    for work in selected:
-        if work == root:
-            dir_name, prefix = ".", ""
-        else:
-            dir_name, prefix = work.name, work.name
-        for img in scan_images(work, path_prefix=prefix):
+    for work in works:
+        for img in work.images():
             items.append(
                 _build_check_item(
-                    img.path, img.stem, work, dir_name, root, thumbnailer, tag, body.position
+                    img.rel, img.stem, work.path, work.name, root, thumbnailer, tag, body.position
                 )
             )
 
@@ -537,7 +514,7 @@ def check(request: Request, body: TagCheckBody) -> TagCheckResponse:
 
 
 @router.post("/edit-one")
-def edit_one(request: Request, body: TagEditOneBody) -> TagCheckItem:
+def edit_one(ds: DatasetDep, body: TagEditOneBody) -> TagCheckItem:
     """编辑单张图片的旁路 ``.txt``, 在指定位置添加标签后返回最新检查结果。
 
     Args:
@@ -554,7 +531,7 @@ def edit_one(request: Request, body: TagEditOneBody) -> TagCheckItem:
         - ``static/js/tag_check.js:onCardClick``
         - ``static/js/tag_check.js:singleTagOp``
     """
-    rt = get_runtime(request)
+    rt = ds
     root = rt.root
     if body.position not in TAG_INSERT_POSITIONS:
         raise HTTPException(400, f"position 非法: {body.position}")
@@ -600,7 +577,7 @@ class TagDeleteOneBody(BaseModel):
 
 
 @router.post("/delete-one")
-def delete_one(request: Request, body: TagDeleteOneBody) -> TagCheckItem:
+def delete_one(ds: DatasetDep, body: TagDeleteOneBody) -> TagCheckItem:
     """从单张图片旁路 ``.txt`` 中删除指定标签后返回最新检查结果。
 
     Args:
@@ -614,7 +591,7 @@ def delete_one(request: Request, body: TagDeleteOneBody) -> TagCheckItem:
         - ``static/js/tag_check.js:onCardClick``
         - ``static/js/tag_check.js:singleTagOp``
     """
-    rt = get_runtime(request)
+    rt = ds
     root = rt.root
     if not body.tag.strip():
         raise HTTPException(400, "标签不能为空")
@@ -651,11 +628,8 @@ def delete_one(request: Request, body: TagDeleteOneBody) -> TagCheckItem:
 
 
 @router.post("/embedding/status", response_model=EmbeddingStatusResponse)
-def embedding_status(request: Request) -> EmbeddingStatusResponse:
+def embedding_status() -> EmbeddingStatusResponse:
     """检查向量重排序模型是否可用。
-
-    Args:
-        request (Request): FastAPI 请求对象, 由路由参数注入。
 
     Returns:
         EmbeddingStatusResponse: 含 ok 与 message 字段。
@@ -668,14 +642,14 @@ def embedding_status(request: Request) -> EmbeddingStatusResponse:
 
 
 @router.post("/embedding/query")
-async def embedding_query(request: Request, body: EmbeddingQueryBody) -> JobSubmitResponse:
+async def embedding_query(ds: DatasetDep, body: EmbeddingQueryBody) -> JobSubmitResponse:
     """按查询文本对候选图片实时重排序(异步长任务, 带进度条)。
 
     Reranker 为 cross-encoder, 无法预计算向量, 须对目录内全部图片逐张
     (query, image) 评分, 耗时较长, 故提交 JobManager, 由前端以 SSE 订阅进度,
     任务完成时在 result 中携带排序结果。
 
-    同一数据集最近 ``MAX_ENTRIES`` 次查询结果缓存于 ``DatasetRuntime.sort_cache``：
+    同一数据集最近 ``MAX_ENTRIES`` 次查询结果缓存于 ``Dataset.sort_cache``：
     命中(查询文本与目录集合一致)时任务立即返回缓存排序, 无需重复调用模型；
     命中即提升该查询在最近列表中的位置, 避免被后续查询挤出。
     缓存排序之后新增的图片会重新调用模型评分, 按相似度并入结果并回写缓存,
@@ -692,29 +666,23 @@ async def embedding_query(request: Request, body: EmbeddingQueryBody) -> JobSubm
         - ``static/js/tag_check.js:embSort``
         - ``static/js/app.js:searchSort``
     """
-    rt = get_runtime(request)
+    rt = ds
     root = rt.root
-    selected = resolve_selected_dirs(root, body.dirs)
-    if not selected:
+    works = rt.select(body.dirs)
+    if not works:
         raise HTTPException(400, "请选择目录")
-
     if not body.query.strip():
         raise HTTPException(400, "查询文本不能为空")
 
     query_text = body.query.strip()
-    dirs_key = tuple(sorted((p.name if p != root else "." for p in selected), key=natural_key))
+    dirs_key = tuple(sorted((w.name for w in works), key=natural_key))
     cache = rt.sort_cache
     cached = cache.get(query_text, dirs_key)
 
     # 收集所有候选图片的相对路径与绝对路径(命中缓存时用于补全, 未命中时用于评分)
-    candidates: list[tuple[str, Path]] = []
-    for work in selected:
-        if work == root:
-            prefix = ""
-        else:
-            prefix = work.name
-        for img in scan_images(work, path_prefix=prefix):
-            candidates.append((img.path, root / img.path))
+    candidates: list[tuple[str, Path]] = [
+        (img.rel, img.abs) for work in works for img in work.images()
+    ]
 
     if cached is not None:
         # 找出缓存排序之后新增的图片, 命中时重新调用模型评分后并入结果
@@ -839,11 +807,11 @@ async def embedding_query(request: Request, body: EmbeddingQueryBody) -> JobSubm
 
 
 @router.get("/embedding/history", response_model=EmbeddingHistoryResponse)
-def embedding_history(request: Request) -> EmbeddingHistoryResponse:
+def embedding_history(ds: DatasetDep) -> EmbeddingHistoryResponse:
     """返回当前数据集最近若干次语义排序查询历史(新的在前, 至多 10 条)。
 
     Args:
-        request (Request): FastAPI 请求对象, 由路由参数注入。
+        ds (DatasetDep): 当前数据集运行时依赖。
 
     Returns:
         EmbeddingHistoryResponse: 含 query 与 time 的历史列表。
@@ -851,7 +819,7 @@ def embedding_history(request: Request) -> EmbeddingHistoryResponse:
     Callers:
         - ``static/js/app.js:searchLoadHistory``
     """
-    rt = get_runtime(request)
+    rt = ds
     return EmbeddingHistoryResponse(
         queries=[
             EmbeddingHistoryItem(query=q, time=t)
@@ -861,7 +829,7 @@ def embedding_history(request: Request) -> EmbeddingHistoryResponse:
 
 
 @router.post("/embedding/batch-tag", response_model=EmbeddingBatchTagResponse)
-def embedding_batch_tag(request: Request, body: EmbeddingBatchTagBody) -> EmbeddingBatchTagResponse:
+def embedding_batch_tag(ds: DatasetDep, body: EmbeddingBatchTagBody) -> EmbeddingBatchTagResponse:
     """按已计算相似度的路径批量添加或删除标签(同步)。
 
     相似度由 ``embedding/query`` 实时评分得出并缓存于前端, 本接口直接
@@ -877,7 +845,7 @@ def embedding_batch_tag(request: Request, body: EmbeddingBatchTagBody) -> Embedd
     Callers:
         - ``static/js/tag_check.js:embBatchTag``
     """
-    root = get_runtime(request).root
+    root = ds.root
     if not body.paths:
         raise HTTPException(400, "无匹配图片, 请先按相似度排序")
     if not body.tag.strip():
@@ -945,7 +913,7 @@ def delete_tag_from_caption_fuzzy(raw: str, tag: str) -> str:
 
 
 @router.post("/concept/query")
-async def concept_query(request: Request, body: ConceptQueryBody) -> JobSubmitResponse:
+async def concept_query(ds: DatasetDep, body: ConceptQueryBody) -> JobSubmitResponse:
     """按概念提示词对候选图片执行文本提示概念分割(异步长任务, 带进度条)。
 
     SAM3 对每张图片逐张分割并计算掩码占比, 耗时较长, 故提交 JobManager,
@@ -962,10 +930,10 @@ async def concept_query(request: Request, body: ConceptQueryBody) -> JobSubmitRe
     Callers:
         - ``static/js/tag_check.js:embSort``
     """
-    rt = get_runtime(request)
+    rt = ds
     root = rt.root
-    selected = resolve_selected_dirs(root, body.dirs)
-    if not selected:
+    works = rt.select(body.dirs)
+    if not works:
         raise HTTPException(400, "请选择目录")
 
     if not body.query.strip():
@@ -975,14 +943,9 @@ async def concept_query(request: Request, body: ConceptQueryBody) -> JobSubmitRe
     if not ok:
         raise HTTPException(400, msg)
 
-    candidates: list[tuple[str, Path]] = []
-    for work in selected:
-        if work == root:
-            prefix = ""
-        else:
-            prefix = work.name
-        for img in scan_images(work, path_prefix=prefix):
-            candidates.append((img.path, root / img.path))
+    candidates: list[tuple[str, Path]] = [
+        (img.rel, img.abs) for work in works for img in work.images()
+    ]
 
     concept = body.query.strip()
     total = len(candidates)

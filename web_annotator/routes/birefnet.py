@@ -7,12 +7,11 @@ import logging
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from routes.deps import get_runtime, jobs, resolve_path
+from routes.deps import DatasetDep, jobs, resolve_path
 from services.core.jobs import EmitFn
-from services.core.scanner import IMAGE_EXTS
+from services.dataset.workdir import IMAGE_EXTS
 from services.analysis.birefnet import (
     BirefnetProgress,
-    collect_images,
     run_birefnet_mask,
 )
 from services.analysis.mask_expression import ExpressionError, parse
@@ -50,7 +49,7 @@ class MaskGenerateResponse(BaseModel):
 
 
 @router.post("/mask-generate")
-async def mask_generate(request: Request, body: MaskGenerateBody) -> MaskGenerateResponse:
+async def mask_generate(request: Request, ds: DatasetDep, body: MaskGenerateBody) -> MaskGenerateResponse:
     """启动蒙版生成任务 (BiRefNet 或 SAM3 概念分割).
 
     依据 ``mode`` 分发:
@@ -62,18 +61,21 @@ async def mask_generate(request: Request, body: MaskGenerateBody) -> MaskGenerat
     Callers:
         - ``static/js/paint.js:``
     """
-    rt = get_runtime(request)
     if body.mode not in MASK_MODES:
         raise HTTPException(400, f"未知生成方式: {body.mode}")
 
     if body.path:
-        src = resolve_path(rt.root, body.path)
+        src = resolve_path(ds.root, body.path)
         if not src.is_file() or src.suffix.lower() not in IMAGE_EXTS:
             raise HTTPException(400, f"无效图片路径: {body.path}")
-        image_rel_paths = [body.path]
+        images = [(body.path, src)]
     else:
-        image_rel_paths = collect_images(rt.root, subdir=body.dir)
-    if not image_rel_paths:
+        try:
+            work = ds.work_dir(body.dir)
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from e
+        images = [(img.rel, img.abs) for img in work.images()]
+    if not images:
         raise HTTPException(400, "没有可处理的图片")
 
     expression = body.expression or ""
@@ -98,8 +100,8 @@ async def mask_generate(request: Request, body: MaskGenerateBody) -> MaskGenerat
 
         if body.mode == "sam3":
             run_sam3_expression_mask(
-                image_rel_paths=[(rel, rt.root / rel) for rel in image_rel_paths],
-                mask_dir=rt.mask_dir,
+                image_rel_paths=images,
+                mask_dir=ds.mask_dir,
                 expression=expression,
                 skip_existing=body.skip_existing,
                 progress=prog,
@@ -107,9 +109,8 @@ async def mask_generate(request: Request, body: MaskGenerateBody) -> MaskGenerat
             )
         else:
             run_birefnet_mask(
-                image_rel_paths=image_rel_paths,
-                data_dir=rt.root,
-                mask_dir=rt.mask_dir,
+                images=images,
+                mask_dir=ds.mask_dir,
                 mask_expand=body.mask_expand,
                 mask_shrink=body.mask_shrink,
                 mask_min=body.mask_min,
@@ -125,13 +126,13 @@ async def mask_generate(request: Request, body: MaskGenerateBody) -> MaskGenerat
     job_id = await jobs(request).submit(
         kind="mask_generate",
         group="compute",
-        dataset=rt.name,
+        dataset=ds.name,
         run=run,
         cancel_fn=lambda: setattr(prog, "cancel_requested", True),
     )
     logger.info(
         "蒙版生成任务提交 dataset=%s mode=%s images=%d",
-        request.state.runtime.root.name,
+        ds.name,
         body.mode,
         len(image_rel_paths),
     )

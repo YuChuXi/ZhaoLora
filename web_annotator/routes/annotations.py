@@ -5,19 +5,16 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter
 from pydantic import BaseModel, Field
 
-from routes.deps import get_runtime, resolve_path
+from routes.deps import DatasetDep, parse_dir_names, resolve_path
 from services.models import (
     AnnotatorStateResponse,
     CountResponse,
     SelectAllResponse,
     ToggleResponse,
 )
-from services.core.scanner import scan_images
-from services.state.annotator import StateManager
-from services.core.work_dir import parse_dir_names, resolve_subdirs
 
 logger = logging.getLogger(__name__)
 
@@ -44,44 +41,6 @@ class RestoreBody(BaseModel):
     paths: list[str] = Field(default_factory=list)
 
 
-def _root(request: Request) -> Path:
-    """返回当前请求绑定的数据集根目录。
-
-    Args:
-        request (Request): FastAPI 请求对象, 由路由参数注入。
-
-    Returns:
-        Path: 数据集根目录的绝对路径。
-    Callers:
-        - ``routes/annotations.py:apply_delete``
-        - ``routes/annotations.py:get_state``
-        - ``routes/annotations.py:restore``
-        - ``routes/annotations.py:select_all``
-        - ``routes/annotations.py:toggle``
-    """
-    return get_runtime(request).root
-
-
-def _state(request: Request) -> StateManager:
-    """返回当前请求绑定的标注状态管理器。
-
-    Args:
-        request (Request): FastAPI 请求对象, 由路由参数注入。
-
-    Returns:
-        StateManager: 标注状态管理器实例。
-    Callers:
-        - ``routes/annotations.py:apply_delete``
-        - ``routes/annotations.py:deselect_all``
-        - ``routes/annotations.py:get_state``
-        - ``routes/annotations.py:restore``
-        - ``routes/annotations.py:select_all``
-        - ``routes/annotations.py:select_range``
-        - ``routes/annotations.py:toggle``
-    """
-    return get_runtime(request).state_manager
-
-
 def _rel_under(root: Path, rel: str) -> str:
     """校验相对路径并返回 posix 相对路径。
 
@@ -102,11 +61,11 @@ def _rel_under(root: Path, rel: str) -> str:
 
 
 @router.post("/toggle")
-def toggle(request: Request, body: ToggleBody) -> ToggleResponse:
+def toggle(ds: DatasetDep, body: ToggleBody) -> ToggleResponse:
     """切换单张图片的选中状态。
 
     Args:
-        request (Request): FastAPI 请求对象, 由路由参数注入。
+        ds (Dataset): 当前数据集, 由路由依赖注入。
         body (ToggleBody): 含图片相对路径。
 
     Returns:
@@ -115,13 +74,13 @@ def toggle(request: Request, body: ToggleBody) -> ToggleResponse:
     Callers:
         - ``static/js/store.js:toggle``
     """
-    path = _rel_under(_root(request), body.path)
-    selected = _state(request).toggle(path)
+    path = _rel_under(ds.root, body.path)
+    selected = ds.state_manager.toggle(path)
     return ToggleResponse(path=path, selected=selected)
 
 
 @router.post("/select-all")
-def select_all(request: Request, body: SelectAllBody) -> SelectAllResponse:
+def select_all(ds: DatasetDep, body: SelectAllBody) -> SelectAllResponse:
     """全选当前视图的图片.
 
     工作目录视图与回收站视图互斥, 全选范围即视图可见集合: ``show_trash``
@@ -130,7 +89,7 @@ def select_all(request: Request, body: SelectAllBody) -> SelectAllResponse:
     仅方向不同.
 
     Args:
-        request (Request): FastAPI 请求对象, 由路由参数注入。
+        ds (Dataset): 当前数据集, 由路由依赖注入。
         body (SelectAllBody): 含目录列表、单个目录名与当前视图是否为回收站视图。
 
     Returns:
@@ -139,32 +98,23 @@ def select_all(request: Request, body: SelectAllBody) -> SelectAllResponse:
     Callers:
         - ``static/js/store.js:selectAll``
     """
-    root = _root(request)
-    state_mgr = _state(request)
     names = body.dirs or parse_dir_names(None, body.dir)
-    try:
-        pairs = resolve_subdirs(root, names)
-    except ValueError as e:
-        raise HTTPException(400, str(e)) from e
+    works = ds.select_or_main(names)
 
     all_paths: list[str] = []
-    for sub, work in pairs:
-        if body.show_trash:
-            trash_work = state_mgr.trash_dir / sub
-            if trash_work.is_dir():
-                all_paths.extend(img.path for img in scan_images(trash_work, path_prefix=sub))
-        else:
-            all_paths.extend(img.path for img in scan_images(work, path_prefix=sub))
-    count = state_mgr.select_all(all_paths)
-    return SelectAllResponse(selected=count, dirs=[s for s, _ in pairs])
+    for work in works:
+        scan_work = work.trashed() if body.show_trash else work
+        all_paths.extend(img.rel for img in scan_work.images())
+    count = ds.state_manager.select_all(all_paths)
+    return SelectAllResponse(selected=count, dirs=[w.name for w in works])
 
 
 @router.post("/deselect-all")
-def deselect_all(request: Request) -> CountResponse:
+def deselect_all(ds: DatasetDep) -> CountResponse:
     """取消全选。
 
     Args:
-        request (Request): FastAPI 请求对象, 由路由参数注入。
+        ds (Dataset): 当前数据集, 由路由依赖注入。
 
     Returns:
         CountResponse: 含已选数量(恒为 0)。
@@ -172,7 +122,7 @@ def deselect_all(request: Request) -> CountResponse:
     Callers:
         - ``static/js/store.js:deselectAll``
     """
-    _state(request).deselect_all()
+    ds.state_manager.deselect_all()
     return CountResponse(selected=0)
 
 
@@ -183,11 +133,11 @@ class SelectRangeBody(BaseModel):
 
 
 @router.post("/select-range")
-def select_range(request: Request, body: SelectRangeBody) -> CountResponse:
+def select_range(ds: DatasetDep, body: SelectRangeBody) -> CountResponse:
     """将给定路径全部标为选中。
 
     Args:
-        request (Request): FastAPI 请求对象, 由路由参数注入。
+        ds (Dataset): 当前数据集, 由路由依赖注入。
         body (SelectRangeBody): 含要选中的路径列表。
 
     Returns:
@@ -196,16 +146,16 @@ def select_range(request: Request, body: SelectRangeBody) -> CountResponse:
     Callers:
         - ``static/js/store.js:selectRange``
     """
-    count = _state(request).select_all(body.paths)
+    count = ds.state_manager.select_all(body.paths)
     return CountResponse(selected=count)
 
 
 @router.post("/apply")
-def apply_delete(request: Request) -> CountResponse:
+def apply_delete(ds: DatasetDep) -> CountResponse:
     """将选中的图片移入回收站。
 
     Args:
-        request (Request): FastAPI 请求对象, 由路由参数注入。
+        ds (Dataset): 当前数据集, 由路由依赖注入。
 
     Returns:
         CountResponse: 含已移动数量。
@@ -213,8 +163,8 @@ def apply_delete(request: Request) -> CountResponse:
     Callers:
         - ``static/js/store.js:applyDelete``
     """
-    root = _root(request)
-    state_mgr = _state(request)
+    root = ds.root
+    state_mgr = ds.state_manager
     state = state_mgr.get()
     selected = [_rel_under(root, p) for p in state.selected]
     if not selected:
@@ -231,23 +181,23 @@ def apply_delete(request: Request) -> CountResponse:
         state_mgr._write(state)
         moved += len(already_gone)
 
-    idx = get_runtime(request).color_index
+    idx = ds.color_index
     if idx is not None:
         idx.clear()
     logger.info("数据集 dataset=%s 删除到回收站 %s 张 (%d 张源文件已不存在, 仅更新状态)",
-                request.state.runtime.root.name, moved, len(already_gone))
+                ds.name, moved, len(already_gone))
     return CountResponse(moved=moved)
 
 
 @router.post("/restore")
-def restore(request: Request, body: RestoreBody) -> CountResponse:
+def restore(ds: DatasetDep, body: RestoreBody) -> CountResponse:
     """从回收站恢复指定的选中图片.
 
     只恢复 ``body.paths`` 中已登记在回收站表里的路径; 恢复全部由前端
     先全选再传入完整路径列表完成, 本接口不设"空列表 = 全部"的隐含语义.
 
     Args:
-        request (Request): FastAPI 请求对象, 由路由参数注入。
+        ds (Dataset): 当前数据集, 由路由依赖注入。
         body (RestoreBody): 含要恢复的路径列表。
 
     Returns:
@@ -256,26 +206,26 @@ def restore(request: Request, body: RestoreBody) -> CountResponse:
     Callers:
         - ``static/js/store.js:restore``
     """
-    root = _root(request)
-    state_mgr = _state(request)
+    root = ds.root
+    state_mgr = ds.state_manager
     trashed = state_mgr.get().trashed
     to_restore = [_rel_under(root, p) for p in body.paths if p in trashed]
     if not to_restore:
         return CountResponse(restored=0)
     restored = state_mgr.restore(to_restore)
-    idx = get_runtime(request).color_index
+    idx = ds.color_index
     if idx is not None:
         idx.clear()
-    logger.info("数据集 dataset=%s 从回收站恢复 %s 张", request.state.runtime.root.name, restored)
+    logger.info("数据集 dataset=%s 从回收站恢复 %s 张", ds.name, restored)
     return CountResponse(restored=restored)
 
 
 @router.get("/state")
-def get_state(request: Request, dirs: str = "", dir: str = "main") -> AnnotatorStateResponse:
+def get_state(ds: DatasetDep, dirs: str = "", dir: str = "main") -> AnnotatorStateResponse:
     """获取当前状态快照(含统计)。
 
     Args:
-        request (Request): FastAPI 请求对象, 由路由参数注入。
+        ds (Dataset): 当前数据集, 由路由依赖注入。
         dirs (str): 逗号分隔的子目录名, 默认空。
         dir (str): 单个子目录名, 默认 ``main``。
 
@@ -285,13 +235,9 @@ def get_state(request: Request, dirs: str = "", dir: str = "main") -> AnnotatorS
     Callers:
         - ``static/js/api.js:getState``
     """
-    root = _root(request)
-    state_mgr = _state(request)
     names = parse_dir_names(dirs, dir)
-    try:
-        pairs = resolve_subdirs(root, names)
-    except ValueError as e:
-        raise HTTPException(400, str(e)) from e
+    works = ds.select_or_main(names)
+    state_mgr = ds.state_manager
 
     state = state_mgr.get()
     trashed = set(state.trashed.keys())
@@ -299,15 +245,14 @@ def get_state(request: Request, dirs: str = "", dir: str = "main") -> AnnotatorS
     alive_n = 0
     trashed_n = 0
     selected_n = 0
-    for sub, work in pairs:
-        prefix = sub + "/"
-        images = scan_images(work, path_prefix=sub)
-        alive_n += sum(1 for img in images if img.path not in trashed)
+    for work in works:
+        prefix = work.prefix + "/"
+        alive_n += sum(1 for img in work.images() if img.rel not in trashed)
         trashed_n += sum(1 for p in trashed if p.startswith(prefix))
         selected_n += sum(1 for p in selected_map if p.startswith(prefix))
     return AnnotatorStateResponse(
-        dirs=[s for s, _ in pairs],
-        dir=pairs[0][0],
+        dirs=[w.name for w in works],
+        dir=works[0].name,
         total=alive_n,
         selected=selected_n,
         trashed=trashed_n,
