@@ -22,10 +22,10 @@ def natural_key(s: str) -> tuple:
         tuple: 逐段三元组组成的元组.
 
     Callers:
-        - ``services/core/scanner.py:collect_images`` / ``scan_images``
-        - ``services/core/work_dir.py:pin_main``
+        - ``services/dataset/workdir.py:WorkDir.images`` / ``WorkDir.image_files``
+        - ``services/dataset/workdir.py:WorkDir.scan``
         - ``services/core/video_scanner.py:scan_videos``
-        - ``services/dataset/layout.py:DatasetLayout.list_part_dirs``
+        - ``services/dataset/runtime.py:Dataset.list_part_dirs``
         - ``services/dataset/runtime.py:DatasetRegistry.names``
         - ``services/state/tasks.py:TaskStore.list_entries`` / ``reorder``
         - ``services/state/archiver.py:_list_files``

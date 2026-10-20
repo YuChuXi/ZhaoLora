@@ -17,8 +17,8 @@ from PIL import Image, UnidentifiedImageError
 
 from services.models import JobSnapshot
 from services.core.atomic import atomic_write_text
-from services.core.scanner import IMAGE_EXTS, collect_images
 from services.core.device import register_model
+from services.dataset.workdir import IMAGE_EXTS, WorkDir
 
 # ---------------------------------------------------------------------------
 # 常量
@@ -377,8 +377,7 @@ def load_quality_scores(root: Path) -> dict[str, float]:
 
 
 def _run_scoring(
-    dirs: list[Path], *,
-    root: Path,
+    works: list[WorkDir], *,
     models: Any,
     scores_filename: str,
     model_name: str,
@@ -393,8 +392,7 @@ def _run_scoring(
     持有并注入.
 
     Args:
-        dirs: 要评分的子目录列表(自动去重). 
-        root: 数据集根目录(仅关键字参数). 
+        works: 要评分的工作目录(自动去重). 
         models: 模型句柄, 由 ``run_scoring`` 经上下文管理器注入. 
         scores_filename: 分数 JSON 文件名(仅关键字参数). 
         model_name: 模型名称, 用于进度消息(仅关键字参数). 
@@ -405,14 +403,15 @@ def _run_scoring(
     Callers:
         - ``services/analysis/scoring.py:run_scoring``
     """
-    root = root.resolve()
-    items = collect_images(list(dict.fromkeys(dirs)))
+    root = works[0].dataset.root
+    unique = list(dict.fromkeys(works))
+    items = [p for work in unique for p in work.image_files()]
     progress.total = len(items)
     progress.done = progress.ok = progress.skipped = progress.failed = 0
     progress.status = "running"
     progress.phase = "loading"
     progress.message = f"共 {len(items)} 张, 加载{model_name}模型…"
-    progress.log(f"开始: dirs={[d.name for d in dirs]}, total={len(items)}")
+    progress.log(f"开始: dirs={[w.name for w in unique]}, total={len(items)}")
     if on_update: on_update()
 
     if not items:
@@ -472,9 +471,8 @@ def _run_scoring(
 
 
 def run_scoring(
-    dirs: list[Path], *,
+    works: list[WorkDir], *,
     kind: str,
-    root: Path,
     progress: ScoreProgress | None = None,
     on_update: Callable[[], None] | None = None,
 ) -> None:
@@ -485,9 +483,8 @@ def run_scoring(
     加载与释放. 模型的设备与生命周期由 ``device`` 模块统一管理.
 
     Args:
-        dirs: 要评分的子目录列表. 
+        works: 要评分的工作目录. 
         kind: 评分类型, ``"aesthetic"`` 或 ``"quality"``(仅关键字参数). 
-        root: 数据集根目录(仅关键字参数). 
         progress: 进度追踪实例(仅关键字, 为 None 时自动创建). 
         on_update: 每次状态变更后的回调(仅关键字). 
 
@@ -505,7 +502,7 @@ def run_scoring(
     if kind == "aesthetic":
         with _AES_MODEL as models:
             _run_scoring(
-                dirs, root=root, models=models,
+                works, models=models,
                 scores_filename=AESTHETIC_SCORES, model_name="美学",
                 score_one=lambda src, m: _aes_score_one(
                     Image.open(src), m[0], m[1], m[2],
@@ -515,7 +512,7 @@ def run_scoring(
     else:
         with _Q_MODEL as models:
             _run_scoring(
-                dirs, root=root, models=models,
+                works, models=models,
                 scores_filename=QUALITY_SCORES, model_name="Q-ReAlign",
                 score_one=_q_score_one,
                 progress=progress, on_update=on_update,

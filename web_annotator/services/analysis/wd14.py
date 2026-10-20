@@ -15,11 +15,9 @@ from typing import TYPE_CHECKING, Callable, Iterable, cast
 import numpy as np
 from PIL import Image
 
-from services.models import JobSnapshot, WorkDirInfo
+from services.models import JobSnapshot
 from services.core.atomic import atomic_write_bytes, atomic_write_text
-from services.core.natural import natural_key
-from services.core.scanner import IMAGE_EXTS, collect_images
-from services.dataset.layout import WD14_META_DIRNAME
+from services.dataset.workdir import WD14_META_DIRNAME, WorkDir
 from services.online_sources.framework.utils import _GENDER_TAGS
 from services.core.device import register_model
 
@@ -255,94 +253,6 @@ class Tags:
         if body:
             caption += " ||| " + Tags.join_caption(body)
         return caption
-
-
-# 打标页不列出这些目录(mask 是 alpha, 非待打标图)
-_SKIP_TAG_DIRS = frozenset({
-    "mask",
-    "aesthetic_report",
-    ".trash",
-    ".thumbs",
-    ".thumbnails",
-    "__pycache__",
-})
-
-
-def list_image_subdirs(root: Path) -> list[WorkDirInfo]:
-    """列出根下含图片的一级子目录.
-
-    Args:
-        root: 数据集根目录.
-
-    Returns:
-        list[WorkDirInfo]: 含图片的一级子目录信息列表; 根目录自身有图时以
-        ``name="."`` 列首, ``main`` 次之, 其余按名排序.
-
-    Callers:
-        - ``routes/tagging.py:dirs``
-        - ``routes/scoring.py:dirs``
-        - ``services/core/work_dir.py:list_work_dirs``
-        - ``services/analysis/wd14.py:resolve_image_dirs``
-    """
-    root = root.resolve()
-    out: list[WorkDirInfo] = []
-    if not root.is_dir():
-        return out
-
-    def count_images(d: Path) -> int:
-        """统计目录内图像数.
-
-        Args:
-            d: 待统计目录.
-
-        Returns:
-            int: 目录内图片文件数.
-
-        Callers:
-            - ``services/analysis/wd14.py:list_image_subdirs``
-        """
-        return sum(1 for p in d.iterdir() if p.is_file() and p.suffix.lower() in IMAGE_EXTS)
-
-    n_root = count_images(root)
-    if n_root:
-        out.append(WorkDirInfo(name=".", label="(根目录)", image_count=n_root))
-
-    for p in sorted(root.iterdir(), key=lambda p: natural_key(p.name)):
-        if not p.is_dir() or p.name.startswith(".") or p.name in _SKIP_TAG_DIRS:
-            continue
-        n = count_images(p)
-        if n > 0 or p.name == "main":
-            out.append(WorkDirInfo(name=p.name, label=p.name, image_count=n))
-
-    root_item = [d for d in out if d.name == "."]
-    rest = [d for d in out if d.name != "."]
-    main = [d for d in rest if d.name == "main"]
-    others = [d for d in rest if d.name != "main"]
-    if not main and (root / "main").is_dir():
-        main = [WorkDirInfo(name="main", label="main", image_count=count_images(root / "main"))]
-    return root_item + main + others
-
-
-def resolve_image_dirs(root: Path, names: list[str] | None) -> list[Path]:
-    """将子目录名解析为绝对路径；未知名跳过. 
-
-    Callers:
-        - ``routes/scoring.py:start``
-        - ``routes/tagging.py:start``
-    """
-    root = root.resolve()
-    available = {
-        d.name: root if d.name == "." else root / d.name
-        for d in list_image_subdirs(root)
-    }
-    if not names:
-        return []
-    dirs: list[Path] = []
-    for name in names:
-        name = (name or "").strip()
-        if name in available:
-            dirs.append(available[name])
-    return dirs
 
 
 def _model_files() -> tuple[Path, Path]:
@@ -626,7 +536,7 @@ _MODEL = register_model(Wd14Model.load, Wd14Model.close, Wd14Model.retarget)
 
 
 class Wd14Cache:
-    """数据集根目录的 WD14 推理缓存.
+    """与图片同目录的 WD14 推理缓存.
 
     缓存按模型指纹分目录, 每张图保存整条输出概率向量; 取标签的阈值在读取时
     决定, 因此更换阈值只需重新取用, 不必重新推理.
@@ -654,13 +564,15 @@ class Wd14Cache:
         """
         self.root = root
         self.labels = labels
-        self.dir = root / WD14_META_DIRNAME / labels.fingerprint
 
     def path(self, src: Path) -> Path:
-        """返回图片的缓存文件路径, 按图片相对数据集根的路径镜像存放.
+        """返回图片的缓存文件路径: 落在图片所在工作子目录内.
+
+        缓存置于 ``<图片目录>/.wd14_meta/<模型指纹>/<stem>.npy``, 与来源帖
+        元数据目录同级, 数据集根只保留工作子目录与任务级元数据.
 
         Args:
-            src (Path): 图片绝对路径, 须位于数据集根目录内.
+            src (Path): 图片绝对路径.
 
         Returns:
             Path: 缓存 ``.npy`` 文件路径.
@@ -670,7 +582,7 @@ class Wd14Cache:
             - ``services/analysis/wd14.py:Wd14Cache.ensure``
             - ``services/analysis/wd14.py:Wd14Cache._scores``
         """
-        return (self.dir / src.relative_to(self.root)).with_suffix(".npy")
+        return src.parent / WD14_META_DIRNAME / self.labels.fingerprint / f"{src.stem}.npy"
 
     def missing(self, images: Iterable[Path]) -> list[Path]:
         """筛出推理缓存缺失的图片.
@@ -955,9 +867,8 @@ class TaggingProgress:
 
 @_MODEL.auto_release
 def run_batch(
-    dirs: list[Path],
+    works: list[WorkDir],
     *,
-    root: Path,
     handle: Wd14Model,
     threshold: float,
     disable_orig_tags: bool,
@@ -972,8 +883,7 @@ def run_batch(
     取标签、合并原标签后写入 ``.txt``. 缓存与阈值解耦, 更换阈值无需重新推理.
 
     Args:
-        dirs (list[Path]): 待打标的图片目录列表.
-        root (Path): 数据集根目录, 用于写入 ``.wd14_meta`` 推理缓存.
+        works (list[WorkDir]): 待打标的工作目录.
         handle (Wd14Model): 模型句柄, 由 ``auto_release`` 注入.
         threshold (float): 置信度阈值.
         disable_orig_tags (bool): 是否丢弃原标签.
@@ -988,7 +898,8 @@ def run_batch(
     Callers:
         - ``routes/tagging.py:start``
     """
-    items = collect_images(dirs)
+    root = works[0].dataset.root
+    items = [p for work in works for p in work.image_files()]
     progress.total = len(items)
     progress.done = 0
     progress.skipped = 0
@@ -998,7 +909,7 @@ def run_batch(
     progress.phase = "loading"
     progress.message = f"共 {len(items)} 张, 加载模型…"
     progress.log(
-        f"开始: dirs={[d.name for d in dirs]}, threshold={threshold}, "
+        f"开始: dirs={[w.name for w in works]}, threshold={threshold}, "
         f"disable_orig_tags={disable_orig_tags}, force={force}, "
         f"artist={artist_tag or '无'}, total={len(items)}"
     )

@@ -636,7 +636,7 @@ def _dataset_name(ctx: _ExportContext) -> str:
     Callers:
         - ``services/ready.py:_render_files`` (经 ``_VARIABLES`` 按变量名调用)
     """
-    return ctx.root.name
+    return ctx.dataset.name
 
 
 def _config_dir(ctx: _ExportContext) -> str:
@@ -656,7 +656,7 @@ def _config_dir(ctx: _ExportContext) -> str:
     Callers:
         - ``services/ready.py:_render_files`` (经 ``_VARIABLES`` 按变量名调用)
     """
-    return str(export_dir(ctx.root.name, ctx.train_format, ctx.variant))
+    return str(export_dir(ctx.dataset.name, ctx.train_format, ctx.variant))
 
 
 def _artifact_dir(ctx: _ExportContext) -> str:
@@ -676,7 +676,7 @@ def _artifact_dir(ctx: _ExportContext) -> str:
     Callers:
         - ``services/ready.py:_render_files`` (经 ``_VARIABLES`` 按变量名调用)
     """
-    return str(output_dir(ctx.root.name, ctx.train_format, ctx.variant))
+    return str(output_dir(ctx.dataset.name, ctx.train_format, ctx.variant))
 
 
 _VARIABLES: dict[str, Callable[[_ExportContext], object]] = {
@@ -742,7 +742,7 @@ def _render_files(ctx: _ExportContext) -> dict[str, str]:
 
 
 def build_ready(
-    root: Path,
+    dataset: Dataset,
     *,
     mode: LoraMode,
     train_format: str,
@@ -764,7 +764,7 @@ def build_ready(
     (分辨率, 是否携带) 分组以免两类子集混入同一块, 目录项则带 ``mask_path``。
 
     Args:
-        root (Path): 数据集根目录.
+        dataset (Dataset): 当前数据集.
         mode (LoraMode): 训练模式, 决定网络 rank(画风 style=16, 角色 character=32).
         train_format (str): 配置导出格式(即顶层模板目录名).
         variant (str): 配置变体(即格式模板目录下的子目录名).
@@ -785,7 +785,7 @@ def build_ready(
         - ``routes/ready.py:toml``
     """
     ctx = _ExportContext(
-        root=root.resolve(),
+        dataset=dataset,
         mode=mode,
         train_format=train_format,
         variant=variant,
@@ -810,14 +810,14 @@ def build_ready(
     main_stats = next((m for m in mask_stats if m.name == "main"),
                       MaskStats(name="main", mask_status="无"))
     return ReadyTomlResult(
-        root=str(ctx.root),
+        root=str(ctx.dataset.root),
         format=train_format,
         variant=variant,
         files=files,
         subsets=subsets,
         dirs=ctx.work_dirs(),
         mask_stats=mask_stats,
-        mask=str((ctx.root / "mask").resolve()) if main_stats.mask_status == "完整" else None,
+        mask=str(ctx.dataset.mask_dir) if main_stats.mask_status == "完整" else None,
         target_images=target_images,
         subset_repeats={entry.name: entry.repeats for entry in plan},
         mask_status=main_stats.mask_status,

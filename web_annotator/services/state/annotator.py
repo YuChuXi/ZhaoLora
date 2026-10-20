@@ -11,12 +11,10 @@ import time
 from pathlib import Path
 
 from services.core.atomic import atomic_write_text, locked
+from services.dataset.workdir import IMAGE_EXTS, TRASH_DIRNAME, resolve_under, sidecar_paths
 from services.models import AnnotatorState
-from services.core.scanner import IMAGE_EXTS
-from services.core.work_dir import resolve_under
 
 STATE_FILENAME = ".annotator_state.json"
-TRASH_DIRNAME = ".trash"
 
 
 class StateManager:
@@ -256,12 +254,13 @@ class StateManager:
         return restored
 
     def _move_sidecar_files(self, parent: Path, rel_path: str, dest_root: Path) -> None:
-        """移动与图片同 stem 的旁路文件及来源元数据.
+        """移动与图片同 stem 的旁路文件、来源元数据与本地源产物.
 
         旁路文件指同目录下同 stem、非图像后缀的文件 (``.txt`` 标签、
         ``.npz`` 蒙板嵌入等); 来源元数据指数据源注册表判定的
-        ``.{来源}_meta/{pid}.json``。两者随图片同进同出回收站, 保证
-        永久删除时不残留孤儿元数据、恢复时元数据完整。
+        ``.{来源}_meta/{pid}.json``; 本地源产物指 ``SIDECAR_SOURCES`` 登记的
+        ``.wd14_meta/<模型指纹>/<stem>.npy`` 等。三者随图片同进同出回收站,
+        保证永久删除时不残留孤儿元数据、恢复时数据完整。
 
         Args:
             parent (Path): 源文件所在目录.
@@ -290,10 +289,10 @@ class StateManager:
             sib_dst = resolve_under(dest_root, sib_rel)
             sib_dst.parent.mkdir(parents=True, exist_ok=True)
             shutil.move(str(sib), str(sib_dst))
-        self._move_source_meta(parent, stem, rel_parent, dest_root)
+        self._move_meta_files(parent, stem, rel_parent, dest_root)
 
-    def _move_source_meta(self, parent: Path, stem: str, rel_parent: str, dest_root: Path) -> None:
-        """移动图片对应的来源元数据文件 (``.{来源}_meta/{pid}.json``).
+    def _move_meta_files(self, parent: Path, stem: str, rel_parent: str, dest_root: Path) -> None:
+        """移动图片的来源元数据与本地源产物.
 
         Args:
             parent (Path): 源图片所在目录.
@@ -308,6 +307,13 @@ class StateManager:
             - ``services/state/annotator.py:StateManager._move_sidecar_files``
         """
         from services.online_sources import detect_source
+
+        for path in sidecar_paths(parent, stem):
+            rel = path.relative_to(parent).as_posix()
+            meta_rel = f"{rel_parent}/{rel}" if rel_parent not in ("", ".") else rel
+            meta_dst = resolve_under(dest_root, meta_rel)
+            meta_dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(path), str(meta_dst))
 
         result = detect_source(stem)
         if result is None:

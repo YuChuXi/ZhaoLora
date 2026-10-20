@@ -18,7 +18,7 @@ from pathlib import Path
 
 from services.core.atomic import atomic_write_text, locked
 from services.core.natural import natural_key
-from services.dataset.layout import TASK_ROOT_RESERVED
+from services.dataset.workdir import TASK_ROOT_RESERVED
 from services.models import TaskEntry, TaskInfo, TaskListFile
 
 TASKS_FILE = ".annotator_tasks.json"

@@ -13,7 +13,7 @@ import json
 from pathlib import Path
 
 from services.core.atomic import atomic_write_text
-from services.dataset.layout import SETTINGS_FILENAME
+from services.dataset.workdir import SETTINGS_FILENAME
 
 
 def load_settings(root: Path) -> dict:

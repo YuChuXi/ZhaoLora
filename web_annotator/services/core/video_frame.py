@@ -28,7 +28,7 @@ from av.video.frame import PictureType
 
 from services.core.atomic import atomic_write_bytes, atomic_write_text
 from services.core.video_scanner import cover_hash
-from services.core.work_dir import resolve_under
+from services.dataset.workdir import resolve_under
 from services.models.video import BitstreamTypes
 
 # 位流缓存目录名(数据集根下)

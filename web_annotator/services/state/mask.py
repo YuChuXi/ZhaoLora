@@ -11,7 +11,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
-from services.core.work_dir import resolve_under
+from services.dataset.workdir import resolve_under
 
 
 def mask_out_path(out_dir: Path, src_path: str) -> Path:

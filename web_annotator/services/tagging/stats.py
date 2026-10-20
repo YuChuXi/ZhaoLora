@@ -12,7 +12,6 @@ import httpx
 
 from services.core.atomic import atomic_write_text
 from services.core.natural import natural_key
-from services.core.work_dir import list_work_dirs
 from services.models import TagStatRow, TagStatsResult
 from services.tagging.clean import make_tag_matcher, tag_key
 
@@ -57,37 +56,6 @@ def normalize_tag(tag: str, *, lower: bool, underscores: bool) -> str:
     if lower:
         t = t.lower()
     return t
-
-
-def resolve_selected_dirs(root: Path, names: list[str] | None) -> list[Path]:
-    """将选中的工作子目录名解析为绝对路径; 空则返回全部工作目录.
-
-    Args:
-        root (Path): 数据集根目录.
-        names (list[str] | None): 选中的子目录名列表; None/空表示全选.
-
-    Returns:
-        list[Path]: 解析后的子目录绝对路径列表.
-
-    Callers:
-        - ``routes/tag_stats.py:stats``
-        - ``routes/tag_stats.py:clean``
-        - ``routes/tag_stats.py:batch_edit``
-        - ``routes/tag_stats.py:check``
-        - ``routes/tag_stats.py:embedding_query``
-        - ``routes/tag_stats.py:concept_query``
-    """
-    root = root.resolve()
-    available = {d.name: root / d.name for d in list_work_dirs(root) if d.name != "."}
-    if not names:
-        return [available[k] for k in available]
-    dirs: list[Path] = []
-    for name in names:
-        name = (name or "").strip()
-        if name not in available:
-            continue
-        dirs.append(available[name])
-    return dirs
 
 
 def load_translation_map(root: Path) -> dict[str, str]:

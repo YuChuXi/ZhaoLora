@@ -22,7 +22,7 @@ from typing import Any
 
 import httpx
 
-from services.core.scanner import IMAGE_EXTS
+from services.dataset.workdir import IMAGE_EXTS
 
 NetworkError = httpx.HTTPError
 

@@ -15,6 +15,7 @@ from urllib.parse import urlparse
 from services.core.atomic import atomic_write_text
 from services.core.natural import natural_key
 from services.core.video_scanner import VIDEO_EXTS
+from services.dataset.workdir import sidecar_paths
 from services.models import BooruDownloadResult, BooruPost, BooruUndownloadResult
 from services.online_sources.framework.base import (
     ProgressFn,
@@ -72,6 +73,10 @@ def remove_download(
     if meta_path.is_file():
         meta_path.unlink()
         removed.append(f"{src.meta_subdir}/{pid}.json")
+
+    for path in sidecar_paths(out_dir, stem):
+        path.unlink()
+        removed.append(path.relative_to(out_dir).as_posix())
 
     return BooruUndownloadResult(
         id=pid,

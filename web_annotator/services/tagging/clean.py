@@ -13,7 +13,7 @@ from typing import Any, NamedTuple
 from services.core.atomic import atomic_write_text
 from services.core.natural import natural_key
 from services.models import TagCleanResult, TagCleanSample
-from services.core.scanner import IMAGE_EXTS
+from services.dataset.workdir import IMAGE_EXTS
 
 # 与 tag_key 一致: score_9 → "score 9"
 SCORE_TAG_KEYS = frozenset(f"score {i}" for i in range(10))
