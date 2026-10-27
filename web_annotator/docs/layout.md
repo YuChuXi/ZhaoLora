@@ -51,7 +51,7 @@ datasets/                         # 任务根（--data-dir）
 开关）、`paint`（笔刷与底色参数）、`tagging`（WD14 参数）、`tag_stats`（标签统计筛选）、
 `tag_batch`（批量编辑参数）、`scoring`（`sort` / `desc` / `filter`）、`dedupe`（算法与阈值）、
 `tag_check`（检查参数与 `emb` 向量对话框参数）、`booru_batch`（批量下载参数）、`ready`（`format` /
-`variant` / `mode` / `target_images` / `use_reg`）、`video`（B 帧隐藏开关）。浏览器 localStorage 中
+`variant` / `mode` / `target_images` / `train_steps` / `use_reg`）、`video`（B 帧隐藏开关）。浏览器 localStorage 中
 旧版设置由首页「导入旧设置」按钮一次性迁移至两层。
 
 ## 目录选择器

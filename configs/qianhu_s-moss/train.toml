@@ -1,9 +1,10 @@
-max_steps = 500
+max_steps = 1000
 micro_batch_size_per_gpu = 1
 pipeline_stages = 1
-gradient_accumulation_steps = 4
-gradient_clipping = 0
-warmup_steps = 50
+gradient_accumulation_steps = 2
+# inf 表示不裁剪梯度，但让 DeepSpeed 计算梯度范数并写入 train/grad_norm
+gradient_clipping = inf
+warmup_steps = 100
 smooth_l1_beta = 1.0
 lr_scheduler = "cosine"
 uncond_fraction = 0.1
@@ -11,7 +12,7 @@ eval_every_n_epochs = 1
 eval_before_first_step = true
 eval_micro_batch_size_per_gpu = 1
 eval_gradient_accumulation_steps = 1
-save_every_n_steps = 50
+save_every_n_steps = 100
 activation_checkpointing = true
 partition_method = "parameters"
 save_dtype = "bfloat16"
@@ -28,24 +29,30 @@ eval_datasets = []
 type = "moss_image"
 diffusion_model = "/media/yuchuxi/Data/Servers/ComfyUI/models/diffusion_models/moss_image_base_bf16.safetensors"
 vae = "/media/yuchuxi/Data/Servers/ComfyUI/models/vae/flux2-vae.safetensors"
-text_encoders = [{path = "/media/yuchuxi/Data/Servers/ComfyUI/models/text_encoders/qwen3.5_9b_int8_convrot.safetensors", type = "moss_image"}]
+text_encoders = [{path = "/media/yuchuxi/Data/Servers/ComfyUI/models/text_encoders/qwen3.5_9b_bf16.safetensors", type = "moss_image"}]
 dtype = "bfloat16"
-diffusion_model_dtype = "float8"
+#diffusion_model_dtype = "float8"
 timestep_sample_method = "logit_normal"
-#shift = 3
+shift = 2.974274
+sigmoid_scale = 0.95
 
 [adapter]
 type = "lora"
 dtype = "bfloat16"
 dropout = 0.1
-rank = 32
+rank = 16
 # 仅训练骨干块的注意力投影(q/k/v/o), 剔除全部 FFN 与文本分支(text_embedder);
 # base.py 原样透传给 peft, 字符串形式按 re.fullmatch 匹配模块全名
-exclude_modules = ".*(text_embedder).*"
+# exclude_modules = ".*(text_embedder).*"
+# LoRA+：A 用 optimizer.lr，B 用 optimizer.lr × ratio；此处 B 为 4.8e-4
+# [[adapter.lr_groups]]
+# pattern = '\.lora_B\.'
+# ratio = 16.0
 
 [optimizer]
 type = "adamw8bit"
-lr = 0.0001
+# optimizer.lr 即 A 的学习率；B = 3e-5 × 16 = 4.8e-4，落在实测 B 可用步长 3e-4~5e-4 内
+lr = 0.0002
 weight_decay = 0.001
 betas = [0.9, 0.999]
 

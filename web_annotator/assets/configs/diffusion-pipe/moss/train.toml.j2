@@ -1,10 +1,14 @@
-{% set rank = {"style": 8, "character": 16}[mode] %}
-max_steps = 500
+{% set rank = {"style": 16, "character": 32}[mode] %}
+{% set warmup_ratio = 0.1 %}
+{% set save_ratio = 0.1 %}
+{% set warmup_steps = (train_steps * warmup_ratio)|round|int %}
+{% set save_steps = [(train_steps * save_ratio)|round|int, 1]|max %}
+max_steps = {{ train_steps }}
 micro_batch_size_per_gpu = 1
 pipeline_stages = 1
-gradient_accumulation_steps = 4
+gradient_accumulation_steps = 2
 gradient_clipping = 0
-warmup_steps = 50
+warmup_steps = {{ warmup_steps }}
 smooth_l1_beta = 1.0
 lr_scheduler = "cosine"
 uncond_fraction = 0.1
@@ -12,14 +16,14 @@ eval_every_n_epochs = 1
 eval_before_first_step = true
 eval_micro_batch_size_per_gpu = 1
 eval_gradient_accumulation_steps = 1
-save_every_n_steps = 50
+save_every_n_steps = {{ save_steps }}
 activation_checkpointing = true
 partition_method = "parameters"
 save_dtype = "bfloat16"
 caching_batch_size = 1
 map_num_proc = 16
 steps_per_print = 1
-blocks_to_swap = 20
+blocks_to_swap = 0
 compile = true
 output_dir = "{{ output_dir }}"
 dataset = "{{ export_dir }}/dataset.toml"
@@ -29,9 +33,9 @@ eval_datasets = []
 type = "moss_image"
 diffusion_model = "{{ comfyui_models_root }}/diffusion_models/moss_image_base_bf16.safetensors"
 vae = "{{ comfyui_models_root }}/vae/flux2-vae.safetensors"
-text_encoders = [{path = "{{ comfyui_models_root }}/text_encoders/qwen3.5_9b_int8_convrot.safetensors", type = "moss_image"}]
+text_encoders = [{path = "{{ comfyui_models_root }}/text_encoders/qwen3.5_9b_bf16.safetensors", type = "moss_image"}]
 dtype = "bfloat16"
-diffusion_model_dtype = "float8"
+# diffusion_model_dtype = "float8"
 timestep_sample_method = "logit_normal"
 shift = 3
 
@@ -42,7 +46,7 @@ dropout = 0.1
 rank = {{ rank }}
 # 仅训练骨干块的注意力投影(q/k/v/o), 剔除全部 FFN 与文本分支(text_embedder);
 # base.py 原样透传给 peft, 字符串形式按 re.fullmatch 匹配模块全名
-exclude_modules = ".*(ffn|text_embedder).*"
+# exclude_modules = ".*(ffn|text_embedder).*"
 
 [optimizer]
 type = "adamw8bit"

@@ -32,6 +32,7 @@ class ReadyBody(BaseModel):
 
     dirs: list[str] | None = None
     target_images: int = Field(default=512, ge=1, description="目标图片数, 据此计算各子集 num_repeats 使重复后图片数 >= 目标折算份额")
+    train_steps: int = Field(default=500, ge=1, description="训练步数; 预热与保存间隔由所选模板按步数比例推导")
     subset_resolutions: dict[str, list[int]] = Field(
         default_factory=dict,
         description="各子集的分辨率列表(目录名→列表); 未指定或为空的子集生成单块无 resolution",
@@ -157,7 +158,7 @@ def toml(request: Request, ds: DatasetDep, body: ReadyBody) -> ReadyTomlResult:
     Args:
         request (Request): FastAPI 请求对象, 由路由参数注入.
         ds (Dataset): 当前请求绑定的数据集对象.
-        body (ReadyBody): 就绪页生成参数(dirs / target_images / subset_resolutions / use_reg / mode / train_format / variant).
+        body (ReadyBody): 就绪页生成参数(dirs / target_images / train_steps / subset_resolutions / use_reg / mode / train_format / variant).
 
     Returns:
         ReadyTomlResult: 子集/蒙版统计与配置文件预览文本(files).
@@ -177,6 +178,7 @@ def toml(request: Request, ds: DatasetDep, body: ReadyBody) -> ReadyTomlResult:
             variant=body.variant,
             dirs=body.dirs,
             target_images=body.target_images,
+            train_steps=body.train_steps,
             subset_resolutions=body.subset_resolutions,
             use_reg=body.use_reg,
             trigger_word=_trigger_word(request, ds),
@@ -202,7 +204,7 @@ def export(
 
     Args:
         ds (Dataset): 当前请求绑定的数据集对象.
-        body (ReadyExportBody): 就绪页导出参数(dirs / target_images / subset_resolutions / use_reg / mode / train_format / variant / files).
+        body (ReadyExportBody): 就绪页导出参数(dirs / target_images / train_steps / subset_resolutions / use_reg / mode / train_format / variant / files).
         overwrite (bool): 目标目录已存在可视化配置时, 需置 True 才覆盖写入, 否则返回 409.
 
     Returns:

@@ -22,16 +22,18 @@
 
 模板内的模型权重路径统一以 `{{ comfyui_models_root }}`（`COMFYUI_MODELS_ROOT`）为前缀，模型目录迁移只需改 `.env`；画风/角色的差异（如网络 rank）由各格式/变体模板自行决定（后端只透传模式名 `mode`），不写死在代码里。
 
+训练步数由前端「训练步数」指定（默认 500，后端只透传 `train_steps`）；预热与保存间隔的比例由模板定义（默认各 0.1x，即 `warmup_steps` / `save_every_n_steps` 分别取 `round(train_steps × 0.1)`，保存间隔下限为 1 步）。要调整比例直接改对应模板的 `warmup_ratio` / `save_ratio`。
+
 ### diffusion-pipe 差异
 
-- `train.toml` 以项目 `configs/chawenjian/train.toml` 为蓝本：训练/验证/保存与 `[model]`/`[optimizer]`/`[monitoring]` 段固定，`dataset` 指向导出目录内的 `dataset.toml`，`output_dir` 取 `{DIFFUSION_PIPE_OUTPUT_ROOT}/{数据集名}-{变体}`（训练产物与配置分离，且目录名带变体，避免各数据集或同一数据集的不同变体在同一目录下用相同的 `epochN`/`stepN` 子目录名互相覆盖），`[adapter].rank` 随画风/角色模式，`wandb_tracker_name` 由数据集名派生。
+- `train.toml` 以项目 `configs/chawenjian/train.toml` 为蓝本：训练/验证与 `[model]`/`[optimizer]`/`[monitoring]` 段固定，`max_steps` 取前端训练步数，`warmup_steps` / `save_every_n_steps` 按模板内定义的比例（默认各 0.1x）由步数推导，`dataset` 指向导出目录内的 `dataset.toml`，`output_dir` 取 `{DIFFUSION_PIPE_OUTPUT_ROOT}/{数据集名}-{变体}`（训练产物与配置分离，且目录名带变体，避免各数据集或同一数据集的不同变体在同一目录下用相同的 `epochN`/`stepN` 子目录名互相覆盖），`[adapter].rank` 随画风/角色模式，`wandb_tracker_name` 由数据集名派生。
 - `dataset.toml` 为 diffusion-pipe 结构：顶层 `resolutions = [512, 1024, 1536]` 为该变体的默认训练分辨率（框架读取目录级 `resolutions` 时会先求值该键作为缺省值，故顶层这一项必填）；每个启用且含图的目录按 `num_repeats` 归并成 `[[directory]]` 块——同值的分辨率合并进该块的 `resolutions` 列表（升序），仅当该目录在不同分辨率上分配值不同时才输出多个同 `path` 块（`num_repeats` 是块级标量；框架按块实例化 `DirectoryDataset`，无重复路径限制，缓存目录按分辨率桶区分）。侧栏目录分辨率输入即该块显式声明的 `resolutions`；留空则该块不写 `resolutions`，按顶层默认分辨率训练（此时 `num_repeats` 不再按分辨率均分）。
 - `num_repeats` 与 sd-scripts 同源分配：子集级总重复次数取 `max(块数, ceil(目标图片数 / 启用目录图片总数))`，经同一均分函数按分辨率分配（余数优先分给最靠近 1024 的分辨率）。归并成块的规则由模板（`assets/configs/diffusion-pipe/<变体>/dataset.toml.j2`）决定，代码只给出每目录的逐分辨率重复次数；预览的 `subset_repeats` 两种格式均为逐分辨率列表；重复次数不由用户逐块填写，由「目标图片数 + 各目录分辨率列表」推导。
 - 「正则化」开关两种格式均生效：regL 以类提示词（不含触发词）的 caption 作为普通数据块参与同一损失计算（`num_repeats = 1`，分辨率取配置值），即先验保持；diffusion-pipe 无独立 reg loss 权重旋钮，等价于先验保持权重 1.0。正则化数据集列表由 `.env` 的 `REG_DATASETS` 配置（`分辨率:目录绝对路径` 逗号分隔）；开启开关但未配置时报 400。
 
 ## 界面
 
-- **顶栏**：格式切换、画风/角色模式切换、生成、复制、`num_repeats`、`resolution`（逗号分隔的多个分辨率，留空则生成单块）、subset 数量、「正则化」开关。
+- **顶栏**：格式切换、画风/角色模式切换、生成、复制、`num_repeats`、`resolution`（逗号分隔的多个分辨率，留空则生成单块）、subset 数量、「正则化」开关、训练步数（默认 500，预热与保存间隔由模板按比例推导）。
 - **左侧栏**：工作目录表格（目录、张数、蒙版完整/无状态）。
 - 主区为配置文件预览（标签页随格式变化），内容即导出的配置文本。
 

@@ -435,6 +435,7 @@ class _ExportContext:
         variant (str): 配置变体(即格式模板目录下的子目录名).
         dirs (list[str] | None): 参与导出的工作目录名; None 表示全部.
         target_images (int): 目标图片数.
+        train_steps (int): 训练步数, 供模板按其内定义的比例推导预热与保存间隔.
         subset_resolutions (dict[str, list[int]]): 目录名→分辨率列表.
         use_reg (bool): 是否附带正则化数据段.
         trigger_word (str): 数据集触发词.
@@ -446,6 +447,7 @@ class _ExportContext:
     variant: str
     dirs: list[str] | None
     target_images: int
+    train_steps: int
     subset_resolutions: dict[str, list[int]]
     use_reg: bool
     trigger_word: str
@@ -584,6 +586,23 @@ def _training_mode(ctx: _ExportContext) -> str:
     return ctx.mode
 
 
+def _train_steps(ctx: _ExportContext) -> int:
+    """装配 ``train_steps`` 变量: 本次请求指定的训练步数.
+
+    只透传步数, 预热与保存间隔由模板按其内定义的比例自行推导.
+
+    Args:
+        ctx (_ExportContext): 本次生成的输入与派生数据.
+
+    Returns:
+        int: 训练步数.
+
+    Callers:
+        - ``services/ready.py:_render_files`` (经 ``_VARIABLES`` 按变量名调用)
+    """
+    return ctx.train_steps
+
+
 def _comfyui_models_root(ctx: _ExportContext) -> str:
     """装配 ``comfyui_models_root`` 变量: ComfyUI 模型根目录的绝对路径.
 
@@ -683,6 +702,7 @@ _VARIABLES: dict[str, Callable[[_ExportContext], object]] = {
     "groups": _group_datasets,
     "directories": _directory_entries,
     "mode": _training_mode,
+    "train_steps": _train_steps,
     "head": _prompt_head,
     "root_name": _dataset_name,
     "export_dir": _config_dir,
@@ -749,6 +769,7 @@ def build_ready(
     variant: str,
     dirs: list[str] | None = None,
     target_images: int = 512,
+    train_steps: int = 500,
     subset_resolutions: dict[str, list[int]] | None = None,
     use_reg: bool = True,
     trigger_word: str = "",
@@ -770,13 +791,14 @@ def build_ready(
         variant (str): 配置变体(即格式模板目录下的子目录名).
         dirs (list[str] | None): 参与导出的工作目录名; None 表示全部, 空列表表示不导出.
         target_images (int): 目标图片数, 据此计算各目录的 num_repeats.
+        train_steps (int): 训练步数; 预热与保存间隔由模板按步数比例推导.
         subset_resolutions (dict[str, list[int]] | None): 目录名→分辨率列表; 留空按该格式
             的兜底规则处理.
         use_reg (bool): 是否附带正则化数据段(各格式模板均按其结构渲染).
         trigger_word (str): 该数据集触发词, 供模板写入采样提示词; 可为空.
 
     Returns:
-        ReadyTomlResult: 含 files(文件名→配置文本)、subsets、mask_stats、subset_repeats 等.
+        ReadyTomlResult: 含 files(文件名→配置文本)、subsets、subset_repeats.
 
     Raises:
         ValueError: 本格式的位置类环境变量未配置, 或模板变量未登记.
@@ -791,6 +813,7 @@ def build_ready(
         variant=variant,
         dirs=dirs,
         target_images=target_images,
+        train_steps=train_steps,
         subset_resolutions=subset_resolutions or {},
         use_reg=use_reg,
         trigger_word=trigger_word,
@@ -806,22 +829,8 @@ def build_ready(
         )
         for entry in plan
     ]
-    mask_stats = [entry.stats for entry in plan]
-    main_stats = next((m for m in mask_stats if m.name == "main"),
-                      MaskStats(name="main", mask_status="无"))
     return ReadyTomlResult(
-        root=str(ctx.dataset.root),
-        format=train_format,
-        variant=variant,
         files=files,
         subsets=subsets,
-        dirs=[w.name for w in ctx.work_dirs()],
-        mask_stats=mask_stats,
-        mask=str(ctx.dataset.mask_dir) if main_stats.mask_status == "完整" else None,
-        target_images=target_images,
         subset_repeats={entry.name: entry.repeats for entry in plan},
-        mask_status=main_stats.mask_status,
-        mask_complete=main_stats.mask_complete,
-        mask_none=main_stats.mask_none,
-        main_count=main_stats.main_count,
     )

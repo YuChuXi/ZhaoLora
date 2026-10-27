@@ -58,22 +58,14 @@ class ReadySubset(BaseModel):
 
 
 class ReadyTomlResult(BaseModel):
-    """就绪页生成结果: 子集/蒙版统计与训练配置预览文本(文件集合随导出格式变化)."""
+    """就绪页生成结果: 子集统计与训练配置预览文本(文件集合随导出格式变化).
 
-    root: str
-    format: str = Field(description="本次生成的配置导出格式(即 assets/configs/ 下的顶层模板目录名)")
-    variant: str = Field(description="本次生成的配置变体(即格式模板目录下的子目录名)")
+    目录列表与蒙版统计由 GET /ready/dirs 单独提供, 本结果不重复承载.
+    """
+
     files: dict[str, str] = Field(default_factory=dict, description="配置文件预览文本, 键为该格式的全部配置文件名(由模板目录扫描得到), 文本即导出写入的内容")
     subsets: list[ReadySubset]
-    dirs: list[WorkDirInfo]
-    mask_stats: list[MaskStats] = Field(default_factory=list)
-    mask: str | None = None
-    target_images: int = Field(512, ge=1, description="目标图片数, 据此计算各子集各分辨率块 num_repeats 使每个子集重复后图片数 >= 目标折算份额")
     subset_repeats: dict[str, list[int]] = Field(default_factory=dict, description="各子集在每个分辨率上的 num_repeats(键为子集名, 列表与其分辨率列表一一对应)")
-    mask_status: Literal["完整", "无"] = "无"
-    mask_complete: int = 0
-    mask_none: int = 0
-    main_count: int = 0
 
 
 class TrainExportResult(BaseModel):

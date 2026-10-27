@@ -353,6 +353,8 @@ class DatasetRegistry:
     job_manager: JobManager | None = None
     by_name: dict[str, Dataset] = field(default_factory=dict)
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
+    # 全局缺省层设置(.annotator_settings.json)合并写入锁
+    settings_lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
 
     def get(self, name: str) -> Dataset | None:
         """按名取已加载数据集.

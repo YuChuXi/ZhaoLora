@@ -79,6 +79,13 @@
       style="width:72px;background:#0a1a30;color:var(--text);border:1px solid var(--border);border-radius:4px;padding:3px 6px;">
   </label>
   <span class="sep"></span>
+  <label style="font-size:12px;color:var(--text-dim);display:flex;align-items:center;gap:4px;"
+    title="训练步数: 预热与保存间隔由所选格式的模板按步数比例推导(默认各 0.1x)">
+    训练步数
+    <input type="number" id="train-steps" value="500" min="1" step="1"
+      style="width:72px;background:#0a1a30;color:var(--text);border:1px solid var(--border);border-radius:4px;padding:3px 6px;">
+  </label>
+  <span class="sep"></span>
   <label style="font-size:12px;color:var(--text-dim);display:flex;align-items:center;gap:4px;cursor:pointer;"
     title="启用时 dataset.toml 附带 regL 正则化数据块: reg 图以类提示词(不含触发词)参与损失, 即先验保持; diffusion-pipe 下等价于先验保持权重 1.0(无独立 reg loss 权重旋钮)">
     <input type="checkbox" id="use-reg" checked> 正则化
@@ -100,6 +107,7 @@
 <div class="toast" id="toast"></div>
 <script src="/static/js/ui.js"></script>
 <script src="/static/js/api.js"></script>
+<script src="/static/js/settings.js"></script>
 <script src="/static/js/nav.js"></script>
 <script src="/static/js/ready.js"></script>
 </body>

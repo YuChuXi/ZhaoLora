@@ -1,0 +1,32 @@
+resolutions = [512, 1024, 1536]
+enable_ar_bucket = true
+min_ar = 0.25
+max_ar = 4.0
+num_ar_buckets = 13
+caption_prefix = ""
+
+[[directory]]
+path = "/home/yuchuxi/Projects/Experiments/Dataset/ZhaoLora/datasets/chawenjian/main"
+mask_path = "/home/yuchuxi/Projects/Experiments/Dataset/ZhaoLora/datasets/chawenjian/mask/main"
+num_repeats = 1
+resolutions = [1024, 1280, 1536]
+
+[[directory]]
+path = "/home/yuchuxi/Projects/Experiments/Dataset/ZhaoLora/datasets/chawenjian/foot"
+num_repeats = 1
+resolutions = [1024, 1280, 1536]
+
+[[directory]]
+path = "/home/yuchuxi/Projects/Experiments/Dataset/ZhaoLora/datasets/chawenjian/head"
+num_repeats = 1
+resolutions = [1024, 1280, 1536]
+
+[[directory]]
+path = "/home/yuchuxi/Projects/Experiments/Dataset/ZhaoLora/datasets/regL/256_1"
+num_repeats = 1
+resolutions = [1536]
+
+[[directory]]
+path = "/home/yuchuxi/Projects/Experiments/Dataset/ZhaoLora/datasets/regL/256_2"
+num_repeats = 1
+resolutions = [1024]

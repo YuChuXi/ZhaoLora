@@ -1,0 +1,443 @@
+diff --git a/utils/lr_probe.py b/utils/lr_probe.py
+new file mode 100644
+index 0000000..6263a5d
+--- /dev/null
++++ b/utils/lr_probe.py
+@@ -0,0 +1,368 @@
++"""沿优化器给出的下降方向测量学习率候选值。
++
++在当前权重 θ 与真实优化器一步给出的下降方向 d 上，把损失沿 θ + η d 做局部展开：
++
++    η* = -(g·d) / ((1/N) Σ m_i ℓ''(e_i) (J d)_i²)
++
++其中 J d 用有限差分 (f(θ+εd) - f(θ))/ε 计算，不显式构建 Jacobian。d 取自优化器的
++参数位移而不是原始梯度，因此 AdamW 系优化器得到的是自适应方向。SmoothL1 的二阶导
++只在 |e| < beta 的区间为 1，分母按该区间统计；MSE 的取值也一并输出用于参照。
++
++Args:
++    model (ComfyPipeline): 已加载主干并注入 LoRA 的 pipeline。
++    model_engine (DeepSpeedEngine): 提供真实 optimizer 与微批配置。
++    layers (list[nn.Module]): `model.to_layers()` 的流水线层，顺序执行即为完整前向。
++    dataset (Dataset): 已完成 post_init 与缓存的数据集。
++    config (dict): 训练配置。
++    args (argparse.Namespace): 需要 lr_probe_resolutions / lr_probe_steps 字段。
++
++Returns:
++    None: 结果打印到标准输出。
++
++Callers:
++    - `train.py:__main__`: 传入 --measure_lr 时调用一次，随后退出。
++"""
++
++import math
++import random
++
++import torch
++
++
++def _forward(layers, features, checkpoint=False):
++    """按 to_layers() 的顺序执行完整前向。
++
++    Args:
++        layers (list[nn.Module]): 流水线层。
++        features (tuple): InitialLayer 的输入元组。
++        checkpoint (bool): 是否对每层启用激活重计算，与训练时的显存策略一致。
++
++    Returns:
++        torch.Tensor: 模型输出 (B, C, H, W)。
++
++    Callers:
++        - `utils/lr_probe.py:measure`: 基线前向、扰动前向与候选学习率验证。
++        - `utils/lr_probe.py:run_sweep`: 固定评估与前向反向训练步。
++    """
++    x = features
++    for layer in layers:
++        if checkpoint:
++            x = torch.utils.checkpoint.checkpoint(layer, x, use_reentrant=False)
++        else:
++            x = layer(x)
++    return x
++
++
++def _select_indices(dataset, resolution):
++    """返回指定正方形分辨率尺寸桶内的数据集下标。
++
++    Args:
++        dataset (Dataset): 已完成 post_init 的数据集。
++        resolution (int): 目标边长。
++
++    Returns:
++        list[int]: 该尺寸桶在 dataset.iteration_order 中的位置列表。
++
++    Callers:
++        - `utils/lr_probe.py:measure`: 每个分辨率挑选彼此分离的样本。
++    """
++    for bucket_index, bucket in enumerate(dataset.buckets):
++        width, height = bucket.datasets[0].size_bucket[-3:-1]
++        if width == resolution and height == resolution:
++            indices = [i for i, (b, _) in enumerate(dataset.iteration_order) if b == bucket_index]
++            if indices:
++                return indices
++    raise ValueError(f'数据集中不存在 {resolution}x{resolution} 的尺寸桶')
++
++
++def _first_derivative(config, error):
++    """给出损失一阶导关于残差的表达式。
++
++    Args:
++        config (dict): 训练配置。
++        error (torch.Tensor): 模型输出与目标的逐元素残差。
++
++    Returns:
++        torch.Tensor: SmoothL1/Huber 的截断残差，或 MSE 的原残差。
++
++    Callers:
++        - `utils/lr_probe.py:measure`: 校验 g·d 与数据空间方向导数是否一致。
++    """
++    if 'huber_delta' in config:
++        return torch.clamp(error, -config['huber_delta'], config['huber_delta'])
++    if 'smooth_l1_beta' in config:
++        return torch.clamp(error, -config['smooth_l1_beta'], config['smooth_l1_beta'])
++    return error
++
++
++def _second_derivative_mask(config, error):
++    """给出损失二阶导为 1 的元素掩码。
++
++    Args:
++        config (dict): 训练配置。
++        error (torch.Tensor): 模型输出与目标的逐元素残差。
++
++    Returns:
++        torch.Tensor: 与 error 同形状的布尔掩码。
++
++    Callers:
++        - `utils/lr_probe.py:measure`: 与 `get_loss_fn` 的回归分支保持同一分段。
++    """
++    if 'huber_delta' in config:
++        return error.abs() < config['huber_delta']
++    if 'smooth_l1_beta' in config:
++        return error.abs() < config['smooth_l1_beta']
++    return torch.ones_like(error, dtype=torch.bool)
++
++
++def _direction_from_optimizer(optimizer, params):
++    """执行一次真实优化器步并取回去除学习率缩放的下降方向。
++
++    优化器状态必须从零开始：清空 state 后首步方向即 m_hat / (sqrt(v_hat) + eps)
++    （AdamW 系）或梯度本身（SGD）。各参数组按其中最大的学习率归一化，因此返回
++    方向的单位是最快参数组的学习率；参数与学习率在返回前恢复。
++
++    Args:
++        optimizer (torch.optim.Optimizer): 训练实际使用的优化器。
++        params (list[nn.Parameter]): 可训练 LoRA 参数。
++
++    Returns:
++        list[torch.Tensor]: 与 params 对应的 float32 下降方向 d。
++
++    Callers:
++        - `utils/lr_probe.py:measure`: 计算 g·d 与有限差分的扰动方向。
++    """
++    saved = [p.detach().clone() for p in params]
++    saved_lr = [group['lr'] for group in optimizer.param_groups]
++    scale = max(saved_lr)
++    for group in optimizer.param_groups:
++        group['lr'] = group['lr'] / scale
++    optimizer.step()
++    direction = []
++    with torch.no_grad():
++        for p, s in zip(params, saved):
++            direction.append((p.detach() - s).float())
++            p.data.copy_(s)
++    for group, lr in zip(optimizer.param_groups, saved_lr):
++        group['lr'] = lr
++    return direction
++
++
++def run_sweep(model, model_engine, layers, dataset, config, resolution, steps, learning_rates):
++    """从同一初始权重出发，用固定学习率跑相同的若干步做受控比较。
++
++    每个候选值都恢复初始 LoRA 权重、清空优化器状态，并对每个 step 使用相同
++    随机种子与同一批数据，因此各候选的损失轨迹可直接比较。候选值统一作用于
++    所有参数组，不保留 lr_groups 的相对比例。
++
++    Args:
++        model (ComfyPipeline): 已注入 LoRA 的 pipeline。
++        model_engine (DeepSpeedEngine): 提供真实 optimizer。
++        layers (list[nn.Module]): 流水线层。
++        dataset (Dataset): 已完成 post_init 与缓存的数据集。
++        config (dict): 训练配置。
++        resolution (int): 使用的正方形尺寸桶边长。
++        steps (int): 每个候选值运行的步数。
++        learning_rates (list[float]): 待比较的学习率。
++
++    Returns:
++        None: 每个候选值的损失统计打印到标准输出。
++
++    Callers:
++        - `utils/lr_probe.py:measure`: --lr_probe_sweep 分支。
++    """
++    optimizer = model_engine.optimizer
++    params = [p for p in model.diffusion_model.parameters() if p.requires_grad]
++    loss_fn = model.get_loss_fn()
++    checkpoint = bool(config.get('activation_checkpointing'))
++    indices = _select_indices(dataset, resolution)
++    picks = [indices[(len(indices) * (k + 1)) // (steps + 1)] for k in range(steps)]
++    base = [p.detach().clone() for p in params]
++    saved_lr = [group['lr'] for group in optimizer.param_groups]
++
++    eval_batches = []
++    for k in range(4):
++        seed = 9000000 + resolution * 100 + k
++        random.seed(seed)
++        torch.manual_seed(seed)
++        features, label = model.prepare_inputs(dataset[indices[len(indices) * (k + 1) // 5]])
++        features = tuple(t.cuda() if torch.is_tensor(t) else t for t in features)
++        target = label[0].cuda().float()
++        mask = label[1]
++        mask = mask.cuda().float() if mask is not None else torch.empty(0, device='cuda')
++        eval_batches.append((features, target, mask))
++
++    def evaluate():
++        """在四组固定输入上计算平均损失，用于比较候选学习率的效果。
++
++        Returns:
++            float: 固定评估批次的平均损失。
++
++        Callers:
++            - `utils/lr_probe.py:run_sweep`: 每个候选值训练前后各调用一次。
++        """
++        total = 0.0
++        with torch.no_grad():
++            for features, target, mask in eval_batches:
++                total += loss_fn(_forward(layers, features, checkpoint), (target, mask)).item()
++        return total / len(eval_batches)
++
++    for lr in learning_rates:
++        with torch.no_grad():
++            for p, b in zip(params, base):
++                p.data.copy_(b)
++        optimizer.state.clear()
++        for group in optimizer.param_groups:
++            group['lr'] = lr
++        before = evaluate()
++        losses = []
++        for step, index in enumerate(picks):
++            seed = resolution * 1000 + step
++            random.seed(seed)
++            torch.manual_seed(seed)
++            features, label = model.prepare_inputs(dataset[index])
++            features = tuple(t.cuda() if torch.is_tensor(t) else t for t in features)
++            target = label[0].cuda().float()
++            mask = label[1]
++            mask = mask.cuda().float() if mask is not None else torch.empty(0, device='cuda')
++            output = _forward(layers, features, checkpoint)
++            loss = loss_fn(output, (target, mask))
++            loss.backward()
++            optimizer.step()
++            optimizer.zero_grad(set_to_none=True)
++            losses.append(loss.item())
++            del output, loss, features, target, mask
++        head = sum(losses[:10]) / 10
++        tail = sum(losses[-10:]) / 10
++        after = evaluate()
++        print(f'sweep lr={lr:.2e}: eval {before:.5f}->{after:.5f} ({after - before:+.5f}) '
++              f'first10={head:.5f} last10={tail:.5f} mean={sum(losses) / len(losses):.5f}')
++        torch.cuda.empty_cache()
++
++    for group, lr in zip(optimizer.param_groups, saved_lr):
++        group['lr'] = lr
++    with torch.no_grad():
++        for p, b in zip(params, base):
++            p.data.copy_(b)
++
++
++def measure(model, model_engine, layers, dataset, config, args):
++    """测量每个尺寸桶、每个 batch 的学习率候选值并验证局部二次近似。
++
++    Args:
++        model (ComfyPipeline): 已注入 LoRA 的 pipeline。
++        model_engine (DeepSpeedEngine): 提供真实 optimizer。
++        layers (list[nn.Module]): `model.to_layers()` 的返回值。
++        dataset (Dataset): 已完成 post_init 与缓存的数据集。
++        config (dict): 训练配置。
++        args (argparse.Namespace): lr_probe_resolutions 与 lr_probe_steps。
++
++    Returns:
++        None.
++
++    Callers:
++        - `train.py:__main__`: --measure_lr 分支。
++    """
++    optimizer = model_engine.optimizer
++    params = [p for p in model.diffusion_model.parameters() if p.requires_grad]
++    loss_fn = model.get_loss_fn()
++    # LoRA dropout 会破坏两次前向的可比性，探针期间关闭；其余模块无随机行为。
++    model.diffusion_model.eval()
++
++    group_lrs = [group['lr'] for group in optimizer.param_groups]
++    print(f'参数组学习率（相对最大组）: {[lr / max(group_lrs) for lr in group_lrs]}')
++
++    eps_values = (1e-3, 3e-3)
++    checkpoint = bool(config.get('activation_checkpointing'))
++    results = []
++    for resolution in args.lr_probe_resolutions:
++        indices = _select_indices(dataset, resolution)
++        picks = [
++            indices[(len(indices) * (k + 1)) // (args.lr_probe_steps + 1)]
++            for k in range(args.lr_probe_steps)
++        ]
++        for step, index in enumerate(picks):
++            seed = resolution * 1000 + step
++            random.seed(seed)
++            torch.manual_seed(seed)
++
++            features, label = model.prepare_inputs(dataset[index])
++            features = tuple(t.cuda() if torch.is_tensor(t) else t for t in features)
++            target = label[0].cuda().float()
++            mask = label[1]
++            mask = mask.cuda().float() if mask is not None else torch.empty(0, device='cuda')
++
++            optimizer.zero_grad(set_to_none=True)
++            optimizer.state.clear()
++            output = _forward(layers, features, checkpoint)
++            loss = loss_fn(output, (target, mask))
++            loss.backward()
++            grads = [p.grad for p in params]
++
++            base_output = output.detach()
++            error = base_output.float() - target
++            numel = error.numel()
++            del output
++            direction = _direction_from_optimizer(optimizer, params)
++            numerator = float(sum((g.double() * d.double()).sum() for g, d in zip(grads, direction)))
++            direction = [d.to(p.dtype) for d, p in zip(direction, params)]
++            saved = [p.detach().clone() for p in params]
++
++            quadratic = _second_derivative_mask(config, error)
++            mask_weight = mask if mask.numel() else 1.0
++            print(
++                f'[{resolution}px step {step}] t={features[1].mean().item():.3f} '
++                f'loss={loss.item():.6f} quadratic_fraction={quadratic.float().mean().item():.3f} '
++                f'|g|={math.sqrt(sum(float((g.double() ** 2).sum()) for g in grads)):.4e} '
++                f'|d|={math.sqrt(sum(float((d.double() ** 2).sum()) for d in direction)):.4e}'
++            )
++
++            estimates = []
++            for eps in eps_values:
++                with torch.no_grad():
++                    for p, d in zip(params, direction):
++                        p.add_(d, alpha=eps)
++                    perturbed = _forward(layers, features, checkpoint)
++                    for p, s in zip(params, saved):
++                        p.data.copy_(s)
++                u = (perturbed.float() - base_output.float()) / eps
++                den = float(((u * u) * mask_weight).double().sum()) / numel
++                den_quadratic = float((quadratic.to(torch.float32) * (u * u) * mask_weight).double().sum()) / numel
++                num_mse = float((error * u * mask_weight).double().sum()) / numel
++                num_sl1 = float((_first_derivative(config, error) * u * mask_weight).double().sum()) / numel
++                eta = -numerator / den_quadratic if den_quadratic > 0 else float('nan')
++                eta_mse = -num_mse / den if den > 0 else float('nan')
++                estimates.append((eps, eta, eta_mse))
++                print(
++                    f'  eps={eps:.0e} eta_sl1={eta:.4e} eta_mse={eta_mse:.4e} '
++                    f'|u|={math.sqrt(float((u * u).mean())):.4e} '
++                    f'e·u/N={num_mse:.4e} sl1·u/N={num_sl1:.4e} g·d={numerator:.4e}'
++                )
++
++            eta, eta_mse = estimates[0][1], estimates[0][2]
++            if math.isfinite(eta) and eta > 0:
++                losses = {}
++                for ratio in (0.25, 0.5, 1.0, 2.0):
++                    with torch.no_grad():
++                        for p, d in zip(params, direction):
++                            p.add_(d, alpha=ratio * eta)
++                        losses[ratio] = loss_fn(_forward(layers, features, checkpoint), (target, mask)).item()
++                        for p, s in zip(params, saved):
++                            p.data.copy_(s)
++                print('  loss(eta*ratio): ' + ' '.join(f'{r:g}:{v:.6f}' for r, v in losses.items()))
++
++            results.append({'resolution': resolution, 'step': step, 'eta': eta, 'eta_mse': eta_mse})
++            del features, target, mask, base_output, error, saved, direction, grads
++            torch.cuda.empty_cache()
++
++    valid = sorted(r['eta'] for r in results if math.isfinite(r['eta']) and r['eta'] > 0)
++    if valid:
++        median = valid[len(valid) // 2]
++        print(f'\n有效估计 {len(valid)}/{len(results)} 个；eta 中位数 {median:.4e}'
++              f'（以最大参数组学习率为单位）；区间 [{valid[0]:.4e}, {valid[-1]:.4e}]')
++        if args.lr_probe_sweep:
++            learning_rates = args.lr_probe_sweep_lrs or [0.25 * median, 0.5 * median, median]
++            print(f'受控短程对比：{args.lr_probe_sweep_steps} 步，'
++                  f'分辨率 {args.lr_probe_sweep_resolution}px')
++            run_sweep(model, model_engine, layers, dataset, config,
++                      args.lr_probe_sweep_resolution, args.lr_probe_sweep_steps, learning_rates)
+--- a/train.py
++++ b/train.py
+@@ -55,6 +55,19 @@
+ parser.add_argument('--master_port', type=int, default=29500, help='Master port for distributed training')
+ parser.add_argument('--dump_dataset', type=Path, default=None, help='Decode cached latents and dump the dataset to this directory.')
+ parser.add_argument('--test_sample', action='store_true', help='Generate and write an image to example.png and then quit.')
++parser.add_argument('--measure_lr', action='store_true', help='Measure a learning rate candidate along the optimizer direction, then quit.')
++parser.add_argument('--lr_probe_resolutions', type=int, nargs='+', default=[512],
++                    help='Square resolutions to probe, in pixels.')
++parser.add_argument('--lr_probe_steps', type=int, default=3,
++                    help='Number of probe batches per resolution.')
++parser.add_argument('--lr_probe_sweep', action='store_true',
++                    help='After estimating, compare short constant-LR runs from the same weights.')
++parser.add_argument('--lr_probe_sweep_lrs', type=float, nargs='+', default=None,
++                    help='Learning rates for the controlled short-run comparison. Defaults to 0.25x/0.5x/1x the median estimate.')
++parser.add_argument('--lr_probe_sweep_steps', type=int, default=30,
++                    help='Steps per candidate in the controlled comparison.')
++parser.add_argument('--lr_probe_sweep_resolution', type=int, default=512,
++                    help='Resolution used by the controlled comparison.')
+ parser = deepspeed.add_config_arguments(parser)
+ args = parser.parse_args()
+ 
+@@ -601,17 +614,18 @@
+     torch.distributed.broadcast_object_list(run_dir_container, src=0, group=dist.get_world_group())
+     run_dir = run_dir_container[0]
+ 
+-    os.makedirs(run_dir, exist_ok=True)
+-    if not resume_from_checkpoint and is_main_process():
+-        shutil.copy(args.config, run_dir)
+-        shutil.copy(config['dataset'], run_dir)
+-        for eval_dataset in config['eval_datasets']:
+-            shutil.copy(eval_dataset['config'], run_dir)
++    if not args.measure_lr:
++        os.makedirs(run_dir, exist_ok=True)
++        if not resume_from_checkpoint and is_main_process():
++            shutil.copy(args.config, run_dir)
++            shutil.copy(config['dataset'], run_dir)
++            for eval_dataset in config['eval_datasets']:
++                shutil.copy(eval_dataset['config'], run_dir)
+     dist.barrier()
+ 
+     # WandB logging
+     wandb_enable = config.get('monitoring', {}).get('enable_wandb', False)
+-    if wandb_enable and is_main_process():
++    if wandb_enable and is_main_process() and not args.measure_lr:
+         wandb_api_key     = config['monitoring']['wandb_api_key']
+         wandb_tracker     = config['monitoring']['wandb_tracker_name']
+         wandb_run_name    = config['monitoring']['wandb_run_name']
+@@ -669,7 +683,7 @@
+     model.pipeline_model = pipeline_model
+     parameters_to_train = [p for p in pipeline_model.parameters() if p.requires_grad]
+ 
+-    if config['compile']:
++    if config['compile'] and not args.measure_lr:
+         # 每个流水线层实例的 forward 含各自整型的 offloader 索引，dynamo 按实例特化产生多个编译变体，
+         # 默认 recompile_limit=8 会在变体数超过后放弃剩余层、回退 eager，这里按层总量放宽
+         pipeline_model.compile(dynamic=True, recompile_limit=len(layers) * 4)
+@@ -893,6 +907,11 @@
+             eval_image_micro_batch_size_per_gpu,
+         )
+ 
++    if args.measure_lr:
++        from utils import lr_probe
++        lr_probe.measure(model, model_engine, layers, train_data, config, args)
++        quit()
++
+     # Might be useful because we set things in fp16 / bf16 without explicitly enabling Deepspeed fp16 mode.
+     # Unsure if really needed.
+     communication_data_type = config['lora']['dtype'] if 'lora' in config else config['model']['dtype']

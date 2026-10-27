@@ -78,8 +78,8 @@
   }
 
   /**
-   * 刷新侧栏工作目录列表：每目录一个条目, 首行为启用勾选/目录/张数·蒙版, 次行为全宽分辨率输入。
-   * 目录集合与蒙版统计均未变化时跳过重建, 保留分辨率输入的焦点与未提交编辑。引用：init、generate。
+   * 渲染侧栏工作目录列表：每目录一个条目, 首行为启用勾选/目录/张数·蒙版, 次行为全宽分辨率输入。
+   * 数据来自 GET /ready/dirs, 页面启动时调用一次(目录集合与蒙版统计在页面生命周期内不变)。
    * @param {object} data
    */
   function renderSide(data) {
@@ -163,12 +163,17 @@
   /**
    * 读取顶栏与侧栏参数构造请求体; 参数无效时提示并返回 null。引用：generate、doExport。
    * @param {boolean} silent
-   * @returns {object|null} 含 dirs / target_images / subset_resolutions / use_reg / mode 的请求体。
+   * @returns {object|null} 含 dirs / target_images / train_steps / subset_resolutions / use_reg / mode 的请求体。
    */
   function collectBody(silent) {
     var target = parseInt(document.getElementById('target-images').value, 10);
     if (!(target >= 1)) {
       if (!silent) toast('目标图片数无效');
+      return null;
+    }
+    var steps = parseInt(document.getElementById('train-steps').value, 10);
+    if (!(steps >= 1)) {
+      if (!silent) toast('训练步数无效');
       return null;
     }
     var subsetRes = {};
@@ -194,6 +199,7 @@
     return {
       dirs: Object.keys(_enabled).filter(function (n) { return _enabled[n]; }),
       target_images: target,
+      train_steps: steps,
       subset_resolutions: subsetRes,
       use_reg: document.getElementById('use-reg').checked,
       mode: _mode,
@@ -278,7 +284,6 @@
     }
     document.getElementById('stat-summary').textContent =
       subsets.length + ' 个 subset · ' + totalImages + ' 张 × ' + repStr + ' = ' + repeated + ' 张';
-    renderSide(data);
     if (!silent) toast('已生成');
   }
 
@@ -324,6 +329,7 @@
    *   - ready.js:format-seg button click 监听
    *   - ready.js:mode-seg button click 监听
    *   - ready.js:target-images change 监听
+   *   - ready.js:train-steps change 监听
    *   - ready.js:use-reg change 监听
    */
   function persistReady() {
@@ -332,6 +338,7 @@
       variant: _variant,
       mode: _mode,
       target_images: document.getElementById('target-images').value,
+      train_steps: document.getElementById('train-steps').value,
       use_reg: !!document.getElementById('use-reg').checked,
     });
   }
@@ -341,6 +348,8 @@
   });
   document.getElementById('target-images').addEventListener('input', autoGenerate);
   document.getElementById('target-images').addEventListener('change', persistReady);
+  document.getElementById('train-steps').addEventListener('input', autoGenerate);
+  document.getElementById('train-steps').addEventListener('change', persistReady);
   document.getElementById('btn-copy').addEventListener('click', function () {
     copyText().catch(function (e) { toast(String(e.message || e)); });
   });
@@ -450,6 +459,7 @@
       _mode = saved.mode;
     }
     if (saved.target_images) document.getElementById('target-images').value = String(saved.target_images);
+    if (saved.train_steps) document.getElementById('train-steps').value = String(saved.train_steps);
     if (saved.use_reg != null) document.getElementById('use-reg').checked = !!saved.use_reg;
 
     var data = await API.request(API.apiPath('/ready/dirs'));
