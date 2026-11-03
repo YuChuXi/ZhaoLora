@@ -1,5 +1,5 @@
 /**
- * caption.js —— 描述页: 调用 Ollama 视觉模型批量生成自然语言描述, 写入各工作目录的 captions.json。
+ * caption.js —— 描述页: 调用 OpenAI 兼容视觉模型批量生成自然语言描述, 写入各工作目录的 captions.json。
  *
  * 依赖: api.js / dir_picker.js / nav.js / masonry.js
  */
@@ -10,6 +10,10 @@
   var MODE_LABELS = { coarse: '粗略', detailed: '详细' };
 
   var _items = [];
+  var _filtered = [];
+  var _filterPresets = [];
+  var _filterTimer = null;
+  var _viewImg = null;
   var _jobId = null;
   var _templates = [];
 
@@ -42,7 +46,7 @@
     AppSettings.set('caption', state);
   }
 
-  /** 保存 WD14 注入设置、NSFW 增强与描述模式/覆盖选项。引用: mode-seg/force 变更监听、closeSettings。 */
+  /** 保存 WD14 注入设置、NSFW 增强与描述模式/清空选项。引用: mode-seg/force 变更监听、closeSettings。 */
   function persistInject() {
     var state = captionState();
     state.inject = {
@@ -282,6 +286,103 @@
     loadSaved().forEach(addRuleRow);
   }
 
+  // ==================== 描述筛选 ====================
+
+  /**
+   * 转义正则元字符。
+   * @param {string} s
+   * @returns {string}
+   */
+  function escapeRegExp(s) {
+    return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  }
+
+  /**
+   * 把 Danbooru 通配模式转为整串匹配正则（小写, 下划线等同空格, * 为通配）。
+   * @param {string} pattern
+   * @returns {RegExp}
+   */
+  function danbooruRe(pattern) {
+    var body = pattern.toLowerCase().replace(/_/g, ' ').split('*').map(escapeRegExp).join('.*');
+    return new RegExp('^' + body + '$');
+  }
+
+  /**
+   * 编译正则, 支持 Python 风格的内联标志前缀(如 `(?i)`), 转成 JS 的 flags。
+   * @param {string} source
+   * @returns {RegExp}
+   */
+  function compileRe(source) {
+    var inline = /^\(\?([imsx]+)\)/.exec(source);
+    if (!inline) return new RegExp(source);
+    var flags = inline[1].replace(/[^ims]/g, '');
+    return new RegExp(source.slice(inline[0].length), flags);
+  }
+
+  /**
+   * 构造单条描述的命中判定。
+   * @param {string} mode exact | danbooru | regex
+   * @param {string} query
+   * @returns {function(string): boolean}
+   */
+  function makeCaptionMatcher(mode, query) {
+    if (mode === 'exact') {
+      return function (text) { return text.indexOf(query) !== -1; };
+    }
+    if (mode === 'danbooru') {
+      var wildcard = danbooruRe(query);
+      return function (text) {
+        return wildcard.test(text.toLowerCase().replace(/_/g, ' ').trim());
+      };
+    }
+    var re = compileRe(query);
+    return function (text) { return re.test(text); };
+  }
+
+  /** 按当前筛选条件渲染瀑布流并更新命中计数。 */
+  function applyFilter() {
+    var mode = document.getElementById('cap-filter-mode').value;
+    var query = document.getElementById('cap-filter-input').value;
+    var matcher = null;
+    if (query) {
+      try {
+        matcher = makeCaptionMatcher(mode, query);
+      } catch (e) {
+        toast('筛选条件无效: ' + String(e.message || e));
+        return;
+      }
+    }
+    _filtered = matcher
+      ? _items.filter(function (img) {
+          return (img.captions || []).some(matcher);
+        })
+      : _items.slice();
+    Masonry.render(_filtered);
+    var stat = document.getElementById('stat-filter');
+    stat.hidden = !query;
+    stat.textContent = '命中 ' + _filtered.length + ' / ' + _items.length;
+  }
+
+  /**
+   * 渲染筛选预置下拉(首项为「自定义」)。
+   * @param {Array<{label: string, mode: string, pattern: string}>} presets
+   */
+  function renderFilterPresets(presets) {
+    _filterPresets = presets || [];
+    var sel = document.getElementById('cap-filter-preset');
+    sel.innerHTML = '';
+    var custom = document.createElement('option');
+    custom.value = '';
+    custom.textContent = '自定义';
+    sel.appendChild(custom);
+    _filterPresets.forEach(function (p, i) {
+      var option = document.createElement('option');
+      option.value = String(i);
+      option.textContent = p.label;
+      sel.appendChild(option);
+    });
+  }
+
   // ==================== 瀑布流 ====================
 
   /**
@@ -304,7 +405,9 @@
    * @param {object} img
    */
   function onCardClick(img) {
+    _viewImg = img;
     document.getElementById('view-title').textContent = img.path;
+    document.getElementById('view-delete').hidden = !(img.captions && img.captions.length);
     var body = document.getElementById('view-body');
     body.innerHTML = '';
     if (!img.captions || !img.captions.length) {
@@ -327,6 +430,19 @@
     openDlg('view-dlg');
   }
 
+  /** 删除当前查看图片的描述条目并刷新列表。 */
+  async function deleteViewedCaption() {
+    var img = _viewImg;
+    if (!img || !img.captions || !img.captions.length) return;
+    await API.request(API.apiPath('/caption/delete'), {
+      method: 'POST',
+      body: JSON.stringify({ path: img.path }),
+    });
+    toast('已删除描述');
+    closeDlg('view-dlg');
+    await refresh();
+  }
+
   /** 重新拉取所选目录的图片与描述现状。 */
   async function refresh() {
     var res = await API.request(API.apiPath('/caption/list'), {
@@ -334,7 +450,7 @@
       body: JSON.stringify({ dirs: DirPicker.getDirs() }),
     });
     _items = res.items || [];
-    Masonry.render(_items);
+    applyFilter();
     var total = res.total || 0;
     var described = res.described || 0;
     document.getElementById('stat-total').textContent = total;
@@ -501,12 +617,13 @@
     syncThresholdEnabled('inject-character', 'character-threshold');
     syncThresholdEnabled('inject-nsfw', 'nsfw-threshold');
     renderTemplates(data.rule_templates);
+    renderFilterPresets(data.filter_presets);
   }
 
   async function init() {
     await AppSettings.ready();
     Masonry.init('masonry', {
-      getData: function () { return _items; },
+      getData: function () { return _filtered; },
       onClick: onCardClick,
       decorate: decorateCard,
     });
@@ -523,6 +640,19 @@
       syncThresholdEnabled('inject-nsfw', 'nsfw-threshold');
     });
     document.getElementById('force').addEventListener('change', persistInject);
+    document.getElementById('cap-filter-mode').addEventListener('change', applyFilter);
+    document.getElementById('cap-filter-input').addEventListener('input', function () {
+      document.getElementById('cap-filter-preset').value = '';
+      clearTimeout(_filterTimer);
+      _filterTimer = setTimeout(applyFilter, 120);
+    });
+    document.getElementById('cap-filter-preset').addEventListener('change', function () {
+      if (this.value === '') { applyFilter(); return; }
+      var preset = _filterPresets[Number(this.value)];
+      document.getElementById('cap-filter-mode').value = preset.mode;
+      document.getElementById('cap-filter-input').value = preset.pattern;
+      applyFilter();
+    });
     document.getElementById('rule-template').addEventListener('change', renderSentence);
     document.getElementById('rule-add').addEventListener('click', function () {
       var rule = buildFromTemplate();
@@ -536,6 +666,9 @@
     document.getElementById('btn-open').addEventListener('click', function () { openDlg('rules-dlg'); });
     document.getElementById('rules-close').addEventListener('click', closeSettings);
     document.getElementById('view-close').addEventListener('click', function () { closeDlg('view-dlg'); });
+    document.getElementById('view-delete').addEventListener('click', function () {
+      deleteViewedCaption().catch(function (e) { toast(String(e.message || e)); });
+    });
     document.getElementById('rules-dlg').addEventListener('click', function (e) {
       if (e.target === this) closeSettings();
     });

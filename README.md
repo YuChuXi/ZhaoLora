@@ -17,7 +17,7 @@
 - **蒙版**：Alpha 绘制、模板复用、BiRefNet 自动抠图、SAM3 文本提示分割与蒙版表达式合并。
 - **标签**：WD14 ONNX 批量打标、标签频率统计、批量翻译、标签存在性与位置检查。
 - **相似度排序**：Qwen3-VL-Reranker 对查询文本与图片逐张评分，支持按阈值批量增删标签。
-- **描述**：调用 Ollama 视觉模型生成自然语言描述，写入 diffusion-pipe 可直接读取的 `captions.json`。
+- **描述**：调用 OpenAI 兼容视觉模型生成自然语言描述，写入 diffusion-pipe 可直接读取的 `captions.json`。
 - **视频**：视频扫描、封面瀑布流、按帧类型抽取训练帧。
 - **就绪**：按 sd-scripts 或 diffusion-pipe 模板生成训练配置并导出，支持多分辨率、蒙版与正则化数据集。
 - **归档**：将已完成任务压缩为 7z（LZMA2 极限压缩），校验后清理工作目录。
@@ -68,7 +68,7 @@
 
 - Linux，Python 3.12（当前开发环境版本）。
 - PyTorch 及其 CUDA 构建，按显卡与驱动选择；CPU 推理可通过 `ANNOTATOR_CPU_ONLY=1` 强制启用。
-- 可选：BBDown（Bilibili 视频下载）、Ollama（自然语言描述）。
+- 可选：BBDown（Bilibili 视频下载）、OpenAI 兼容视觉模型服务（自然语言描述）。
 - diffusion-pipe 需要单独的 Python 环境与 DeepSpeed，安装步骤见 `diffusion-pipe/README.md`。
 
 ## 安装
@@ -128,7 +128,7 @@ cp web_annotator/.env.example web_annotator/.env
 | `DANBOORU_LOGIN` / `DANBOORU_API_KEY` | Danbooru 认证 |
 | `GELBOORU_USER_ID` / `GELBOORU_API_KEY` | Gelbooru 认证与标签补全 |
 | `BBDOWN_PATH` | BBDown 可执行文件路径；留空时从 `PATH` 查找 |
-| `CAPTION_OLLAMA_ENDPOINTS` | 由 `地址` 与 `模型` 以竖线连接的服务列表，多个服务以逗号分隔 |
+| `CAPTION_OPENAI_BASE_URL` / `CAPTION_OPENAI_MODEL` | 描述服务的 OpenAI 兼容根地址（含 `/v1`）与视觉模型名 |
 | `WD14_MODEL` | WD14 ONNX 权重路径，标签表取同名 `.csv` |
 | `SAM3_MODEL` | SAM3 权重目录或 HuggingFace repo id |
 | `BIREFNET_WEIGHT` | BiRefNet 权重路径 |

@@ -4,6 +4,7 @@ min_ar = 0.25
 max_ar = 4.0
 num_ar_buckets = 13
 caption_prefix = ""
+use_captions_json = true
 
 [[directory]]
 path = "/home/yuchuxi/Projects/Experiments/Dataset/ZhaoLora/datasets/chawenjian/main"
@@ -21,12 +22,12 @@ path = "/home/yuchuxi/Projects/Experiments/Dataset/ZhaoLora/datasets/chawenjian/
 num_repeats = 1
 resolutions = [1024, 1280, 1536]
 
-[[directory]]
-path = "/home/yuchuxi/Projects/Experiments/Dataset/ZhaoLora/datasets/regL/256_1"
-num_repeats = 1
-resolutions = [1536]
+# [[directory]]
+# path = "/home/yuchuxi/Projects/Experiments/Dataset/ZhaoLora/datasets/regL/256_1"
+# num_repeats = 1
+# resolutions = [1536]
 
-[[directory]]
-path = "/home/yuchuxi/Projects/Experiments/Dataset/ZhaoLora/datasets/regL/256_2"
-num_repeats = 1
-resolutions = [1024]
+# [[directory]]
+# path = "/home/yuchuxi/Projects/Experiments/Dataset/ZhaoLora/datasets/regL/256_2"
+# num_repeats = 1
+# resolutions = [1024]

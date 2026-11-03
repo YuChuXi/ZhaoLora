@@ -6,13 +6,15 @@ import logging
 
 from fastapi import APIRouter, HTTPException, Request
 
-from routes.deps import DatasetDep, jobs
+from routes.deps import DatasetDep, jobs, resolve_path
 from services.analysis.caption import (
+    FILTER_PRESETS,
     RULE_TEMPLATES,
     SYSTEM_PROMPT_TEMPLATES,
     CaptionProgress,
+    delete_caption,
     load_captions,
-    ollama_status,
+    openai_status,
     run_caption,
 )
 from services.analysis.wd14 import DEFAULT_THRESHOLD
@@ -21,7 +23,9 @@ from services.core.thumbnailer import image_size
 from services.dataset.workdir import WorkImage
 from services.models import (
     CaptionBody,
+    CaptionDeleteBody,
     CaptionDirsResponse,
+    CaptionFilterPreset,
     CaptionImageItem,
     CaptionListBody,
     CaptionListResponse,
@@ -49,7 +53,7 @@ def dirs(ds: DatasetDep) -> CaptionDirsResponse:
         - ``static/js/nav.js:dirsApi``
         - ``static/js/caption.js:init``
     """
-    ok, info = ollama_status()
+    ok, info = openai_status()
     return CaptionDirsResponse(
         dirs=[w.to_info() for w in ds.work_dirs()],
         ready=ok,
@@ -57,6 +61,10 @@ def dirs(ds: DatasetDep) -> CaptionDirsResponse:
         rule_templates=[
             CaptionRuleTemplateInfo(label=label, text=source)
             for label, source in RULE_TEMPLATES.items()
+        ],
+        filter_presets=[
+            CaptionFilterPreset(label=label, mode=mode, pattern=pattern)
+            for label, (mode, pattern) in FILTER_PRESETS.items()
         ],
         default_wd14_threshold=DEFAULT_THRESHOLD,
     )
@@ -129,6 +137,36 @@ def list_images(ds: DatasetDep, body: CaptionListBody) -> CaptionListResponse:
     )
 
 
+@router.post("/delete")
+def delete_one(ds: DatasetDep, body: CaptionDeleteBody) -> CaptionImageItem:
+    """删除单张图片在 ``captions.json`` 中的描述条目.
+
+    Args:
+        ds (Dataset): 当前数据集, 由路由依赖注入.
+        body (CaptionDeleteBody): 删除参数, 含图片相对路径.
+
+    Returns:
+        CaptionImageItem: 删除后的图片条目(描述为空).
+
+    Raises:
+        HTTPException: 图片不存在时返回 404.
+
+    Callers:
+        - ``static/js/caption.js:deleteViewedCaption``
+    """
+    rel = body.path.replace("\\", "/").lstrip("/")
+    img_abs = resolve_path(ds, rel)
+    if not img_abs.is_file():
+        raise HTTPException(404, "图片不存在")
+    delete_caption(img_abs.parent, img_abs.name)
+    logger.info("单图删描述 dataset=%s path=%s", ds.name, rel)
+    return _build_item(
+        WorkImage(ds.work_of(rel), img_abs),
+        load_captions(img_abs.parent),
+        ds.thumbnailer,
+    )
+
+
 @router.post("/start")
 async def start(ds: DatasetDep, request: Request, body: CaptionBody) -> JobSubmitResponse:
     """提交批量描述标注长任务, 返回 job_id.
@@ -145,12 +183,12 @@ async def start(ds: DatasetDep, request: Request, body: CaptionBody) -> JobSubmi
         JobSubmitResponse: 含 job_id, 前端据以订阅 SSE 进度.
 
     Raises:
-        HTTPException: Ollama 不可用、未选择目录、模式或注入范围非法时返回 400.
+        HTTPException: 描述服务不可用、未选择目录、模式或注入范围非法时返回 400.
 
     Callers:
         - ``static/js/caption.js:startJob``
     """
-    ok, msg = ollama_status()
+    ok, msg = openai_status()
     if not ok:
         raise HTTPException(400, msg)
 
@@ -166,7 +204,7 @@ async def start(ds: DatasetDep, request: Request, body: CaptionBody) -> JobSubmi
     payload = body
 
     async def run(emit: EmitFn) -> CaptionResult:
-        """在事件循环中逐张调用 Ollama 生成描述并写入 captions.json.
+        """在事件循环中逐张调用描述服务生成描述并写入 captions.json.
 
         Args:
             emit (EmitFn): 任务事件推送回调.

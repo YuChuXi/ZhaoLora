@@ -45,13 +45,19 @@ class CaptionBody(BaseModel):
         description="NSFW 增强的置信度下限; Explicit 或 Questionable 不低于该值时在提示词追加备注, 省略为不启用",
     )
     rules: list[CaptionRule] = Field(default_factory=list, description="预设提示词条目")
-    force: bool = Field(False, description="是否覆盖 captions.json 中已存在的条目")
+    force: bool = Field(False, description="是否先清空所选目录的全部已有描述再重新标注")
 
 
 class CaptionListBody(BaseModel):
     """描述页图片列表请求."""
 
     dirs: list[str] | None = Field(default=None, description="子目录名, 空/省略=全选")
+
+
+class CaptionDeleteBody(BaseModel):
+    """单张图片描述删除请求."""
+
+    path: str = Field(..., description="图片相对数据集根的路径")
 
 
 class CaptionImageItem(ImageThumbItem):
@@ -87,6 +93,14 @@ class CaptionRuleTemplateInfo(BaseModel):
     text: str = Field(..., description="模板源码, 其中的 Jinja 变量即前端的待填空位")
 
 
+class CaptionFilterPreset(BaseModel):
+    """描述筛选预置: 一键套用匹配模式与模式串."""
+
+    label: str = Field(..., description="界面展示名")
+    mode: str = Field(..., description="匹配模式: exact | danbooru | regex")
+    pattern: str = Field(..., description="模式串")
+
+
 class CaptionDirsResponse(BaseModel):
     """描述页目录与描述服务状态."""
 
@@ -97,4 +111,7 @@ class CaptionDirsResponse(BaseModel):
     default_wd14_threshold: float = Field(..., description="WD14 参考标签置信度下限的默认值")
     rule_templates: list[CaptionRuleTemplateInfo] = Field(
         default_factory=list, description="预设提示词模板"
+    )
+    filter_presets: list[CaptionFilterPreset] = Field(
+        default_factory=list, description="描述筛选预置"
     )

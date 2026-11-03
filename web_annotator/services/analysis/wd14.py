@@ -114,7 +114,7 @@ class Wd14TagGroups:
 
         Callers:
             - ``services/analysis/wd14.py:Tags.merge_for_disk_by_confidence``
-            - ``services/analysis/caption.py:_generate_captions``
+            - ``services/analysis/caption.py:run_caption``
         """
         return tuple(
             sorted(
@@ -725,7 +725,7 @@ class Wd14Cache:
             Wd14TagGroups | None: 按类别分组的标签; 缓存缺失时为 None.
 
         Callers:
-            - ``services/analysis/caption.py:_generate_captions``
+            - ``services/analysis/caption.py:run_caption``
         """
         scores = self._scores(src)
         if scores is None:

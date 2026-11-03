@@ -62,6 +62,23 @@
     font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
     font-size: 12px; line-height: 1.45; color: #c8d4e0; white-space: pre-wrap;
   }
+  /* 描述筛选: 匹配方式与模式串, 与标签检查页输入框同款 */
+  .cap-filter-label {
+    display: flex; align-items: center; gap: 4px;
+    font-size: 12px; color: var(--text-dim);
+  }
+  #cap-filter-mode,
+  #cap-filter-preset {
+    background: var(--card-bg); color: var(--text);
+    border: 1px solid var(--border); border-radius: 4px;
+    padding: 4px 8px; font-size: 12px;
+  }
+  #cap-filter-input {
+    background: #0a1a30; color: var(--text);
+    border: 1px solid var(--border); border-radius: 4px;
+    padding: 5px 10px; font-size: 13px;
+    width: min(360px, 40vw);
+  }
   /* 描述查看 */
   .view-caption {
     background: #0a1a30; color: var(--text); border: 1px solid var(--border);
@@ -77,6 +94,17 @@
 <div class="toolbar">
   <button class="btn green" type="button" id="btn-open">开始标注</button>
   <button class="btn danger" type="button" id="btn-cancel" hidden>取消</button>
+  <span class="sep"></span>
+  <label class="cap-filter-label">描述
+    <select id="cap-filter-mode" title="描述匹配方式">
+      <option value="exact">严格子串</option>
+      <option value="danbooru">Danbooru 通配(*)</option>
+      <option value="regex">正则</option>
+    </select>
+  </label>
+  <select id="cap-filter-preset" title="预置筛选条件"></select>
+  <input type="text" id="cap-filter-input" spellcheck="false" placeholder="按描述筛选; 留空显示全部">
+  <span class="status-seg" id="stat-filter" hidden></span>
   <span class="sep"></span>
   <span class="status-seg" id="stat-job"></span>
   <span class="status-seg" id="stat-model">-</span>
@@ -139,8 +167,8 @@
         </div>
         <div class="cap-row">
           <span class="cap-label">已有描述</span>
-          <label class="cap-ck" title="重新标注已有描述的图片, 并覆盖其 captions.json 条目">
-            <input type="checkbox" id="force"> 覆盖, 重新标注并覆盖原有条目</label>
+          <label class="cap-ck" title="清空所选目录的全部已有描述, 再重新标注全部图片">
+            <input type="checkbox" id="force"> 清空, 清空所选目录全部描述并重新标注</label>
         </div>
       </section>
 
@@ -178,6 +206,7 @@
     </div>
     <div class="modal-body cap-body" id="view-body"></div>
     <div class="modal-foot">
+      <button class="btn danger" type="button" id="view-delete" hidden>删除描述</button>
       <button class="btn" type="button" id="view-close">关闭</button>
     </div>
   </div>
