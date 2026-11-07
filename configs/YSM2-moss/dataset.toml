@@ -1,0 +1,30 @@
+resolutions = [512, 1024, 1536]
+enable_ar_bucket = true
+min_ar = 0.25
+max_ar = 4.0
+num_ar_buckets = 13
+caption_prefix = ""
+
+[[directory]]
+path = "/home/yuchuxi/Projects/Experiments/Dataset/ZhaoLora/datasets/YSM2/main"
+mask_path = "/home/yuchuxi/Projects/Experiments/Dataset/ZhaoLora/datasets/YSM2/mask/main"
+num_repeats = 1
+resolutions = [1024]
+
+[[directory]]
+path = "/home/yuchuxi/Projects/Experiments/Dataset/ZhaoLora/datasets/YSM2/afd"
+mask_path = "/home/yuchuxi/Projects/Experiments/Dataset/ZhaoLora/datasets/YSM2/mask/afd"
+num_repeats = 1
+resolutions = [1024]
+
+[[directory]]
+path = "/home/yuchuxi/Projects/Experiments/Dataset/ZhaoLora/datasets/YSM2/discord"
+mask_path = "/home/yuchuxi/Projects/Experiments/Dataset/ZhaoLora/datasets/YSM2/mask/discord"
+num_repeats = 1
+resolutions = [1536]
+
+[[directory]]
+path = "/home/yuchuxi/Projects/Experiments/Dataset/ZhaoLora/datasets/YSM2/select_cpd"
+mask_path = "/home/yuchuxi/Projects/Experiments/Dataset/ZhaoLora/datasets/YSM2/mask/select_cpd"
+num_repeats = 1
+resolutions = [768]
