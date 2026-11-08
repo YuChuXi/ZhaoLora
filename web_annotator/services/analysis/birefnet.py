@@ -5,7 +5,6 @@ from __future__ import annotations
 import logging
 import os
 from collections.abc import Callable
-from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
 
@@ -15,8 +14,8 @@ import torch
 from PIL import Image
 from torchvision import transforms
 
-from services.models import JobSnapshot
 from services.core.device import register_model
+from services.core.jobs import JobProgress
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +39,7 @@ def _load_model() -> tuple:
         - ``services/core/device.py:register_model`` 注册的 load 回调
     """
     try:
-        from transformers import AutoModelForImageSegmentation, AutoConfig
+        from transformers import AutoConfig, AutoModelForImageSegmentation
     except ImportError:
         raise RuntimeError("需要 transformers: pip install transformers huggingface_hub")
 
@@ -156,33 +155,6 @@ def _remap_mask(mask: np.ndarray, lo: int, hi: int) -> np.ndarray:
     return np.clip(f * (hi - lo) + lo, 0, 255).astype(np.uint8)
 
 
-@dataclass
-class BirefnetProgress:
-    """BiRefNet 蒙版生成进度. """
-
-    done: int = 0
-    total: int = 0
-    failed: int = 0
-    cancel_requested: bool = False
-
-    def snapshot(self) -> JobSnapshot:
-        """当前进度快照. 
-
-        Callers:
-            - ``routes/birefnet.py:mask_generate``
-        """
-        return JobSnapshot(
-            status="running",
-            kind="birefnet_mask",
-            dataset="",
-            job_id="",
-            done=self.done,
-            total=self.total,
-            failed=self.failed,
-            message=f"{self.done}/{self.total}" if self.total else "准备中",
-        )
-
-
 @_MODEL.auto_release
 def run_birefnet_mask(
     images: list[tuple[str, Path]],
@@ -194,7 +166,7 @@ def run_birefnet_mask(
     mask_min: int = 96,
     mask_max: int = 255,
     skip_existing: bool = True,
-    progress: BirefnetProgress | None = None,
+    progress: JobProgress | None = None,
     on_progress: Callable[[], None] | None = None,
 ) -> tuple[int, int]:
     """对图片列表生成 BiRefNet 蒙版, 输出到 mask_dir(保留子目录结构).

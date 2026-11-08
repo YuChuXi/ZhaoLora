@@ -6,19 +6,13 @@ import logging
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
-from services.analysis.birefnet import (
-    BirefnetProgress,
-    run_birefnet_mask,
-)
-from services.analysis.expression import ExpressionError, parse
-from services.analysis.sam3 import (
-    Sam3MaskProgress,
-    run_sam3_expression_mask,
-)
-from services.core.jobs import EmitFn
-from services.dataset.workdir import IMAGE_EXTS
 
 from routes.deps import DatasetDep, jobs, resolve_path
+from services.analysis.birefnet import run_birefnet_mask
+from services.analysis.expression import ExpressionError, parse
+from services.analysis.sam3 import run_sam3_expression_mask
+from services.core.jobs import EmitFn, JobProgress
+from services.dataset.workdir import IMAGE_EXTS
 
 logger = logging.getLogger(__name__)
 
@@ -87,7 +81,7 @@ async def mask_generate(request: Request, ds: DatasetDep, body: MaskGenerateBody
         except ExpressionError as e:
             raise HTTPException(400, f"表达式错误: {e}")
 
-    prog = Sam3MaskProgress() if body.mode == "sam3" else BirefnetProgress()
+    prog = JobProgress(status="running", phase="running")
 
     def run(emit: EmitFn) -> None:
         """工作线程入口.
@@ -96,6 +90,7 @@ async def mask_generate(request: Request, ds: DatasetDep, body: MaskGenerateBody
             - ``services/core/jobs.py:JobManager.submit``
         """
         def on_progress() -> None:
+            prog.message = f"{prog.done}/{prog.total}" if prog.total else "准备中"
             emit(prog.snapshot())
 
         if body.mode == "sam3":
@@ -119,9 +114,8 @@ async def mask_generate(request: Request, ds: DatasetDep, body: MaskGenerateBody
                 progress=prog,
                 on_progress=on_progress,
             )
-        snap = prog.snapshot()
-        snap.status = "done"
-        emit(snap)
+        prog.status = "done"
+        on_progress()
 
     job_id = await jobs(request).submit(
         kind="mask_generate",
@@ -134,6 +128,6 @@ async def mask_generate(request: Request, ds: DatasetDep, body: MaskGenerateBody
         "蒙版生成任务提交 dataset=%s mode=%s images=%d",
         ds.name,
         body.mode,
-        len(image_rel_paths),
+        len(images),
     )
     return MaskGenerateResponse(job_id=job_id)

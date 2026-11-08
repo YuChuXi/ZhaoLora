@@ -14,7 +14,7 @@ from services.analysis.dedupe import (
     find_duplicate_groups,
     load_records,
 )
-from services.core.jobs import EmitFn
+from services.core.jobs import EmitFn, JobProgress
 from services.models import (
     DedupeMoveResponse,
     DedupeScanResult,
@@ -197,8 +197,6 @@ async def scan_duplicates(request: Request, ds: DatasetDep, body: ScanBody) -> J
             records.extend(part)
 
         if algorithm in ("fft", "orb"):
-            from services.core.jobs import JobProgress
-
             feat_p = JobProgress(
                 status="running",
                 phase=algorithm,

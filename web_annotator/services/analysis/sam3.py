@@ -18,7 +18,6 @@ import io
 import logging
 import os
 from collections.abc import Callable
-from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
@@ -27,13 +26,12 @@ from PIL import Image
 
 from services.analysis.expression import evaluate, extract_concepts, parse, to_uint8
 from services.core.device import register_model
-from services.models import JobSnapshot
+from services.core.jobs import JobProgress
 from services.state.mask import load_mask
 
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
-    import torch
     from transformers import Sam3Model, Sam3Processor
 
 # SAM3 模型: 经 ``SAM3_MODEL`` 环境变量手动配置, 取本地目录或 HuggingFace repo id;
@@ -247,7 +245,7 @@ def overlay_png_base64(mask: np.ndarray) -> str:
     h, w = mask.shape
     scale = min(1.0, _OVERLAY_MAX_SIDE / max(w, h))
     if scale < 1.0:
-        nw, nh = max(1, int(round(w * scale))), max(1, int(round(h * scale)))
+        nw, nh = max(1, round(w * scale)), max(1, round(h * scale))
         mask = np.array(Image.fromarray(mask).resize((nw, nh), Image.Resampling.NEAREST))
         h, w = mask.shape
 
@@ -316,40 +314,6 @@ def run_concept_query(
     return items
 
 
-@dataclass
-class Sam3MaskProgress:
-    """SAM3 表达式蒙版生成进度.
-
-    Callers:
-        - ``routes/birefnet.py:mask_generate``
-    """
-
-    done: int = 0
-    total: int = 0
-    failed: int = 0
-    cancel_requested: bool = False
-
-    def snapshot(self) -> JobSnapshot:
-        """当前进度快照.
-
-        Returns:
-            JobSnapshot: 当前进度的快照对象.
-
-        Callers:
-            - ``routes/birefnet.py:mask_generate``
-        """
-        return JobSnapshot(
-            status="running",
-            kind="sam3_mask",
-            dataset="",
-            job_id="",
-            done=self.done,
-            total=self.total,
-            failed=self.failed,
-            message=f"{self.done}/{self.total}" if self.total else "准备中",
-        )
-
-
 @_MODEL.auto_release
 def run_sam3_expression_mask(
     image_rel_paths: list[tuple[str, Path]],
@@ -358,7 +322,7 @@ def run_sam3_expression_mask(
     *,
     handle: Sam3Handle | None = None,
     skip_existing: bool = True,
-    progress: Sam3MaskProgress | None = None,
+    progress: JobProgress | None = None,
     on_progress: Callable[[], None] | None = None,
 ) -> tuple[int, int]:
     """对图片列表按蒙板表达式生成蒙板并保存.
