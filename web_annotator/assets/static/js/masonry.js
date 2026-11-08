@@ -177,10 +177,17 @@ var Masonry = (function() {
     var aes = (typeof img.aesthetic === 'number')
       ? ('A' + img.aesthetic.toFixed(2) + ' ')
       : '';
-    var qual = (typeof img.quality === 'number')
-      ? ('Q' + img.quality.toFixed(2) + ' ')
-      : '';
-    name.textContent = posted + aes + qual + res + img.stem;
+    var scoreText = '';
+    if (window.ScoringMeta && img.scores) {
+      var order = window.ScoringMeta.order || [];
+      for (var si = 0; si < order.length; si++) {
+        var scoreValue = img.scores[order[si].key];
+        if (typeof scoreValue === 'number') {
+          scoreText += order[si].label + scoreValue.toFixed(2) + ' ';
+        }
+      }
+    }
+    name.textContent = posted + aes + scoreText + res + img.stem;
     info.appendChild(name);
     card.appendChild(info);
 

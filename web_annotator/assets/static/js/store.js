@@ -61,10 +61,12 @@ var Store = (function() {
         if (db !== da) return db - da;
         return (a.stem || '').localeCompare(b.stem || '', 'en');
       });
-    } else if (_sortBy === 'quality') {
+    } else if (_sortBy.indexOf('score:') === 0) {
+      // 按 WD14 评分项分值降序; 无该评分项分值的图片置于末尾按名称排序
+      var scoreKey = _sortBy.slice(6);
       out.sort(function (a, b) {
-        var da = (typeof a.quality === 'number') ? a.quality : -1;
-        var db = (typeof b.quality === 'number') ? b.quality : -1;
+        var da = (a.scores && typeof a.scores[scoreKey] === 'number') ? a.scores[scoreKey] : -1;
+        var db = (b.scores && typeof b.scores[scoreKey] === 'number') ? b.scores[scoreKey] : -1;
         if (db !== da) return db - da;
         return (a.stem || '').localeCompare(b.stem || '', 'en');
       });

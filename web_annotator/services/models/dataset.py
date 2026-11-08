@@ -63,7 +63,7 @@ class FilterImageItem(ImageThumbItem):
     trashed: bool = False
     dir: str = ""
     aesthetic: float | None = None
-    quality: float | None = None
+    scores: dict[str, float] = Field(default_factory=dict, description="评分项 key → 分数")
     posted_at: str = ""
 
 

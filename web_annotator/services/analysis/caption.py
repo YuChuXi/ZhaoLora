@@ -625,7 +625,7 @@ async def run_caption(
         # WD14 推理是 CPU 密集操作, 交给线程执行以免阻塞事件循环; 其内部逐张检查取消
         await asyncio.to_thread(
             cache.populate,
-            pending,
+            cache.missing(pending),
             log=partial(_log, progress),
             cancel_check=lambda: progress.cancel_requested,
         )

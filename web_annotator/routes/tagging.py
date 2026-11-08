@@ -3,18 +3,19 @@
 from __future__ import annotations
 
 import logging
+
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
-
-from routes.deps import DatasetDep, jobs
-from services.core.jobs import EmitFn
-from services.models import TaggingDirsResponse, TaggingStartResponse
 from services.analysis.wd14 import (
     DEFAULT_THRESHOLD,
     TaggingProgress,
     model_ready,
     run_batch,
 )
+from services.core.jobs import EmitFn
+from services.models import TaggingDirsResponse, TaggingStartResponse
+
+from routes.deps import DatasetDep, jobs
 
 logger = logging.getLogger(__name__)
 

@@ -114,6 +114,14 @@
   ::-webkit-scrollbar { width: 6px; }
   ::-webkit-scrollbar-track { background: #0d0d1a; }
   ::-webkit-scrollbar-thumb { background: #333; border-radius: 3px; }
+
+  /* 评分项管理 */
+  .item-row { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; font-size: 12px; }
+  .item-row .item-label { font-weight: 600; white-space: nowrap; }
+  .item-row .item-expr { flex: 1; color: var(--text-dim); font-family: ui-monospace, monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .item-form { display: flex; flex-direction: column; gap: 6px; border-top: 1px solid var(--border); padding-top: 10px; }
+  .item-form input { background: #0a1a30; color: var(--text); border: 1px solid var(--border); border-radius: 4px; padding: 5px 8px; font-size: 12px; font-family: inherit; }
+  .item-form-hint { font-size: 11px; color: var(--text-dim); line-height: 1.6; }
 </style>
 </head>
 <body>
@@ -129,13 +137,11 @@
 <div class="result-tabs">
   <button class="btn green" id="btn-start" style="padding:4px 10px;font-size:12px;">开始</button>
   <button class="btn" id="btn-cancel" disabled style="padding:4px 10px;font-size:12px;">取消</button>
+  <button class="btn" id="btn-cache" type="button" style="padding:4px 10px;font-size:12px;" title="为所选目录补齐 WD14 推理缓存">建立缓存</button>
   <span class="sep"></span>
-  <button class="result-tab active" data-type="aesthetic">
-    美学 <span class="tab-badge">0</span>
-  </button>
-  <button class="result-tab" data-type="quality">
-    质量 <span class="tab-badge">0</span>
-  </button>
+  <div id="result-tab-list" style="display:flex;align-items:center;"></div>
+  <span class="sep"></span>
+  <button class="btn" id="btn-items" type="button" style="padding:4px 10px;font-size:12px;" title="管理评分项">评分项</button>
   <span style="flex:1"></span>
   <span style="display:flex;align-items:center;gap:6px;padding-right:4px;font-size:11px;color:#666;">
     共 <strong id="result-count" style="color:#ccc">0</strong> 张
@@ -183,6 +189,31 @@
     <span class="badge" id="lightboxScore">-</span>
     <span class="badge" id="lightboxTag" style="font-size:0.72rem;opacity:0.8">-</span>
     <span style="font-size:0.72rem;color:#888" id="lightboxPath">-</span>
+  </div>
+</div>
+
+<div class="modal" id="items-modal" aria-hidden="true">
+  <div class="modal-panel" role="dialog" style="width:min(620px,94vw);height:auto;max-height:min(640px,86vh);">
+    <div class="modal-head">
+      <span class="modal-title">评分项</span>
+    </div>
+    <div class="modal-body" style="padding:12px;display:flex;flex-direction:column;gap:12px;">
+      <div id="items-list" style="display:flex;flex-direction:column;gap:6px;"></div>
+      <div class="item-form">
+        <input type="text" id="item-label" placeholder="名称, 如 CSAM" spellcheck="false">
+        <input type="text" id="item-expr" placeholder='表达式, 如 max("loli", "shota")' spellcheck="false">
+        <div class="item-form-hint">
+          双引号字符串引用同名 WD14 标签概率; 语法同蒙板表达式: 算术、比较与
+          min / max / sum / avg / abs / sqrt / exp / log / pow / clamp / blur.
+        </div>
+        <div>
+          <button class="btn green" id="btn-item-add" type="button">添加</button>
+        </div>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn" id="btn-items-close" type="button">关闭</button>
+    </div>
   </div>
 </div>
 

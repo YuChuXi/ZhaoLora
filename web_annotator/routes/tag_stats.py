@@ -88,9 +88,6 @@ class CleanBody(BaseModel):
     inject_pony_score: bool = Field(
         False, description="根据 .aesthetic_scores.json 写入 score_0…score_9(位于头部前置之前)"
     )
-    inject_quality_tag: bool = Field(
-        False, description="根据 .quality_scores.json 写入质量标签(masterpiece/worst quality 等)"
-    )
     dry_run: bool = True
     sample_limit: int = Field(default=40, ge=0, le=200)
 
@@ -217,7 +214,6 @@ async def clean(ds: DatasetDep, body: CleanBody) -> JobSubmitResponse:
         raise HTTPException(400, "请选择目录")
 
     scores = load_score_json(root, ".aesthetic_scores.json") if body.inject_pony_score else {}
-    quality_scores = load_score_json(root, ".quality_scores.json") if body.inject_quality_tag else {}
     payload = body
 
     def run(emit: EmitFn) -> TagCleanResult:
@@ -250,8 +246,6 @@ async def clean(ds: DatasetDep, body: CleanBody) -> JobSubmitResponse:
             inject_pony_score=payload.inject_pony_score,
             dataset_root=root,
             aesthetic_scores=scores,
-            inject_quality_tag=payload.inject_quality_tag,
-            quality_scores=quality_scores,
             dry_run=payload.dry_run,
             sample_limit=payload.sample_limit,
         )
@@ -295,7 +289,6 @@ class BatchEditBody(BaseModel):
     conditional: bool = Field(False, description="仅当已有同名标签时才插入")
     keep_duplicates: bool = Field(False, description="不删除已有重复标签")
     inject_pony_score: bool = Field(False, description="注入 Pony 美学档位, 永远置于最前")
-    inject_quality_tag: bool = Field(False, description="注入质量标签, 永远置于最前")
     inject_year_tag: bool = Field(False, description="按在线来源 meta JSON 发布时间注入年份标签(如 year 2025), 置于 ||| 之前头部")
     separator_mode: str = Field("keep", description="||| 分隔模式: keep(保留) | add(添加) | remove(删除)")
     dry_run: bool = True
@@ -325,7 +318,7 @@ async def batch_edit(ds: DatasetDep, body: BatchEditBody) -> JobSubmitResponse:
         raise HTTPException(400, "请选择目录")
     if (
         not body.delete_tags and not body.add_tags and not body.replace_pairs
-        and not (body.inject_pony_score or body.inject_quality_tag or body.inject_year_tag)
+        and not (body.inject_pony_score or body.inject_year_tag)
     ):
         raise HTTPException(400, "请指定要删除、添加或替换的标签")
 
@@ -337,7 +330,6 @@ async def batch_edit(ds: DatasetDep, body: BatchEditBody) -> JobSubmitResponse:
         raise HTTPException(400, "match_mode 须为 exact / regex / danbooru")
 
     scores = load_score_json(root, ".aesthetic_scores.json") if body.inject_pony_score else {}
-    quality_scores = load_score_json(root, ".quality_scores.json") if body.inject_quality_tag else {}
     payload = body
 
     def run(emit: EmitFn) -> TagCleanResult:
@@ -373,8 +365,6 @@ async def batch_edit(ds: DatasetDep, body: BatchEditBody) -> JobSubmitResponse:
             inject_pony_score=payload.inject_pony_score,
             dataset_root=root,
             aesthetic_scores=scores,
-            inject_quality_tag=payload.inject_quality_tag,
-            quality_scores=quality_scores,
             use_separator=payload.separator_mode,
             dry_run=payload.dry_run,
             sample_limit=payload.sample_limit,

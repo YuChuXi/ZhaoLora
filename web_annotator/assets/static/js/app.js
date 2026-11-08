@@ -200,8 +200,32 @@
     dlg.setAttribute('aria-hidden', 'true');
   }
 
+  /**
+   * 加载数据集评分项并追加到排序下拉, 同时暴露评分项元数据供卡片渲染。
+   *
+   * Returns:
+   *   {Promise<void>}
+   *
+   * Callers:
+   *   - app.js:init
+   */
+  async function loadScoreOptions() {
+    var sel = document.getElementById('sort-by');
+    if (!sel) return;
+    var res = await API.request(API.apiPath('/scoring/items'));
+    var items = res.items || [];
+    window.ScoringMeta = { order: items };
+    items.forEach(function (item) {
+      var opt = document.createElement('option');
+      opt.value = 'score:' + item.key;
+      opt.textContent = item.label;
+      sel.appendChild(opt);
+    });
+  }
+
   async function init() {
     await AppSettings.ready();
+    await loadScoreOptions();
     Masonry.init('masonry', { decorate: searchDecorate });
 
     var colsSlider = document.getElementById('cols-slider');
@@ -296,6 +320,10 @@
       var savedSort = AppSettings.get('sort');
       if (savedSort) Store.setSort(savedSort);
       sortSel.value = Store.getSort();
+      if (sortSel.selectedIndex < 0) {
+        Store.setSort('name');
+        sortSel.value = 'name';
+      }
       sortSel.addEventListener('change', function () {
         Store.setSort(sortSel.value);
         refreshView();

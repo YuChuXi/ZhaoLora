@@ -296,7 +296,6 @@
         document.getElementById('batch-add-keep-dup').checked = !!a.keep_duplicates;
         document.getElementById('batch-add-match-mode').value = a.match_mode;
         document.getElementById('batch-add-inject-pony').checked = !!a.inject_pony_score;
-        document.getElementById('batch-add-inject-quality').checked = !!a.inject_quality_tag;
         document.getElementById('batch-add-inject-year').checked = !!a.inject_year_tag;
         document.getElementById('batch-add-position').disabled = (a.separator_mode === 'remove');
       }
@@ -457,7 +456,6 @@
     var tags = parseTagList(tagsInput.value);
     var metaInject = mode === 'add' && (
       document.getElementById('batch-add-inject-pony').checked ||
-      document.getElementById('batch-add-inject-quality').checked ||
       document.getElementById('batch-add-inject-year').checked);
     if (!tags.length && !metaInject) { toast('请指定标签'); return; }
     var replacePairs = [];
@@ -482,7 +480,6 @@
       conditional: mode === 'add' ? document.getElementById('batch-add-conditional').checked : false,
       keep_duplicates: mode === 'add' ? document.getElementById('batch-add-keep-dup').checked : false,
       inject_pony_score: mode === 'add' ? document.getElementById('batch-add-inject-pony').checked : false,
-      inject_quality_tag: mode === 'add' ? document.getElementById('batch-add-inject-quality').checked : false,
       inject_year_tag: mode === 'add' ? document.getElementById('batch-add-inject-year').checked : false,
       separator_mode: mode === 'add' ? document.getElementById('batch-add-separator').value : 'keep',
       dry_run: !!dryRun,
@@ -498,7 +495,6 @@
         keep_duplicates: body.keep_duplicates,
         match_mode: body.match_mode,
         inject_pony_score: body.inject_pony_score,
-        inject_quality_tag: body.inject_quality_tag,
         inject_year_tag: body.inject_year_tag,
       };
     } else if (mode === 'delete') {

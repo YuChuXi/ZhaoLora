@@ -121,6 +121,9 @@ from services.models.paint import (
 )
 from services.models.archive import ArchivedTask
 from services.models.pages import (
+    ScoreItem,
+    ScoreItemBody,
+    ScoreItemsResponse,
     ScoringDirsResponse,
     ScoringStartResponse,
     TaggingDirsResponse,
@@ -227,6 +230,9 @@ __all__ = [
     'TemplateItem',
     'TemplatesPayload',
     'ArchivedTask',
+    'ScoreItem',
+    'ScoreItemBody',
+    'ScoreItemsResponse',
     'ScoringDirsResponse',
     'ScoringStartResponse',
     'TaggingDirsResponse',

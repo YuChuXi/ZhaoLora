@@ -35,7 +35,7 @@ docs/                          功能说明文档
 加载/卸载。生命周期为 **初始化到内存 → 加载到 GPU ↔ 卸载到内存 → 超时完全释放**。
 
 - 模块内用 `register_model(load, unload)` 登记模型并持有返回的 `Model` 单例（如
-  `_AES_MODEL`、`_Q_MODEL`）。
+  `_AES_MODEL`）。
 - 获取句柄两种方式，按场景选用：
   - **上下文管理器**（推荐）：`with _MODEL as handle:`，`__enter__` 自动 `acquire`、
     `__exit__` 自动 `release`，适合按分支动态选择模型（见

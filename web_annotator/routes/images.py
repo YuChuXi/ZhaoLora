@@ -9,20 +9,21 @@ from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import FileResponse
-
-from routes.deps import DatasetDep, parse_dir_names, resolve_path
+from services.analysis.scoring import load_item_scores, load_score_json
+from services.analysis.similarity import ColorIndex, fingerprint_file
+from services.core.thumbnailer import image_size
 from services.dataset.runtime import Dataset
 from services.dataset.workdir import WorkDir, resolve_under
-from services.online_sources.framework.base import SOURCES, file_stem as source_file_stem
-from services.analysis.similarity import ColorIndex, fingerprint_file
 from services.models import (
     DirsResponse,
     FilterImageItem,
     SimilarItem,
     SimilarResponse,
 )
-from services.analysis.scoring import load_score_json
-from services.core.thumbnailer import image_size
+from services.online_sources.framework.base import SOURCES
+from services.online_sources.framework.base import file_stem as source_file_stem
+
+from routes.deps import DatasetDep, parse_dir_names, resolve_path
 
 router = APIRouter(tags=["images"])
 
@@ -102,6 +103,22 @@ def _posted_at_index(work: WorkDir) -> dict[str, str]:
     return index
 
 
+def _image_scores(scores: dict[str, dict[str, float]], rel: str) -> dict[str, float]:
+    """取出单张图片在各评分项上的分值.
+
+    Args:
+        scores: 评分项 key → ``{相对路径: 分数}``.
+        rel: 图片相对数据集根的路径.
+
+    Returns:
+        dict[str, float]: 只包含已算出该图分值的评分项.
+
+    Callers:
+        - ``routes/images.py:list_images``
+    """
+    return {key: values[rel] for key, values in scores.items() if rel in values}
+
+
 @router.get("/dirs")
 def list_dirs(ds: DatasetDep) -> DirsResponse:
     """列出工作子目录. 引用: 筛选页 DirPicker. """
@@ -122,7 +139,7 @@ def list_images(
     selected = set(state.selected.keys())
     trashed_state = set(state.trashed.keys())
     scores = load_score_json(ds.root, ".aesthetic_scores.json")
-    quality_scores = load_score_json(ds.root, ".quality_scores.json")
+    item_scores = load_item_scores(ds.root)
     result: list[FilterImageItem] = []
     seen: set[str] = set()
 
@@ -150,7 +167,7 @@ def list_images(
                     thumbnail_hash=ds.thumbnailer.hash_for(rel),
                     dir=sub,
                     aesthetic=scores.get(rel),
-                    quality=quality_scores.get(rel),
+                    scores=_image_scores(item_scores, rel),
                     posted_at=posted.get(img.stem, ""),
                 )
             )
@@ -179,7 +196,7 @@ def list_images(
                         thumbnail_hash=ds.thumbnailer.hash_for(img.rel),
                         dir=sub,
                         aesthetic=scores.get(img.rel),
-                        quality=quality_scores.get(img.rel),
+                        scores=_image_scores(item_scores, img.rel),
                         posted_at=posted.get(img.stem, ""),
                     )
                 )
@@ -206,7 +223,7 @@ def list_images(
                         thumbnail_hash=ds.thumbnailer.hash_for(rel),
                         dir=sub,
                         aesthetic=scores.get(rel),
-                        quality=quality_scores.get(rel),
+                        scores=_image_scores(item_scores, rel),
                         posted_at=posted.get(Path(rel).stem, ""),
                     )
                 )

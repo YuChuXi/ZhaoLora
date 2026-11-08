@@ -111,7 +111,7 @@ def _locate_file(mod: str, index: dict[Path, set[str]], src: Path | None = None)
     """按模块名定位文件(完整点号路径或裸模块名).
 
     Args:
-        mod: 模块名(如 ``routes.tag_stats`` / ``dedupe.py`` / ``mask_expression``).
+        mod: 模块名(如 ``routes.tag_stats`` / ``dedupe.py`` / ``expression``).
         index: 全部文件符号索引.
         src: 引用所在文件, 用于同目录优先消歧.
 
@@ -142,7 +142,7 @@ def _locate_file(mod: str, index: dict[Path, set[str]], src: Path | None = None)
                 return same_dir
         hits = [p for p in index if p.name == mod]
         return hits[0] if len(hits) == 1 else None
-    # 裸模块名(如 mask_expression) → 唯一文件名匹配
+    # 裸模块名(如 expression) → 唯一文件名匹配
     fname = mod.split(".")[-1] + ".py"
     if src is not None:
         same_dir = src.parent / fname

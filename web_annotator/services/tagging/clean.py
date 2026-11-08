@@ -12,20 +12,14 @@ from typing import Any, NamedTuple
 
 from services.core.atomic import atomic_write_text
 from services.core.natural import natural_key
-from services.models import TagCleanResult, TagCleanSample
 from services.dataset.workdir import IMAGE_EXTS
+from services.models import TagCleanResult, TagCleanSample
 
 # 与 tag_key 一致: score_9 → "score 9"
 SCORE_TAG_KEYS = frozenset(f"score {i}" for i in range(10))
 
-# 质量标签 tag_key (已是小写无下划线, 与 tag_key() 输出一致)
-QUALITY_TAG_KEYS = frozenset({"masterpiece", "best quality", "good quality", "normal quality", "low quality", "worst quality"})
-
 # 年份标签(如 "year 2025")的匹配模式, 用于注入前清理旧标签
 _YEAR_TAG_RE = re.compile(r"^year \d{4}$")
-
-# 始终置顶的标签 (分数 + 质量)
-PRIORITY_TAG_KEYS: frozenset[str] = SCORE_TAG_KEYS | QUALITY_TAG_KEYS
 
 
 def split_tags_line(s: str) -> list[str]:
@@ -88,10 +82,10 @@ def split_header_body(raw: str) -> tuple[list[str], list[str], bool]:
 
 
 def _first_content_index(tags: list[str]) -> int:
-    """返回首个非优先标签(质量/分数)的索引.
+    """返回首个非评分档位标签的索引.
 
-    优先标签 (PRIORITY_TAG_KEYS) 始终置顶, 内容标签从其后开始.
-    若全部为优先标签则返回列表长度.
+    评分档位标签 (SCORE_TAG_KEYS) 始终置顶, 内容标签从其后开始.
+    若全部为评分档位标签则返回列表长度.
 
     Args:
         tags (list[str]): 标签原文列表.
@@ -103,7 +97,7 @@ def _first_content_index(tags: list[str]) -> int:
         - ``services/tagging/clean.py:check_tag_in_caption``
     """
     for i, t in enumerate(tags):
-        if tag_key(t) not in PRIORITY_TAG_KEYS:
+        if tag_key(t) not in SCORE_TAG_KEYS:
             return i
     return len(tags)
 
@@ -208,7 +202,7 @@ def delete_tag_from_caption(raw: str, tag: str) -> str:
         - ``routes/tag_stats.py:delete_one``
         - ``routes/tag_stats.py:embedding_batch_tag``
     """
-    header, body, has_sep = split_header_body(raw)
+    header, body, _has_sep = split_header_body(raw)
     key = tag_key(tag)
     header = [t for t in header if tag_key(t) != key]
     body = [t for t in body if tag_key(t) != key]
@@ -242,13 +236,13 @@ def format_pony_score_tag(raw: float) -> str:
         str: 形如 ``score_0`` … ``score_9`` 的标签.
 
     Callers:
-        - ``services/tagging/clean.py:_lookup_pony_quality``
+        - ``services/tagging/clean.py:_lookup_pony_score``
     """
     return f"score_{raw_to_pony(raw)}"
 
 
 def rel_image_for_txt(txt: Path, root: Path) -> str | None:
-    """同 stem 旁路图片相对数据集根的路径(用于查美学分/质量分).
+    """同 stem 旁路图片相对数据集根的路径(用于查美学分).
 
     Args:
         txt (Path): 旁路 txt 文件路径.
@@ -258,7 +252,7 @@ def rel_image_for_txt(txt: Path, root: Path) -> str | None:
         str | None: 命中图片的 posix 相对路径; 无同 stem 图片时为 None.
 
     Callers:
-        - ``services/tagging/clean.py:_lookup_pony_quality``
+        - ``services/tagging/clean.py:_lookup_pony_score``
     """
     root_r = root.resolve()
     parent = txt.parent
@@ -449,14 +443,12 @@ def clean_caption(
     promote_tags: tuple[str, ...] = (),
     prepend_tags: tuple[str, ...] = (),
     pony_score_tag: str | None = None,
-    quality_tag: str | None = None,
     use_promote_separator: bool = False,
 ) -> str:
     """清洗单条 caption.
 
-    顺序: HTML 实体还原与下划线规范化 → 删除 → 提升重排 → 美学/质量标签 → 头部前置.
-    pony_score_tag(如 score_9)和 quality_tag(如 masterpiece)写入头部前置之前,
-    两者随机排序, 并移除既有 score_0…score_9 和质量标签.
+    顺序: HTML 实体还原与下划线规范化 → 删除 → 提升重排 → 美学档位标签 → 头部前置.
+    pony_score_tag(如 score_9)写入头部前置之前, 并移除既有 score_0…score_9.
 
     Args:
         raw (str): 原始 caption 文本.
@@ -465,7 +457,6 @@ def clean_caption(
         promote_tags (tuple[str, ...]): 提升至头部的标签列表.
         prepend_tags (tuple[str, ...]): 头部前置标签列表(可新增).
         pony_score_tag (str | None): 美学档位标签, 如 ``score_9``.
-        quality_tag (str | None): 质量标签, 如 ``masterpiece``.
         use_promote_separator (bool): 是否用 ``|||`` 分隔提升块.
 
     Returns:
@@ -486,14 +477,12 @@ def clean_caption(
     promote_keys = promote_keys_ordered(promote_tags)
     kept, n_promoted = apply_promote_tags(kept, promote_keys)
 
-    # 移除既有的美学档位标签和质量标签
+    # 移除既有的美学档位标签
     if pony_score_tag:
         kept = [t for t in kept if tag_key(t) not in SCORE_TAG_KEYS]
-    if quality_tag:
-        kept = [t for t in kept if tag_key(t) not in QUALITY_TAG_KEYS]
 
-    # 头部: score/质量随机置顶 + prepend 前置
-    header = _priority_tags(pony_score_tag, quality_tag) + [
+    # 头部: 美学档位置顶 + prepend 前置
+    header = ([pony_score_tag] if pony_score_tag else []) + [
         normalize_tag_underscores(t) for t in prepend_tags if t.strip()
     ]
     if header:
@@ -526,47 +515,31 @@ def _collect_txt_files(dirs: list[Path]) -> list[Path]:
     return files
 
 
-def _lookup_pony_quality(path: Path, root: Path | None, *,
-                         inject_pony_score: bool, scores: dict[str, float],
-                         inject_quality_tag: bool, q_scores: dict[str, float]) -> tuple[str | None, str | None, int, int, int, int]:
-    """按旁路图片得分查美学/质量档位标签并返回计数增量.
+def _lookup_pony_score(
+    path: Path, root: Path | None, *,
+    inject_pony_score: bool, scores: dict[str, float],
+) -> tuple[str | None, int, int]:
+    """按旁路图片得分查美学档位标签并返回计数增量.
 
     Args:
         path (Path): txt 文件路径.
         root (Path | None): 数据集根目录; None 时无法解析相对路径, 记缺失.
         inject_pony_score (bool): 是否注入美学档位.
         scores (dict[str, float]): 相对路径 → 原始美学分 [0,1].
-        inject_quality_tag (bool): 是否注入质量标签.
-        q_scores (dict[str, float]): 相对路径 → 质量分 [0,1].
 
     Returns:
-        tuple[str | None, str | None, int, int, int, int]:
-        ``(score_tag, quality_tag_val, pony_injected, pony_missing,
-        quality_injected, quality_missing)``; 未注入的维度计数为 0.
+        tuple[str | None, int, int]: ``(score_tag, injected, missing)``;
+        未注入时后两项为 0.
+
     Callers:
         - ``services/tagging/clean.py:_run_batch_edit``
     """
-    score_tag: str | None = None
-    quality_tag_val: str | None = None
-    pony_injected = pony_missing = 0
-    quality_injected = quality_missing = 0
-
-    if inject_pony_score and root is not None:
-        rel = rel_image_for_txt(path, root)
-        if rel is not None and rel in scores:
-            score_tag = format_pony_score_tag(scores[rel])
-            pony_injected = 1
-        else:
-            pony_missing = 1
-    if inject_quality_tag and root is not None:
-        rel = rel_image_for_txt(path, root)
-        if rel is not None and rel in q_scores:
-            from services.analysis.scoring import quality_to_tag
-            quality_tag_val = quality_to_tag(q_scores[rel])
-            quality_injected = 1
-        else:
-            quality_missing = 1
-    return score_tag, quality_tag_val, pony_injected, pony_missing, quality_injected, quality_missing
+    if not inject_pony_score or root is None:
+        return None, 0, 0
+    rel = rel_image_for_txt(path, root)
+    if rel is not None and rel in scores:
+        return format_pony_score_tag(scores[rel]), 1, 0
+    return None, 0, 1
 
 
 def _lookup_year_tag(txt: Path) -> str | None:
@@ -633,8 +606,6 @@ class _BatchStats(NamedTuple):
     failed: int
     pony_injected: int
     pony_missing: int
-    quality_injected: int
-    quality_missing: int
     year_injected: int
     year_missing: int
     samples: list[TagCleanSample]
@@ -645,10 +616,9 @@ def _run_batch_edit(
     *,
     root: Path | None,
     inject_pony_score: bool, scores: dict[str, float],
-    inject_quality_tag: bool, q_scores: dict[str, float],
     inject_year_tag: bool = False,
     dry_run: bool, sample_limit: int,
-    edit: Callable[[str, str | None, str | None, str | None], tuple[str, Any]],
+    edit: Callable[[str, str | None, str | None], tuple[str, Any]],
 ) -> tuple[_BatchStats, list[Any]]:
     """通用批量编辑骨架: 遍历 txt、查分、编辑、统计并记录样本.
 
@@ -657,13 +627,11 @@ def _run_batch_edit(
         root (Path | None): 数据集根目录(解析旁路图片相对路径).
         inject_pony_score (bool): 美学档位注入开关.
         scores (dict[str, float]): 相对路径 → 原始美学分 [0,1].
-        inject_quality_tag (bool): 质量标签注入开关.
-        q_scores (dict[str, float]): 相对路径 → 质量分 [0,1].
         inject_year_tag (bool): 年份标签注入开关(由 meta JSON 发布时间生成).
         dry_run (bool): True 仅预览, 不写文件.
         sample_limit (int): 返回样本上限.
-        edit (Callable[[str, str | None, str | None, str | None], tuple[str, Any]]): 单文件编辑函数
-            ``(raw, score_tag, quality_tag_val, year_tag) -> (new, extra)``,
+        edit (Callable[[str, str | None, str | None], tuple[str, Any]]): 单文件编辑函数
+            ``(raw, score_tag, year_tag) -> (new, extra)``,
             ``extra`` 为编辑附带数据(无则为 None), 按文件顺序收集返回.
 
     Returns:
@@ -675,7 +643,6 @@ def _run_batch_edit(
     files = _collect_txt_files(dirs)
     changed = unchanged = failed = 0
     pony_injected = pony_missing = 0
-    quality_injected = quality_missing = 0
     year_injected = year_missing = 0
     samples: list[TagCleanSample] = []
     extras: list[Any] = []
@@ -688,22 +655,19 @@ def _run_batch_edit(
             extras.append(None)
             continue
 
-        score_tag, quality_tag_val, pi, pm, qi, qm = _lookup_pony_quality(
+        score_tag, pi, pm = _lookup_pony_score(
             path, root,
             inject_pony_score=inject_pony_score, scores=scores,
-            inject_quality_tag=inject_quality_tag, q_scores=q_scores,
         )
         pony_injected += pi
         pony_missing += pm
-        quality_injected += qi
-        quality_missing += qm
 
         year_tag = _lookup_year_tag(path) if inject_year_tag else None
         if inject_year_tag:
             year_injected += year_tag is not None
             year_missing += year_tag is None
 
-        new, extra = edit(raw, score_tag, quality_tag_val, year_tag)
+        new, extra = edit(raw, score_tag, year_tag)
         extras.append(extra)
         if new == raw.strip():
             unchanged += 1
@@ -713,7 +677,7 @@ def _run_batch_edit(
 
     stats = _BatchStats(
         files, changed, unchanged, failed,
-        pony_injected, pony_missing, quality_injected, quality_missing,
+        pony_injected, pony_missing,
         year_injected, year_missing, samples,
     )
     return stats, extras
@@ -730,8 +694,6 @@ def clean_txt_dirs(
     inject_pony_score: bool = False,
     dataset_root: Path | None = None,
     aesthetic_scores: dict[str, float] | None = None,
-    inject_quality_tag: bool = False,
-    quality_scores: dict[str, float] | None = None,
     dry_run: bool = True,
     sample_limit: int = 40,
 ) -> TagCleanResult:
@@ -745,10 +707,8 @@ def clean_txt_dirs(
         prepend (list[str] | None): 前置列表.
         promote_separator (bool): 是否用 ||| 分隔提升块.
         inject_pony_score (bool): 是否根据 .aesthetic_scores.json 写入 score_0…score_9.
-        inject_quality_tag (bool): 是否根据 .quality_scores.json 写入质量标签.
         dataset_root (Path | None): 数据集根目录(用于解析旁路图像相对路径).
         aesthetic_scores (dict[str, float] | None): 相对路径 → 原始美学分 [0,1].
-        quality_scores (dict[str, float] | None): 相对路径 → 质量分 [0,1].
         dry_run (bool): True 仅预览, 不写文件.
         sample_limit (int): 返回的前后对比样本上限.
 
@@ -765,10 +725,10 @@ def clean_txt_dirs(
     promote_tags = tuple(expand_cli_list(promote or []))
     prepend_tags = tuple(expand_cli_list(prepend or []))
     scores = aesthetic_scores or {}
-    q_scores = quality_scores or {}
+
     root = dataset_root.resolve() if dataset_root is not None else None
 
-    def _edit(raw: str, score_tag: str | None, quality_tag_val: str | None, _year_tag: str | None) -> tuple[str, object]:
+    def _edit(raw: str, score_tag: str | None, _year_tag: str | None) -> tuple[str, object]:
         """单文件清洗闭包, 由 ``_run_batch_edit`` 逐文件调用; 不支持年份注入."""
         return clean_caption(
             raw,
@@ -777,14 +737,12 @@ def clean_txt_dirs(
             promote_tags=promote_tags,
             prepend_tags=prepend_tags,
             pony_score_tag=score_tag,
-            quality_tag=quality_tag_val,
             use_promote_separator=promote_separator,
         ), None
 
     st, _ = _run_batch_edit(
         dirs, root=root,
         inject_pony_score=inject_pony_score, scores=scores,
-        inject_quality_tag=inject_quality_tag, q_scores=q_scores,
         dry_run=dry_run, sample_limit=sample_limit,
         edit=_edit,
     )
@@ -802,9 +760,6 @@ def clean_txt_dirs(
         inject_pony_score=inject_pony_score,
         pony_injected=st.pony_injected,
         pony_missing=st.pony_missing,
-        inject_quality_tag=inject_quality_tag,
-        quality_injected=st.quality_injected,
-        quality_missing=st.quality_missing,
     )
 
 
@@ -911,35 +866,15 @@ def make_tag_matcher(patterns: list[str], mode: str) -> Callable[[str], bool]:
     return lambda key: key in keys or any(re_.search(key) for re_ in pats.values())
 
 
-def _priority_tags(score_tag: str | None, quality_tag: str | None) -> list[str]:
-    """收集 score/质量标签并随机排序(两者都存在时).
-
-    Args:
-        score_tag (str | None): 美学档位标签.
-        quality_tag (str | None): 质量标签.
-
-    Returns:
-        list[str]: 随机排序后的优先标签列表.
-    Callers:
-        - ``services/tagging/clean.py:_compose_caption``
-        - ``services/tagging/clean.py:clean_caption``
-    """
-    priority = [t.strip() for t in (score_tag, quality_tag) if t and t.strip()]
-    if len(priority) > 1:
-        random.shuffle(priority)
-    return priority
-
-
 def _compose_caption(header: list[str], body: list[str], *,
-                     score_tag: str | None, quality_tag_val: str | None,
+                     score_tag: str | None,
                      use_separator: str, n_added_head: int) -> str:
-    """重组(score/质量标签置顶)并按分隔符模式拼接 caption.
+    """重组(美学档位置顶)并按分隔符模式拼接 caption.
 
     Args:
         header (list[str]): 头部标签列表.
         body (list[str]): 正文标签列表.
         score_tag (str | None): 美学档位标签.
-        quality_tag_val (str | None): 质量标签.
         use_separator (str): ``|||`` 模式: ``add`` / ``keep`` / ``remove``.
         n_added_head (int): 本次添加到头部的标签数.
 
@@ -948,7 +883,7 @@ def _compose_caption(header: list[str], body: list[str], *,
     Callers:
         - ``services/tagging/clean.py:batch_edit_tags``
     """
-    priority = _priority_tags(score_tag, quality_tag_val)
+    priority = [score_tag] if score_tag else []
     header = priority + header
 
     n_head = len(priority) + n_added_head
@@ -977,8 +912,6 @@ def batch_edit_tags(
     inject_pony_score: bool = False,
     dataset_root: Path | None = None,
     aesthetic_scores: dict[str, float] | None = None,
-    inject_quality_tag: bool = False,
-    quality_scores: dict[str, float] | None = None,
     use_separator: str = "keep",
     inject_year_tag: bool = False,
     dry_run: bool = True,
@@ -998,13 +931,11 @@ def batch_edit_tags(
         conditional (bool): 仅当文件中已有匹配标签(按 match_mode)时才插入.
         keep_duplicates (bool): 不删除已有重复标签.
         inject_pony_score (bool): 根据美学分注入 score_0…score_9.
-        inject_quality_tag (bool): 根据质量分注入质量标签.
         use_separator (str): ||| 分隔模式: "add"(添加) | "keep"(保留) | "remove"(删除).
         inject_year_tag (bool): 按在线来源 meta JSON 的发布时间注入年份标签 ``year YYYY``,
             置于 ``|||`` 之前头部最前(先清理旧年份标签).
         dataset_root (Path | None): 数据集根目录(解析旁路图像路径).
         aesthetic_scores (dict[str, float] | None): 相对路径 → 原始美学分 [0,1].
-        quality_scores (dict[str, float] | None): 相对路径 → 质量分 [0,1].
         dry_run (bool): True 仅预览.
         sample_limit (int): 返回样本上限.
 
@@ -1033,28 +964,24 @@ def batch_edit_tags(
 
     add_list = expand_cli_list(add_tags or [])
     scores = aesthetic_scores or {}
-    q_scores = quality_scores or {}
     root = dataset_root.resolve() if dataset_root is not None else None
 
-    def _edit(raw: str, score_tag: str | None, quality_tag_val: str | None, year_tag: str | None) -> tuple[str, object]:
+    def _edit(raw: str, score_tag: str | None, year_tag: str | None) -> tuple[str, object]:
         """单文件批量编辑闭包, 由 ``_run_batch_edit`` 逐文件调用.
 
         返回 ``(new, matched_file)``.
         """
-        # 整理食材: 拆分; 仅在注入对应维度时移除旧 score/质量标签,
+        # 整理食材: 拆分; 仅在注入对应维度时移除旧 score 标签,
         # 否则保留(除非用户明确指定删除, 由 _transform 处理)
         header, body, _ = split_header_body(raw)
         if inject_pony_score:
             header = [t for t in header if tag_key(t) not in SCORE_TAG_KEYS]
             body = [t for t in body if tag_key(t) not in SCORE_TAG_KEYS]
-        if inject_quality_tag:
-            header = [t for t in header if tag_key(t) not in QUALITY_TAG_KEYS]
-            body = [t for t in body if tag_key(t) not in QUALITY_TAG_KEYS]
         if inject_year_tag:
             header = [t for t in header if not _YEAR_TAG_RE.match(tag_key(t))]
             body = [t for t in body if not _YEAR_TAG_RE.match(tag_key(t))]
         if year_tag:
-            # 年份标签置于 ||| 之前头部最前(美学/质量优先标签在重组时仍插于其前)
+            # 年份标签置于 ||| 之前头部最前(美学优先标签在重组时仍插于其前)
             header = [year_tag, *header]
         matched_file: dict[str, list[str]] = {}
 
@@ -1132,7 +1059,7 @@ def batch_edit_tags(
 
         new = _compose_caption(
             header, body,
-            score_tag=score_tag, quality_tag_val=quality_tag_val,
+            score_tag=score_tag,
             use_separator=use_separator, n_added_head=n_added_head,
         )
         return new, matched_file
@@ -1140,7 +1067,6 @@ def batch_edit_tags(
     st, extras = _run_batch_edit(
         dirs, root=root,
         inject_pony_score=inject_pony_score, scores=scores,
-        inject_quality_tag=inject_quality_tag, q_scores=q_scores,
         inject_year_tag=inject_year_tag,
         dry_run=dry_run, sample_limit=sample_limit,
         edit=_edit,
@@ -1167,9 +1093,6 @@ def batch_edit_tags(
         inject_pony_score=inject_pony_score,
         pony_injected=st.pony_injected,
         pony_missing=st.pony_missing,
-        inject_quality_tag=inject_quality_tag,
-        quality_injected=st.quality_injected,
-        quality_missing=st.quality_missing,
         inject_year_tag=inject_year_tag,
         year_injected=st.year_injected,
         year_missing=st.year_missing,

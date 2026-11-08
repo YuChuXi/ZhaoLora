@@ -25,8 +25,8 @@ from typing import TYPE_CHECKING, cast
 import numpy as np
 from PIL import Image
 
+from services.analysis.expression import evaluate, extract_concepts, parse, to_uint8
 from services.core.device import register_model
-from services.analysis.mask_expression import evaluate, extract_concepts, parse, to_uint8
 from services.models import JobSnapshot
 from services.state.mask import load_mask
 

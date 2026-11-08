@@ -1,18 +1,21 @@
-"""蒙板表达式: 解析与掩码求值.
+"""0-1 域表达式: 解析与求值.
 
 概述
 ----
-蒙板以 0-255 灰度值表示 (非二值). 表达式运算全程在 0-1 域进行: 数值字面量
-直接按 0-1 书写 (1 对应蒙板值 255, 支持任意实数), ``当前蒙板`` 与概念掩码
-在求值前除以 255 归一化; 运算结果统一在最后钳位到 0-255 并转换为整数
-(``to_uint8``), 中间过程不出现 255 这样的整数域值. 前端输入框外标注 ``×255`` 提示.
+供蒙板表达式与评分项共用. 表达式运算全程在 0-1 域进行: 数值字面量直接按
+0-1 书写 (1 对应蒙板值 255, 支持任意实数), 操作数在求值前按 ``concept_scale``
+归一化 (0-255 掩码取 255, 已归一化的概率取 1). 运算结果由调用方决定最终
+收敛方式: 蒙板经 ``to_uint8`` 转为 0-255 灰度, 评分直接取浮点值.
 
 语法与优先级
 ------------
 遵循 Python 表达式优先级 (由高到低):
 
-- 括号 ``()`` 与函数式 ``min(a, b)`` / ``max(a, b)`` / ``blur(掩码, 半径)``:
-  优先级最高.
+- 括号 ``()`` 与函数式调用: 优先级最高.
+  - 归约: ``min`` / ``max`` / ``sum`` / ``avg`` 接收两个及以上参数.
+  - 逐元素: ``abs`` / ``sqrt`` / ``exp`` / ``log`` 一个参数, ``pow(a, b)`` 两个,
+    ``clamp(x, 下界, 上界)`` 三个.
+  - ``blur(掩码, 半径)`` 两个参数, 半径须为数值.
 - 乘法 ``*``: 0-1 域乘法, ``clip(a*b, 0, 1)``.
 - 加减 ``+`` / ``-``: 钳位加 / 钳位减, ``clip(a±b, 0, 1)``.
 - 比较 ``>`` ``<`` ``>=`` ``<=`` ``==`` ``!=``: 逐像素比较, 结果为 0/1 掩码;
@@ -23,28 +26,31 @@ SAM 概念分割产生的生硬边缘; 掩码参数可为任意子表达式.
 
 操作数
 ------
-- ``当前蒙板``: 当前已保存的蒙板; 不存在时视为全不透明 (255).
-- ``"概念文本"``: SAM3 文本提示概念分割得到的二值掩码, 引号可为 ASCII ``"``
-  或中文全角 ``""``.
-- 数值字面量 (0-1 域, 任意实数): 纯值蒙板, 如 ``0`` 全透明 / ``1`` 全不透明 /
-  ``0.5`` 半透明 / ``2`` 或 ``-1`` 等中间量亦可.
+调用方经 ``concepts`` 提供"引号文本 → 0-1 数组"的映射:
+
+- 蒙板: ``"概念文本"`` 为 SAM3 概念分割掩码, ``当前蒙板`` 为已保存的蒙板;
+  引号可为 ASCII ``"`` 或中文全角 ``""``.
+- 评分: ``"标签名"`` 为 WD14 同名标签的概率.
+
+数值字面量 (0-1 域, 任意实数): 纯值操作数, 如 ``0`` / ``1`` / ``0.5`` / ``0.33``.
 
 示例
 ----
-``(当前蒙板-("白色背景"+"对话气泡"))`` 表示从当前蒙板中减去白色背景与对话气泡
-相加的区域; ``(当前蒙板*0.5)`` 表示当前蒙板透明度减半.
+``(当前蒙板-("白色背景"+"对话气泡"))`` 表示从当前蒙板中减去白色背景与对话
+气泡相加的区域; 评分项 ``max("loli", "shota")`` / ``"sensitive" * 0.33``.
 
 实现说明
 --------
 解析复用标准库 ``ast`` (Python 表达式语法子集, 自动获得标准运算优先级),
 仅接受受支持的节点 (``Constant`` / ``Name`` / ``UnaryOp`` / ``BinOp`` /
 ``Compare`` / ``Call``), 不执行任意代码. ``parse`` 解析后经 ``validate``
-静态校验节点/运算符/函数形态 (不依赖掩码数据, 表达式错误在请求阶段即可向
-前端抛出), ``evaluate`` 只负责依赖掩码数据的逐像素求值.
+静态校验节点/运算符/函数形态 (不依赖操作数数据, 表达式错误在请求阶段即可向
+前端抛出), ``evaluate`` 只负责依赖操作数数据的逐元素求值.
 
 Callers:
     - ``routes/birefnet.py:mask_generate``
     - ``services/analysis/sam3.py:run_sam3_expression_mask``
+    - ``services/analysis/scoring.py:score_item_tree``
 """
 
 from __future__ import annotations
@@ -57,15 +63,36 @@ import numpy as np
 
 # 当前蒙板关键字
 _CURRENT_WORD = "当前蒙板"
-# 函数式运算符 (接收两个以逗号分隔的参数)
-_FUNC_OPS = {"min", "max", "blur"}
+# 逐元素函数: 名称 → numpy 实现
+_ELEMENT_OPS = {
+    "abs": np.abs,
+    "sqrt": np.sqrt,
+    "exp": np.exp,
+    "log": np.log,
+    "pow": np.power,
+    "clamp": np.clip,
+}
+# 多参数归约: 名称 → (numpy ufunc, 是否取平均)
+_REDUCE_OPS = {
+    "min": (np.minimum, False),
+    "max": (np.maximum, False),
+    "sum": (np.add, False),
+    "avg": (np.add, True),
+}
+# 函数参数个数: 名称 → (最少, 最多); 最多为 None 表示不限
+_FUNC_ARITY = {
+    "abs": (1, 1), "sqrt": (1, 1), "exp": (1, 1), "log": (1, 1),
+    "pow": (2, 2), "clamp": (3, 3), "blur": (2, 2),
+    "min": (2, None), "max": (2, None), "sum": (2, None), "avg": (2, None),
+}
+_FUNC_OPS = frozenset(_FUNC_ARITY)
 
 
 class ExpressionError(ValueError):
     """表达式语法或语义错误.
 
     Callers:
-        - ``services/analysis/mask_expression.py:parse``
+        - ``services/analysis/expression.py:parse``
     """
 
 
@@ -80,7 +107,7 @@ def _add(a: np.ndarray, b: np.ndarray) -> np.ndarray:
         np.ndarray: 钳位加结果 (H, W), 值域 [0, 1].
 
     Callers:
-        - ``services/analysis/mask_expression.py:evaluate``
+        - ``services/analysis/expression.py:evaluate``
     """
     return np.clip(a + b, 0, 1)
 
@@ -96,7 +123,7 @@ def _sub(a: np.ndarray, b: np.ndarray) -> np.ndarray:
         np.ndarray: 钳位减结果 (H, W), 值域 [0, 1].
 
     Callers:
-        - ``services/analysis/mask_expression.py:evaluate``
+        - ``services/analysis/expression.py:evaluate``
     """
     return np.clip(a - b, 0, 1)
 
@@ -112,41 +139,9 @@ def _mul(a: np.ndarray, b: np.ndarray) -> np.ndarray:
         np.ndarray: 乘法结果 (H, W), 值域 [0, 1].
 
     Callers:
-        - ``services/analysis/mask_expression.py:evaluate``
+        - ``services/analysis/expression.py:evaluate``
     """
     return np.clip(a * b, 0, 1)
-
-
-def _min(a: np.ndarray, b: np.ndarray) -> np.ndarray:
-    """逐像素取较小值.
-
-    Args:
-        a: 0-1 域掩码 (H, W).
-        b: 0-1 域掩码 (H, W).
-
-    Returns:
-        np.ndarray: 逐像素较小值 (H, W).
-
-    Callers:
-        - ``services/analysis/mask_expression.py:evaluate``
-    """
-    return np.minimum(a, b)
-
-
-def _max(a: np.ndarray, b: np.ndarray) -> np.ndarray:
-    """逐像素取较大值.
-
-    Args:
-        a: 0-1 域掩码 (H, W).
-        b: 0-1 域掩码 (H, W).
-
-    Returns:
-        np.ndarray: 逐像素较大值 (H, W).
-
-    Callers:
-        - ``services/analysis/mask_expression.py:evaluate``
-    """
-    return np.maximum(a, b)
 
 
 def _blur(mask: np.ndarray, sigma: float) -> np.ndarray:
@@ -163,13 +158,12 @@ def _blur(mask: np.ndarray, sigma: float) -> np.ndarray:
         np.ndarray: 模糊后的 0-1 域掩码 (H, W)。
 
     Callers:
-        - ``services/analysis/mask_expression.py:evaluate``
+        - ``services/analysis/expression.py:evaluate``
     """
     if sigma <= 0:
         return mask
-    ksize = int(round(sigma * 6)) | 1
-    if ksize < 3:
-        ksize = 3
+    ksize = round(sigma * 6) | 1
+    ksize = max(ksize, 3)
     return cv2.GaussianBlur(
         mask.astype(np.float32), (ksize, ksize), float(sigma)
     ).astype(np.float64)
@@ -186,7 +180,7 @@ def _gt(a: np.ndarray, b: np.ndarray) -> np.ndarray:
         np.ndarray: 比较结果 (H, W), 值域 {0, 1}.
 
     Callers:
-        - ``services/analysis/mask_expression.py:evaluate``
+        - ``services/analysis/expression.py:evaluate``
     """
     return (a > b).astype(np.float64)
 
@@ -202,7 +196,7 @@ def _lt(a: np.ndarray, b: np.ndarray) -> np.ndarray:
         np.ndarray: 比较结果 (H, W), 值域 {0, 1}.
 
     Callers:
-        - ``services/analysis/mask_expression.py:evaluate``
+        - ``services/analysis/expression.py:evaluate``
     """
     return (a < b).astype(np.float64)
 
@@ -218,7 +212,7 @@ def _ge(a: np.ndarray, b: np.ndarray) -> np.ndarray:
         np.ndarray: 比较结果 (H, W), 值域 {0, 1}.
 
     Callers:
-        - ``services/analysis/mask_expression.py:evaluate``
+        - ``services/analysis/expression.py:evaluate``
     """
     return (a >= b).astype(np.float64)
 
@@ -234,7 +228,7 @@ def _le(a: np.ndarray, b: np.ndarray) -> np.ndarray:
         np.ndarray: 比较结果 (H, W), 值域 {0, 1}.
 
     Callers:
-        - ``services/analysis/mask_expression.py:evaluate``
+        - ``services/analysis/expression.py:evaluate``
     """
     return (a <= b).astype(np.float64)
 
@@ -250,7 +244,7 @@ def _eq(a: np.ndarray, b: np.ndarray) -> np.ndarray:
         np.ndarray: 比较结果 (H, W), 值域 {0, 1}.
 
     Callers:
-        - ``services/analysis/mask_expression.py:evaluate``
+        - ``services/analysis/expression.py:evaluate``
     """
     return (a == b).astype(np.float64)
 
@@ -266,7 +260,7 @@ def _ne(a: np.ndarray, b: np.ndarray) -> np.ndarray:
         np.ndarray: 比较结果 (H, W), 值域 {0, 1}.
 
     Callers:
-        - ``services/analysis/mask_expression.py:evaluate``
+        - ``services/analysis/expression.py:evaluate``
     """
     return (a != b).astype(np.float64)
 
@@ -301,7 +295,7 @@ def _normalize(expression: str) -> str:
         str: 规范化后的表达式.
 
     Callers:
-        - ``services/analysis/mask_expression.py:parse``
+        - ``services/analysis/expression.py:parse``
     """
     return expression.replace("\u201c", '"').replace("\u201d", '"')
 
@@ -350,7 +344,7 @@ def validate(node: ast.AST) -> None:
         ExpressionError: 含不受支持的节点/运算符/函数/参数形态.
 
     Callers:
-        - ``services/analysis/mask_expression.py:parse``
+        - ``services/analysis/expression.py:parse``
     """
     if isinstance(node, ast.Constant):
         if isinstance(node.value, bool):
@@ -381,15 +375,14 @@ def validate(node: ast.AST) -> None:
         return
     if isinstance(node, ast.Call):
         if not isinstance(node.func, ast.Name) or node.func.id not in _FUNC_OPS:
-            raise ExpressionError("只支持 min / max / blur 函数")
-        if len(node.args) != 2:
-            raise ExpressionError(f"{node.func.id} 需要两个参数")
-        radius = node.args[1]
-        if node.func.id == "blur" and (
-            not isinstance(radius, ast.Constant)
-            or not isinstance(radius.value, (int, float))
-        ):
-            raise ExpressionError("blur 的半径必须是数值")
+            raise ExpressionError(f"不支持的函数: {ast.dump(node.func)}")
+        low, high = _FUNC_ARITY[node.func.id]
+        if len(node.args) < low or (high is not None and len(node.args) > high):
+            raise ExpressionError(f"{node.func.id} 参数个数不合法")
+        if node.func.id == "blur":
+            radius = node.args[1]
+            if not isinstance(radius, ast.Constant) or not isinstance(radius.value, (int, float)):
+                raise ExpressionError("blur 的半径必须是数值")
         for arg in node.args:
             validate(arg)
         return
@@ -446,7 +439,7 @@ def _apply(op, left: np.ndarray, right: np.ndarray) -> np.ndarray:
         ExpressionError: 掩码尺寸不一致.
 
     Callers:
-        - ``services/analysis/mask_expression.py:evaluate``
+        - ``services/analysis/expression.py:evaluate``
     """
     if left.shape != right.shape:
         raise ExpressionError("掩码尺寸不一致")
@@ -454,43 +447,48 @@ def _apply(op, left: np.ndarray, right: np.ndarray) -> np.ndarray:
 
 
 def _concept_mask(
-    concepts: dict[str, np.ndarray | None], text: str, default: np.ndarray
+    concepts: dict[str, np.ndarray | None], text: str, default: np.ndarray, scale: float,
 ) -> np.ndarray:
     """取概念掩码并归一化到 0-1 域; 缺失的概念视为全零.
 
     Args:
-        concepts: 概念名 → 二值掩码 (H, W) 或 ``None``(未命中).
+        concepts: 概念名 → 掩码 (H, W) 或 ``None``(未命中).
         text: 概念名.
         default: 用于确定输出形状的参考掩码 (H, W).
+        scale: 输入掩码的满量程; 0-255 掩码取 255, 已归一化的概率取 1.
 
     Returns:
         np.ndarray: 0-1 域掩码 (H, W); 概念缺失时为全零.
 
     Callers:
-        - ``services/analysis/mask_expression.py:evaluate``
+        - ``services/analysis/expression.py:evaluate``
     """
     mask = concepts.get(text)
     if mask is None:
         return np.zeros(default.shape, dtype=np.float64)
-    return mask.astype(np.float64) / 255.0
+    return mask.astype(np.float64) / scale
 
 
 def evaluate(
     node: ast.AST,
     concepts: dict[str, np.ndarray | None],
     default: np.ndarray,
+    *,
+    concept_scale: float = 255.0,
 ) -> np.ndarray:
     """对已通过 ``validate`` 的 AST 求值, 得到 0-1 域浮点掩码.
 
-    全程在 0-1 域计算: 当前蒙板与概念掩码求值前除以 255 归一化; 数值字面量
-    为任意实数直接参与 (一元负号取负, 越界由 ``to_uint8`` 收敛). 缺失的概念
-    (值为 ``None``) 视为全零掩码. 结果尺寸与 ``default`` 一致. 节点/运算符/
-    参数形态等静态约束由 ``parse`` → ``validate`` 保证, 此处不再重复检查.
+    全程在 0-1 域计算: 当前蒙板与概念掩码求值前按 ``concept_scale`` 归一化;
+    数值字面量为任意实数直接参与 (一元负号取负, 越界由 ``to_uint8`` 收敛).
+    缺失的概念 (值为 ``None``) 视为全零掩码. 结果尺寸与 ``default`` 一致.
+    节点/运算符/参数形态等静态约束由 ``parse`` → ``validate`` 保证, 此处不再
+    重复检查.
 
     Args:
         node: ``parse`` 返回且已校验的表达式 AST.
-        concepts: 概念名 → 二值掩码 (H, W) 或 ``None``(未命中).
+        concepts: 概念名 → 掩码 (H, W) 或 ``None``(未命中).
         default: 当前蒙板 (H, W), 0-255 uint8, 作为 ``当前蒙板`` 操作数的值.
+        concept_scale: 概念与当前蒙板的满量程; 掩码为 255, 已归一化的概率为 1.
 
     Returns:
         np.ndarray: 中间掩码 (H, W), float64, 值域通常钳位到 [0, 1].
@@ -500,31 +498,32 @@ def evaluate(
 
     Callers:
         - ``services/analysis/sam3.py:run_sam3_expression_mask``
+        - ``services/analysis/scoring.py:evaluate_score``
     """
     if isinstance(node, ast.Constant):
         if isinstance(node.value, str):
-            return _concept_mask(concepts, node.value, default)
+            return _concept_mask(concepts, node.value, default, concept_scale)
         if isinstance(node.value, (int, float)):
             return np.full(default.shape, float(node.value), dtype=np.float64)
         raise ExpressionError("不支持的常量类型")
     if isinstance(node, ast.Name):
         if node.id == _CURRENT_WORD:
-            return default.astype(np.float64) / 255.0
-        return _concept_mask(concepts, node.id, default)
+            return default.astype(np.float64) / concept_scale
+        return _concept_mask(concepts, node.id, default, concept_scale)
     if isinstance(node, ast.UnaryOp):
-        operand = evaluate(node.operand, concepts, default)
+        operand = evaluate(node.operand, concepts, default, concept_scale=concept_scale)
         return -operand if isinstance(node.op, ast.USub) else operand
     if isinstance(node, ast.BinOp):
         return _apply(
             _BIN_OPS[type(node.op)],
-            evaluate(node.left, concepts, default),
-            evaluate(node.right, concepts, default),
+            evaluate(node.left, concepts, default, concept_scale=concept_scale),
+            evaluate(node.right, concepts, default, concept_scale=concept_scale),
         )
     if isinstance(node, ast.Compare):
         return _apply(
             _CMP_OPS[type(node.ops[0])],
-            evaluate(node.left, concepts, default),
-            evaluate(node.comparators[0], concepts, default),
+            evaluate(node.left, concepts, default, concept_scale=concept_scale),
+            evaluate(node.comparators[0], concepts, default, concept_scale=concept_scale),
         )
     if isinstance(node, ast.Call):
         # 节点/运算符/参数形态已由 validate 静态保证, cast 仅作类型收窄
@@ -532,15 +531,18 @@ def evaluate(
         if func.id == "blur":
             radius = cast(ast.Constant, node.args[1])
             return _blur(
-                evaluate(node.args[0], concepts, default),
+                evaluate(node.args[0], concepts, default, concept_scale=concept_scale),
                 float(cast(float, radius.value)),
             )
-        op = _min if func.id == "min" else _max
-        return _apply(
-            op,
-            evaluate(node.args[0], concepts, default),
-            evaluate(node.args[1], concepts, default),
-        )
+        values = [
+            evaluate(arg, concepts, default, concept_scale=concept_scale)
+            for arg in node.args
+        ]
+        if func.id in _ELEMENT_OPS:
+            return _ELEMENT_OPS[func.id](*values)
+        ufunc, average = _REDUCE_OPS[func.id]
+        reduced = ufunc.reduce(values)
+        return reduced / len(values) if average else reduced
     raise ExpressionError(f"不支持的表达式节点: {type(node).__name__}")
 
 

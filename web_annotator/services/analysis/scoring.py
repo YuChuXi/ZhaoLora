@@ -1,9 +1,11 @@
-"""统一评分引擎: 美学(CLIP)与质量(Q-ReAlign)共用基础设施. """
+"""统一评分引擎: 美学(CLIP)与 WD14 标签概率的数据驱动评分. """
 
 from __future__ import annotations
 
+import ast
 import json
 import os
+import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -11,25 +13,39 @@ from typing import Any, cast
 
 import numpy as np
 import torch
-import torch.nn as nn
 from huggingface_hub import hf_hub_download
 from PIL import Image, UnidentifiedImageError
+from torch import nn
 
-from services.models import JobSnapshot
+from services.analysis import expression
+from services.analysis.wd14 import Tags, Wd14Cache, Wd14Labels
 from services.core.atomic import atomic_write_text
 from services.core.device import register_model
-from services.dataset.workdir import IMAGE_EXTS, WorkDir
+from services.dataset.workdir import WorkDir
+from services.models import JobSnapshot
+from services.models.pages import ScoreItem
 
 # ---------------------------------------------------------------------------
 # 常量
 # ---------------------------------------------------------------------------
 
 AESTHETIC_SCORES = ".aesthetic_scores.json"
-QUALITY_SCORES = ".quality_scores.json"
-QUALITY_TAGS = [
-    "worst quality", "low quality", "normal quality",
-    "good quality", "best quality", "masterpiece",
-]
+SCORE_ITEMS_FILE = ".annotator_scoring.json"
+SCORE_RESULTS = ".score_results.json"
+
+# 评分项按单像素掩码求值, 复用掩码表达式引擎的全部运算符与函数
+_SCALAR_DEFAULT = np.zeros((1, 1), dtype=np.float64)
+
+# 内置评分项: 概率取自 WD14 标签表中同名标签, 不可删除
+BUILTIN_SCORE_ITEMS: tuple[ScoreItem, ...] = (
+    ScoreItem(key="csam", label="CSAM", expr='max("loli", "shota")', builtin=True),
+    ScoreItem(
+        key="nsfw",
+        label="NSFW",
+        expr='max("sensitive" * 0.33, "questionable" * 0.66, "explicit")',
+        builtin=True,
+    ),
+)
 
 # 美学模型 CLIP 骨干: 经 ``AESTHETIC_CLIP_MODEL`` 环境变量手动配置, 取 OpenAI CLIP
 # 模型名或本地权重路径.
@@ -39,8 +55,6 @@ AESTHETIC_CLIP_MODEL = os.environ.get("AESTHETIC_CLIP_MODEL", "") or "ViT-L/14"
 AESTHETIC_HEAD_CKPT = (
     Path(os.environ["AESTHETIC_HEAD_CKPT"]) if os.environ.get("AESTHETIC_HEAD_CKPT") else None
 )
-# 质量模型: 经 ``QREALIGN_MODEL`` 环境变量手动配置, 取本地目录或 HuggingFace repo id.
-QREALIGN_MODEL = os.environ.get("QREALIGN_MODEL", "") or "q-future/Q-ReAlign-Lite-4B"
 
 # ---------------------------------------------------------------------------
 # 进度追踪
@@ -59,7 +73,7 @@ class ScoreProgress:
         total: 待处理图片总数. 
         done: 已处理数量. 
         ok: 成功评分数量. 
-        skipped: 跳过(已有缓存)数量. 
+        skipped: 跳过数量(已有结果或 WD14 缓存缺失). 
         failed: 失败数量. 
         current: 当前处理的图片相对路径. 
         message: 用户可见的状态消息. 
@@ -115,6 +129,64 @@ class ScoreProgress:
 # ---------------------------------------------------------------------------
 
 
+def _rel_key(value: object) -> str:
+    """把分数文件的键规范为数据集根相对路径.
+
+    Args:
+        value (object): 文件中的原始键.
+
+    Returns:
+        str: 正斜杠分隔、去除前导斜杠的相对路径.
+
+    Callers:
+        - ``services/analysis/scoring.py:load_score_json``
+        - ``services/analysis/scoring.py:save_score_json``
+        - ``services/analysis/scoring.py:load_item_scores``
+        - ``services/analysis/scoring.py:save_item_scores``
+    """
+    return str(value).replace("\\", "/").lstrip("/")
+
+
+def _read_json_object(path: Path) -> dict | None:
+    """读取 JSON 文件根对象.
+
+    Args:
+        path (Path): 文件路径.
+
+    Returns:
+        dict | None: 根对象; 文件不存在时为 None.
+
+    Raises:
+        TypeError: 根节点不是对象.
+
+    Callers:
+        - ``services/analysis/scoring.py:load_score_json``
+        - ``services/analysis/scoring.py:load_item_scores``
+        - ``services/analysis/scoring.py:load_score_items``
+    """
+    if not path.is_file():
+        return None
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(data, dict):
+        raise TypeError(f"JSON 根节点必须是对象: {path}")
+    return data
+
+
+def _write_json_object(path: Path, data: dict) -> None:
+    """写入 JSON 对象, 两位缩进、按键排序并原子替换.
+
+    Args:
+        path (Path): 目标文件路径.
+        data (dict): 待写入对象.
+
+    Callers:
+        - ``services/analysis/scoring.py:save_score_json``
+        - ``services/analysis/scoring.py:save_item_scores``
+        - ``services/analysis/scoring.py:save_score_items``
+    """
+    atomic_write_text(path, json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
+
+
 def load_score_json(root: Path, filename: str) -> dict[str, float]:
     """读取数据集根目录下的分数 JSON 文件. 
 
@@ -132,17 +204,14 @@ def load_score_json(root: Path, filename: str) -> dict[str, float]:
         TypeError: JSON 根节点不是对象时抛出. 
 
     Callers:
-        - ``routes/images.py:`` : 加载美学/质量分数填充图片列表. 
-        - ``routes/tag_stats.py:`` : 加载分数用于标签注入. 
-        - ``services/analysis/scoring.py:run_scoring`` : 读取已有分数跳过重复计算. 
+        - ``routes/scoring.py:`` : 读取美学分数. 
+        - ``routes/images.py:`` : 加载美学分数填充图片列表. 
+        - ``services/analysis/scoring.py:_run_aesthetic_scoring`` : 读取已有分数跳过重复计算. 
     """
-    path = root.resolve() / filename
-    if not path.is_file():
+    data = _read_json_object(root.resolve() / filename)
+    if data is None:
         return {}
-    data = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(data, dict):
-        raise TypeError(f"分数文件根节点必须是对象: {path}")
-    return {str(k).replace("\\", "/").lstrip("/"): float(v) for k, v in data.items()}
+    return {_rel_key(k): float(v) for k, v in data.items()}
 
 
 def save_score_json(root: Path, filename: str, scores: dict[str, float]) -> None:
@@ -156,13 +225,267 @@ def save_score_json(root: Path, filename: str, scores: dict[str, float]) -> None
         scores: 相对路径到分数的映射. 
 
     Callers:
-        - ``services/analysis/scoring.py:run_scoring`` : 评分过程中定期持久化. 
+        - ``services/analysis/scoring.py:_run_aesthetic_scoring`` : 评分过程中定期持久化. 
     """
-    path = root.resolve() / filename
-    clean = {str(k).replace("\\", "/").lstrip("/"): round(float(v), 6) for k, v in scores.items()}
-    atomic_write_text(path, json.dumps(clean, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
+    clean = {_rel_key(k): round(float(v), 6) for k, v in scores.items()}
+    _write_json_object(root.resolve() / filename, clean)
 
 
+def load_item_scores(root: Path) -> dict[str, dict[str, float]]:
+    """读取各评分项的结果缓存.
+
+    Args:
+        root: 数据集根目录.
+
+    Returns:
+        dict[str, dict[str, float]]: 评分项 key → ``{相对路径: 分数}``; 文件不存在时为
+        空映射.
+
+    Raises:
+        TypeError: 文件结构不是两层对象时抛出.
+
+    Callers:
+        - ``routes/scoring.py:dirs`` : 统计各评分项已算出的数量.
+        - ``services/analysis/scoring.py:build_score_results`` : 读取指定评分项结果.
+        - ``services/analysis/scoring.py:delete_score_item`` : 清除被删评分项的结果.
+        - ``routes/images.py:list_images`` : 填充图片列表的评分项分值.
+    """
+    path = root.resolve() / SCORE_RESULTS
+    data = _read_json_object(path)
+    if data is None:
+        return {}
+    result: dict[str, dict[str, float]] = {}
+    for key, values in data.items():
+        if not isinstance(values, dict):
+            raise TypeError(f"评分结果 {key} 必须是对象: {path}")
+        result[str(key)] = {_rel_key(p): float(v) for p, v in values.items()}
+    return result
+
+
+def save_item_scores(root: Path, scores: dict[str, dict[str, float]]) -> None:
+    """写入各评分项的结果缓存.
+
+    Args:
+        root: 数据集根目录.
+        scores: 评分项 key → ``{相对路径: 分数}``.
+
+    Callers:
+        - ``services/analysis/scoring.py:_run_wd14_scoring`` : 评分过程中定期持久化.
+        - ``services/analysis/scoring.py:delete_score_item`` : 清除被删评分项的结果.
+    """
+    clean = {
+        str(key): {_rel_key(p): round(float(v), 6) for p, v in values.items()}
+        for key, values in scores.items()
+    }
+    _write_json_object(root.resolve() / SCORE_RESULTS, clean)
+
+
+# ---------------------------------------------------------------------------
+# 评分项定义
+# ---------------------------------------------------------------------------
+
+
+def load_score_items(root: Path) -> list[ScoreItem]:
+    """读取数据集的自定义评分项并与内置项合并.
+
+    Args:
+        root: 数据集根目录.
+
+    Returns:
+        list[ScoreItem]: 内置项在前、自定义项在后.
+
+    Raises:
+        TypeError: 定义文件结构非法.
+        ValueError: 自定义 key 与内置或彼此重复.
+
+    Callers:
+        - ``routes/scoring.py:dirs``
+        - ``routes/scoring.py:create_item``
+        - ``routes/scoring.py:delete_item``
+        - ``services/analysis/scoring.py:_run_wd14_scoring``
+    """
+    path = root.resolve() / SCORE_ITEMS_FILE
+    data = _read_json_object(path)
+    if data is None:
+        return list(BUILTIN_SCORE_ITEMS)
+    raw = data.get("items", [])
+    if not isinstance(raw, list):
+        raise TypeError(f"评分项 items 必须是数组: {path}")
+    custom = [ScoreItem.model_validate({**item, "builtin": False}) for item in raw]
+    keys = [item.key for item in custom]
+    if len(set(keys)) != len(keys):
+        raise ValueError(f"评分项 key 重复: {keys}")
+    reserved = {item.key for item in BUILTIN_SCORE_ITEMS} & set(keys)
+    if reserved:
+        raise ValueError(f"评分项 key 与内置项冲突: {sorted(reserved)}")
+    return [*BUILTIN_SCORE_ITEMS, *custom]
+
+
+def save_score_items(root: Path, items: list[ScoreItem]) -> None:
+    """把自定义评分项写入数据集定义文件.
+
+    Args:
+        root: 数据集根目录.
+        items: 全部评分项; 内置项不写入.
+
+    Callers:
+        - ``services/analysis/scoring.py:create_score_item``
+        - ``services/analysis/scoring.py:delete_score_item``
+    """
+    custom = [
+        {"key": item.key, "label": item.label, "expr": item.expr}
+        for item in items
+        if not item.builtin
+    ]
+    _write_json_object(root.resolve() / SCORE_ITEMS_FILE, {"items": custom})
+
+
+def create_score_item(
+    root: Path, *, label: str, expr: str, label_index: dict[str, int],
+) -> list[ScoreItem]:
+    """校验表达式并追加一个自定义评分项.
+
+    Args:
+        root: 数据集根目录.
+        label: 显示名称(去首尾空白后不能为空).
+        expr: 评分表达式.
+        label_index: WD14 标签等价键到概率下标的索引, 用于校验引用标签.
+
+    Returns:
+        list[ScoreItem]: 更新后的全部评分项.
+
+    Raises:
+        ValueError: 名称为空或表达式非法/引用标签不存在.
+
+    Callers:
+        - ``routes/scoring.py:create_item``
+    """
+    name = label.strip()
+    if not name:
+        raise ValueError("评分项名称不能为空")
+    source = expr.strip()
+    score_item_tree(source, label_index)
+    items = load_score_items(root)
+    key = _new_item_key({item.key for item in items})
+    items.append(ScoreItem(key=key, label=name, expr=source))
+    save_score_items(root, items)
+    return items
+
+
+def delete_score_item(root: Path, key: str) -> list[ScoreItem]:
+    """删除一个自定义评分项及其已缓存的分数.
+
+    Args:
+        root: 数据集根目录.
+        key: 评分项 key.
+
+    Returns:
+        list[ScoreItem]: 更新后的全部评分项.
+
+    Raises:
+        KeyError: 评分项不存在.
+        ValueError: 目标为内置评分项.
+
+    Callers:
+        - ``routes/scoring.py:delete_item``
+    """
+    items = load_score_items(root)
+    target = next((item for item in items if item.key == key), None)
+    if target is None:
+        raise KeyError(key)
+    if target.builtin:
+        raise ValueError("内置评分项不可删除")
+    save_score_items(root, [item for item in items if item.key != key])
+    scores = load_item_scores(root)
+    if scores.pop(key, None) is not None:
+        save_item_scores(root, scores)
+    return load_score_items(root)
+
+
+def _new_item_key(existing: set[str]) -> str:
+    """生成不与现有评分项冲突的 key.
+
+    Args:
+        existing: 现有评分项 key 集合.
+
+    Returns:
+        str: ``item_`` 前缀的 8 位十六进制 key.
+
+    Callers:
+        - ``services/analysis/scoring.py:create_score_item``
+    """
+    while True:
+        key = f"item_{uuid.uuid4().hex[:8]}"
+        if key not in existing:
+            return key
+
+
+# ---------------------------------------------------------------------------
+# 表达式 (复用 services/analysis/expression.py 的语法与求值引擎)
+# ---------------------------------------------------------------------------
+
+
+def score_item_tree(source: str, label_index: dict[str, int]) -> ast.AST:
+    """解析评分表达式并校验引用标签存在于 WD14 标签表.
+
+    语法与蒙板表达式一致: 双引号字符串取同名 WD14 标签概率; 支持算术、比较与
+    ``min`` / ``max`` / ``sum`` / ``avg`` / ``abs`` / ``sqrt`` / ``exp`` /
+    ``log`` / ``pow`` / ``clamp`` / ``blur`` 函数.
+
+    Args:
+        source: 表达式文本.
+        label_index: WD14 标签等价键到概率下标的索引.
+
+    Returns:
+        ast.AST: 已解析并静态校验的表达式语法树.
+
+    Raises:
+        ValueError: 表达式为空、语法错误或引用标签不存在.
+
+    Callers:
+        - ``services/analysis/scoring.py:create_score_item``
+        - ``services/analysis/scoring.py:_run_wd14_scoring``
+    """
+    tree = expression.parse(source)
+    missing = [
+        tag for tag in expression.extract_concepts(tree)
+        if Tags.equivalence_key(tag) not in label_index
+    ]
+    if missing:
+        raise ValueError(f"WD14 标签表中不存在: {', '.join(missing)}")
+    return tree
+
+
+def evaluate_score(
+    tree: ast.AST,
+    buffers: dict[str, np.ndarray],
+    label_index: dict[str, int],
+    probabilities: np.ndarray,
+) -> float:
+    """按一张图的 WD14 概率向量对评分表达式求值.
+
+    评分表达式复用蒙板表达式引擎: 每个标签概率写入单像素数组, 按 0-1 域参与
+    运算, 求值结果即该评分项分值.
+
+    Args:
+        tree: ``score_item_tree`` 返回的语法树.
+        buffers: 概念名 → 单像素数组, 就地写入概率.
+        label_index: WD14 标签等价键到概率下标的索引.
+        probabilities: 与该标签表对齐的概率向量.
+
+    Returns:
+        float: 表达式求值结果.
+
+    Callers:
+        - ``services/analysis/scoring.py:_run_wd14_scoring``
+    """
+    for tag, buffer in buffers.items():
+        buffer[0, 0] = probabilities[label_index[Tags.equivalence_key(tag)]]
+    return float(
+        expression.evaluate(
+            tree, buffers, _SCALAR_DEFAULT, concept_scale=1.0,
+        )[0, 0]
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -243,7 +566,7 @@ def _aes_score_one(image: Image.Image, clip_model, preprocess, aes_head) -> floa
         float: 原始美学分数(约 0~1).
 
     Callers:
-        - ``services/analysis/scoring.py:_run_scoring``
+        - ``services/analysis/scoring.py:run_scoring``
     """
     device = next(clip_model.parameters()).device
     t = preprocess(image.convert("RGB")).unsqueeze(0).to(device)
@@ -254,164 +577,35 @@ def _aes_score_one(image: Image.Image, clip_model, preprocess, aes_head) -> floa
 
 
 # ---------------------------------------------------------------------------
-# 质量模型(Q-ReAlign-Lite-4B)
-# ---------------------------------------------------------------------------
-
-
-def _load_q_models() -> tuple:
-    """加载 Q-ReAlign-Lite-4B 模型 (CPU).
-
-    Returns:
-        tuple: ``(model, processor)``.
-
-    Raises:
-        RuntimeError: transformers 版本不足时抛出.
-
-    Callers:
-        - ``services/core/device.py:register_model`` 注册的 load 回调
-    """
-    try:
-        from transformers import AutoModelForImageTextToText, AutoProcessor
-    except ImportError:
-        raise RuntimeError("需要 transformers >= 5.2.0")
-    processor = AutoProcessor.from_pretrained(QREALIGN_MODEL)
-    model = AutoModelForImageTextToText.from_pretrained(
-        QREALIGN_MODEL, dtype="auto",
-    )
-    model = cast("Any", model).to("cpu").eval()
-    return model, processor
-
-
-def _unload_q_models(handle: object) -> None:
-    """释放 Q-ReAlign 模型.
-
-    Args:
-        handle: ``_load_q_models`` 返回的 ``(model, processor)`` 元组.
-
-    Callers:
-        - ``services/core/device.py:register_model`` 注册的 unload 回调
-    """
-    model, _processor = cast("tuple", handle)
-    del model
-
-
-_Q_MODEL = register_model(_load_q_models, _unload_q_models)
-
-
-@torch.no_grad()
-def _q_score_one(src: Path, models: tuple) -> float:
-    """对单张图片执行 Q-ReAlign 质量评分.
-
-    Args:
-        src: 图片文件路径.
-        models: ``(model, processor)`` 元组.
-
-    Returns:
-        float: 加权质量分(0~1).
-
-    Callers:
-        - ``services/analysis/scoring.py:_run_scoring``
-    """
-    model, processor = models
-    device = next(model.parameters()).device
-    img = Image.open(src)
-    levels = ["excellent", "good", "fair", "poor", "bad"]
-    weights = [1.0, 0.75, 0.5, 0.25, 0.0]
-    messages = [{"role": "user", "content": [
-        {"type": "image"},
-        {"type": "text", "text": "How would you rate the quality of this image?"},
-    ]}]
-    text = processor.apply_chat_template(messages, add_generation_prompt=True)
-    text += "The quality of the image is"
-    inputs = processor(text=[text], images=[img.convert("RGB")], return_tensors="pt").to(device)
-    ids = [processor.tokenizer(" " + w, add_special_tokens=False).input_ids[0] for w in levels]
-    probs = model(**inputs).logits[0, -1, ids].softmax(-1)
-    return float((probs * torch.tensor(weights, device=device)).sum().item())
-
-
-def quality_to_tag(score: float) -> str:
-    """将连续质量分映射为 6 级质量标签. 
-
-    等宽分箱: 
-
-    - [0.00, 0.17) → ``worst quality``
-    - [0.17, 0.33) → ``low quality``
-    - [0.33, 0.50) → ``normal quality``
-    - [0.50, 0.67) → ``good quality``
-    - [0.67, 0.83) → ``best quality``
-    - [0.83, 1.00] → ``masterpiece``
-
-    Args:
-        score: 质量分数, 范围 [0, 1]. 
-
-    Returns:
-        str: 对应的质量标签. 
-
-    Callers:
-        - ``services/analysis/scoring.py:build_score_results``
-        - ``services/tagging/clean.py:clean_caption`` : 标签清理时注入质量标签. 
-    """
-    i = min(int(score * len(QUALITY_TAGS)), len(QUALITY_TAGS) - 1)
-    return QUALITY_TAGS[max(0, i)]
-
-
-def load_quality_scores(root: Path) -> dict[str, float]:
-    """读取数据集根目录下的质量分数 JSON 文件. 
-
-    Args:
-        root: 数据集根目录. 
-
-    Returns:
-        dict[str, float]: 相对路径到质量分的映射, 文件不存在时返回空字典. 
-
-    Callers:
-        - ``routes/images.py:`` : 填充图片列表的质量字段. 
-        - ``routes/tag_stats.py:`` : 标签操作时加载质量分. 
-    """
-    return load_score_json(root, QUALITY_SCORES)
-
-
-# ---------------------------------------------------------------------------
 # 评分引擎
 # ---------------------------------------------------------------------------
 
 
-def _run_scoring(
+def _run_aesthetic_scoring(
     works: list[WorkDir], *,
     models: Any,
-    scores_filename: str,
-    model_name: str,
-    score_one: Callable[[Path, Any], float],
     progress: ScoreProgress,
     on_update: Callable[[], None] | None,
 ) -> None:
-    """评分主循环引擎. 
-
-    处理完整的评分流水线: 文件收集 → 进度初始化 → 缓存跳过/新评计算 →
-    定期持久化. 模型句柄由调用方经上下文管理器 (``with model as handle``)
-    持有并注入.
+    """美学评分主循环: 文件收集 → 缓存跳过/新评计算 → 定期持久化.
 
     Args:
-        works: 要评分的工作目录(自动去重). 
-        models: 模型句柄, 由 ``run_scoring`` 经上下文管理器注入. 
-        scores_filename: 分数 JSON 文件名(仅关键字参数). 
-        model_name: 模型名称, 用于进度消息(仅关键字参数). 
-        score_one: ``(src_path, models) -> float`` 单张评分回调(仅关键字参数). 
-        progress: 进度追踪实例(仅关键字参数). 
-        on_update: 每次状态变更后的回调(仅关键字参数). 
+        works: 要评分的工作目录(自动去重).
+        models: ``(clip, preprocess, aes_head)`` 模型句柄.
+        progress: 进度追踪实例.
+        on_update: 每次状态变更后的回调.
 
     Callers:
         - ``services/analysis/scoring.py:run_scoring``
     """
     root = works[0].dataset.root
-    unique = list(dict.fromkeys(works))
-    items = [p for work in unique for p in work.image_files()]
+    items = [p for work in works for p in work.image_files()]
     progress.total = len(items)
     progress.done = progress.ok = progress.skipped = progress.failed = 0
     progress.status = "running"
     progress.phase = "loading"
-    progress.message = f"共 {len(items)} 张, 加载{model_name}模型…"
-    progress.log(f"开始: dirs={[w.name for w in unique]}, total={len(items)}")
+    progress.message = f"共 {len(items)} 张, 加载美学模型…"
+    progress.log(f"开始: dirs={[w.name for w in works]}, total={len(items)}")
     if on_update: on_update()
 
     if not items:
@@ -422,10 +616,10 @@ def _run_scoring(
 
     progress.phase = "running"
     progress.message = f"共 {len(items)} 张"
-    progress.log(f"{model_name}模型就绪")
+    progress.log("美学模型就绪")
     if on_update: on_update()
 
-    existing = load_score_json(root, scores_filename)
+    existing = load_score_json(root, AESTHETIC_SCORES)
     scores: dict[str, float] = existing.copy()
 
     for src in items:
@@ -433,11 +627,11 @@ def _run_scoring(
             progress.status = "cancelled"
             progress.phase = "done"
             progress.message = f"已取消 ({progress.ok} 完成)"
-            save_score_json(root, scores_filename, scores)
+            save_score_json(root, AESTHETIC_SCORES, scores)
             if on_update: on_update()
             return
 
-        rel = str(src.relative_to(root)).replace("\\", "/")
+        rel = src.relative_to(root).as_posix()
         progress.current = rel
 
         if rel in existing:
@@ -446,7 +640,9 @@ def _run_scoring(
             progress.done += 1
         else:
             try:
-                scores[rel] = score_one(src, models)
+                scores[rel] = _aes_score_one(
+                    Image.open(src), models[0], models[1], models[2],
+                )
                 progress.ok += 1
                 progress.done += 1
             except (OSError, UnidentifiedImageError, RuntimeError, ValueError) as e:
@@ -455,13 +651,107 @@ def _run_scoring(
                 progress.log(f"失败: {rel} — {e}")
 
         if progress.done % 10 == 0 or progress.done == len(items):
-            save_score_json(root, scores_filename, scores)
+            save_score_json(root, AESTHETIC_SCORES, scores)
         if on_update: on_update()
 
-    save_score_json(root, scores_filename, scores)
+    save_score_json(root, AESTHETIC_SCORES, scores)
     progress.status = progress.phase = "done"
     progress.current = ""
     progress.message = f"完成 {progress.ok} 张, 跳过 {progress.skipped}"
+    if on_update: on_update()
+
+
+def _run_wd14_scoring(
+    works: list[WorkDir], *,
+    progress: ScoreProgress,
+    on_update: Callable[[], None] | None,
+) -> None:
+    """按 WD14 缓存概率计算全部评分项.
+
+    评分不重新推理, 只读取 ``.wd14_meta`` 下的概率向量; 缓存缺失的图片计入跳过,
+    由调用方提示先建立缓存.
+
+    Args:
+        works: 要评分的工作目录.
+        progress: 进度追踪实例.
+        on_update: 每次状态变更后的回调.
+
+    Raises:
+        RuntimeError: WD14 模型权重或标签表缺失.
+
+    Callers:
+        - ``services/analysis/scoring.py:run_scoring``
+    """
+    root = works[0].dataset.root
+    items = [p for work in works for p in work.image_files()]
+    labels = Wd14Labels.load()
+    label_index = labels.index()
+    score_items = load_score_items(root)
+    trees = {item.key: score_item_tree(item.expr, label_index) for item in score_items}
+    buffers = {
+        key: {
+            tag: np.zeros((1, 1), dtype=np.float64)
+            for tag in expression.extract_concepts(tree)
+        }
+        for key, tree in trees.items()
+    }
+    cache = Wd14Cache(root, labels)
+
+    progress.total = len(items)
+    progress.done = progress.ok = progress.skipped = progress.failed = 0
+    progress.status = "running"
+    progress.phase = "running"
+    progress.message = f"共 {len(items)} 张, 计算 {len(trees)} 个评分项"
+    progress.log(
+        f"开始: dirs={[w.name for w in works]}, items={list(trees)}, total={len(items)}"
+    )
+    if on_update: on_update()
+
+    if not items:
+        progress.status = progress.phase = "done"
+        progress.message = "没有可处理的图片"
+        if on_update: on_update()
+        return
+
+    scores: dict[str, dict[str, float]] = {key: {} for key in trees}
+
+    for src in items:
+        if progress.cancel_requested:
+            progress.status = "cancelled"
+            progress.phase = "done"
+            progress.message = f"已取消 ({progress.ok} 完成)"
+            save_item_scores(root, scores)
+            if on_update: on_update()
+            return
+
+        rel = cache.rel(src)
+        progress.current = rel
+        probabilities = cache.probabilities(src)
+        if probabilities is None:
+            progress.skipped += 1
+            progress.done += 1
+        else:
+            for key, tree in trees.items():
+                scores[key][rel] = evaluate_score(
+                    tree, buffers[key], label_index, probabilities,
+                )
+            progress.ok += 1
+            progress.done += 1
+
+        if progress.done % 20 == 0 or progress.done == len(items):
+            save_item_scores(root, scores)
+        if on_update: on_update()
+
+    save_item_scores(root, scores)
+    progress.status = progress.phase = "done"
+    progress.current = ""
+    if progress.skipped:
+        progress.message = (
+            f"完成 {progress.ok} 张, {progress.skipped} 张缺少 WD14 缓存"
+        )
+        progress.log("缺少缓存的图片需先在评分页建立 WD14 缓存")
+    else:
+        progress.message = f"完成 {progress.ok} 张"
     if on_update: on_update()
 
 
@@ -476,47 +766,35 @@ def run_scoring(
     progress: ScoreProgress | None = None,
     on_update: Callable[[], None] | None = None,
 ) -> None:
-    """执行美学或质量评分. 
+    """执行美学评分或 WD14 数据驱动评分.
 
-    模型句柄经上下文管理器获取并自动归还: 按 ``kind`` 分支进入对应模型的
-    ``with`` 块, 由 ``Model.__enter__/__exit__`` 完成 acquire/release, 无需手动
-    加载与释放. 模型的设备与生命周期由 ``device`` 模块统一管理.
+    美学模型的句柄经上下文管理器获取并自动归还, 设备与生命周期由 ``device``
+    模块统一管理; WD14 评分只读推理缓存, 不加载模型.
 
     Args:
-        works: 要评分的工作目录. 
-        kind: 评分类型, ``"aesthetic"`` 或 ``"quality"``(仅关键字参数). 
-        progress: 进度追踪实例(仅关键字, 为 None 时自动创建). 
-        on_update: 每次状态变更后的回调(仅关键字). 
+        works: 要评分的工作目录.
+        kind: 评分类型, ``"aesthetic"`` 或 ``"wd14"``(仅关键字).
+        progress: 进度追踪实例(仅关键字, 为 None 时自动创建).
+        on_update: 每次状态变更后的回调(仅关键字).
 
     Raises:
-        ValueError: ``kind`` 不是 ``"aesthetic"`` 或 ``"quality"`` 时抛出. 
+        ValueError: ``kind`` 不是 ``"aesthetic"`` 或 ``"wd14"`` 时抛出.
 
     Callers:
         - ``routes/scoring.py:start``
     """
-    if kind not in ("aesthetic", "quality"):
-        raise ValueError(f"kind 必须是 'aesthetic' 或 'quality', 收到: {kind!r}")
+    if kind not in ("aesthetic", "wd14"):
+        raise ValueError(f"kind 必须是 'aesthetic' 或 'wd14', 收到: {kind!r}")
     if progress is None:
         progress = ScoreProgress()
 
     if kind == "aesthetic":
         with _AES_MODEL as models:
-            _run_scoring(
-                works, models=models,
-                scores_filename=AESTHETIC_SCORES, model_name="美学",
-                score_one=lambda src, m: _aes_score_one(
-                    Image.open(src), m[0], m[1], m[2],
-                ),
-                progress=progress, on_update=on_update,
+            _run_aesthetic_scoring(
+                works, models=models, progress=progress, on_update=on_update,
             )
     else:
-        with _Q_MODEL as models:
-            _run_scoring(
-                works, models=models,
-                scores_filename=QUALITY_SCORES, model_name="Q-ReAlign",
-                score_one=_q_score_one,
-                progress=progress, on_update=on_update,
-            )
+        _run_wd14_scoring(works, progress=progress, on_update=on_update)
 
 
 # ---------------------------------------------------------------------------
@@ -524,18 +802,15 @@ def run_scoring(
 # ---------------------------------------------------------------------------
 
 
-def build_score_results(
-    root: Path, kind: str,
-) -> list[dict[str, Any]]:
-    """从缓存的分数 JSON 构建前端的评分结果列表. 
+def build_score_results(root: Path, kind: str) -> list[dict[str, Any]]:
+    """从缓存的分数 JSON 构建前端的评分结果列表.
 
     Args:
-        root: 数据集根目录. 
-        kind: 评分类型, ``"aesthetic"`` 或 ``"quality"``. 
+        root: 数据集根目录.
+        kind: ``"aesthetic"`` 或评分项 key.
 
     Returns:
-        list[dict]: 每条包含 ``path``、``score`` 及类型专用字段, 
-        按分数降序排列. 
+        list[dict]: 每条包含 ``path`` 与 ``score``; 美学结果另含档位字段. 按分数降序.
 
     Callers:
         - ``routes/scoring.py:results``
@@ -552,15 +827,8 @@ def build_score_results(
             })
         results.sort(key=lambda r: r["score"], reverse=True)
         return results
-    else:
-        scores = load_score_json(root, QUALITY_SCORES)
-        results = []
-        for path, sc in scores.items():
-            results.append({
-                "path": path,
-                "score": round(sc, 6),
-                "quality_tag": quality_to_tag(sc),
-            })
-        results.sort(key=lambda r: r["score"], reverse=True)
-        return results
 
+    scores = load_item_scores(root).get(kind, {})
+    results = [{"path": path, "score": round(value, 6)} for path, value in scores.items()]
+    results.sort(key=lambda r: r["score"], reverse=True)
+    return results

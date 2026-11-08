@@ -6,19 +6,19 @@ import logging
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
-
-from routes.deps import DatasetDep, jobs, resolve_path
-from services.core.jobs import EmitFn
-from services.dataset.workdir import IMAGE_EXTS
 from services.analysis.birefnet import (
     BirefnetProgress,
     run_birefnet_mask,
 )
-from services.analysis.mask_expression import ExpressionError, parse
+from services.analysis.expression import ExpressionError, parse
 from services.analysis.sam3 import (
     Sam3MaskProgress,
     run_sam3_expression_mask,
 )
+from services.core.jobs import EmitFn
+from services.dataset.workdir import IMAGE_EXTS
+
+from routes.deps import DatasetDep, jobs, resolve_path
 
 logger = logging.getLogger(__name__)
 

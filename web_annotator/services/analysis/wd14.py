@@ -7,20 +7,21 @@ import hashlib
 import io
 import json
 import os
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable, Iterable, cast
+from typing import TYPE_CHECKING, cast
 
 import numpy as np
 from PIL import Image
 
-from services.models import JobSnapshot
 from services.core.atomic import atomic_write_bytes, atomic_write_text
+from services.core.device import register_model
 from services.dataset.sidecar import SidecarSource, register_sidecar
 from services.dataset.workdir import WD14_META_DIRNAME, WorkDir
+from services.models import JobSnapshot
 from services.online_sources.framework.utils import _GENDER_TAGS
-from services.core.device import register_model
 
 if TYPE_CHECKING:
     from onnxruntime import InferenceSession
@@ -283,7 +284,7 @@ def _model_files() -> tuple[Path, Path]:
     return WD14_ONNX, WD14_CSV
 
 
-def _build_session(providers: list[str]) -> "InferenceSession":
+def _build_session(providers: list[str]) -> InferenceSession:
     """按执行提供程序创建 WD14 ONNX 推理会话.
 
     Args:
@@ -370,7 +371,7 @@ class Wd14Labels:
 
     @classmethod
     @lru_cache(maxsize=1)
-    def load(cls) -> "Wd14Labels":
+    def load(cls) -> Wd14Labels:
         """读取标签表并计算模型指纹.
 
         内容哈希与标签表解析在进程内只执行一次; 返回的实例不可变, 可安全共享.
@@ -402,6 +403,18 @@ class Wd14Labels:
             names=tuple(names),
             categories=tuple(categories),
         )
+
+    def index(self) -> dict[str, int]:
+        """构建标签等价键到概率下标的索引.
+
+        Returns:
+            dict[str, int]: 等价键 → 概率向量下标.
+
+        Callers:
+            - ``routes/scoring.py:create_item``
+            - ``services/analysis/scoring.py:_run_wd14_scoring``
+        """
+        return {Tags.equivalence_key(name): i for i, name in enumerate(self.names)}
 
     def groups(self, scores: np.ndarray, threshold: float) -> Wd14TagGroups:
         """按置信度阈值把整条概率向量解码为分组标签.
@@ -436,7 +449,7 @@ class Wd14Model:
         - ``services/core/device.py:register_model`` : 以本类为 WD14 模型的生命周期载体.
     """
 
-    def __init__(self, labels: Wd14Labels, session: "InferenceSession") -> None:
+    def __init__(self, labels: Wd14Labels, session: InferenceSession) -> None:
         """初始化模型句柄.
 
         Args:
@@ -451,7 +464,7 @@ class Wd14Model:
         self._session = session
 
     @classmethod
-    def load(cls) -> "Wd14Model":
+    def load(cls) -> Wd14Model:
         """加载标签表与会话 (会话恒以 CPU 提供程序创建).
 
         转移目标设备由 ``device.Model`` 生命周期统一决定 (``retarget``),
@@ -471,7 +484,7 @@ class Wd14Model:
             raise RuntimeError(msg)
         return cls(Wd14Labels.load(), _build_session(["CPUExecutionProvider"]))
 
-    def retarget(self, device) -> "Wd14Model":
+    def retarget(self, device) -> Wd14Model:
         """把推理会话转移到目标设备.
 
         ONNX 会话的执行提供程序创建后不可迁移, 故按目标设备重建会话;
@@ -513,7 +526,7 @@ class Wd14Model:
             np.ndarray: 与标签表逐行对齐的概率向量, 已含 rating 与角色标签.
 
         Callers:
-            - ``services/analysis/wd14.py:Wd14Cache.ensure``
+            - ``services/analysis/wd14.py:Wd14Cache.populate``
         """
         session = self._session
         if img.mode == "RGBA":
@@ -551,8 +564,10 @@ class Wd14Cache:
 
     Callers:
         - ``services/analysis/wd14.py:run_batch`` : 打标主循环.
-        - ``services/analysis/wd14.py:Wd14Cache.populate`` : 描述页补建缓存.
-        - ``services/analysis/caption.py:run_caption`` : 任务级缓存句柄.
+        - ``services/analysis/wd14.py:build_cache`` : 评分页补建缓存.
+        - ``services/analysis/caption.py:run_caption`` : 描述页补建缓存.
+        - ``services/analysis/scoring.py:_run_wd14_scoring`` : 读取概率向量.
+        - ``routes/scoring.py:dirs`` : 统计缓存覆盖.
     """
 
     def __init__(self, root: Path, labels: Wd14Labels) -> None:
@@ -583,8 +598,7 @@ class Wd14Cache:
 
         Callers:
             - ``services/analysis/wd14.py:Wd14Cache.missing``
-            - ``services/analysis/wd14.py:Wd14Cache.ensure``
-            - ``services/analysis/wd14.py:Wd14Cache._scores``
+            - ``services/analysis/wd14.py:Wd14Cache.populate``
         """
         return src.parent / WD14_META_DIRNAME / self.labels.fingerprint / f"{src.stem}.npy"
 
@@ -598,105 +612,85 @@ class Wd14Cache:
             list[Path]: 缓存文件不存在的图片列表, 保持输入顺序.
 
         Callers:
-            - ``services/analysis/wd14.py:Wd14Cache.ensure``
-            - ``services/analysis/wd14.py:Wd14Cache.populate``
+            - ``services/analysis/caption.py:run_caption``
+            - ``services/analysis/wd14.py:run_batch``
+            - ``services/analysis/wd14.py:build_cache``
+            - ``routes/scoring.py:dirs``
         """
         return [src for src in images if not self.path(src).is_file()]
 
-    def ensure(
+    def populate(
         self,
-        images: list[Path],
+        pending: list[Path],
         *,
-        model: Wd14Model,
         log: Callable[[str], None],
         cancel_check: Callable[[], bool],
-        on_progress: Callable[[int, int, Path], None] | None = None,
+        progress: TaggingProgress | None = None,
+        on_update: Callable[[], None] | None = None,
+        done_base: int | None = None,
     ) -> set[Path]:
-        """为缓存缺失的图片跑推理, 把整条概率向量写入缓存.
+        """为已确认缺缓存的图片跑推理, 把整条概率向量写入缓存.
 
-        已有缓存的图片不重复推理; 单张失败记入日志后继续, 不中断整批.
-        模型文件缺失属配置错误, 由推理调用链直接抛出.
+        缺失判定由调用方经 ``missing`` 完成, 本方法只处理传入列表; 单张失败记入
+        日志后继续, 不中断整批. 模型文件缺失属配置错误, 由推理调用链直接抛出.
 
         Args:
-            images (list[Path]): 待检查的图片绝对路径列表.
-            model (Wd14Model): 模型句柄.
+            pending (list[Path]): 待生成缓存的图片绝对路径, 须已剔除已有缓存.
             log (Callable[[str], None]): 日志回调, 接收单行文本.
             cancel_check (Callable[[], bool]): 协作取消判定, 返回 True 时中止.
-            on_progress (Callable[[int, int, Path], None] | None): 单张完成回调
-                ``(已完成数, 总数, 图片路径)``.
+            progress (TaggingProgress | None): 进度对象; 为 None 时不更新逐张进度.
+            on_update (Callable[[], None] | None): 进度变更回调.
+            done_base (int | None): 进度条起始完成数; ``None`` 表示本阶段不推进
+                ``done``(由后续阶段自行计数).
 
         Returns:
             set[Path]: 推理或写入失败的图片集合.
-
-        Callers:
-            - ``services/analysis/wd14.py:Wd14Cache.populate``
-            - ``services/analysis/wd14.py:run_batch``
-        """
-        missing = self.missing(images)
-        if not missing:
-            return set()
-
-        log(f"WD14 缓存缺失 {len(missing)}/{len(images)} 张, 推理补齐…")
-        failed: set[Path] = set()
-        for i, src in enumerate(missing):
-            if cancel_check():
-                log(f"WD14 缓存生成已取消: 完成 {i} 张, 失败 {len(failed)} 张")
-                return failed
-            try:
-                with Image.open(src) as img:
-                    scores = model.scores(img)
-                path = self.path(src)
-                path.parent.mkdir(parents=True, exist_ok=True)
-                buf = io.BytesIO()
-                np.save(buf, scores.astype(np.float16), allow_pickle=False)
-                atomic_write_bytes(path, buf.getvalue())
-            except (OSError, ValueError, RuntimeError) as e:
-                failed.add(src)
-                log(f"WD14 缓存生成失败: {self.rel(src)} — {e}")
-            else:
-                log(f"WD14 缓存 [{i + 1}/{len(missing)}]: {self.rel(src)}")
-            if on_progress:
-                on_progress(i + 1, len(missing), src)
-        log(f"WD14 缓存生成完成: 新建 {len(missing) - len(failed)} 张, 失败 {len(failed)} 张")
-        return failed
-
-    def populate(
-        self,
-        images: list[Path],
-        *,
-        log: Callable[[str], None],
-        cancel_check: Callable[[], bool],
-    ) -> None:
-        """按需加载模型并补齐推理缓存, 不改动任何 ``.txt``.
-
-        供描述页在参考标签注入或标签模式命中需要 WD14 标签时, 先补齐缓存再生成
-        描述. 全部就绪时不加载模型.
-
-        Args:
-            images (list[Path]): 待检查的图片绝对路径列表.
-            log (Callable[[str], None]): 日志回调, 接收单行文本.
-            cancel_check (Callable[[], bool]): 协作取消判定, 返回 True 时中止.
-
-        Returns:
-            None
 
         Raises:
             RuntimeError: WD14 模型权重或标签表缺失.
 
         Callers:
             - ``services/analysis/caption.py:run_caption``
+            - ``services/analysis/wd14.py:run_batch``
+            - ``services/analysis/wd14.py:build_cache``
         """
-        if not self.missing(images):
-            return
-        with _MODEL as raw_model:
-            self.ensure(
-                images,
-                model=cast(Wd14Model, raw_model),
-                log=log,
-                cancel_check=cancel_check,
-            )
+        if not pending:
+            return set()
 
-    def _scores(self, src: Path) -> np.ndarray | None:
+        total = len(pending)
+        log(f"WD14 缓存待生成 {total} 张, 加载模型…")
+        failed: set[Path] = set()
+        with _MODEL as raw_model:
+            model = cast(Wd14Model, raw_model)
+            for i, src in enumerate(pending):
+                if cancel_check():
+                    log(f"WD14 缓存生成已取消: 完成 {i} 张, 失败 {len(failed)} 张")
+                    return failed
+                rel = self.rel(src)
+                try:
+                    with Image.open(src) as img:
+                        scores = model.scores(img)
+                    path = self.path(src)
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    buf = io.BytesIO()
+                    np.save(buf, scores.astype(np.float16), allow_pickle=False)
+                    atomic_write_bytes(path, buf.getvalue())
+                except (OSError, ValueError) as e:
+                    failed.add(src)
+                    log(f"WD14 缓存生成失败: {rel} — {e}")
+                else:
+                    log(f"WD14 缓存 [{i + 1}/{total}]: {rel}")
+                if progress is not None:
+                    if done_base is not None:
+                        progress.done = done_base + i + 1
+                    progress.current = rel
+                    progress.message = f"生成缓存 [{i + 1}/{total}] {rel}"
+                    if on_update:
+                        on_update()
+        log(f"WD14 缓存生成完成: 新建 {total - len(failed)} 张, 失败 {len(failed)} 张")
+        return failed
+
+    def probabilities(self, src: Path) -> np.ndarray | None:
         """读取图片的整条 WD14 概率向量.
 
         Args:
@@ -708,6 +702,7 @@ class Wd14Cache:
         Callers:
             - ``services/analysis/wd14.py:Wd14Cache.groups``
             - ``services/analysis/wd14.py:Wd14Cache.refresh``
+            - ``services/analysis/scoring.py:_run_wd14_scoring``
         """
         path = self.path(src)
         if not path.is_file():
@@ -727,7 +722,7 @@ class Wd14Cache:
         Callers:
             - ``services/analysis/caption.py:run_caption``
         """
-        scores = self._scores(src)
+        scores = self.probabilities(src)
         if scores is None:
             return None
         return self.labels.groups(scores, threshold)
@@ -757,7 +752,7 @@ class Wd14Cache:
         Callers:
             - ``services/analysis/wd14.py:run_batch``
         """
-        scores = self._scores(src)
+        scores = self.probabilities(src)
         if scores is None:
             raise RuntimeError(f"推理缓存缺失: {self.rel(src)}")
         txt = src.with_suffix(".txt")
@@ -786,7 +781,7 @@ class Wd14Cache:
             str: POSIX 风格相对路径.
 
         Callers:
-            - ``services/analysis/wd14.py:Wd14Cache.ensure``
+            - ``services/analysis/wd14.py:Wd14Cache.populate``
             - ``services/analysis/wd14.py:Wd14Cache.refresh``
             - ``services/analysis/wd14.py:run_batch``
         """
@@ -861,8 +856,9 @@ class TaggingProgress:
             line: 日志行文本.
 
         Callers:
-            - ``services/analysis/wd14.py:Wd14Cache.ensure`` (经 ``run_batch`` 传入)
             - ``services/analysis/wd14.py:run_batch``
+            - ``services/analysis/wd14.py:build_cache``
+            - ``services/analysis/caption.py:run_caption`` (经 ``partial``)
         """
         self.logs.append(line)
         if len(self.logs) > 400:
@@ -941,31 +937,13 @@ def run_batch(
     if on_update:
         on_update()
 
-    def report_cache(done: int, total: int, src: Path) -> None:
-        """把缓存生成进度写入进度对象.
-
-        Args:
-            done (int): 已完成的缓存图片数.
-            total (int): 本次缓存生成的图片总数.
-            src (Path): 刚完成的图片路径.
-
-        Returns:
-            None
-
-        Callers:
-            - ``services/analysis/wd14.py:run_batch`` 的 ``Wd14Cache.ensure`` 回调
-        """
-        progress.current = cache.rel(src)
-        progress.message = f"生成缓存 [{done}/{total}] {progress.current}"
-        if on_update:
-            on_update()
-
-    failed = cache.ensure(
-        pending,
-        model=handle,
+    failed = cache.populate(
+        cache.missing(pending),
         log=progress.log,
         cancel_check=lambda: progress.cancel_requested,
-        on_progress=report_cache,
+        progress=progress,
+        on_update=on_update,
+        done_base=None,
     )
     progress.failed = len(failed)
 
@@ -1005,7 +983,7 @@ def run_batch(
                     disable_orig_tags=disable_orig_tags,
                     artist_tag=artist_tag,
                 )
-            except (OSError, ValueError, RuntimeError) as e:
+            except (OSError, ValueError) as e:
                 progress.failed += 1
                 progress.log(f"[{i + 1}/{len(pending)}] 失败: {rel} — {e}")
             else:
@@ -1025,3 +1003,74 @@ def run_batch(
     progress.log(progress.message)
     if on_update:
         on_update()
+
+
+def build_cache(
+    works: list[WorkDir],
+    *,
+    progress: TaggingProgress,
+    on_update: Callable[[], None] | None = None,
+) -> None:
+    """为所选目录补齐 WD14 推理缓存, 不改动任何 ``.txt``.
+
+    评分页入口: 统计待补齐数量并设置进度口径, 缓存补齐统一走
+    ``Wd14Cache.populate``; 全部已缓存时不加载模型.
+
+    Args:
+        works (list[WorkDir]): 待补齐缓存的工作目录.
+        progress (TaggingProgress): 进度对象.
+        on_update (Callable[[], None] | None): 进度变更回调.
+
+    Returns:
+        None
+
+    Raises:
+        RuntimeError: WD14 模型权重或标签表缺失.
+
+    Callers:
+        - ``routes/scoring.py:start_cache``
+    """
+    root = works[0].dataset.root
+    items = [p for work in works for p in work.image_files()]
+    cache = Wd14Cache(root, Wd14Labels.load())
+    pending = cache.missing(items)
+    progress.total = len(items)
+    progress.done = progress.skipped = len(items) - len(pending)
+    progress.ok = progress.failed = 0
+    progress.status = "running"
+    progress.phase = "running" if pending else "done"
+    progress.message = (
+        f"共 {len(items)} 张, 已有缓存 {progress.skipped} 张, 待生成 {len(pending)} 张"
+    )
+    progress.log(
+        f"开始: dirs={[w.name for w in works]}, total={len(items)}, pending={len(pending)}"
+    )
+    if on_update:
+        on_update()
+
+    failed = cache.populate(
+        pending,
+        log=progress.log,
+        cancel_check=lambda: progress.cancel_requested,
+        progress=progress,
+        on_update=on_update,
+        done_base=progress.skipped,
+    )
+    progress.failed = len(failed)
+    progress.ok = progress.done - progress.skipped - len(failed)
+
+    progress.current = ""
+    progress.phase = "done"
+    if progress.cancel_requested:
+        progress.status = "cancelled"
+        progress.message = f"已取消 (新建 {progress.ok} 张, 失败 {progress.failed} 张)"
+    else:
+        progress.status = "done"
+        progress.message = (
+            f"缓存就绪: 已有 {progress.skipped} 张, 新建 {progress.ok} 张, "
+            f"失败 {progress.failed} 张"
+        )
+    progress.log(progress.message)
+    if on_update:
+        on_update()
+
