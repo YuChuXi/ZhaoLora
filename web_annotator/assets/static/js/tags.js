@@ -309,18 +309,16 @@
 
     // ---- 统计条件对话框 ----
     var OPT_MODAL = 'stats-options-modal';
+    UI.bindModal(OPT_MODAL);
     document.getElementById('btn-stats-options').addEventListener('click', function () {
-      document.getElementById(OPT_MODAL).classList.add('open');
+      UI.openModal(OPT_MODAL);
     });
     document.getElementById('btn-stats-options-close').addEventListener('click', function () {
-      document.getElementById(OPT_MODAL).classList.remove('open');
+      UI.closeModal(OPT_MODAL);
     });
     document.getElementById('btn-stats-options-apply').addEventListener('click', function () {
-      document.getElementById(OPT_MODAL).classList.remove('open');
+      UI.closeModal(OPT_MODAL);
       refresh().catch(function (e) { toast(String(e.message || e)); });
-    });
-    document.getElementById(OPT_MODAL).addEventListener('click', function (e) {
-      if (e.target.id === OPT_MODAL) document.getElementById(OPT_MODAL).classList.remove('open');
     });
     document.getElementById('btn-translate-missing').addEventListener('click', function () {
       translateMissing();
@@ -346,6 +344,7 @@
     });
 
     // ---- 批量添加对话框 ----
+    UI.bindModal('batch-add-modal');
     document.getElementById('btn-batch-add').addEventListener('click', function () {
       var sel = selectedTags();
       document.getElementById('batch-add-tags').value = sel.map(function (t) { return t.tag; }).join(', ');
@@ -357,10 +356,10 @@
         document.getElementById('batch-add-conditional').checked = true;
         syncAddMatchMode();
       }
-      document.getElementById('batch-add-modal').classList.add('open');
+      UI.openModal('batch-add-modal');
     });
     document.getElementById('btn-batch-add-close').addEventListener('click', function () {
-      document.getElementById('batch-add-modal').classList.remove('open');
+      UI.closeModal('batch-add-modal');
     });
     document.getElementById('btn-batch-add-preview').addEventListener('click', function () {
       runBatchEdit('add', true).catch(function (e) { toast(String(e.message || e)); });
@@ -381,14 +380,15 @@
     syncAddMatchMode();
 
     // ---- 批量删除对话框 ----
+    UI.bindModal('batch-delete-modal');
     document.getElementById('btn-batch-delete').addEventListener('click', function () {
       var sel = selectedTags();
       document.getElementById('batch-delete-tags').value = sel.map(function (t) { return t.tag; }).join(', ');
       document.getElementById('batch-delete-result').textContent = '';
-      document.getElementById('batch-delete-modal').classList.add('open');
+      UI.openModal('batch-delete-modal');
     });
     document.getElementById('btn-batch-delete-close').addEventListener('click', function () {
-      document.getElementById('batch-delete-modal').classList.remove('open');
+      UI.closeModal('batch-delete-modal');
     });
     document.getElementById('btn-batch-delete-preview').addEventListener('click', function () {
       runBatchEdit('delete', true).catch(function (e) { toast(String(e.message || e)); });
@@ -398,15 +398,16 @@
     });
 
     // ---- 批量替换对话框 ----
+    UI.bindModal('batch-replace-modal');
     document.getElementById('btn-batch-replace').addEventListener('click', function () {
       var sel = selectedTags();
       document.getElementById('batch-replace-from').value = sel.map(function (t) { return t.tag; }).join(', ');
       document.getElementById('batch-replace-to').value = '';
       document.getElementById('batch-replace-result').textContent = '';
-      document.getElementById('batch-replace-modal').classList.add('open');
+      UI.openModal('batch-replace-modal');
     });
     document.getElementById('btn-batch-replace-close').addEventListener('click', function () {
-      document.getElementById('batch-replace-modal').classList.remove('open');
+      UI.closeModal('batch-replace-modal');
     });
     document.getElementById('btn-batch-replace-preview').addEventListener('click', function () {
       runBatchEdit('replace', true).catch(function (e) { toast(String(e.message || e)); });

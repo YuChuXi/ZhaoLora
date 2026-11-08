@@ -612,19 +612,12 @@
   // 评分项弹窗
   document.getElementById('btn-items').addEventListener('click', function () {
     renderItemList();
-    document.getElementById('items-modal').classList.add('open');
-    document.getElementById('items-modal').setAttribute('aria-hidden', 'false');
+    UI.openModal('items-modal');
   });
   document.getElementById('btn-items-close').addEventListener('click', function () {
-    document.getElementById('items-modal').classList.remove('open');
-    document.getElementById('items-modal').setAttribute('aria-hidden', 'true');
+    UI.closeModal('items-modal');
   });
-  document.getElementById('items-modal').addEventListener('click', function (e) {
-    if (e.target === this) {
-      this.classList.remove('open');
-      this.setAttribute('aria-hidden', 'true');
-    }
-  });
+  UI.bindModal('items-modal');
   document.getElementById('btn-item-add').addEventListener('click', function () {
     createItem().catch(function (e) { toast(String(e.message || e)); });
   });
@@ -640,10 +633,7 @@
   document.querySelector('.lightbox-prev').addEventListener('click', function (e) { e.stopPropagation(); navLightbox(-1); });
   document.querySelector('.lightbox-next').addEventListener('click', function (e) { e.stopPropagation(); navLightbox(1); });
   document.addEventListener('keydown', function (e) {
-    if (e.key === 'Escape') {
-      closeLightbox();
-      document.getElementById('items-modal').classList.remove('open');
-    }
+    if (e.key === 'Escape') closeLightbox();
     if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') navLightbox(-1);
     if (e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D') navLightbox(1);
   });

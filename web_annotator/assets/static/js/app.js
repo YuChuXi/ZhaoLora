@@ -186,18 +186,14 @@
    * 打开语义搜索对话框并加载历史。
    */
   function searchOpen() {
-    var dlg = document.getElementById('search-dlg');
-    dlg.classList.add('open');
-    dlg.setAttribute('aria-hidden', 'false');
+    UI.openModal('search-dlg');
     searchLoadHistory();
     document.getElementById('search-query').focus();
   }
 
   /** 关闭语义搜索对话框。 */
   function searchClose() {
-    var dlg = document.getElementById('search-dlg');
-    dlg.classList.remove('open');
-    dlg.setAttribute('aria-hidden', 'true');
+    UI.closeModal('search-dlg');
   }
 
   /**
@@ -335,9 +331,7 @@
     // ---- 语义搜索对话框事件 ----
     document.getElementById('btn-search-dlg').addEventListener('click', searchOpen);
     document.getElementById('btn-search-close').addEventListener('click', searchClose);
-    document.getElementById('search-dlg').addEventListener('click', function (e) {
-      if (e.target === this) searchClose();
-    });
+    UI.bindModal('search-dlg');
     document.getElementById('btn-search-sort').addEventListener('click', function () {
       searchSort().catch(function (e) { toast('查询失败: ' + String(e.message || e)); });
     });
@@ -352,11 +346,6 @@
       if (!q) return;
       document.getElementById('search-query').value = q;
       searchSort().catch(function (e) { toast('查询失败: ' + String(e.message || e)); });
-    });
-    document.addEventListener('keydown', function (e) {
-      if (e.key === 'Escape' && document.getElementById('search-dlg').classList.contains('open')) {
-        searchClose();
-      }
     });
 
     DirPicker.onChange(function () {

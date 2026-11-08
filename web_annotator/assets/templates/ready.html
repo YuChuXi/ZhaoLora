@@ -29,8 +29,6 @@
   .dir-empty { padding: 10px 2px; color: var(--text-dim); text-align: center; font-size: 12px; }
   .res-input {
     display: block; width: 100%; box-sizing: border-box; margin-top: 6px;
-    background: #0a1a30; color: var(--text); border: 1px solid var(--border);
-    border-radius: 4px; padding: 3px 6px; font-size: 12px;
   }
   .toolbar .status-seg { min-width: 0; flex: 0 1 auto; }
   .file-tabs { display: flex; gap: 4px; padding: 10px 14px 0; }
@@ -70,27 +68,28 @@
   <span class="sep"></span>
   <button class="btn green" id="btn-gen">生成</button>
   <button class="btn" id="btn-copy" title="复制当前标签页内容">复制</button>
-  <button class="btn green" id="btn-export">导出配置</button>
+  <button class="btn" id="btn-export">导出配置</button>
   <span class="sep"></span>
-  <label style="font-size:12px;color:var(--text-dim);display:flex;align-items:center;gap:4px;"
+  <label class="field"
     title="目标图片数: 系统据此计算 num_repeats = ceil(目标 / 实际图片数), 使重复后图片数 >= 目标">
     目标图片数
-    <input type="number" id="target-images" value="512" min="1" step="1"
-      style="width:72px;background:#0a1a30;color:var(--text);border:1px solid var(--border);border-radius:4px;padding:3px 6px;">
+    <input type="number" id="target-images" class="input" value="512" min="1" step="1"
+      style="width:72px;">
   </label>
   <span class="sep"></span>
-  <label style="font-size:12px;color:var(--text-dim);display:flex;align-items:center;gap:4px;"
+  <label class="field"
     title="训练步数: 预热与保存间隔由所选格式的模板按步数比例推导(默认各 0.1x)">
     训练步数
-    <input type="number" id="train-steps" value="500" min="1" step="1"
-      style="width:72px;background:#0a1a30;color:var(--text);border:1px solid var(--border);border-radius:4px;padding:3px 6px;">
+    <input type="number" id="train-steps" class="input" value="500" min="1" step="1"
+      style="width:72px;">
   </label>
   <span class="sep"></span>
-  <label style="font-size:12px;color:var(--text-dim);display:flex;align-items:center;gap:4px;cursor:pointer;"
+  <label class="field"
     title="启用时 dataset.toml 附带 regL 正则化数据块: reg 图以类提示词(不含触发词)参与损失, 即先验保持; diffusion-pipe 下等价于先验保持权重 1.0(无独立 reg loss 权重旋钮)">
     <input type="checkbox" id="use-reg" checked> 正则化
   </label>
   <span class="sep"></span>
+  <span class="spacer"></span>
   <span class="status-seg" id="stat-summary">-</span>
 </div>
 

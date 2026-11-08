@@ -19,17 +19,8 @@
   body.mode-single .multi-only { display: none !important; }
   body.mode-single .single-only { display: inline-flex !important; }
 
-  #check-tag {
-    background: #0a1a30; color: var(--text);
-    border: 1px solid var(--border); border-radius: 4px;
-    padding: 5px 10px; font-size: 13px;
-    width: min(260px, 30vw);
-  }
-  #check-position {
-    background: var(--card-bg); color: var(--text);
-    border: 1px solid var(--border); border-radius: 4px;
-    padding: 4px 8px; font-size: 12px;
-  }
+  #check-tag { width: min(260px, 30vw); }
+  #check-position { width: auto; }
   /* 标签补全下拉 */
   .ac-wrap { position: relative; display: inline-block; }
   .ac-popup {
@@ -111,14 +102,6 @@
   }
   .emb-dlg-row { display: flex; align-items: center; gap: 8px; }
   .emb-dlg-row label { font-size: 13px; color: var(--text-dim); white-space: nowrap; }
-  /* 语义检索对话框输入控件统一外观 */
-  .emb-dlg-row input[type="text"],
-  .emb-dlg-row input[type="number"],
-  .emb-dlg-row select {
-    background: var(--card-bg); color: var(--text);
-    border: 1px solid var(--border); border-radius: 4px;
-    padding: 4px 8px; font-size: 13px;
-  }
   #emb-query, #emb-tag, #emb-engine { flex: 1; }
   #emb-threshold { width: 80px; text-align: center; }
   #emb-fuzzy-wrap { display: flex; align-items: center; gap: 3px; color: var(--text-dim); white-space: nowrap; font-size: 13px; }
@@ -131,13 +114,14 @@
 
 <!-- 共享工具栏: 标签/位置/模式为两视图共用的操作目标; 检查/列数=多图专属; 切帧/fit/返回=单图专属 -->
 <div class="toolbar">
-  <input type="text" id="check-tag" placeholder="标签（如 1girl）" spellcheck="false">
-  <select id="check-position">
+  <input type="search" id="check-tag" class="input" spellcheck="false" autocomplete="off"
+    placeholder="标签（如 1girl）">
+  <select id="check-position" class="select">
     <option value="any">任意位置</option>
     <option value="before">在 ||| 前</option>
     <option value="after">在 ||| 后</option>
   </select>
-  <select id="check-mode">
+  <select id="check-mode" class="select">
     <option value="top">置顶</option>
     <option value="bottom">置底</option>
     <option value="random">任意</option>
@@ -145,12 +129,16 @@
   <button class="btn multi-only" type="button" id="btn-emb-dlg" title="相似度搜索与批量标记">相似度</button>
   <span class="sep multi-only"></span>
   <button class="btn green multi-only" type="button" id="btn-check">检查</button>
-  <label class="multi-only" style="display:flex;align-items:center;gap:3px;font-size:12px;color:var(--text-dim);cursor:pointer;user-select:none;"
+  <label class="field multi-only"
     title="将每张图的蒙板应用到图片(去背), 透明区显示棋盘格">
-    <input type="checkbox" id="chk-apply-mask" style="margin:0;">蒙板
+    <input type="checkbox" id="chk-apply-mask">蒙板
   </label>
   <label class="cols-ctl multi-only" id="cols-ctl"><span>列</span><input type="range" id="cols-slider" min="0" max="16" value="0" step="1"><span id="cols-label">自动</span></label>
   <button class="btn multi-only" type="button" id="btn-single-mode">单图</button>
+  <span class="spacer multi-only"></span>
+  <span class="status-seg multi-only">共<b id="stat-total">0</b></span>
+  <span class="status-seg multi-only">符合<b id="stat-ok">0</b></span>
+  <span class="status-seg multi-only">不符<b id="stat-bad">0</b></span>
   <span class="sep single-only"></span>
   <button class="btn single-only" type="button" id="btn-single-close" title="返回瀑布流 (Esc)">✕ 瀑布流</button>
   <button class="btn single-only" type="button" id="btn-prev" title="上一张 (←/A)">◀</button>
@@ -167,14 +155,15 @@
     <div class="modal-body" style="display:flex;flex-direction:column;gap:12px;padding:16px;">
       <div class="emb-dlg-row">
         <label>引擎</label>
-        <select id="emb-engine">
+        <select id="emb-engine" class="select">
           <option value="similarity">相似度 · Qwen3-VL-Reranker-2B</option>
           <option value="concept">概念分割 · SAM3</option>
         </select>
       </div>
       <div class="emb-dlg-row">
         <label id="emb-query-label">查询文本</label>
-        <input type="text" id="emb-query" placeholder="查询文本 / 概念提示词" spellcheck="false">
+        <input type="search" id="emb-query" class="input" placeholder="查询文本 / 概念提示词"
+          spellcheck="false" autocomplete="off">
       </div>
       <div class="emb-dlg-row">
         <button class="btn green" type="button" id="emb-sort">按相似度排序</button>
@@ -189,23 +178,23 @@
       <hr style="border:none;border-top:1px solid var(--border);margin:0;">
       <div class="emb-dlg-row">
         <label>标签</label>
-        <input type="text" id="emb-tag" placeholder="要添加或删除的标签" spellcheck="false">
+        <input type="text" id="emb-tag" class="input" placeholder="要添加或删除的标签" spellcheck="false">
       </div>
       <div class="emb-dlg-row">
         <label>位置</label>
         <span id="emb-position-display" style="color:var(--text);font-size:12px;">-</span>
       </div>
       <div class="emb-dlg-row">
-        <select id="emb-action">
+        <select id="emb-action" class="select">
           <option value="add">添加标签</option>
           <option value="delete">删除标签</option>
         </select>
         <label id="emb-metric-label">相似度</label>
-        <select id="emb-operator">
+        <select id="emb-operator" class="select">
           <option value="gt">&gt;=</option>
           <option value="lt">&lt;=</option>
         </select>
-        <input type="number" id="emb-threshold" value="0.5" min="0" max="1" step="0.05">
+        <input type="number" id="emb-threshold" class="input" value="0.5" min="0" max="1" step="0.05">
         <label id="emb-fuzzy-wrap" style="display:none"><input type="checkbox" id="emb-fuzzy">模糊匹配</label>
       </div>
     </div>
@@ -220,11 +209,6 @@
 <div class="view-multi" id="view-multi">
   <div class="masonry" id="masonry"></div>
   <div class="hint" id="check-hint">输入标签并检查 · 绿色=位置符合 · 红色=位置不符 · 点击卡片添加/删除标签 · 右键卡片进入单图 · 无标签时显示全部图片 · 支持相似度排序、概念分割与批量标记</div>
-  <div class="status-bar" id="check-status">
-    <span class="status-seg">共<b id="stat-total">0</b></span>
-    <span class="status-seg">符合<b id="stat-ok">0</b></span>
-    <span class="status-seg">不符<b id="stat-bad">0</b></span>
-  </div>
 </div>
 
 <!-- 单图视图 (参考 paint: 主图区 + 底部状态栏) -->

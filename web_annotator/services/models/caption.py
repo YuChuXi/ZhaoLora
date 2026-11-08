@@ -33,6 +33,9 @@ class CaptionBody(BaseModel):
     """描述标注启动请求."""
 
     dirs: list[str] | None = Field(default=None, description="子目录名, 空/省略=全选")
+    paths: list[str] | None = Field(
+        None, description="显式图片相对路径; 非空时只处理这些图片, 省略或空列表=处理 dirs 内全部图片"
+    )
     modes: list[str] = Field(default_factory=lambda: list(CAPTION_MODES), description="生成的描述模式")
     general_threshold: float | None = Field(
         None, ge=0.0, le=1.0, description="通用标签置信度下限; 省略为不注入"
@@ -45,7 +48,7 @@ class CaptionBody(BaseModel):
         description="NSFW 增强的置信度下限; Explicit 或 Questionable 不低于该值时在提示词追加备注, 省略为不启用",
     )
     rules: list[CaptionRule] = Field(default_factory=list, description="预设提示词条目")
-    force: bool = Field(False, description="是否先清空所选目录的全部已有描述再重新标注")
+    force: bool = Field(False, description="是否先清空本次待处理图片的已有描述再重新标注")
 
 
 class CaptionListBody(BaseModel):
@@ -55,9 +58,15 @@ class CaptionListBody(BaseModel):
 
 
 class CaptionDeleteBody(BaseModel):
-    """单张图片描述删除请求."""
+    """描述删除请求."""
 
-    path: str = Field(..., description="图片相对数据集根的路径")
+    paths: list[str] = Field(..., min_length=1, description="待删除描述的图片相对路径列表")
+
+
+class CaptionDeleteResponse(BaseModel):
+    """描述删除结果."""
+
+    deleted: int = Field(..., description="实际删除描述条目的图片数量")
 
 
 class CaptionImageItem(ImageThumbItem):
@@ -71,8 +80,6 @@ class CaptionListResponse(BaseModel):
     """描述页图片列表响应."""
 
     items: list[CaptionImageItem] = Field(default_factory=list)
-    total: int = 0
-    described: int = 0
     dirs: list[str] = Field(default_factory=list)
 
 

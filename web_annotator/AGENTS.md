@@ -80,10 +80,40 @@ docs/                          功能说明文档
   `API.watchJob(jobId, onEvent)` 订阅 SSE，终态自动 `close`。
 - `static/js/store.js`：`Store` 单例。图片列表与选择状态的内存缓存，`toggle` 增量更新并
   通知监听器（`onChange` / `onToggle`），不进行整列表重渲染。
-- `static/js/ui.js`：`window.toast(msg)` 全局提示。
+- `static/js/ui.js`：`UI` 单例。除 `toast` / `errshow` / `escHtml` 外，提供页面共用的
+  交互原语，业务页不得重复实现：
+  - `UI.openModal(id)` / `UI.closeModal(id)` / `UI.bindModal(id, onClose)`：统一模态开关、
+    遮罩点击与 Esc 关闭；`onClose` 只做收尾，不得再次调用 `closeModal`。
+  - `UI.createSelection(onChange)`：前端选择集合（`has` / `toggle` / `selectRange` /
+    `selectAll` / `invert` / `clear` / `count` / `paths`），供无 Store 的页面复用。
+  - `UI.bindJobPanel(opts)`：进度条、百分比、日志、取消按钮与终态收尾的统一实现，
+    业务页只提交任务并在 `onFinish` 中刷新数据。
+- `static/js/masonry.js`：瀑布流。`init` 的 `selection` 参数接管选中状态；单击立即提交
+  选择语义，`onPreview` 提供时以右键（桌面）或长按（触屏）打开预览；选择变更后调用
+  `syncSelection()` 增量同步卡片样式，禁止整列表重建。
 - `static/js/nav.js`：功能标签导航与数据集绑定启动。
 - 业务页脚本统一为 IIFE：`(function () { 'use strict'; ... })();`，公共能力从上述管理器
   取用，不重复实现。
+
+### 3.1 标签页操作范式
+
+列表类页面（筛选 / 评分 / 去重 / 标签检查 / 描述）遵循同一套交互语义：
+
+1. **工具栏分区从左到右**：本页主操作（绿色 `.btn.green`）→ 取消（`.btn.danger`，仅任务
+   运行时出现）→ 分隔 → 参数与筛选 → 分隔 → 选择与批量操作 → `.spacer` → 统计与状态
+   信息。主操作只有一个，其余按钮一律中性 `.btn`；破坏性操作使用 `.btn.danger`。统计
+   信息放在工具栏右侧，不得置于文档流末尾（长列表下不可见）。
+2. **主操作职责唯一**：主操作直接提交任务或打开其参数面板，不在两个位置重复放置
+   "开始"按钮；参数面板底部只保留保存/关闭。
+3. **选择语义统一**：单击卡片切换选中，Shift 连选，`Ctrl+A` 全选，`Delete` 删除选中项；
+   工具栏提供全选 / 反选 / 清除选择，未选中时批量按钮置灰。
+4. **预览语义统一**：右键（桌面）或长按（触屏）打开大图或详情，且不改变选中状态；
+   Esc 或关闭按钮退出。单击立即切换选中，禁止用单击直接打开模态，也禁止用双击并延迟单击。
+5. **任务反馈统一**：进度条、日志、取消按钮与终态提示由 `UI.bindJobPanel` 接管，页面
+   不自行解析快照字段。
+6. **任务目标所见即所得**：列表页的任务作用集合恒为当前瀑布流中的图片——未选中卡片时
+   取当前筛选结果，选中卡片时取选中且可见的图片；工具栏统计、批量操作与任务提交共用
+   这一集合，禁止另设「范围」下拉或第二套集合计算。
 
 ## 4. 标准控件（模板与样式）
 
@@ -97,7 +127,15 @@ docs/                          功能说明文档
 - **Toast 提示**：`<div class="toast" id="toast">` + `window.toast(msg)`。
 - **任务进度条**：`.job-progress`（紧凑用 `.compact`）+ `#progress-fill`；`loading` /
   `queued` 时置 `indeterminate` 动画。见 `scoring.html` / `tags.html`。
-- **工具栏**：`.toolbar`（紧凑 `.toolbar.compact`），按钮 `.btn`（`.danger` / `.green`）。
+- **工具栏**：`.toolbar`（紧凑 `.toolbar.compact`），按钮 `.btn`（`.danger` / `.green`）；
+  字段用 `.field`（标签 + 控件行内对齐），输入框 `.input`、下拉 `.select`，右对齐占位
+  用 `.spacer`。页面不得再内联声明输入框/按钮的配色与内边距。
+- **字段容器**：一行可换行的字段集合用 `.field-row`，纵向字段组用 `.field-stack`；
+  两者均支持 `hidden` 隐藏，页面不得再内联写 `display:flex` 的字段布局。
+- **控件外观唯一来源**：`.input` / `.select` 是表单控件外观的唯一定义处，页面与模态
+  内的控件必须显式声明这两个类；禁止用 `.modal input` 一类后代选择器兜底外观。
+- **筛选输入**：筛选与搜索类文本框统一 `type="search"` + `.input`，清除入口由样式表的
+  原生清除按钮统一提供，页面不得自行放置"清空"按钮。
 - **灯箱**：`.lightbox` 用于大图查看（`scoring.html`）。
 - 所有页面以 `<div class="toast" id="toast"></div>` 收尾，并按规定顺序引用脚本。
 

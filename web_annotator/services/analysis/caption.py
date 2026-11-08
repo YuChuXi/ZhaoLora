@@ -409,7 +409,8 @@ def load_captions(directory: Path) -> dict[str, list[str]]:
 
     Callers:
         - ``services/analysis/caption.py:run_caption``
-        - ``routes/caption.py:_build_item``
+        - ``routes/caption.py:list_images``
+        - ``routes/caption.py:delete_many``
     """
     path = directory / CAPTIONS_JSON_FILE
     if not path.is_file():
@@ -433,31 +434,13 @@ def write_captions(directory: Path, data: dict[str, list[str]]) -> None:
 
     Callers:
         - ``services/analysis/caption.py:run_caption``
+        - ``routes/caption.py:delete_many``
     """
     ordered = {key: data[key] for key in sorted(data)}
     atomic_write_text(
         directory / CAPTIONS_JSON_FILE,
         json.dumps(ordered, ensure_ascii=False, indent=2) + "\n",
     )
-
-
-def delete_caption(directory: Path, name: str) -> None:
-    """从工作目录的 ``captions.json`` 中删除单张图片的描述.
-
-    Args:
-        directory (Path): 工作目录绝对路径.
-        name (str): 图片文件名.
-
-    Returns:
-        None
-
-    Callers:
-        - ``routes/caption.py:delete_one``
-    """
-    store = load_captions(directory)
-    if store.pop(name, None) is None:
-        return
-    write_captions(directory, store)
 
 
 def _log(progress: JobProgress, line: str) -> None:
@@ -480,6 +463,7 @@ def _log(progress: JobProgress, line: str) -> None:
 async def run_caption(
     works: list[WorkDir],
     *,
+    paths: set[str] | None,
     modes: list[str],
     general_threshold: float | None,
     character_threshold: float | None,
@@ -491,10 +475,10 @@ async def run_caption(
 ) -> CaptionResult:
     """批量描述: ``CONCURRENCY`` 个工作协程共用一条队列轮转取图, 结果写入 ``captions.json``.
 
-    每张图片按 ``modes`` 顺序各请求一次(系统提示词随模式切换). ``force`` 为真时先清空
-    所选目录的全部已有描述再重新标注; 为假时跳过已存在描述的图片. 单张失败重新入队,
-    至多 ``MAX_RETRIES`` 次, 仍失败才记入失败并继续. 取消后不再取新图, 在途请求在
-    下一个流式数据块处中断.
+    每张图片按 ``modes`` 顺序各请求一次(系统提示词随模式切换). ``force`` 为真时先
+    清除待处理图片的已有描述再重新标注; 为假时跳过已存在描述的图片. 单张失败重新
+    入队, 至多 ``MAX_RETRIES`` 次, 仍失败才记入失败并继续. 取消后不再取新图, 在途
+    请求在下一个流式数据块处中断.
 
     参考标签注入、NSFW 增强与「匹配标签」命中判定都取自 WD14 缓存, 故生成前先对
     缺失缓存的待处理图片补建 ``.wd14_meta``(见 ``_needs_wd14`` 与
@@ -503,12 +487,14 @@ async def run_caption(
 
     Args:
         works (list[WorkDir]): 待描述的工作目录列表.
+        paths (set[str] | None): 显式图片相对路径集合; None 表示处理 ``works`` 内全部
+            图片. 仅作用于本次任务, 不影响 ``captions.json`` 中其它图片的条目.
         modes (list[str]): 描述模式列表, 取值属于 ``SYSTEM_PROMPT_TEMPLATES``.
         general_threshold (float | None): 通用标签置信度下限; None 为不注入.
         character_threshold (float | None): 角色标签置信度下限; None 为不注入.
         nsfw_threshold (float | None): NSFW 增强的置信度下限; None 为不启用.
         rules (list[CaptionRule]): 预设提示词条目.
-        force (bool): 是否清空 captions.json 中已存在的条目并重新标注.
+        force (bool): 是否清除待处理图片的已有描述并重新标注.
         progress (JobProgress): 进度对象.
         on_update (Callable[[], None] | None): 进度变更回调.
 
@@ -523,6 +509,8 @@ async def run_caption(
     """
     root = works[0].dataset.root
     items = [p for work in works for p in work.image_files()]
+    if paths is not None:
+        items = [p for p in items if p.relative_to(root).as_posix() in paths]
     if not BASE_URL or not MODEL:
         raise ValueError("未配置 CAPTION_OPENAI_BASE_URL / CAPTION_OPENAI_MODEL")
     dir_names = [w.name for w in works]
@@ -551,11 +539,15 @@ async def run_caption(
 
     stores = {work.path: load_captions(work.path) for work in works}
     if force:
-        cleared = [path for path, store in stores.items() if store]
-        for path in cleared:
-            stores[path] = {}
-            write_captions(path, {})
-        _log(progress, f"已清空 {len(cleared)} 个目录的已有描述")
+        cleared = 0
+        touched: set[Path] = set()
+        for src in items:
+            if stores[src.parent].pop(src.name, None) is not None:
+                cleared += 1
+                touched.add(src.parent)
+        for parent in touched:
+            write_captions(parent, stores[parent])
+        _log(progress, f"已清除 {cleared} 张图片的已有描述")
         if on_update:
             on_update()
     pending: list[Path] = []

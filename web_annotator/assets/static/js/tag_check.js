@@ -990,29 +990,18 @@
       if (btn) btn.textContent = action === 'delete' ? '批量删除' : '批量添加';
     }
     function openEmbDlg() {
-      var dlg = document.getElementById('emb-dlg');
-      dlg.classList.add('open');
-      dlg.setAttribute('aria-hidden', 'false');
+      UI.openModal('emb-dlg');
       document.getElementById('emb-position-display').textContent = embPositionLabel();
       embUpdateAction();
       embSetEngine(false);
       document.getElementById('emb-query').focus();
     }
     function closeEmbDlg() {
-      var dlg = document.getElementById('emb-dlg');
-      dlg.classList.remove('open');
-      dlg.setAttribute('aria-hidden', 'true');
+      UI.closeModal('emb-dlg');
     }
     document.getElementById('btn-emb-dlg').addEventListener('click', openEmbDlg);
     document.getElementById('btn-emb-close').addEventListener('click', closeEmbDlg);
-    document.getElementById('emb-dlg').addEventListener('click', function (e) {
-      if (e.target === this) closeEmbDlg();
-    });
-    document.addEventListener('keydown', function (e) {
-      if (e.key === 'Escape' && document.getElementById('emb-dlg').classList.contains('open')) {
-        closeEmbDlg();
-      }
-    });
+    UI.bindModal('emb-dlg');
     document.getElementById('emb-action').addEventListener('change', function () {
       embUpdateAction();
       persistTagCheck();

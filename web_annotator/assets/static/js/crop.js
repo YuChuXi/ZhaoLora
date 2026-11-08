@@ -627,6 +627,7 @@
           ' → ' + box.target_w + 'x' + box.target_h + ' @' + Number(box.zoom).toFixed(1) + 'x</div>';
         var input = document.createElement('input');
         input.type = 'text';
+        input.className = 'input';
         input.placeholder = '部位名';
         input.value = box.name || '';
         input.addEventListener('click', function (e) { e.stopPropagation(); });
@@ -1053,7 +1054,7 @@
     _origH = im.naturalHeight;
     _noCrop = false;
     document.getElementById('chk-no-crop').checked = false;
-    document.getElementById('part-name-wrap').style.display = 'none';
+    document.getElementById('part-name-wrap').hidden = true;
     var state = await stateTask;
     initDefaultCrop((_images[_index] && _images[_index].path === imgMeta.path) ? state.parts : null);
     fitCanvas();
@@ -1146,7 +1147,7 @@
   function onToggleNoCrop() {
     _noCrop = document.getElementById('chk-no-crop').checked;
     var wrapEl = document.getElementById('part-name-wrap');
-    wrapEl.style.display = _noCrop ? 'flex' : 'none';
+    wrapEl.hidden = !_noCrop;
     if (_noCrop) {
       wrap.style.cursor = 'default';
       if (!document.getElementById('part-name').value && _crops[_selected] && _crops[_selected].name) {

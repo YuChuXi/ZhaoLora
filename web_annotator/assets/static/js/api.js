@@ -210,10 +210,10 @@ var API = (function () {
 
   /**
    * 查询指定类型的活跃长任务（页面刷新后重连用）。
-   * @param {string} kind 任务类型: archive / aesthetic / quality / online_batch
+   * @param {string} kind 任务类型: caption / scoring / dedupe / online_batch 等
    * @param {string} [dataset] 数据集名, 省略则不限
    * @returns {Promise<object|null>} JobSnapshot 或 null
-   * 引用：index.js、scoring.js、booru_filter.js。
+   * 引用：caption.js、scoring.js、dedupe.js、booru_filter.js、tagging.js。
    */
   async function findActiveJob(kind, dataset) {
     var qs = 'kind=' + encodeURIComponent(kind);

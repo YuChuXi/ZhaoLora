@@ -1,7 +1,10 @@
 /**
  * caption.js —— 描述页: 调用 OpenAI 兼容视觉模型批量生成自然语言描述, 写入各工作目录的 captions.json。
  *
- * 依赖: api.js / dir_picker.js / nav.js / masonry.js
+ * 依赖: ui.js / api.js / dir_picker.js / nav.js / masonry.js
+ *
+ * 操作约定与其它标签页一致: 单击卡片选择, Shift 连选, 右键或长按查看描述;
+ * 工具栏「生成描述」按当前所见图片与已保存设置直接提交任务, 「设置」只编辑参数。
  */
 (function () {
   'use strict';
@@ -14,13 +17,14 @@
   var _filterPresets = [];
   var _filterTimer = null;
   var _viewImg = null;
-  var _jobId = null;
   var _templates = [];
+  var _selection = null;
+  var _job = null;
 
   /**
    * 读取「caption」设置键的当前值。
-   * 引用：loadSaved / loadInject / persistRules / persistInject。
-   * @returns {{rules?:Array<object>, inject?:Object}}
+   * @returns {{rules?:Array<object>, inject?:Object, modes?:string[],
+   *   force?:boolean}}
    */
   function captionState() {
     var state = AppSettings.get('caption');
@@ -46,7 +50,7 @@
     AppSettings.set('caption', state);
   }
 
-  /** 保存 WD14 注入设置、NSFW 增强与描述模式/清空选项。引用: mode-seg/force 变更监听、closeSettings。 */
+  /** 保存 WD14 注入设置、NSFW 增强、描述模式与清空选项。 */
   function persistInject() {
     var state = captionState();
     state.inject = {
@@ -83,28 +87,6 @@
     return value >= 0 && value <= 1 ? value : false;
   }
 
-  // ==================== 模态 ====================
-
-  /**
-   * 打开模态。
-   * @param {string} id
-   */
-  function openDlg(id) {
-    var dlg = document.getElementById(id);
-    dlg.classList.add('open');
-    dlg.setAttribute('aria-hidden', 'false');
-  }
-
-  /**
-   * 关闭模态。
-   * @param {string} id
-   */
-  function closeDlg(id) {
-    var dlg = document.getElementById(id);
-    dlg.classList.remove('open');
-    dlg.setAttribute('aria-hidden', 'true');
-  }
-
   // ==================== 描述设置 ====================
 
   /**
@@ -116,6 +98,7 @@
   function mkText(placeholder, value) {
     var el = document.createElement('input');
     el.type = 'text';
+    el.className = 'input';
     el.placeholder = placeholder;
     el.value = value || '';
     return el;
@@ -206,7 +189,7 @@
       box.appendChild(document.createTextNode(tpl.text.slice(last, m.index)));
       var blank = document.createElement('input');
       blank.type = 'text';
-      blank.className = 'cap-blank';
+      blank.className = 'input cap-blank';
       blank.dataset.field = m[1];
       blank.placeholder = m[1];
       blank.title = '填写「' + m[1] + '」';
@@ -229,7 +212,7 @@
   }
 
   /**
-   * 按句式行的空位取值生成一条条目(触发方式由用户在条目上设置)。
+   * 按句式行的空位取值生成一条条目。
    * @returns {{text: string}|null} null 表示有空位未填
    */
   function buildFromTemplate() {
@@ -274,11 +257,16 @@
     saveSaved(collectRules());
   }
 
-  /** 保存设置并关闭描述设置对话框。 */
-  function closeSettings() {
+  /** 保存提示词条目与注入设置。 */
+  function saveSettings() {
     persistRules();
     persistInject();
-    closeDlg('rules-dlg');
+  }
+
+  /** 保存设置并关闭描述设置对话框。 */
+  function closeSettings() {
+    saveSettings();
+    UI.closeModal('rules-dlg');
   }
 
   /** 按「caption」设置键恢复提示词条目。 */
@@ -339,7 +327,7 @@
     return function (text) { return re.test(text); };
   }
 
-  /** 按当前筛选条件渲染瀑布流并更新命中计数。 */
+  /** 按当前筛选条件渲染瀑布流, 并按所见图片更新统计。 */
   function applyFilter() {
     var mode = document.getElementById('cap-filter-mode').value;
     var query = document.getElementById('cap-filter-input').value;
@@ -357,10 +345,20 @@
           return (img.captions || []).some(matcher);
         })
       : _items.slice();
+    _selection.retain(visiblePaths());
     Masonry.render(_filtered);
-    var stat = document.getElementById('stat-filter');
-    stat.hidden = !query;
-    stat.textContent = '命中 ' + _filtered.length + ' / ' + _items.length;
+    updateStats();
+  }
+
+  /** 统计当前所见图片的共/已描述/未描述数量。 */
+  function updateStats() {
+    var described = 0;
+    _filtered.forEach(function (img) {
+      if (img.captions && img.captions.length) described += 1;
+    });
+    document.getElementById('stat-total').textContent = _filtered.length;
+    document.getElementById('stat-described').textContent = described;
+    document.getElementById('stat-missing').textContent = _filtered.length - described;
   }
 
   /**
@@ -383,6 +381,37 @@
     });
   }
 
+  // ==================== 选择 ====================
+
+  /**
+   * 选中集合变化时刷新计数与批量按钮可用状态。
+   * @param {number} count 选中数量
+   * @param {string[]} _paths 选中路径列表(未使用)
+   */
+  function onSelectionChange(count, _paths) {
+    Masonry.syncSelection();
+    document.getElementById('stat-sel').hidden = !count;
+    document.getElementById('stat-selected').textContent = count;
+    document.getElementById('btn-clear-sel').disabled = !count;
+    document.getElementById('btn-delete').disabled = !count;
+  }
+
+  /**
+   * 返回当前选中的图片条目(按列表顺序)。
+   * @returns {Array<object>}
+   */
+  function selectedItems() {
+    return _items.filter(function (img) { return _selection.has(img.path); });
+  }
+
+  /**
+   * 当前视图内全部路径。
+   * @returns {string[]}
+   */
+  function visiblePaths() {
+    return _filtered.map(function (img) { return img.path; });
+  }
+
   // ==================== 瀑布流 ====================
 
   /**
@@ -401,10 +430,10 @@
   }
 
   /**
-   * 点击卡片: 打开描述查看模态。
+   * 打开描述查看模态(卡片右键或长按触发)。
    * @param {object} img
    */
-  function onCardClick(img) {
+  function openView(img) {
     _viewImg = img;
     document.getElementById('view-title').textContent = img.path;
     document.getElementById('view-delete').hidden = !(img.captions && img.captions.length);
@@ -427,35 +456,54 @@
         body.appendChild(box);
       });
     }
-    openDlg('view-dlg');
+    UI.openModal('view-dlg');
   }
 
-  /** 删除当前查看图片的描述条目并刷新列表。 */
-  async function deleteViewedCaption() {
-    var img = _viewImg;
-    if (!img || !img.captions || !img.captions.length) return;
-    await API.request(API.apiPath('/caption/delete'), {
-      method: 'POST',
-      body: JSON.stringify({ path: img.path }),
-    });
-    toast('已删除描述');
-    closeDlg('view-dlg');
-    await refresh();
-  }
+  // ==================== 描述列表 ====================
 
-  /** 重新拉取所选目录的图片与描述现状。 */
+  /** 重新拉取所选目录的图片与描述现状, 并清空选择。 */
   async function refresh() {
     var res = await API.request(API.apiPath('/caption/list'), {
       method: 'POST',
       body: JSON.stringify({ dirs: DirPicker.getDirs() }),
     });
     _items = res.items || [];
+    _selection.clear();
     applyFilter();
-    var total = res.total || 0;
-    var described = res.described || 0;
-    document.getElementById('stat-total').textContent = total;
-    document.getElementById('stat-described').textContent = described;
-    document.getElementById('stat-missing').textContent = total - described;
+  }
+
+  // ==================== 描述删除 ====================
+
+  /**
+   * 批量删除指定图片的描述。
+   * @param {string[]} paths 图片相对路径列表
+   * @param {boolean} confirmFirst 是否先确认
+   * @returns {Promise<void>}
+   */
+  async function deleteCaptions(paths, confirmFirst) {
+    if (!paths.length) {
+      toast('未选择图片');
+      return;
+    }
+    if (confirmFirst && !confirm('删除 ' + paths.length + ' 张图片的描述？')) return;
+    var res = await API.request(API.apiPath('/caption/delete'), {
+      method: 'POST',
+      body: JSON.stringify({ paths: paths }),
+    });
+    toast(res.deleted ? ('已删除 ' + res.deleted + ' 张的描述') : '所选图片均无描述');
+    UI.closeModal('view-dlg');
+    await refresh();
+  }
+
+  /** 删除当前选中图片的描述。 */
+  async function deleteSelectedCaptions() {
+    await deleteCaptions(_selection.paths(), true);
+  }
+
+  /** 删除当前查看图片的描述。 */
+  async function deleteViewedCaption() {
+    if (!_viewImg) return;
+    await deleteCaptions([_viewImg.path], false);
   }
 
   // ==================== 标注任务 ====================
@@ -473,74 +521,26 @@
   }
 
   /**
-   * 更新进度条与日志控制台。
-   * @param {object} s 任务快照
+   * 本次任务的目标图片: 有选择时取选中图片, 否则取全部可见图片。
+   * 选择集合在筛选时已收窄到可见图片, 故两者都属于当前所见。
+   * @returns {string[]} 图片相对路径列表
    */
-  function updateProgress(s) {
-    var running = s.status === 'running' || s.status === 'queued';
-    document.getElementById('job-progress').hidden = !running;
-    var fill = document.getElementById('progress-fill');
-    fill.classList.toggle('indeterminate', s.status === 'queued');
-    if (s.status === 'running') fill.style.width = Math.min(100, s.pct || 0) + '%';
-    document.getElementById('progress-pct').textContent = s.status === 'queued'
-      ? '…'
-      : (Math.min(100, Math.round(s.pct || 0)) + '%');
-    if (s.message) document.getElementById('stat-job').textContent = s.message;
-    var box = document.getElementById('log-box');
-    if (s.logs && s.logs.length) {
-      box.hidden = false;
-      box.textContent = s.logs.join('\n');
-      box.scrollTop = box.scrollHeight;
-    }
+  function targetPaths() {
+    return _selection.count() ? _selection.paths() : visiblePaths();
   }
 
-  /** 重置任务相关界面控件。 */
-  function resetJobUi() {
-    document.getElementById('job-progress').hidden = true;
-    document.getElementById('btn-cancel').hidden = true;
-    document.getElementById('btn-start').disabled = false;
-  }
-
-  /**
-   * 任务终态处理: 提示结果并刷新列表。
-   * @param {object} s 任务快照
-   */
-  function finishJob(s) {
-    _jobId = null;
-    resetJobUi();
-    if (s.status === 'done') {
-      toast(s.message || '标注完成');
-    } else if (s.status === 'cancelled') {
-      toast(s.message || '已取消');
-    } else {
-      toast('标注失败: ' + (s.message || ''));
-    }
-    refresh().catch(function (e) { toast(String(e.message || e)); });
-  }
-
-  /**
-   * 订阅任务进度, 终态时收尾。
-   * @param {string} jobId
-   */
-  function watch(jobId) {
-    _jobId = jobId;
-    document.getElementById('btn-cancel').hidden = false;
-    API.watchJob(jobId, function (s) {
-      updateProgress(s);
-      if (s.status === 'done' || s.status === 'error' || s.status === 'cancelled') {
-        finishJob(s);
-      }
-    });
-  }
-
-  /** 提交描述标注长任务并订阅进度。 */
+  /** 提交描述标注长任务。 */
   async function startJob() {
     var modes = selectedModes();
     if (!modes.length) {
       toast('请至少选择一种描述模式');
       return;
     }
-    var rules = collectRules();
+    var paths = targetPaths();
+    if (!paths.length) {
+      toast('没有可处理的图片');
+      return;
+    }
     var generalThreshold = readThreshold('inject-general', 'general-threshold');
     var characterThreshold = readThreshold('inject-character', 'character-threshold');
     var nsfwThreshold = readThreshold('inject-nsfw', 'nsfw-threshold');
@@ -550,43 +550,36 @@
     }
     var body = {
       dirs: DirPicker.getDirs(),
+      paths: paths,
       modes: modes,
       general_threshold: generalThreshold,
       character_threshold: characterThreshold,
       nsfw_threshold: nsfwThreshold,
-      rules: rules,
+      rules: collectRules(),
       force: document.getElementById('force').checked,
     };
-    document.getElementById('btn-start').disabled = true;
-    document.getElementById('job-progress').hidden = false;
-    document.getElementById('progress-fill').style.width = '0%';
+    var runBtn = document.getElementById('btn-run');
+    runBtn.disabled = true;
+    var log = document.getElementById('log-box');
+    log.hidden = true;
+    log.textContent = '';
     try {
       var res = await API.request(API.apiPath('/caption/start'), {
         method: 'POST',
         body: JSON.stringify(body),
       });
-      closeSettings();
-      watch(res.job_id);
+      UI.closeModal('rules-dlg');
+      _job.start(res.job_id);
     } catch (e) {
-      resetJobUi();
+      runBtn.disabled = false;
       toast('提交失败: ' + String(e.message || e));
     }
   }
 
-  /** 请求取消当前标注任务。 */
-  async function cancelJob() {
-    if (!_jobId) return;
-    var btn = document.getElementById('btn-cancel');
-    btn.disabled = true;
-    try {
-      await API.cancelJob(_jobId);
-    } finally {
-      btn.disabled = false;
-    }
-  }
+  // ==================== 初始化 ====================
 
   /**
-   * 按后端返回的模式、注入默认值与提示词模板渲染对话框选项。
+   * 按后端返回的模式、注入默认值与提示词模板渲染设置项。
    * @param {object} data /caption/dirs 响应
    */
   function renderOptions(data) {
@@ -620,13 +613,45 @@
     renderFilterPresets(data.filter_presets);
   }
 
+  /**
+   * 渲染描述服务状态(就绪说明或失败原因)。
+   * @param {object} data /caption/dirs 响应
+   */
+  function renderServiceStatus(data) {
+    document.getElementById('stat-model').textContent =
+      (data.ready ? '' : '未就绪: ') + (data.info || '');
+  }
+
+  /** 绑定工具栏、筛选、快捷键与模态事件并加载数据。 */
   async function init() {
     await AppSettings.ready();
+
+    _selection = UI.createSelection(onSelectionChange);
     Masonry.init('masonry', {
       getData: function () { return _filtered; },
-      onClick: onCardClick,
+      selection: _selection,
+      onPreview: openView,
       decorate: decorateCard,
     });
+
+    _job = UI.bindJobPanel({
+      bar: 'job-progress',
+      fill: 'progress-fill',
+      pct: 'progress-pct',
+      log: 'log-box',
+      cancelBtn: 'btn-cancel',
+      statusEl: 'stat-job',
+      onFinish: function (s) {
+        document.getElementById('btn-run').disabled = false;
+        if (s.status === 'done') toast(s.message || '标注完成');
+        else if (s.status === 'cancelled') toast(s.message || '已取消');
+        else toast('标注失败: ' + (s.message || ''));
+        refresh().catch(function (e) { toast(String(e.message || e)); });
+      },
+    });
+
+    UI.bindModal('rules-dlg', saveSettings);
+    UI.bindModal('view-dlg');
 
     loadSettings();
 
@@ -663,29 +688,50 @@
       });
       persistRules();
     });
-    document.getElementById('btn-open').addEventListener('click', function () { openDlg('rules-dlg'); });
+    document.getElementById('btn-settings').addEventListener('click', function () {
+      UI.openModal('rules-dlg');
+    });
+    document.getElementById('btn-run').addEventListener('click', function () {
+      startJob().catch(function (e) { toast(String(e.message || e)); });
+    });
     document.getElementById('rules-close').addEventListener('click', closeSettings);
-    document.getElementById('view-close').addEventListener('click', function () { closeDlg('view-dlg'); });
+    document.getElementById('rules-save').addEventListener('click', closeSettings);
+
+    document.getElementById('btn-select-all').addEventListener('click', function () {
+      _selection.selectAll(visiblePaths());
+    });
+    document.getElementById('btn-invert').addEventListener('click', function () {
+      _selection.invert(visiblePaths());
+    });
+    document.getElementById('btn-clear-sel').addEventListener('click', function () {
+      _selection.clear();
+    });
+    document.getElementById('btn-delete').addEventListener('click', function () {
+      deleteSelectedCaptions().catch(function (e) { toast(String(e.message || e)); });
+    });
+    document.getElementById('btn-cancel').addEventListener('click', function () {
+      _job.cancel();
+    });
+    document.getElementById('view-close').addEventListener('click', function () {
+      UI.closeModal('view-dlg');
+    });
     document.getElementById('view-delete').addEventListener('click', function () {
       deleteViewedCaption().catch(function (e) { toast(String(e.message || e)); });
     });
-    document.getElementById('rules-dlg').addEventListener('click', function (e) {
-      if (e.target === this) closeSettings();
-    });
-    document.getElementById('view-dlg').addEventListener('click', function (e) {
-      if (e.target === this) closeDlg('view-dlg');
-    });
-    document.addEventListener('keydown', function (e) {
-      if (e.key !== 'Escape') return;
-      closeSettings();
-      closeDlg('view-dlg');
-    });
 
-    document.getElementById('btn-start').addEventListener('click', function () {
-      startJob().catch(function (e) { toast(String(e.message || e)); });
-    });
-    document.getElementById('btn-cancel').addEventListener('click', function () {
-      cancelJob().catch(function (e) { toast(String(e.message || e)); });
+    document.addEventListener('keydown', function (e) {
+      var tag = (e.target && e.target.tagName || '').toLowerCase();
+      if (tag === 'input' || tag === 'textarea' || tag === 'select') return;
+      if (e.key === 'a' && (e.ctrlKey || e.metaKey) && !e.shiftKey) {
+        e.preventDefault();
+        _selection.selectAll(visiblePaths());
+      } else if (e.key === 'i' && (e.ctrlKey || e.metaKey)) {
+        e.preventDefault();
+        _selection.invert(visiblePaths());
+      } else if (e.key === 'Delete') {
+        e.preventDefault();
+        deleteSelectedCaptions().catch(function (err) { toast(String(err.message || err)); });
+      }
     });
 
     DirPicker.onChange(function () {
@@ -694,7 +740,9 @@
 
     // 页面刷新后重连未结束的标注任务
     API.findActiveJob('caption', API.dataset()).then(function (s) {
-      if (s) watch(s.job_id);
+      if (!s) return;
+      document.getElementById('btn-run').disabled = true;
+      _job.start(s.job_id);
     });
 
     API.request(API.apiPath('/caption/dirs'))
@@ -704,15 +752,6 @@
         return refresh();
       })
       .catch(function (e) { toast(String(e.message || e)); });
-  }
-
-  /**
-   * 渲染描述服务状态(就绪说明或失败原因)。
-   * @param {object} data /caption/dirs 响应
-   */
-  function renderServiceStatus(data) {
-    document.getElementById('stat-model').textContent =
-      (data.ready ? '' : '未就绪: ') + (data.info || '');
   }
 
   function start() {

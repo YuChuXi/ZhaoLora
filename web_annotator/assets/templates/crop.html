@@ -32,11 +32,7 @@
   .crop-item.active { border-color: #00ffff; box-shadow: 0 0 0 1px #00ffff; }
   .crop-item .body { flex: 1; min-width: 0; }
   .crop-item .meta { color: var(--text-dim); margin-top: 4px; font-size: 11px; }
-  .crop-item input[type="text"] {
-    width: 100%; margin-top: 4px; padding: 3px 6px;
-    background: #0a1a30; color: var(--text); border: 1px solid var(--border);
-    border-radius: 4px; font-size: 12px;
-  }
+  .crop-item input[type="text"] { width: 100%; margin-top: 4px; }
   .crop-item-actions { flex-shrink: 0; display: flex; flex-direction: column; gap: 4px; }
   .crop-item .btn-del {
     padding: 2px 8px; font-size: 11px;
@@ -46,10 +42,7 @@
   .crop-item .btn-del:hover { color: #fff; border-color: var(--accent); background: var(--accent); }
   .crop-item .btn-del-perm:hover { border-color: #c44; background: #c44; }
   .part-add-row { display: flex; gap: 6px; padding: 0 8px 8px; }
-  .part-add-row input {
-    flex: 1; padding: 4px 6px; background: #0a1a30; color: var(--text);
-    border: 1px solid var(--border); border-radius: 4px; font-size: 12px;
-  }
+  .part-add-row input { flex: 1; }
   .crop-side .side-actions {
     padding: 8px 12px; border-top: 1px solid var(--border);
     display: flex; flex-direction: column; gap: 6px;
@@ -58,10 +51,7 @@
     padding: 8px 12px; border-top: 1px solid var(--border); font-size: 11px; color: var(--text-dim);
   }
   .part-defaults label { display: flex; align-items: center; gap: 6px; margin-top: 6px; }
-  .part-defaults input {
-    width: 110px; padding: 2px 6px; background: #0a1a30; color: var(--text);
-    border: 1px solid var(--border); border-radius: 4px; font-size: 11px;
-  }
+  .part-defaults input { width: 110px; font-size: 11px; }
   .status-bar .live { color: #5eb8ff; margin-left: 6px; }
   .toolbar { flex-wrap: nowrap; }
 </style>
@@ -76,12 +66,12 @@
   <button class="btn" id="btn-add-crop" title="Q">新建选区</button>
   <button class="btn" id="btn-clear-crops" title="C">清空选区</button>
   <span class="sep"></span>
-  <label style="font-size:12px;color:var(--text-dim);cursor:pointer;user-select:none;display:flex;align-items:center;gap:4px;">
+  <label class="field">
     <input type="checkbox" id="chk-no-crop"> 整图输出
   </label>
-  <label id="part-name-wrap" style="font-size:12px;color:var(--text-dim);display:none;align-items:center;gap:4px;">
+  <label id="part-name-wrap" class="field" hidden>
     部位
-    <input type="text" id="part-name" placeholder="head" style="width:80px;background:var(--card-bg);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:2px 6px;font-size:12px;">
+    <input type="text" id="part-name" class="input" placeholder="head" style="width:80px;">
   </label>
 </div>
 
@@ -92,14 +82,14 @@
   <aside class="crop-side">
     <h3>选区</h3>
     <div class="part-add-row">
-      <input type="text" id="part-add-input" placeholder="部位名">
+      <input type="text" id="part-add-input" class="input" placeholder="部位名">
       <button class="btn" id="btn-add-part" type="button">添加</button>
     </div>
     <div class="crop-list" id="crop-list"></div>
     <div class="part-defaults">
       <div>默认裁切（本地）</div>
       <label>全局
-        <input type="text" id="crop-default-global" placeholder="1536x1536@1.0" spellcheck="false">
+        <input type="text" id="crop-default-global" class="input" placeholder="1536x1536@1.0" spellcheck="false">
       </label>
       <div id="crop-default-parts"></div>
     </div>

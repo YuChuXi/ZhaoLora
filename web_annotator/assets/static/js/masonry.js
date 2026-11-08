@@ -13,10 +13,12 @@ var Masonry = (function() {
 
   // 可选配置: 非筛选页可通过 init 第二参数注入自定义数据源与交互
   var _config = {
-    getData: null,   // function() → 图片数组; 用于 setColumns 触发的重绘
-    onClick: null,   // function(img, card, event); 覆盖默认 Store.toggle
-    decorate: null,  // function(card, img); 创建卡片后追加自定义样式/属性
-    imageSrc: null,  // function(img) → 缩略图 URL; 省略则用 API.thumbnailUrl
+    getData: null,      // function() → 图片数组; 用于 setColumns 触发的重绘
+    onClick: null,      // function(img, card, event); 覆盖默认选择逻辑
+    onPreview: null,    // function(img); 提供时右键(桌面)与长按(触屏)打开预览
+    decorate: null,     // function(card, img); 创建卡片后追加自定义样式/属性
+    imageSrc: null,     // function(img) → 缩略图 URL; 省略则用 API.thumbnailUrl
+    selection: null,    // {has, toggle, selectRange}; 提供时接管选中状态, 否则用 Store
   };
 
   var _index = {};          // path → {img, x, y, w, h}
@@ -26,18 +28,23 @@ var Masonry = (function() {
   /**
    * 初始化瀑布流容器.
    * @param {string} containerId
-   * @param {{getData?: function, onClick?: function, decorate?: function}} [config]
+   * @param {{getData?: function, onClick?: function, onPreview?: function,
+   *   decorate?: function, imageSrc?: function, selection?: object}} [config]
    *   - getData: setColumns 重绘时的数据源; 省略则用 Store.getVisible
-   *   - onClick: 卡片点击回调; 省略则调用 Store.toggle
+   *   - onClick: 点击卡片的回调; 省略则按 selection / Store 切换选中
+   *   - onPreview: 右键(桌面)与长按(触屏)打开预览的回调; 单击选中立即生效
    *   - decorate: 卡片创建后追加样式/属性的回调
+   *   - selection: 选择集合适配器, 供无 Store 的页面接管选中状态
    */
   function init(containerId, config) {
     _container = document.getElementById(containerId);
     if (config) {
       _config.getData = config.getData || null;
       _config.onClick = config.onClick || null;
+      _config.onPreview = config.onPreview || null;
       _config.decorate = config.decorate || null;
       _config.imageSrc = config.imageSrc || null;
+      _config.selection = config.selection || null;
     }
   }
 
@@ -74,6 +81,7 @@ var Masonry = (function() {
     _container.innerHTML = '';
     _index = {};
     if (images.length === 0) {
+      _container.style.height = '';
       _container.innerHTML =
         '<div style="padding:60px;text-align:center;color:var(--text-dim);">没有图片</div>';
       return;
@@ -115,37 +123,93 @@ var Masonry = (function() {
     return min;
   }
 
+  /**
+   * 卡片是否处于选中态.
+   * @param {Object} img 图片元数据
+   * @returns {boolean}
+   * 引用：_createCard。
+   */
+  function _isSelected(img) {
+    return _config.selection ? _config.selection.has(img.path) : !!img.selected;
+  }
+
+  /**
+   * 计算布局坐标下与首尾两张卡片纵向范围相交的路径(Shift 连选).
+   * @param {string} pathA 起点路径
+   * @param {string} pathB 终点路径
+   * @returns {string[]} 相交卡片的路径; 起点或终点未渲染时为空
+   * 引用：_commitClick。
+   */
+  function _rangePaths(pathA, pathB) {
+    var itA = _index[pathA];
+    var itB = _index[pathB];
+    if (!itA || !itB || itA === itB) return [];
+    var yLo = Math.min(itA.y, itB.y);
+    var yHi = Math.max(itA.y + itA.h, itB.y + itB.h);
+    var out = [];
+    for (var key in _index) {
+      var it = _index[key];
+      if (it.y + it.h > yLo && it.y < yHi) out.push(key);
+    }
+    return out;
+  }
+
+  /**
+   * 切换单张图片的选中状态.
+   * @param {Object} img 图片元数据
+   * @returns {void}
+   * 引用：_commitClick、右键与长按预览。
+   */
+  function _toggleSelect(img) {
+    if (_config.selection) _config.selection.toggle(img.path);
+    else Store.toggle(img.path);
+  }
+
+  /**
+   * 批量置为选中.
+   * @param {string[]} paths 路径列表
+   * @returns {void}
+   * 引用：_commitClick。
+   */
+  function _selectMany(paths) {
+    if (_config.selection) _config.selection.selectRange(paths);
+    else Store.selectRange(paths);
+  }
+
+  /**
+   * 处理一次单击: 优先交给页面回调, 否则按 Shift 连选或单张切换.
+   * @param {Object} img 图片元数据
+   * @param {HTMLElement} card 卡片元素
+   * @param {{shiftKey: boolean}} e 点击事件
+   * @returns {void}
+   * 引用：卡片 click 监听。
+   */
+  function _commitClick(img, card, e) {
+    if (_config.onClick) {
+      _config.onClick(img, card, e);
+      _lastClickedPath = img.path;
+      return;
+    }
+    var paths = [];
+    if (e.shiftKey && _lastClickedPath) paths = _rangePaths(_lastClickedPath, img.path);
+    if (paths.length) _selectMany(paths);
+    else _toggleSelect(img);
+    _lastClickedPath = img.path;
+  }
+
   function _createCard(img, colW) {
     var card = document.createElement('div');
     card.className = 'card';
-    if (img.selected) card.classList.add('selected');
+    if (_isSelected(img)) card.classList.add('selected');
     card.dataset.path = img.path;
-    card.addEventListener('click', function(e) {
-      if (_config.onClick) {
-        _config.onClick(img, card, e);
-        _lastClickedPath = img.path;
-        return;
-      }
-      if (e.shiftKey && _lastClickedPath) {
-        var itA = _index[_lastClickedPath];
-        var itB = _index[img.path];
-        if (itA && itB && itA !== itB) {
-          // 布局坐标下与 [yLo, yHi] 有交集的卡片即选中
-          var yLo = Math.min(itA.y, itB.y);
-          var yHi = Math.max(itA.y + itA.h, itB.y + itB.h);
-          var paths = [];
-          for (var key in _index) {
-            var it = _index[key];
-            if (it.y + it.h > yLo && it.y < yHi) paths.push(key);
-          }
-          if (paths.length) Store.selectRange(paths);
-        } else {
-          Store.toggle(img.path);
-        }
-      } else {
-        Store.toggle(img.path);
-      }
-      _lastClickedPath = img.path;
+    card.addEventListener('click', function (e) {
+      if (e.button !== 0) return;
+      _commitClick(img, card, e);
+    });
+    card.addEventListener('contextmenu', function (e) {
+      if (!_config.onPreview) return;
+      e.preventDefault();
+      _config.onPreview(img);
     });
     if (typeof SimilarHover !== 'undefined') SimilarHover.bindCard(card, img.path);
 
@@ -210,6 +274,25 @@ var Masonry = (function() {
     else card.classList.remove('selected');
   }
 
+  /**
+   * 按当前选中状态同步全部已渲染卡片的选中样式.
+   *
+   * 选择集合变更后由页面调用, 只遍历已渲染卡片, 不重建 DOM.
+   *
+   * @returns {void}
+   * 引用：caption.js 的选择变更回调。
+   */
+  function syncSelection() {
+    if (!_container) return;
+    var cards = _container.querySelectorAll('.card');
+    for (var i = 0; i < cards.length; i++) {
+      var it = _index[cards[i].dataset.path];
+      if (!it) continue;
+      if (_isSelected(it.img)) cards[i].classList.add('selected');
+      else cards[i].classList.remove('selected');
+    }
+  }
+
   function _findCard(path) {
     if (!_container) return null;
     var cards = _container.querySelectorAll('.card');
@@ -243,6 +326,6 @@ var Masonry = (function() {
 
   return {
     init: init, render: render, setSelected: setSelected,
-    setColumns: setColumns, jumpTo: jumpTo,
+    syncSelection: syncSelection, setColumns: setColumns, jumpTo: jumpTo,
   };
 })();

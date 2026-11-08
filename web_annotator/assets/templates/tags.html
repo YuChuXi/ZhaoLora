@@ -40,8 +40,7 @@
   }
   .export-box textarea {
     flex: 1; min-height: 52px; max-height: 120px; resize: vertical;
-    background: #0a1a30; color: var(--text); border: 1px solid var(--border);
-    border-radius: 6px; padding: 6px 8px; font-size: 12px; font-family: ui-monospace, monospace;
+    font-family: ui-monospace, monospace;
   }
   .empty-hint { padding: 40px; text-align: center; color: var(--text-dim); }
 
@@ -55,12 +54,6 @@
   .tagging-panel-actions label {
     display: flex; align-items: center; gap: 4px;
     font-size: 12px; color: var(--text-dim); cursor: pointer; user-select: none;
-  }
-  .tagging-panel-actions input[type="number"],
-  .tagging-panel-actions input[type="text"] {
-    background: #0a1a30; color: var(--text);
-    border: 1px solid var(--border); border-radius: 4px;
-    padding: 2px 4px; font-size: 12px;
   }
   .tagging-panel-actions input[type="number"] { width: 56px; }
   #artist-tag { width: 120px; }
@@ -82,18 +75,19 @@
 <body>
 <nav class="app-tabs" id="app-tabs"></nav>
 <div class="toolbar">
-  <span class="stat" id="stat-summary">-</span>
+  <button class="btn green" id="btn-auto-tag" type="button" title="打开自动生成参数并开始打标">生成标签</button>
+  <button class="btn" id="btn-batch-add" type="button">批量添加</button>
+  <button class="btn" id="btn-batch-replace" type="button">批量替换</button>
+  <button class="btn" id="btn-batch-delete" type="button">批量删除</button>
   <span class="sep"></span>
-  <button class="btn green" id="btn-auto-tag" type="button">自动生成</button>
-  <button class="btn green" id="btn-batch-add" type="button">批量添加</button>
-  <button class="btn green" id="btn-batch-replace" type="button">批量替换</button>
-  <button class="btn green" id="btn-batch-delete" type="button">批量删除</button>
-  <button class="btn" id="btn-stats-options" type="button">条件</button>
-  <button class="btn green" id="btn-refresh">统计</button>
+  <button class="btn" id="btn-stats-options" type="button">统计条件</button>
+  <button class="btn" id="btn-refresh">统计</button>
   <button class="btn" id="btn-translate-missing">翻译缺失</button>
+  <span class="sep"></span>
   <button class="btn" id="btn-export-en">导出英文</button>
   <button class="btn" id="btn-export-zh">导出中文</button>
-  <span class="sep"></span>
+  <span class="spacer"></span>
+  <span class="status-seg" id="stat-summary">-</span>
 </div>
 
 <div class="tags-main">
@@ -119,8 +113,8 @@
       </table>
     </div>
     <div class="export-box">
-      <textarea id="export-text" readonly placeholder="已选标签"></textarea>
-      <button class="btn green" id="btn-copy-box" type="button">复制</button>
+      <textarea id="export-text" class="input" readonly placeholder="已选标签"></textarea>
+      <button class="btn" id="btn-copy-box" type="button">复制</button>
     </div>
   </div>
 </div>
@@ -132,10 +126,10 @@
     </div>
     <div class="tagging-panel-actions">
       <label>置信度
-        <input type="number" id="threshold" value="0.1" min="0" max="1" step="0.01">
+        <input type="number" id="threshold" class="input" value="0.1" min="0" max="1" step="0.01">
       </label>
       <label>触发词
-        <input type="text" id="artist-tag" placeholder="@画师名或普通标签" spellcheck="false">
+        <input type="text" id="artist-tag" class="input" placeholder="@画师名或普通标签" spellcheck="false">
       </label>
       <label><input type="checkbox" id="chk-disable-orig" checked> 忽略已有</label>
       <label><input type="checkbox" id="chk-force"> 覆盖</label>
@@ -175,10 +169,10 @@
         <label style="display:flex;align-items:center;gap:6px;cursor:pointer;"><input type="checkbox" id="opt-per-sample" checked> 按图去重</label>
       </div>
       <label style="display:flex;align-items:center;gap:6px;">最少出现
-        <input type="number" id="opt-min" value="1" min="1" style="width:60px;background:#0a1a30;color:var(--text);border:1px solid var(--border);border-radius:4px;padding:2px 4px;">
+        <input type="number" id="opt-min" class="input" value="1" min="1" style="width:60px;">
       </label>
       <div style="display:flex;align-items:center;gap:6px;">统计范围
-        <select id="opt-section" style="background:var(--card-bg);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:2px 6px;font-size:12px;">
+        <select id="opt-section" class="select">
           <option value="all">全部</option>
           <option value="before">||| 前</option>
           <option value="after">||| 后</option>
@@ -186,17 +180,17 @@
       </div>
       <div style="display:flex;flex-direction:column;gap:6px;border-top:1px solid var(--border);padding-top:10px;">
         <div style="display:flex;align-items:center;gap:6px;">样本筛选匹配方式
-          <select id="opt-match-mode" style="background:var(--card-bg);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:2px 6px;font-size:12px;">
+          <select id="opt-match-mode" class="select">
             <option value="exact">精确</option>
             <option value="danbooru">Danbooru 通配(*)</option>
             <option value="regex">正则</option>
           </select>
         </div>
         <label style="display:flex;flex-direction:column;gap:3px;">仅含标签（逗号分隔; 留空表示不限）
-          <input type="text" id="opt-include" placeholder="tag1, tag2" style="background:#0a1a30;color:var(--text);border:1px solid var(--border);border-radius:4px;padding:4px 8px;font-size:12px;">
+          <input type="search" id="opt-include" class="input" autocomplete="off" placeholder="tag1, tag2">
         </label>
         <label style="display:flex;flex-direction:column;gap:3px;">排除标签（逗号分隔; 留空表示不限）
-          <input type="text" id="opt-exclude" placeholder="tag1, tag2" style="background:#0a1a30;color:var(--text);border:1px solid var(--border);border-radius:4px;padding:4px 8px;font-size:12px;">
+          <input type="search" id="opt-exclude" class="input" autocomplete="off" placeholder="tag1, tag2">
         </label>
         <span style="opacity:.75;">通配: * 匹配任意字符；正则作用于归一化标签(小写无下划线)</span>
       </div>
@@ -217,23 +211,23 @@
     <div style="padding:12px;display:flex;flex-direction:column;gap:10px;overflow:auto;">
       <label style="font-size:12px;color:var(--text-dim);display:flex;flex-direction:column;gap:3px;">
         要添加的标签（逗号分隔）
-        <input type="text" id="batch-add-tags" placeholder="tag1, tag2" style="background:#0a1a30;color:var(--text);border:1px solid var(--border);border-radius:4px;padding:4px 8px;font-size:12px;">
+        <input type="text" id="batch-add-tags" class="input" placeholder="tag1, tag2">
       </label>
       <div style="display:flex;flex-direction:column;gap:8px;font-size:12px;color:var(--text-dim);">
         <div style="display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px;">
           <span>分隔符</span>
-          <select id="batch-add-separator" style="background:var(--card-bg);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:2px 6px;font-size:12px;">
+          <select id="batch-add-separator" class="select">
             <option value="keep">保留 |||</option>
             <option value="add">添加 |||</option>
             <option value="remove">删除 |||</option>
           </select>
           <span>位置</span>
-          <select id="batch-add-position" style="background:var(--card-bg);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:3px 6px;font-size:12px;">
+          <select id="batch-add-position" class="select">
             <option value="before">||| 之前</option>
             <option value="after">||| 之后</option>
           </select>
           <span>方式</span>
-          <select id="batch-add-mode" style="background:var(--card-bg);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:3px 6px;font-size:12px;">
+          <select id="batch-add-mode" class="select">
             <option value="top">置顶</option>
             <option value="bottom">置底</option>
             <option value="random">随机</option>
@@ -245,7 +239,7 @@
         </div>
         <div id="batch-add-match-mode-wrap" style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-dim);opacity:.5;padding-left:18px;">
           <span>匹配方式</span>
-          <select id="batch-add-match-mode" disabled style="background:var(--card-bg);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:2px 6px;font-size:12px;">
+          <select id="batch-add-match-mode" class="select" disabled>
             <option value="exact">精确</option>
             <option value="danbooru">Danbooru 通配(*)</option>
             <option value="regex">正则</option>
@@ -275,11 +269,11 @@
     <div style="padding:12px;display:flex;flex-direction:column;gap:10px;overflow:auto;">
       <label style="font-size:12px;color:var(--text-dim);display:flex;flex-direction:column;gap:3px;">
         要删除的标签（逗号分隔）
-        <input type="text" id="batch-delete-tags" placeholder="tag1, tag2" style="background:#0a1a30;color:var(--text);border:1px solid var(--border);border-radius:4px;padding:4px 8px;font-size:12px;">
+        <input type="text" id="batch-delete-tags" class="input" placeholder="tag1, tag2">
       </label>
       <div style="display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;font-size:12px;color:var(--text-dim);">
         <span>匹配方式</span>
-        <select id="batch-delete-mode" style="background:var(--card-bg);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:2px 6px;font-size:12px;">
+        <select id="batch-delete-mode" class="select">
           <option value="exact">精确</option>
           <option value="danbooru">Danbooru 通配(*)</option>
           <option value="regex">正则</option>
@@ -306,17 +300,17 @@
       <div style="display:flex;gap:10px;align-items:flex-start;">
         <label style="font-size:12px;color:var(--text-dim);display:flex;flex-direction:column;gap:3px;flex:1;">
           原标签（逗号分隔）
-          <input type="text" id="batch-replace-from" placeholder="tag1, tag2" style="background:#0a1a30;color:var(--text);border:1px solid var(--border);border-radius:4px;padding:4px 8px;font-size:12px;">
+          <input type="text" id="batch-replace-from" class="input" placeholder="tag1, tag2">
         </label>
         <label style="font-size:12px;color:var(--text-dim);display:flex;flex-direction:column;gap:3px;flex:1;">
           新标签（逗号分隔，按顺序对应）
-          <input type="text" id="batch-replace-to" placeholder="new1, new2" style="background:#0a1a30;color:var(--text);border:1px solid var(--border);border-radius:4px;padding:4px 8px;font-size:12px;">
+          <input type="text" id="batch-replace-to" class="input" placeholder="new1, new2">
         </label>
       </div>
       <div style="font-size:12px;color:var(--text-dim);">原位置替换：原标签出现的位置改写为新标签，替换后整体去重。两个列表按顺序一一配对。</div>
       <div style="display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;font-size:12px;color:var(--text-dim);">
         <span>原标签匹配方式</span>
-        <select id="batch-replace-mode" style="background:var(--card-bg);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:2px 6px;font-size:12px;">
+        <select id="batch-replace-mode" class="select">
           <option value="exact">精确</option>
           <option value="danbooru">Danbooru 通配(*)</option>
           <option value="regex">正则</option>

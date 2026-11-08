@@ -6,7 +6,7 @@
 <title>描述</title>
 <link rel="stylesheet" href="/static/css/annotator.css">
 <style>
-  /* 描述页对话框: 分节、参数行、条目表与描述查看 */
+  /* 描述设置: 分节、参数行、提示词条目表与描述查看 */
   .cap-body {
     padding: 14px 16px; display: flex; flex-direction: column; gap: 12px;
     font-size: 12px; color: var(--text-dim);
@@ -18,6 +18,7 @@
   .cap-sec-title { font-weight: 600; color: var(--text); }
   .cap-note { font-size: 11px; color: var(--text-dim); }
   .modal-head .cap-note { margin-left: auto; }
+  #cap-filter-input { width: min(360px, 40vw); }
   /* 参数行: 左侧标签列对齐, 控件与说明同行 */
   .cap-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
   .cap-label { flex: 0 0 88px; color: var(--text-dim); }
@@ -36,12 +37,6 @@
     border: 1px solid var(--border); border-radius: 6px;
   }
   .cap-add-foot { display: flex; justify-content: flex-end; }
-  .cap-body input[type="text"],
-  .cap-body input[type="number"],
-  .cap-body select {
-    background: #0a1a30; color: var(--text); border: 1px solid var(--border);
-    border-radius: 4px; padding: 4px 8px; font-size: 12px; font-family: inherit;
-  }
   .cap-sel { align-self: flex-start; }
   /* 模板句式: 只把空位替换为输入框, 句式其余部分原样显示 */
   .cap-sentence { line-height: 2.2; color: var(--text); word-break: break-word; }
@@ -55,34 +50,17 @@
     font-size: 13px; line-height: 1; cursor: pointer; padding: 0;
   }
   .cap-del:hover { color: var(--accent); }
-  /* 运行日志控制台: 任务产生日志后常驻可回看, 与打标页日志同款等宽字体 */
+  /* 运行日志控制台: 任务产生日志后常驻可回看 */
   .cap-log {
     max-height: 180px; overflow: auto; padding: 8px 16px;
     background: var(--surface); border-bottom: 1px solid var(--border);
     font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
     font-size: 12px; line-height: 1.45; color: #c8d4e0; white-space: pre-wrap;
   }
-  /* 描述筛选: 匹配方式与模式串, 与标签检查页输入框同款 */
-  .cap-filter-label {
-    display: flex; align-items: center; gap: 4px;
-    font-size: 12px; color: var(--text-dim);
-  }
-  #cap-filter-mode,
-  #cap-filter-preset {
-    background: var(--card-bg); color: var(--text);
-    border: 1px solid var(--border); border-radius: 4px;
-    padding: 4px 8px; font-size: 12px;
-  }
-  #cap-filter-input {
-    background: #0a1a30; color: var(--text);
-    border: 1px solid var(--border); border-radius: 4px;
-    padding: 5px 10px; font-size: 13px;
-    width: min(360px, 40vw);
-  }
   /* 描述查看 */
   .view-caption {
     background: #0a1a30; color: var(--text); border: 1px solid var(--border);
-    border-radius: 4px; padding: 8px 10px; font-size: 12px; line-height: 1.6;
+    border-radius: 4px; padding: 8px 10px; font-size: 13px; line-height: 1.7;
     white-space: pre-wrap; word-break: break-word;
   }
   .view-caption .view-label { color: var(--text-dim); font-weight: 600; display: block; margin-bottom: 4px; }
@@ -92,20 +70,28 @@
 <nav class="app-tabs" id="app-tabs"></nav>
 
 <div class="toolbar">
-  <button class="btn green" type="button" id="btn-open">开始标注</button>
+  <button class="btn green" type="button" id="btn-run" title="按当前所见图片与已保存设置生成描述">生成描述</button>
+  <button class="btn" type="button" id="btn-settings" title="调整描述模式、WD14 注入与提示词补充">设置</button>
   <button class="btn danger" type="button" id="btn-cancel" hidden>取消</button>
   <span class="sep"></span>
-  <label class="cap-filter-label">描述
-    <select id="cap-filter-mode" title="描述匹配方式">
+  <label class="field">描述
+    <select id="cap-filter-mode" class="select" title="描述匹配方式">
       <option value="exact">严格子串</option>
       <option value="danbooru">Danbooru 通配(*)</option>
       <option value="regex">正则</option>
     </select>
   </label>
-  <select id="cap-filter-preset" title="预置筛选条件"></select>
-  <input type="text" id="cap-filter-input" spellcheck="false" placeholder="按描述筛选; 留空显示全部">
-  <span class="status-seg" id="stat-filter" hidden></span>
+  <select id="cap-filter-preset" class="select" title="预置筛选条件"></select>
+  <input type="search" id="cap-filter-input" class="input" spellcheck="false"
+    autocomplete="off" placeholder="按描述筛选; 留空显示全部">
   <span class="sep"></span>
+  <button class="btn" type="button" id="btn-select-all" title="Ctrl+A">全选</button>
+  <button class="btn" type="button" id="btn-invert" title="Ctrl+I">反选</button>
+  <button class="btn" type="button" id="btn-clear-sel" disabled>清除选择</button>
+  <button class="btn danger" type="button" id="btn-delete" title="Delete" disabled>删除描述</button>
+  <span class="spacer"></span>
+  <span class="status-seg">共<b id="stat-total">0</b>·已描述<b id="stat-described">0</b>·未描述<b id="stat-missing">0</b></span>
+  <span class="status-seg" id="stat-sel" hidden>已选<b id="stat-selected">0</b></span>
   <span class="status-seg" id="stat-job"></span>
   <span class="status-seg" id="stat-model">-</span>
 </div>
@@ -119,14 +105,9 @@
 <div class="cap-log" id="log-box" hidden></div>
 
 <div class="masonry" id="masonry"></div>
-<div class="hint" id="cap-hint">绿色=已有描述 · 点击卡片查看描述 · 描述写入各目录的 captions.json（键为文件名, 值为「粗略/详细」列表）</div>
-<div class="status-bar" id="cap-status">
-  <span class="status-seg">共<b id="stat-total">0</b></span>
-  <span class="status-seg">已描述<b id="stat-described">0</b></span>
-  <span class="status-seg">未描述<b id="stat-missing">0</b></span>
-</div>
+<div class="hint" id="cap-hint">单击选择 · Shift 连选 · 右键/长按查看 · Ctrl+A 全选</div>
 
-<!-- 描述设置与启动: 生成设置、提示词补充 -->
+<!-- 描述设置: 生成参数与提示词补充; 保存后由工具栏「生成描述」启动 -->
 <div class="modal" id="rules-dlg" aria-hidden="true">
   <div class="modal-panel" role="dialog" aria-labelledby="rules-dlg-title"
     style="width:min(800px,94vw);height:auto;max-height:min(720px,88vh);">
@@ -147,12 +128,12 @@
           <label class="cap-ck" title="注入 Danbooru 通用标签(取自 WD14 缓存中置信度不低于阈值的标签)">
             <input type="checkbox" id="inject-general"> 通用</label>
           <span class="cap-note">≥</span>
-          <input type="number" id="general-threshold" class="cap-num" min="0" max="1" step="0.05"
+          <input type="number" id="general-threshold" class="input cap-num" min="0" max="1" step="0.05"
             title="置信度阈值: 只注入不低于该值的通用标签">
           <label class="cap-ck" title="注入 Danbooru 角色标签(取自 WD14 缓存中置信度不低于阈值的标签)">
             <input type="checkbox" id="inject-character"> 角色</label>
           <span class="cap-note">≥</span>
-          <input type="number" id="character-threshold" class="cap-num" min="0" max="1" step="0.05"
+          <input type="number" id="character-threshold" class="input cap-num" min="0" max="1" step="0.05"
             title="置信度阈值: 只注入不低于该值的角色标签">
           <span class="cap-note">候选交给模型核对画面后取舍; 缓存缺失的图片先补建缓存</span>
         </div>
@@ -161,14 +142,14 @@
           <label class="cap-ck" title="启用后, 当 WD14 判定 Explicit 或 Questionable 的置信度不低于阈值时, 在提示词追加备注">
             <input type="checkbox" id="inject-nsfw"> 启用</label>
           <span class="cap-note">≥</span>
-          <input type="number" id="nsfw-threshold" class="cap-num" min="0" max="1" step="0.05"
+          <input type="number" id="nsfw-threshold" class="input cap-num" min="0" max="1" step="0.05"
             title="置信度阈值: Explicit 或 Questionable 不低于该值时追加备注">
           <span class="cap-note">命中时在提示词追加「Using explicit slang.」</span>
         </div>
         <div class="cap-row">
           <span class="cap-label">已有描述</span>
-          <label class="cap-ck" title="清空所选目录的全部已有描述, 再重新标注全部图片">
-            <input type="checkbox" id="force"> 清空, 清空所选目录全部描述并重新标注</label>
+          <label class="cap-ck" title="先清空本次所处理图片的已有描述, 再重新标注; 不勾选则跳过已有描述的图片">
+            <input type="checkbox" id="force"> 清空已有描述后重新标注</label>
         </div>
       </section>
 
@@ -178,7 +159,7 @@
           <span class="cap-note">「匹配标签」命中 WD14 标签时注入; 留空则对该数据集全部图片生效</span>
         </div>
         <div class="cap-add">
-          <select id="rule-template" class="cap-sel" title="内嵌模板: 选模板后其空格即成待填字段"></select>
+          <select id="rule-template" class="select cap-sel" title="内嵌模板: 选模板后其空格即成待填字段"></select>
           <div class="cap-sentence" id="rule-fields"></div>
           <div class="cap-add-foot">
             <button class="btn green" type="button" id="rule-add" title="按当前句式生成一条提示词条目">添加</button>
@@ -191,8 +172,8 @@
       </section>
     </div>
     <div class="modal-foot">
-      <button class="btn" type="button" id="rules-close">取消</button>
-      <button class="btn green" type="button" id="btn-start">开始标注</button>
+      <button class="btn" type="button" id="rules-close">关闭</button>
+      <button class="btn green" type="button" id="rules-save">保存</button>
     </div>
   </div>
 </div>

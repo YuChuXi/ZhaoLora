@@ -760,7 +760,7 @@
    */
   function beginTemplateCapture() {
     if (!_cur || !_cur.alpha) { toast('当前没有可框选的画布'); return; }
-    _templateDlg.hidden = true;
+    UI.closeModal('template-dlg');
     _captureMode = true;
     _templateInst.style.display = 'none';
     _scheduleRender();
@@ -1448,9 +1448,16 @@
   _templateInst.addEventListener('pointerdown', _floatPointerDown);
   // 工具栏「模板」按钮打开管理对话框
   document.getElementById('btn-template').addEventListener('click', function() {
-    if (_templateDlg.hidden) { _renderTemplateCards(); _templateDlg.hidden = false; }
+    if (!_templateDlg.classList.contains('open')) {
+      _renderTemplateCards();
+      UI.openModal('template-dlg');
+    }
   });
-  document.getElementById('tmpl-close').addEventListener('click', function() { _templateDlg.hidden = true; });
+  document.getElementById('tmpl-close').addEventListener('click', function() {
+    UI.closeModal('template-dlg');
+  });
+  UI.bindModal('template-dlg');
+  UI.bindModal('birefnet-dlg');
   document.getElementById('tmpl-capture').addEventListener('click', beginTemplateCapture);
   // 默认合并方式: min(默认) / max
   document.querySelectorAll('input[name="merge-mode"]').forEach(function(el) {
@@ -1746,8 +1753,7 @@
 
   // 蒙版生成 (BiRefNet / SAM3)
   var birefnetBtn = document.getElementById('btn-birefnet-mask');
-  var birefnetDlg = document.getElementById('birefnet-dlg');
-  if (birefnetBtn && birefnetDlg) {
+  if (birefnetBtn) {
     var maskModeEl = document.getElementById('mask-mode');
     var birefnetParamsEl = document.getElementById('birefnet-params');
     var sam3ParamsEl = document.getElementById('sam3-params');
@@ -1771,8 +1777,8 @@
     };
     maskModeEl.addEventListener('change', syncMaskMode);
     syncMaskMode();
-    birefnetBtn.addEventListener('click', function () { birefnetDlg.hidden = false; });
-    document.getElementById('birefnet-cancel').addEventListener('click', function () { birefnetDlg.hidden = true; });
+    birefnetBtn.addEventListener('click', function () { UI.openModal('birefnet-dlg'); });
+    document.getElementById('birefnet-cancel').addEventListener('click', function () { UI.closeModal('birefnet-dlg'); });
     // 「跳过已有蒙版」仅批量模式可用: 单图模式禁用(灰显由 CSS 派生), disabled 只能 JS 设
     var syncSkipEnabled = function () {
       document.getElementById('birefnet-skip').disabled = !document.getElementById('birefnet-batch').checked;
@@ -1805,7 +1811,7 @@
         if (!_cur || !_cur.item) { toast('当前没有图片'); return; }
         body.path = _cur.item.path;
       }
-      birefnetDlg.hidden = true;
+      UI.closeModal('birefnet-dlg');
       API.request(API.apiPath('/mask-generate'), { method: 'POST', body: JSON.stringify(body) })
         .then(function (resp) {
           if (resp.ok && resp.job_id) {

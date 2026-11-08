@@ -7,6 +7,8 @@
 <link rel="stylesheet" href="/static/css/annotator.css">
 <style>
   body { margin: 0; min-height: 100vh; display: flex; flex-direction: column; }
+  /* 相似度阈值仅在 FFT/ORB 算法下显示, 由算法切换脚本接管 */
+  #sim-wrap { display: none; }
   .dedupe-main { flex: 1; overflow: auto; padding: 12px 16px 40px; }
   .dedupe-empty {
     padding: 60px 20px; text-align: center; color: var(--text-dim); font-size: 14px;
@@ -75,10 +77,7 @@
     pointer-events: none;
   }
   .dup-card.selected .dup-mark { opacity: 1; transform: scale(1); }
-  .toolbar input[type="number"] {
-    width: 90px; background: var(--card-bg); color: var(--text);
-    border: 1px solid var(--border); border-radius: 4px; padding: 3px 6px; font-size: 12px;
-  }
+  .toolbar input[type="number"] { width: 90px; }
   /* MSE 阈值用自定义按钮步进科学计数法, 隐藏 number 原生 spinner(step=any 时步进为1与微值不兼容) */
   #mse-threshold::-webkit-outer-spin-button,
   #mse-threshold::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
@@ -151,38 +150,38 @@
 <body>
 <nav class="app-tabs" id="app-tabs"></nav>
 <div class="toolbar">
-  <label style="font-size:12px;color:var(--text-dim);display:flex;align-items:center;gap:4px;">
+  <label class="field">
     算法
-    <select id="dedupe-alg">
+    <select id="dedupe-alg" class="select">
       <option value="mse">MSE（像素）</option>
       <option value="fft">FFT（低频）</option>
       <option value="orb">ORB（局部）</option>
     </select>
   </label>
-  <label style="font-size:12px;color:var(--text-dim);display:flex;align-items:center;gap:4px;" id="mse-wrap">
+  <label class="field" id="mse-wrap">
     MSE
-    <input type="number" id="mse-threshold" value="1e-4" min="1e-9" max="1" step="any">
+    <input type="number" id="mse-threshold" class="input" value="1e-4" min="1e-9" max="1" step="any">
     <span class="mse-stepper">
       <button type="button" class="mse-btn" data-dir="1" tabindex="-1" aria-label="增大阈值">▲</button>
       <button type="button" class="mse-btn" data-dir="-1" tabindex="-1" aria-label="减小阈值">▼</button>
     </span>
   </label>
-  <label style="font-size:12px;color:var(--text-dim);display:flex;align-items:center;gap:4px;display:none;" id="sim-wrap">
+  <label class="field" id="sim-wrap">
     相似度
-    <input type="number" id="sim-threshold" value="0.95" min="0" max="1" step="0.01">
+    <input type="number" id="sim-threshold" class="input" value="0.95" min="0" max="1" step="0.01">
   </label>
-  <label style="font-size:12px;color:var(--text-dim);display:flex;align-items:center;gap:4px;">
+  <label class="field">
     分辨率比
-    <input type="number" id="res-ratio" value="1.05" min="1" max="10" step="0.01">
+    <input type="number" id="res-ratio" class="input" value="1.05" min="1" max="10" step="0.01">
   </label>
   <button class="btn green" id="btn-scan">扫描</button>
   <span class="sep"></span>
-  <span class="stat">组 <b id="stat-groups">0</b></span>
-  <span class="stat">已选 <b id="stat-selected">0</b></span>
-  <span class="sep"></span>
-  <button class="btn" id="btn-suggest">建议删除</button>
   <button class="btn" id="btn-deselect">全不选</button>
+  <button class="btn" id="btn-suggest">建议删除</button>
   <button class="btn danger" id="btn-apply">删除</button>
+  <span class="spacer"></span>
+  <span class="status-seg">组<b id="stat-groups">0</b></span>
+  <span class="status-seg">已选<b id="stat-selected">0</b></span>
 </div>
 
 <div class="job-progress compact" id="job-progress" hidden>

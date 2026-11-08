@@ -6,10 +6,7 @@
 <title>筛选</title>
 <link rel="stylesheet" href="/static/css/annotator.css">
 <style>
-  .toolbar-input {
-    background: #0a1a30; color: var(--text);
-    border: 1px solid var(--border); border-radius: 4px; padding: 4px 8px; font-size: 12px;
-  }
+  /* 来源条件输入框宽度; 控件外观由 .input / .select 统一提供 */
   #booru-tags   { width: min(220px, 28vw); }
   #bilibili-uid { width: min(130px, 16vw); }
   #x-user       { width: min(150px, 18vw); }
@@ -35,10 +32,6 @@
   }
   .booru-page-btn:hover:not(:disabled) { color: var(--text); background: rgba(255,255,255,0.06); }
   .booru-page-btn:disabled { opacity: 0.28; cursor: default; }
-  #filter-mode, #booru-order {
-    background: var(--card-bg); color: var(--text);
-    border: 1px solid var(--border); border-radius: 4px; padding: 3px 6px; font-size: 12px;
-  }
   #booru-cheat {
     font-size: 12px; color: var(--accent, #6af); text-decoration: none; white-space: nowrap;
     margin-right: auto;
@@ -74,12 +67,6 @@
     display: flex; align-items: center; gap: 8px;
   }
   .emb-dlg-row label { font-size: 13px; color: var(--text-dim); white-space: nowrap; }
-  .emb-dlg-row input[type="text"],
-  .emb-dlg-row select {
-    background: var(--card-bg); color: var(--text);
-    border: 1px solid var(--border); border-radius: 4px;
-    padding: 4px 8px; font-size: 13px;
-  }
   #search-query { flex: 1; }
   #search-history { flex: 1; }
   #search-status { color: var(--text-dim); font-size: 11px; white-space: nowrap; }
@@ -139,17 +126,10 @@
   }
   .booru-extra-row[hidden] { display: none !important; }
   .booru-extra-row > span.label { min-width: 2.5em; color: var(--text-dim); }
-  .booru-extra-row input[type="number"],
-  .booru-extra-row input[type="text"],
-  .booru-extra-row input[type="date"],
-  .booru-extra-row select {
-    background: #0a1a30; color: var(--text);
-    border: 1px solid var(--border); border-radius: 4px;
-    padding: 4px 8px; font-size: 12px;
-  }
   .booru-extra-row input[type="number"] { width: 5.5rem; }
   .booru-extra-row input[type="date"] { width: 9.2rem; }
-  .booru-extra-row input[type="text"] { flex: 1; min-width: 8rem; }
+  .booru-extra-row input[type="text"],
+  .booru-extra-row input[type="search"] { flex: 1; min-width: 8rem; }
   .booru-rate-chip {
     font-size: 11px; padding: 4px 10px; border-radius: 4px;
     border: 1px solid var(--border); background: #0a1a30; color: var(--text);
@@ -195,9 +175,9 @@
 <nav class="app-tabs" id="app-tabs"></nav>
 
 <div class="toolbar">
-  <label style="font-size:12px;color:var(--text-dim);display:flex;align-items:center;gap:4px;">
+  <label class="field">
     来源
-    <select id="filter-mode">
+    <select id="filter-mode" class="select">
       <option value="local">本地</option>
       <option value="gelbooru">Gelbooru</option>
       <option value="danbooru">Danbooru</option>
@@ -212,7 +192,7 @@
   <span class="sep"></span>
   <span class="status-seg">已收录 <b id="stat-kept">0</b></span>
   <span class="status-seg" id="stat-loaded-wrap" hidden>已加载 <b id="stat-loaded">0</b></span>
-  <span class="status-seg" id="stat-selected-wrap">已选择 <b id="stat-selected">0</b></span>
+  <span class="status-seg" id="stat-selected-wrap">已选 <b id="stat-selected">0</b></span>
   <span class="status-seg" id="stat-trashed-wrap">回收站 <b id="stat-trashed">0</b></span>
   <span class="sep"></span>
 
@@ -228,9 +208,9 @@
   </label>
 
   <div id="toolbar-local" class="toolbar-group">
-    <label style="font-size:12px;color:var(--text-dim);display:flex;align-items:center;gap:4px;">
+    <label class="field">
       排序
-      <select id="sort-by">
+      <select id="sort-by" class="select">
         <option value="name">名称</option>
         <option value="posted">时间</option>
         <option value="aesthetic">美学</option>
@@ -242,18 +222,18 @@
     <button class="btn" id="btn-meta-dlg" type="button" title="重生成 Caption / 刷新元数据">元数据工具</button>
     <span class="sep"></span>
     <button class="btn" id="btn-select-all" title="Ctrl+A">全选</button>
-    <button class="btn" id="btn-deselect-all" title="Ctrl+Shift+A">取消全选</button>
     <button class="btn" id="btn-invert" title="Ctrl+I">反选</button>
+    <button class="btn" id="btn-deselect-all" title="Ctrl+Shift+A">清除选择</button>
     <span class="sep"></span>
     <button class="btn danger" id="btn-apply" title="Delete">删除</button>
-    <button class="btn green" id="btn-restore" title="Ctrl+Z">恢复</button>
+    <button class="btn" id="btn-restore" title="Ctrl+Z">恢复</button>
     <span class="sep"></span>
-    <label style="font-size:12px;color:var(--text-dim);cursor:pointer;user-select:none;display:flex;align-items:center;gap:4px;">
+    <label class="field">
       <input type="checkbox" id="chk-show-trash"> 回收站视图
     </label>
   </div>
 
-  <label style="font-size:12px;color:var(--text-dim);display:flex;align-items:center;gap:4px;">
+  <label class="field">
     列数 <input type="range" id="cols-slider" min="0" max="16" value="0" step="1" style="width:90px;">
     <span id="cols-label">自动</span>
   </label>
@@ -314,15 +294,15 @@
     <div class="modal-body" style="padding:14px 16px;display:flex;flex-direction:column;gap:12px;">
     <div class="booru-extra-row">
       <span class="label">数量</span>
-      <input type="number" id="booru-batch-limit" min="1" max="5000" value="50" step="1" title="最多下载张数（跳过已保存；运行中可改）">
+      <input type="number" id="booru-batch-limit" class="input" min="1" max="5000" value="50" step="1" title="最多下载张数（跳过已保存；运行中可改）">
     </div>
     <div class="booru-extra-row">
       <span class="label">连接</span>
-      <input type="number" id="booru-batch-conn" min="1" max="8" value="2" step="1" title="同时下载数（运行中可改）">
+      <input type="number" id="booru-batch-conn" class="input" min="1" max="8" value="2" step="1" title="同时下载数（运行中可改）">
     </div>
     <div class="booru-extra-row">
       <span class="label">限速</span>
-      <input type="number" id="booru-batch-rate" min="0" max="60" value="0" step="0.5" title="每秒最多发起几次下载，0=不限（运行中可改）">
+      <input type="number" id="booru-batch-rate" class="input" min="0" max="60" value="0" step="0.5" title="每秒最多发起几次下载，0=不限（运行中可改）">
       <span>次/秒（0=不限）</span>
     </div>
     <div class="booru-extra-row">
@@ -398,11 +378,12 @@
     <div class="modal-body" style="display:flex;flex-direction:column;gap:12px;padding:16px;">
       <div class="emb-dlg-row">
         <label>查询文本</label>
-        <input type="text" id="search-query" placeholder="查询文本，回车或点击排序" spellcheck="false">
+        <input type="search" id="search-query" class="input" placeholder="查询文本，回车或点击排序"
+          spellcheck="false" autocomplete="off">
       </div>
       <div class="emb-dlg-row">
         <label>最近搜索</label>
-        <select id="search-history" hidden></select>
+        <select id="search-history" class="select" hidden></select>
       </div>
       <div class="emb-dlg-row">
         <button class="btn green" type="button" id="btn-search-sort">按相似度排序</button>

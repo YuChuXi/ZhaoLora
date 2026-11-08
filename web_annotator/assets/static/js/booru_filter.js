@@ -457,8 +457,8 @@ var BooruFilter = (function () {
     }
     if (f.type === 'text') {
       var i = document.createElement('input');
-      i.type = 'text';
-      i.className = 'toolbar-input';
+      i.type = 'search';
+      i.className = 'input';
       if (f.id) i.id = f.id;
       if (f.placeholder) i.placeholder = f.placeholder;
       i.spellcheck = false;
@@ -466,9 +466,10 @@ var BooruFilter = (function () {
     }
     if (f.type === 'select') {
       var lab = document.createElement('label');
-      lab.style.cssText = 'font-size:12px;color:var(--text-dim);display:flex;align-items:center;gap:4px;';
+      lab.className = 'field';
       lab.textContent = f.label;
       var sel = document.createElement('select');
+      sel.className = 'select';
       sel.id = f.id;
       (f.options || []).forEach(function (o) {
         var op = document.createElement('option');
@@ -700,6 +701,8 @@ var BooruFilter = (function () {
       var lo = document.createElement('input');
       var hi = document.createElement('input');
       var mid = document.createElement('span');
+      lo.className = 'input';
+      hi.className = 'input';
       if (field.date) {
         lo.type = 'date';
         lo.dataset.ex = field.lo;
@@ -724,6 +727,7 @@ var BooruFilter = (function () {
     var input = document.createElement('input');
     if (field.type === 'select') {
       input = document.createElement('select');
+      input.className = 'select';
       (field.options || []).forEach(function (o) {
         var op = document.createElement('option');
         op.value = o[0];
@@ -731,8 +735,10 @@ var BooruFilter = (function () {
         input.appendChild(op);
       });
     } else {
-      input.type = field.type === 'date' ? 'date' : 'text';
-      if (field.type === 'text') input.spellcheck = false;
+      input.className = 'input';
+      if (field.type === 'date') input.type = 'date';
+      else if (field.type === 'text') { input.type = 'search'; input.spellcheck = false; }
+      else input.type = 'text';
       if (field.placeholder) input.placeholder = field.placeholder;
     }
     input.dataset.ex = field.key;
@@ -1107,11 +1113,10 @@ var BooruFilter = (function () {
       renderExtraPanel();
       syncCheatLink();
       fillExtraDlg();
+      UI.openModal('booru-extra-dlg');
+    } else {
+      UI.closeModal('booru-extra-dlg');
     }
-    var dlg = document.getElementById('booru-extra-dlg');
-    if (!dlg) return;
-    dlg.classList.toggle('show', !!show);
-    dlg.setAttribute('aria-hidden', show ? 'false' : 'true');
   }
 
   function clearExtraDlg() {
@@ -1767,10 +1772,8 @@ var BooruFilter = (function () {
   }
 
   function setBatchDlg(show) {
-    var dlg = document.getElementById('booru-batch-dlg');
-    if (!dlg) return;
-    dlg.classList.toggle('show', !!show);
-    dlg.setAttribute('aria-hidden', show ? 'false' : 'true');
+    if (show) UI.openModal('booru-batch-dlg');
+    else UI.closeModal('booru-batch-dlg');
     if (!show && !_batchRunning) setBatchProgress(null);
     syncBatchCloseBtn();
     syncBatchStopBtn();
@@ -1778,10 +1781,8 @@ var BooruFilter = (function () {
 
   /** 显隐元数据工具对话框。引用：srcBar click(role=meta)、btn-meta-dlg、booru-meta-close。 */
   function setMetaDlg(show) {
-    var dlg = document.getElementById('booru-meta-dlg');
-    if (!dlg) return;
-    dlg.classList.toggle('show', !!show);
-    dlg.setAttribute('aria-hidden', show ? 'false' : 'true');
+    if (show) UI.openModal('booru-meta-dlg');
+    else UI.closeModal('booru-meta-dlg');
     // 运行中禁用操作按钮, 避免重复提交长任务
     var busy = _batchRunning;
     ['booru-meta-regenerate', 'booru-meta-refresh'].forEach(function (id) {
@@ -1928,7 +1929,7 @@ var BooruFilter = (function () {
     updatePageStatus();
     // 元数据工具对话框若处于打开状态, 恢复其操作按钮
     var metaDlg = document.getElementById('booru-meta-dlg');
-    if (metaDlg && metaDlg.classList.contains('show')) setMetaDlg(true);
+    if (metaDlg && metaDlg.classList.contains('open')) setMetaDlg(true);
   }
 
   async function stopBatch() {
@@ -2478,12 +2479,11 @@ var BooruFilter = (function () {
       });
       srcBar.addEventListener('change', saveUiState);
     }
-    var batchDlg = document.getElementById('booru-batch-dlg');
-    if (batchDlg) {
-      batchDlg.addEventListener('click', function (e) {
-        if (e.target === batchDlg) setBatchDlg(false);
-      });
-    }
+    UI.bindModal('booru-batch-dlg', function () {
+      if (!_batchRunning) setBatchProgress(null);
+      syncBatchCloseBtn();
+      syncBatchStopBtn();
+    });
     var batchStart = document.getElementById('booru-batch-start');
     if (batchStart) {
       batchStart.addEventListener('click', function () {
@@ -2506,12 +2506,7 @@ var BooruFilter = (function () {
         stopBatch().catch(function (e) { toast(String(e.message || e)); });
       });
     }
-    var metaDlg = document.getElementById('booru-meta-dlg');
-    if (metaDlg) {
-      metaDlg.addEventListener('click', function (e) {
-        if (e.target === metaDlg) setMetaDlg(false);
-      });
-    }
+    UI.bindModal('booru-meta-dlg');
     var metaEntry = document.getElementById('btn-meta-dlg');
     if (metaEntry) {
       metaEntry.addEventListener('click', function () { setMetaDlg(true); });
@@ -2532,10 +2527,10 @@ var BooruFilter = (function () {
         refreshMetadata().catch(function (e) { toast(String(e.message || e)); });
       });
     }
+    UI.bindModal('booru-extra-dlg');
     var extraDlg = document.getElementById('booru-extra-dlg');
     if (extraDlg) {
       extraDlg.addEventListener('click', function (e) {
-        if (e.target === extraDlg) { setExtraDlg(false); return; }
         var chip = e.target.closest('.booru-rate-chip');
         if (chip) {
           chip.classList.toggle('on');
@@ -2579,16 +2574,6 @@ var BooruFilter = (function () {
 
     document.addEventListener('keydown', function (e) {
       if (e.key !== 'Escape') return;
-      var batchDlgEl = document.getElementById('booru-batch-dlg');
-      if (batchDlgEl && batchDlgEl.classList.contains('show')) {
-        setBatchDlg(false);
-        return;
-      }
-      var extraDlg = document.getElementById('booru-extra-dlg');
-      if (extraDlg && extraDlg.classList.contains('show')) {
-        setExtraDlg(false);
-        return;
-      }
       if (document.getElementById('booru-preview') &&
           document.getElementById('booru-preview').classList.contains('show')) {
         hidePreview();

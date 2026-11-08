@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request
 
@@ -11,10 +12,10 @@ from services.analysis.caption import (
     FILTER_PRESETS,
     RULE_TEMPLATES,
     SYSTEM_PROMPT_TEMPLATES,
-    delete_caption,
     load_captions,
     openai_status,
     run_caption,
+    write_captions,
 )
 from services.analysis.wd14 import DEFAULT_THRESHOLD
 from services.core.jobs import EmitFn, JobProgress
@@ -23,6 +24,7 @@ from services.dataset.workdir import WorkImage
 from services.models import (
     CaptionBody,
     CaptionDeleteBody,
+    CaptionDeleteResponse,
     CaptionDirsResponse,
     CaptionFilterPreset,
     CaptionImageItem,
@@ -108,7 +110,7 @@ def list_images(ds: DatasetDep, body: CaptionListBody) -> CaptionListResponse:
         body (CaptionListBody): 目录列表请求.
 
     Returns:
-        CaptionListResponse: 图片条目列表与已描述数量.
+        CaptionListResponse: 图片条目列表.
 
     Raises:
         HTTPException: 未选择目录时返回 400.
@@ -127,43 +129,49 @@ def list_images(ds: DatasetDep, body: CaptionListBody) -> CaptionListResponse:
         for img in work.images():
             items.append(_build_item(img, store, thumbnailer))
 
-    described = sum(1 for it in items if it.captions)
     return CaptionListResponse(
         items=items,
-        total=len(items),
-        described=described,
         dirs=[w.name for w in selected],
     )
 
 
 @router.post("/delete")
-def delete_one(ds: DatasetDep, body: CaptionDeleteBody) -> CaptionImageItem:
-    """删除单张图片在 ``captions.json`` 中的描述条目.
+def delete_many(ds: DatasetDep, body: CaptionDeleteBody) -> CaptionDeleteResponse:
+    """删除多张图片在各自目录 ``captions.json`` 中的描述条目.
+
+    同一工作目录的删除合并为一次整体写入; 任一路径不在数据集内或图片不存在时整批
+    拒绝, 不产生部分写入.
 
     Args:
         ds (Dataset): 当前数据集, 由路由依赖注入.
-        body (CaptionDeleteBody): 删除参数, 含图片相对路径.
+        body (CaptionDeleteBody): 待删除描述的图片相对路径列表.
 
     Returns:
-        CaptionImageItem: 删除后的图片条目(描述为空).
+        CaptionDeleteResponse: 实际删除描述条目的图片数量.
 
     Raises:
-        HTTPException: 图片不存在时返回 404.
+        HTTPException: 路径越界返回 400, 图片不存在返回 404.
 
     Callers:
+        - ``static/js/caption.js:deleteSelectedCaptions``
         - ``static/js/caption.js:deleteViewedCaption``
     """
-    rel = body.path.replace("\\", "/").lstrip("/")
-    img_abs = resolve_path(ds, rel)
-    if not img_abs.is_file():
-        raise HTTPException(404, "图片不存在")
-    delete_caption(img_abs.parent, img_abs.name)
-    logger.info("单图删描述 dataset=%s path=%s", ds.name, rel)
-    return _build_item(
-        WorkImage(ds.work_of(rel), img_abs),
-        load_captions(img_abs.parent),
-        ds.thumbnailer,
+    stores: dict[Path, dict[str, list[str]]] = {}
+    deleted = 0
+    for raw in body.paths:
+        rel = raw.replace("\\", "/").lstrip("/")
+        img_abs = resolve_path(ds, rel)
+        if not img_abs.is_file():
+            raise HTTPException(404, f"图片不存在: {rel}")
+        store = stores.setdefault(img_abs.parent, load_captions(img_abs.parent))
+        if store.pop(img_abs.name, None) is not None:
+            deleted += 1
+    for parent, store in stores.items():
+        write_captions(parent, store)
+    logger.info(
+        "批量删描述 dataset=%s 请求=%d 实际删除=%d", ds.name, len(body.paths), deleted
     )
+    return CaptionDeleteResponse(deleted=deleted)
 
 
 @router.post("/start")
@@ -176,13 +184,14 @@ async def start(ds: DatasetDep, request: Request, body: CaptionBody) -> JobSubmi
     Args:
         ds (Dataset): 当前数据集, 由路由依赖注入.
         request (Request): FastAPI 请求对象, 由路由参数注入.
-        body (CaptionBody): 描述参数, 含目录、模式、注入范围与预设提示词.
+        body (CaptionBody): 描述参数, 含目录或显式图片路径、模式、注入范围与预设提示词.
 
     Returns:
         JobSubmitResponse: 含 job_id, 前端据以订阅 SSE 进度.
 
     Raises:
-        HTTPException: 描述服务不可用、未选择目录、模式或注入范围非法时返回 400.
+        HTTPException: 描述服务不可用、未选择目录、图片不在所选目录内、模式或注入
+            范围非法时返回 400.
 
     Callers:
         - ``static/js/caption.js:startJob``
@@ -198,6 +207,12 @@ async def start(ds: DatasetDep, request: Request, body: CaptionBody) -> JobSubmi
     modes = [m for m in body.modes if m in SYSTEM_PROMPT_TEMPLATES]
     if not modes:
         raise HTTPException(400, f"描述模式非法: {body.modes}")
+
+    if body.paths:
+        available = {p.relative_to(ds.root).as_posix() for w in selected for p in w.image_files()}
+        unknown = [p for p in body.paths if p not in available]
+        if unknown:
+            raise HTTPException(400, f"图片不在所选目录内: {', '.join(unknown[:5])}")
 
     prog = JobProgress()
     payload = body
@@ -220,6 +235,7 @@ async def start(ds: DatasetDep, request: Request, body: CaptionBody) -> JobSubmi
 
         result = await run_caption(
             selected,
+            paths=set(body.paths) if body.paths else None,
             modes=modes,
             general_threshold=payload.general_threshold,
             character_threshold=payload.character_threshold,

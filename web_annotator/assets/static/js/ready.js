@@ -145,7 +145,7 @@
 
       var resInput = document.createElement('input');
       resInput.type = 'text';
-      resInput.className = 'res-input';
+      resInput.className = 'input res-input';
       resInput.value = _resolutions[d.name];
       resInput.setAttribute('data-name', d.name);
       resInput.title = '逗号分隔的多个分辨率, 每个分辨率按子集是否携带蒙版目录拆分为蒙版块与普通块; 留空则该子集生成单块无 resolution';

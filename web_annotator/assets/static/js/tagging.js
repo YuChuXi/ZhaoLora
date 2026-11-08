@@ -8,10 +8,6 @@ var Tagging = (function () {
   var _jobId = null;
   var _modelReady = false;
 
-  function modal() {
-    return document.getElementById('tagging-modal');
-  }
-
   /**
    * 读取「tagging」设置键的当前值。
    * 引用：initModel / startJob。
@@ -189,10 +185,7 @@ var Tagging = (function () {
   }
 
   function open() {
-    var m = modal();
-    if (!m) return;
-    m.classList.add('open');
-    m.setAttribute('aria-hidden', 'false');
+    UI.openModal('tagging-modal');
     // 触发词输入框为空时默认填充任务名(数据集名)
     var input = document.getElementById('artist-tag');
     if (input && !input.value.trim()) {
@@ -201,10 +194,7 @@ var Tagging = (function () {
   }
 
   function close() {
-    var m = modal();
-    if (!m) return;
-    m.classList.remove('open');
-    m.setAttribute('aria-hidden', 'true');
+    UI.closeModal('tagging-modal');
   }
 
   async function init() {
@@ -216,18 +206,7 @@ var Tagging = (function () {
     var closeBtn = document.getElementById('btn-tagging-close');
     if (closeBtn) closeBtn.addEventListener('click', close);
 
-    var m = modal();
-    if (m) {
-      m.addEventListener('click', function (e) {
-        if (e.target === m) close();
-      });
-    }
-
-    document.addEventListener('keydown', function (e) {
-      if (e.key !== 'Escape') return;
-      var box = modal();
-      if (box && box.classList.contains('open')) close();
-    });
+    UI.bindModal('tagging-modal');
 
     document.getElementById('btn-start').addEventListener('click', function () {
       startJob().catch(function (e) { toast(String(e.message || e)); });
