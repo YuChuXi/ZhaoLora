@@ -6,16 +6,15 @@ import logging
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
+
+from routes.deps import DatasetDep, jobs
 from services.analysis.wd14 import (
     DEFAULT_THRESHOLD,
-    TaggingProgress,
     model_ready,
     run_batch,
 )
-from services.core.jobs import EmitFn
+from services.core.jobs import EmitFn, JobProgress
 from services.models import TaggingDirsResponse, TaggingStartResponse
-
-from routes.deps import DatasetDep, jobs
 
 logger = logging.getLogger(__name__)
 
@@ -79,7 +78,7 @@ async def start(ds: DatasetDep, request: Request, body: StartBody) -> TaggingSta
     if not works:
         raise HTTPException(400, "请选择目录")
 
-    prog = TaggingProgress()
+    prog = JobProgress()
 
     def run(emit: EmitFn) -> None:
         """工作线程入口: 调用 ``run_batch`` 执行批量打标.

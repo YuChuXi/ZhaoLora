@@ -15,7 +15,6 @@ import logging
 import os
 from collections import deque
 from collections.abc import Callable
-from dataclasses import dataclass, field
 from functools import partial
 from pathlib import Path
 
@@ -30,8 +29,9 @@ from services.analysis.wd14 import (
     Wd14TagGroups,
 )
 from services.core.atomic import atomic_write_text
+from services.core.jobs import JobProgress
 from services.dataset.workdir import CAPTIONS_JSON_FILE, WorkDir
-from services.models import CaptionImageItem, CaptionResult, CaptionRule, JobSnapshot
+from services.models import CaptionImageItem, CaptionResult, CaptionRule
 from services.tagging.clean import make_tag_matcher, tag_key
 
 logger = logging.getLogger(__name__)
@@ -460,59 +460,11 @@ def delete_caption(directory: Path, name: str) -> None:
     write_captions(directory, store)
 
 
-@dataclass
-class CaptionProgress:
-    """描述标注进度对象.
-
-    Callers:
-        - ``routes/caption.py:start`` : 构造后交给任务.
-    """
-
-    status: str = "idle"  # idle|running|done|error|cancelled
-    phase: str = "idle"  # idle|running|done
-    total: int = 0
-    done: int = 0
-    ok: int = 0
-    failed: int = 0
-    skipped: int = 0
-    current: str = ""
-    message: str = ""
-    logs: list[str] = field(default_factory=list)
-    cancel_requested: bool = False
-
-    def snapshot(self) -> JobSnapshot:
-        """导出进度快照.
-
-        Returns:
-            JobSnapshot: 当前进度的快照对象, 供长任务 SSE 推送.
-
-        Callers:
-            - ``routes/caption.py:start``
-        """
-        pct = round(100.0 * self.done / self.total, 1) if self.total > 0 else 0.0
-        if self.status == "done" and self.total > 0:
-            pct = 100.0
-        return JobSnapshot(
-            status=self.status,
-            phase=self.phase,
-            total=self.total,
-            done=self.done,
-            pct=pct,
-            skipped=self.skipped,
-            ok=self.ok,
-            failed=self.failed,
-            current=self.current,
-            message=self.message,
-            logs=list(self.logs[-80:]),
-            cancel_requested=self.cancel_requested,
-        )
-
-
-def _log(progress: CaptionProgress, line: str) -> None:
+def _log(progress: JobProgress, line: str) -> None:
     """追加一条进度日志并输出到服务端日志.
 
     Args:
-        progress (CaptionProgress): 进度对象.
+        progress (JobProgress): 进度对象.
         line (str): 日志行文本.
 
     Returns:
@@ -534,7 +486,7 @@ async def run_caption(
     nsfw_threshold: float | None,
     rules: list[CaptionRule],
     force: bool,
-    progress: CaptionProgress,
+    progress: JobProgress,
     on_update: Callable[[], None] | None = None,
 ) -> CaptionResult:
     """批量描述: ``CONCURRENCY`` 个工作协程共用一条队列轮转取图, 结果写入 ``captions.json``.
@@ -557,7 +509,7 @@ async def run_caption(
         nsfw_threshold (float | None): NSFW 增强的置信度下限; None 为不启用.
         rules (list[CaptionRule]): 预设提示词条目.
         force (bool): 是否清空 captions.json 中已存在的条目并重新标注.
-        progress (CaptionProgress): 进度对象.
+        progress (JobProgress): 进度对象.
         on_update (Callable[[], None] | None): 进度变更回调.
 
     Returns:

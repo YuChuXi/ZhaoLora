@@ -39,6 +39,92 @@ RunFn = (
 
 
 @dataclass
+class JobProgress:
+    """长任务进度: 状态、计数、当前文件与日志.
+
+    Attributes:
+        status (str): ``idle`` / ``running`` / ``done`` / ``error`` / ``cancelled``.
+        phase (str): 阶段标记, 供前端切换不确定进度动画.
+        total (int): 总工作量.
+        done (int): 已完成工作量.
+        ok (int): 成功处理数量.
+        skipped (int): 跳过数量.
+        failed (int): 失败数量.
+        current (str): 当前处理的相对路径.
+        message (str): 用户可见的状态消息.
+        logs (list[str]): 日志行, 上限 400, 推送最近 80 条.
+        cancel_requested (bool): 是否已请求取消.
+
+    Callers:
+        - ``services/analysis/wd14.py:run_batch`` / ``build_cache``
+        - ``services/analysis/scoring.py:run_scoring``
+        - ``services/analysis/caption.py:run_caption``
+        - ``routes/tagging.py:start``
+        - ``routes/scoring.py:start`` / ``start_cache``
+        - ``routes/caption.py:start``
+        - ``routes/dedupe.py:scan_duplicates``
+    """
+
+    status: str = "idle"
+    phase: str = "idle"
+    total: int = 0
+    done: int = 0
+    ok: int = 0
+    skipped: int = 0
+    failed: int = 0
+    current: str = ""
+    message: str = ""
+    logs: list[str] = field(default_factory=list)
+    cancel_requested: bool = False
+
+    def snapshot(self) -> JobSnapshot:
+        """导出进度快照.
+
+        Returns:
+            JobSnapshot: 当前进度与最近 80 条日志, 供长任务 SSE 推送.
+
+        Callers:
+            - ``routes/tagging.py:start``
+            - ``routes/scoring.py:start`` / ``start_cache``
+            - ``routes/caption.py:start``
+            - ``routes/dedupe.py:scan_duplicates``
+        """
+        total, done = self.total, self.done
+        pct = round(100.0 * done / total, 1) if total > 0 else 0.0
+        if self.status == "done" and total > 0:
+            pct = 100.0
+        return JobSnapshot(
+            status=self.status,
+            phase=self.phase,
+            total=total,
+            done=done,
+            pct=pct,
+            skipped=self.skipped,
+            ok=self.ok,
+            failed=self.failed,
+            current=self.current,
+            message=self.message,
+            logs=list(self.logs[-80:]),
+            cancel_requested=self.cancel_requested,
+        )
+
+    def log(self, line: str) -> None:
+        """追加日志行, 超过上限时截断旧记录.
+
+        Args:
+            line (str): 日志行文本.
+
+        Callers:
+            - ``services/analysis/wd14.py:run_batch`` / ``build_cache``
+            - ``services/analysis/scoring.py:run_scoring``
+            - ``services/analysis/caption.py:run_caption`` (经 ``partial``)
+        """
+        self.logs.append(line)
+        if len(self.logs) > 400:
+            self.logs = self.logs[-300:]
+
+
+@dataclass
 class Job:
     """单个长任务状态.
 

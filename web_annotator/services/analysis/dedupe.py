@@ -8,18 +8,15 @@ from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import cast
 
 import cv2
 import numpy as np
 from PIL import Image, ImageFile, UnidentifiedImageError
 
+from services.core.device import cuda_device
 from services.core.natural import natural_key
 from services.dataset.workdir import IMAGE_EXTS
-from services.core.device import cuda_device
-
-if TYPE_CHECKING:  # torch 惰性导入, 仅用于类型注解
-    import torch
 
 Image.MAX_IMAGE_PIXELS = None
 ImageFile.LOAD_TRUNCATED_IMAGES = True
@@ -213,7 +210,7 @@ def extract_fft_features(
 
     Args:
         records: 已有指纹的记录列表.
-        progress: 可选 ``ScoreProgress``, 更新 ``done`` / ``current``.
+        progress: 可选 ``JobProgress``, 更新 ``done`` / ``current``.
         on_step: 可选回调, 每张处理完成后以 ``(done, total)`` 调用, 供任务上报进度.
 
     Returns:
@@ -281,7 +278,7 @@ def extract_orb_features(
 
     Args:
         records: 已有指纹的记录列表.
-        progress: 可选 ``ScoreProgress``, 更新 ``done`` / ``current``.
+        progress: 可选 ``JobProgress``, 更新 ``done`` / ``current``.
         on_step: 可选回调, 每张处理完成后以 ``(done, total)`` 调用, 供任务上报进度.
 
     Returns:

@@ -8,7 +8,7 @@ import io
 import json
 import os
 from collections.abc import Callable, Iterable
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
@@ -18,9 +18,9 @@ from PIL import Image
 
 from services.core.atomic import atomic_write_bytes, atomic_write_text
 from services.core.device import register_model
+from services.core.jobs import JobProgress
 from services.dataset.sidecar import SidecarSource, register_sidecar
 from services.dataset.workdir import WD14_META_DIRNAME, WorkDir
-from services.models import JobSnapshot
 from services.online_sources.framework.utils import _GENDER_TAGS
 
 if TYPE_CHECKING:
@@ -625,7 +625,7 @@ class Wd14Cache:
         *,
         log: Callable[[str], None],
         cancel_check: Callable[[], bool],
-        progress: TaggingProgress | None = None,
+        progress: JobProgress | None = None,
         on_update: Callable[[], None] | None = None,
         done_base: int | None = None,
     ) -> set[Path]:
@@ -638,7 +638,7 @@ class Wd14Cache:
             pending (list[Path]): 待生成缓存的图片绝对路径, 须已剔除已有缓存.
             log (Callable[[str], None]): 日志回调, 接收单行文本.
             cancel_check (Callable[[], bool]): 协作取消判定, 返回 True 时中止.
-            progress (TaggingProgress | None): 进度对象; 为 None 时不更新逐张进度.
+            progress (JobProgress | None): 进度对象; 为 None 时不更新逐张进度.
             on_update (Callable[[], None] | None): 进度变更回调.
             done_base (int | None): 进度条起始完成数; ``None`` 表示本阶段不推进
                 ``done``(由后续阶段自行计数).
@@ -806,65 +806,6 @@ def model_ready() -> tuple[bool, str]:
     return True, f"模型就绪: {onnx_path}"
 
 
-@dataclass
-class TaggingProgress:
-    status: str = "idle"  # idle|running|done|error|cancelled
-    phase: str = "idle"  # idle|loading|running|done
-    total: int = 0
-    done: int = 0
-    skipped: int = 0
-    ok: int = 0
-    failed: int = 0
-    current: str = ""
-    message: str = ""
-    logs: list[str] = field(default_factory=list)
-    cancel_requested: bool = False
-
-    def snapshot(self) -> JobSnapshot:
-        """导出进度快照.
-
-        Returns:
-            JobSnapshot: 当前进度的快照对象, 供长任务 SSE 推送.
-
-        Callers:
-            - ``routes/tagging.py:start``
-        """
-        total = self.total
-        done = self.done
-        pct = round(100.0 * done / total, 1) if total > 0 else 0.0
-        if self.status == "done" and total > 0:
-            pct = 100.0
-        return JobSnapshot(
-            status=self.status,
-            phase=self.phase,
-            total=total,
-            done=done,
-            pct=pct,
-            skipped=self.skipped,
-            ok=self.ok,
-            failed=self.failed,
-            current=self.current,
-            message=self.message,
-            logs=list(self.logs[-80:]),
-            cancel_requested=self.cancel_requested,
-        )
-
-    def log(self, line: str) -> None:
-        """追加进度日志并截断.
-
-        Args:
-            line: 日志行文本.
-
-        Callers:
-            - ``services/analysis/wd14.py:run_batch``
-            - ``services/analysis/wd14.py:build_cache``
-            - ``services/analysis/caption.py:run_caption`` (经 ``partial``)
-        """
-        self.logs.append(line)
-        if len(self.logs) > 400:
-            self.logs = self.logs[-300:]
-
-
 @_MODEL.auto_release
 def run_batch(
     works: list[WorkDir],
@@ -873,7 +814,7 @@ def run_batch(
     threshold: float,
     disable_orig_tags: bool,
     force: bool,
-    progress: TaggingProgress,
+    progress: JobProgress,
     on_update: Callable[[], None] | None = None,
     artist_tag: str = "",
 ) -> None:
@@ -888,7 +829,7 @@ def run_batch(
         threshold (float): 置信度阈值.
         disable_orig_tags (bool): 是否丢弃原标签.
         force (bool): 是否覆盖已存在的 ``.txt``.
-        progress (TaggingProgress): 进度对象.
+        progress (JobProgress): 进度对象.
         on_update (Callable[[], None] | None): 进度变更回调.
         artist_tag (str): 追加的画师标签 (以 ``@`` 开头).
 
@@ -1008,7 +949,7 @@ def run_batch(
 def build_cache(
     works: list[WorkDir],
     *,
-    progress: TaggingProgress,
+    progress: JobProgress,
     on_update: Callable[[], None] | None = None,
 ) -> None:
     """为所选目录补齐 WD14 推理缓存, 不改动任何 ``.txt``.
@@ -1018,7 +959,7 @@ def build_cache(
 
     Args:
         works (list[WorkDir]): 待补齐缓存的工作目录.
-        progress (TaggingProgress): 进度对象.
+        progress (JobProgress): 进度对象.
         on_update (Callable[[], None] | None): 进度变更回调.
 
     Returns:

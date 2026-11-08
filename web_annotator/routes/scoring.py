@@ -11,7 +11,6 @@ from pydantic import BaseModel, Field
 from routes.deps import DatasetDep, jobs
 from services.analysis.scoring import (
     AESTHETIC_SCORES,
-    ScoreProgress,
     build_score_results,
     create_score_item,
     delete_score_item,
@@ -21,13 +20,12 @@ from services.analysis.scoring import (
     run_scoring,
 )
 from services.analysis.wd14 import (
-    TaggingProgress,
     Wd14Cache,
     Wd14Labels,
     build_cache,
     model_ready,
 )
-from services.core.jobs import EmitFn
+from services.core.jobs import EmitFn, JobProgress
 from services.models import (
     ScoreItemBody,
     ScoreItemsResponse,
@@ -248,7 +246,7 @@ async def start(ds: DatasetDep, request: Request, body: StartBody) -> ScoringSta
     if not works:
         raise HTTPException(400, "请选择目录")
 
-    prog = ScoreProgress()
+    prog = JobProgress()
 
     def run(emit: EmitFn) -> None:
         """工作线程入口. 
@@ -313,7 +311,7 @@ async def start_cache(
     if not works:
         raise HTTPException(400, "请选择目录")
 
-    prog = TaggingProgress()
+    prog = JobProgress()
 
     def run(emit: EmitFn) -> None:
         """工作线程入口: 补齐 WD14 推理缓存.

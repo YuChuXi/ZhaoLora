@@ -11,14 +11,13 @@ from services.analysis.caption import (
     FILTER_PRESETS,
     RULE_TEMPLATES,
     SYSTEM_PROMPT_TEMPLATES,
-    CaptionProgress,
     delete_caption,
     load_captions,
     openai_status,
     run_caption,
 )
 from services.analysis.wd14 import DEFAULT_THRESHOLD
-from services.core.jobs import EmitFn
+from services.core.jobs import EmitFn, JobProgress
 from services.core.thumbnailer import image_size
 from services.dataset.workdir import WorkImage
 from services.models import (
@@ -200,7 +199,7 @@ async def start(ds: DatasetDep, request: Request, body: CaptionBody) -> JobSubmi
     if not modes:
         raise HTTPException(400, f"描述模式非法: {body.modes}")
 
-    prog = CaptionProgress()
+    prog = JobProgress()
     payload = body
 
     async def run(emit: EmitFn) -> CaptionResult:

@@ -197,9 +197,9 @@ async def scan_duplicates(request: Request, ds: DatasetDep, body: ScanBody) -> J
             records.extend(part)
 
         if algorithm in ("fft", "orb"):
-            from services.analysis.scoring import ScoreProgress
+            from services.core.jobs import JobProgress
 
-            feat_p = ScoreProgress(
+            feat_p = JobProgress(
                 status="running",
                 phase=algorithm,
                 total=len(records),

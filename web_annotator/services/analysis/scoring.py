@@ -7,7 +7,6 @@ import json
 import os
 import uuid
 from collections.abc import Callable
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, cast
 
@@ -21,8 +20,8 @@ from services.analysis import expression
 from services.analysis.wd14 import Tags, Wd14Cache, Wd14Labels
 from services.core.atomic import atomic_write_text
 from services.core.device import register_model
+from services.core.jobs import JobProgress
 from services.dataset.workdir import WorkDir
-from services.models import JobSnapshot
 from services.models.pages import ScoreItem
 
 # ---------------------------------------------------------------------------
@@ -55,74 +54,6 @@ AESTHETIC_CLIP_MODEL = os.environ.get("AESTHETIC_CLIP_MODEL", "") or "ViT-L/14"
 AESTHETIC_HEAD_CKPT = (
     Path(os.environ["AESTHETIC_HEAD_CKPT"]) if os.environ.get("AESTHETIC_HEAD_CKPT") else None
 )
-
-# ---------------------------------------------------------------------------
-# 进度追踪
-# ---------------------------------------------------------------------------
-
-
-@dataclass
-class ScoreProgress:
-    """通用评分进度追踪. 
-
-    通过 ``snapshot()`` 生成 ``JobSnapshot`` 推送至 SSE. 
-
-    Attributes:
-        status: 当前状态 ("idle", "running", "done", "cancelled"). 
-        phase: 当前阶段 ("idle", "loading", "running", "done"). 
-        total: 待处理图片总数. 
-        done: 已处理数量. 
-        ok: 成功评分数量. 
-        skipped: 跳过数量(已有结果或 WD14 缓存缺失). 
-        failed: 失败数量. 
-        current: 当前处理的图片相对路径. 
-        message: 用户可见的状态消息. 
-        logs: 内部日志行列表(最多 400 条). 
-        cancel_requested: 是否已请求取消. 
-    """
-
-    status: str = "idle"
-    phase: str = "idle"
-    total: int = 0
-    done: int = 0
-    ok: int = 0
-    skipped: int = 0
-    failed: int = 0
-    current: str = ""
-    message: str = ""
-    logs: list[str] = field(default_factory=list)
-    cancel_requested: bool = False
-
-    def snapshot(self) -> JobSnapshot:
-        """生成可序列化的进度快照. 
-
-        Returns:
-            JobSnapshot: 包含完成百分比与最近 80 条日志的快照. 
-
-        Callers:
-            - ``routes/scoring.py:`` : SSE 推送评分进度. 
-        """
-        total, done = self.total, self.done
-        pct = round(100.0 * done / total, 1) if total > 0 else 0.0
-        if self.status == "done" and total > 0:
-            pct = 100.0
-        return JobSnapshot(
-            status=self.status, phase=self.phase, total=total, done=done, pct=pct,
-            ok=self.ok, skipped=self.skipped, failed=self.failed,
-            current=self.current, message=self.message,
-            logs=list(self.logs[-80:]), cancel_requested=self.cancel_requested,
-        )
-
-    def log(self, line: str) -> None:
-        """追加一行日志, 保持最多 400 行上限. 
-
-        Args:
-            line: 日志文本. 
-        """
-        self.logs.append(line)
-        if len(self.logs) > 400:
-            self.logs = self.logs[-300:]
-
 
 # ---------------------------------------------------------------------------
 # 分数 IO
@@ -584,7 +515,7 @@ def _aes_score_one(image: Image.Image, clip_model, preprocess, aes_head) -> floa
 def _run_aesthetic_scoring(
     works: list[WorkDir], *,
     models: Any,
-    progress: ScoreProgress,
+    progress: JobProgress,
     on_update: Callable[[], None] | None,
 ) -> None:
     """美学评分主循环: 文件收集 → 缓存跳过/新评计算 → 定期持久化.
@@ -663,13 +594,13 @@ def _run_aesthetic_scoring(
 
 def _run_wd14_scoring(
     works: list[WorkDir], *,
-    progress: ScoreProgress,
+    progress: JobProgress,
     on_update: Callable[[], None] | None,
 ) -> None:
-    """按 WD14 缓存概率计算全部评分项.
+    """先补齐 WD14 推理缓存, 再按概率计算全部评分项.
 
-    评分不重新推理, 只读取 ``.wd14_meta`` 下的概率向量; 缓存缺失的图片计入跳过,
-    由调用方提示先建立缓存.
+    缺失缓存的图片在评分前统一推理写入 ``.wd14_meta``, 随后只读缓存向量求值;
+    单张缓存生成失败的图片计入失败, 不中断整批.
 
     Args:
         works: 要评分的工作目录.
@@ -696,14 +627,19 @@ def _run_wd14_scoring(
         for key, tree in trees.items()
     }
     cache = Wd14Cache(root, labels)
+    pending = cache.missing(items)
 
-    progress.total = len(items)
+    progress.total = len(pending) + len(items)
     progress.done = progress.ok = progress.skipped = progress.failed = 0
     progress.status = "running"
     progress.phase = "running"
-    progress.message = f"共 {len(items)} 张, 计算 {len(trees)} 个评分项"
+    progress.message = (
+        f"共 {len(items)} 张, 缺缓存 {len(pending)} 张, "
+        f"计算 {len(trees)} 个评分项"
+    )
     progress.log(
-        f"开始: dirs={[w.name for w in works]}, items={list(trees)}, total={len(items)}"
+        f"开始: dirs={[w.name for w in works]}, items={list(trees)}, "
+        f"total={len(items)}, pending={len(pending)}"
     )
     if on_update: on_update()
 
@@ -713,9 +649,26 @@ def _run_wd14_scoring(
         if on_update: on_update()
         return
 
+    if pending:
+        cache.populate(
+            pending,
+            log=progress.log,
+            cancel_check=lambda: progress.cancel_requested,
+            progress=progress,
+            on_update=on_update,
+            done_base=0,
+        )
+        if progress.cancel_requested:
+            progress.status = "cancelled"
+            progress.phase = "done"
+            progress.current = ""
+            progress.message = "已取消 (缓存阶段中止)"
+            if on_update: on_update()
+            return
+
     scores: dict[str, dict[str, float]] = {key: {} for key in trees}
 
-    for src in items:
+    for i, src in enumerate(items):
         if progress.cancel_requested:
             progress.status = "cancelled"
             progress.phase = "done"
@@ -726,17 +679,17 @@ def _run_wd14_scoring(
 
         rel = cache.rel(src)
         progress.current = rel
+        progress.message = f"评分 [{i + 1}/{len(items)}] {rel}"
         probabilities = cache.probabilities(src)
         if probabilities is None:
-            progress.skipped += 1
-            progress.done += 1
+            progress.failed += 1
         else:
             for key, tree in trees.items():
                 scores[key][rel] = evaluate_score(
                     tree, buffers[key], label_index, probabilities,
                 )
             progress.ok += 1
-            progress.done += 1
+        progress.done += 1
 
         if progress.done % 20 == 0 or progress.done == len(items):
             save_item_scores(root, scores)
@@ -745,13 +698,10 @@ def _run_wd14_scoring(
     save_item_scores(root, scores)
     progress.status = progress.phase = "done"
     progress.current = ""
-    if progress.skipped:
-        progress.message = (
-            f"完成 {progress.ok} 张, {progress.skipped} 张缺少 WD14 缓存"
-        )
-        progress.log("缺少缓存的图片需先在评分页建立 WD14 缓存")
-    else:
-        progress.message = f"完成 {progress.ok} 张"
+    progress.message = f"完成 {progress.ok} 张"
+    if progress.failed:
+        progress.message += f", 缓存生成失败 {progress.failed} 张"
+        progress.log("失败的图片可重新开始评分以补齐缓存")
     if on_update: on_update()
 
 
@@ -763,13 +713,13 @@ def _run_wd14_scoring(
 def run_scoring(
     works: list[WorkDir], *,
     kind: str,
-    progress: ScoreProgress | None = None,
+    progress: JobProgress | None = None,
     on_update: Callable[[], None] | None = None,
 ) -> None:
     """执行美学评分或 WD14 数据驱动评分.
 
     美学模型的句柄经上下文管理器获取并自动归还, 设备与生命周期由 ``device``
-    模块统一管理; WD14 评分只读推理缓存, 不加载模型.
+    模块统一管理; WD14 评分先补齐缺失的推理缓存, 再读取概率向量求值.
 
     Args:
         works: 要评分的工作目录.
@@ -786,7 +736,7 @@ def run_scoring(
     if kind not in ("aesthetic", "wd14"):
         raise ValueError(f"kind 必须是 'aesthetic' 或 'wd14', 收到: {kind!r}")
     if progress is None:
-        progress = ScoreProgress()
+        progress = JobProgress()
 
     if kind == "aesthetic":
         with _AES_MODEL as models:
