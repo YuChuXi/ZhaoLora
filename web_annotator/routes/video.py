@@ -143,7 +143,6 @@ async def video_detail(
     Callers:
         - ``static/js/video_extract.js:`` 加载视频详情
     """
-    root = ds.root
     resolve_path(ds, path)  # 校验路径合法
     store, _ = _stores(ds)
     w, h, dur, total = probe_video(resolve_path(ds, path))

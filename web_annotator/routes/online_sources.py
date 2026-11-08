@@ -7,41 +7,46 @@ import logging
 import os
 from pathlib import Path
 
-from services.dataset.workdir import IMAGE_EXTS
-
+from curl_cffi.requests.exceptions import RequestException as CffiError
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from curl_cffi.requests.exceptions import RequestException as CffiError
-
-from services.online_sources.batch import BatchProgress, get_progress, register_progress, run_batch
+from routes.deps import DatasetDep, jobs
+from services.core.jobs import EmitFn, JobProgress
+from services.core.natural import natural_key
+from services.dataset.runtime import Dataset
+from services.dataset.workdir import IMAGE_EXTS
+from services.models import (
+    BatchParamsBody,
+    BatchStartBody,
+    BooruDownloadResult,
+    BooruPost,
+    BooruSearchResult,
+    BooruSourcesResponse,
+    BooruUndownloadResult,
+    JobSubmitResponse,
+)
 from services.online_sources import (
     download_post,
     get_source,
     is_downloaded,
     list_source_names,
     local_rel_path,
-    regenerate_captions as _regenerate_captions,
     remove_download,
 )
-from services.online_sources.framework.http import HttpClient, NetworkError as _NetworkError
-from routes.deps import DatasetDep, jobs
-from services.core.jobs import EmitFn
-from services.dataset.runtime import Dataset
-from services.models import (
-    BatchParamsBody,
-    BatchStartBody,
-    BooruPost,
-    BooruDownloadResult,
-    BooruSearchResult,
-    BooruSourcesResponse,
-    BooruUndownloadResult,
-    JobSnapshot,
-    JobSubmitResponse,
+from services.online_sources import (
+    regenerate_captions as _regenerate_captions,
 )
-from services.core.natural import natural_key
-from services.online_sources.framework.base import SOURCES
+from services.online_sources.batch import (
+    BatchRun,
+    get_progress,
+    register_progress,
+    run_batch,
+)
+from services.online_sources.framework.base import SOURCES, detect_source
+from services.online_sources.framework.http import HttpClient
+from services.online_sources.framework.http import NetworkError as _NetworkError
 
 logger = logging.getLogger(__name__)
 
@@ -138,7 +143,6 @@ async def search(ds: DatasetDep, body: SearchBody) -> BooruSearchResult:
     if order and src.valid_orders and order not in src.valid_orders:
         raise HTTPException(400, f"不支持的排序: {body.order}")
     query = src.build_search_query(body.tags, order=order, extra=body.extra or "")
-    root = ds.root
     try:
         out_dir = ds.work_dir(body.dir).path
     except ValueError as e:
@@ -376,8 +380,13 @@ async def _submit_video_download(
         Callers:
             - ``services/core/jobs.py:JobManager.submit``
         """
+        prog = JobProgress(
+            status="running", phase="downloading", total=1, message="正在下载视频"
+        )
+        emit(prog.snapshot())
+
         def on_progress(pct: int, total: int) -> None:
-            """把来源的 ``(pct, total)`` 进度转为 JobSnapshot 推送。
+            """把来源的百分比进度写入快照并推送。
 
             Args:
                 pct (int): 进度百分比。
@@ -385,20 +394,15 @@ async def _submit_video_download(
 
             Returns:
                 None: 无返回值, 仅推送快照。
+
+            Callers:
+                - ``services/online_sources/framework/media.py:download_post`` (经 ``emit`` 回调)
             """
-            emit(
-                JobSnapshot(
-                    status="running", phase="downloading",
-                    total=total, done=pct, pct=pct,
-                    message=f"正在下载视频 {pct}%",
-                )
-            )
-        emit(
-            JobSnapshot(
-                status="running", phase="downloading", total=1, done=0, pct=0,
-                message="正在下载视频",
-            )
-        )
+            prog.done = pct
+            prog.total = total
+            prog.message = f"正在下载视频 {pct}%"
+            emit(prog.snapshot())
+
         result = asyncio.run(
             download_post(source, post, video_dir, overwrite=False, emit=on_progress)
         )
@@ -406,12 +410,10 @@ async def _submit_video_download(
             done_msg = f"视频下载完成: {len(result.files)} 个分P"
         else:
             done_msg = f"视频下载完成: {Path(result.path).name}"
-        emit(
-            JobSnapshot(
-                status="done", phase="done", total=1, done=1, pct=100,
-                message=done_msg,
-            )
-        )
+        prog.status = prog.phase = "done"
+        prog.done = prog.total = 1
+        prog.message = done_msg
+        emit(prog.snapshot())
 
     job_id = await mgr.submit(
         kind="video_download",
@@ -500,11 +502,10 @@ async def batch_start(
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
 
-    prog = BatchProgress(
-        limit=body.limit,
+    prog = BatchRun(
         conn=body.conn,
         rate_rps=body.rate_rps,
-        dataset=ds.name,
+        total=body.limit,
     )
     thumb = ds.thumbnailer
     tags = body.tags
@@ -583,14 +584,14 @@ def batch_params(request: Request, ds: DatasetDep, body: BatchParamsBody) -> Job
     if prog is None:
         raise HTTPException(404, "没有进行中的批量任务")
     if body.limit is not None:
-        prog.limit = body.limit
+        prog.total = body.limit
     if body.conn is not None:
         prog.conn = body.conn
     if body.rate_rps is not None:
         prog.rate_rps = body.rate_rps
     logger.info(
         "数据集 %s 更新批量参数: job=%s limit=%s conn=%s rate_rps=%s",
-        ds.name, job.id, prog.limit, prog.conn, prog.rate_rps,
+        ds.name, job.id, prog.total, prog.conn, prog.rate_rps,
     )
     return JobSubmitResponse(ok=True, job_id=job.id)
 
@@ -662,16 +663,37 @@ async def refresh_metadata(
         raise HTTPException(400, str(e)) from e
 
     def run(emit: EmitFn) -> None:
-        import asyncio as _asyncio
-        loop = _asyncio.new_event_loop()
-        try:
-            loop.run_until_complete(_run_refresh(ds.work_dir(body.dir).path if body.dir else ds.root, emit))
-        finally:
-            loop.close()
+        """工作线程: 扫描目录并按文件名 ID 重新拉取元数据.
+
+        Args:
+            emit (EmitFn): 任务事件推送回调.
+
+        Returns:
+            None: 无返回值, 进度经 ``emit`` 推送.
+
+        Callers:
+            - ``services/core/jobs.py:JobManager.submit``
+        """
+        asyncio.run(
+            _run_refresh(
+                ds.work_dir(body.dir).path if body.dir else ds.root,
+                emit,
+            )
+        )
 
     async def _run_refresh(scan_dir: Path, emit: EmitFn) -> None:
-        from services.online_sources.framework.base import detect_source, get_source
+        """逐个文件按来源前缀重新拉取在线来源元数据.
 
+        Args:
+            scan_dir (Path): 待扫描目录.
+            emit (EmitFn): 任务事件推送回调.
+
+        Returns:
+            None: 无返回值, 进度经 ``emit`` 推送.
+
+        Callers:
+            - ``routes/online_sources.py:refresh_metadata`` (经 ``asyncio.run``)
+        """
         scan_dir = scan_dir.resolve()
         files: list[tuple[str, str]] = []  # (source, pid)
         for f in sorted(scan_dir.iterdir(), key=lambda p: natural_key(p.name)):
@@ -682,30 +704,39 @@ async def refresh_metadata(
                 files.append((*detected,))
 
         total = len(files)
+        prog = JobProgress(status="running", phase="running", total=total)
+        if not total:
+            prog.status = prog.phase = "done"
+            prog.message = "未识别到在线来源文件(文件名无来源前缀)"
+            emit(prog.snapshot())
+            return
+
         stats: dict[str, int] = {}
         errors: list[str] = []
-        if not total:
-            emit(JobSnapshot(status="done", phase="done", total=0, done=0, pct=100,
-                             message="未识别到在线来源文件(文件名无来源前缀)"))
-            return
-        emit(JobSnapshot(status="running", phase="running", total=total, done=0, pct=0,
-                         message=f"共 {total} 个文件"))
+        prog.message = f"共 {total} 个文件"
+        emit(prog.snapshot())
 
         for i, (source, pid) in enumerate(files):
-            pct = round(100.0 * (i + 1) / total, 1) if total else 100.0
-            emit(JobSnapshot(status="running", phase="running", total=total, done=i + 1, pct=pct,
-                             message=f"[{i + 1}/{total}] {source}:{pid}"))
+            prog.done = i + 1
+            prog.current = f"{source}:{pid}"
+            prog.message = f"[{i + 1}/{total}] {source}:{pid}"
+            emit(prog.snapshot())
             try:
                 src = get_source(source)
                 await src.fetch_meta(scan_dir, pid)
                 stats[source] = stats.get(source, 0) + 1
+                prog.ok += 1
             except Exception as e:
                 errors.append(f"{source}:{pid} {e}")
+                prog.failed += 1
+                prog.log(f"元数据刷新失败: {source}:{pid} — {e}")
 
         parts = [f"{s}: {c}" for s, c in sorted(stats.items())]
         parts.append(f"错误 {len(errors)}")
-        emit(JobSnapshot(status="done", phase="done", total=total, done=total, pct=100,
-                         message=", ".join(parts)))
+        prog.status = prog.phase = "done"
+        prog.current = ""
+        prog.message = ", ".join(parts)
+        emit(prog.snapshot())
 
     job_id = await jobs(request).submit(kind="refresh_meta", group="compute", dataset=ds.name, run=run)
     logger.info("数据集 %s 刷新元数据: job=%s 目录=%s", ds.name, job_id, body.dir)

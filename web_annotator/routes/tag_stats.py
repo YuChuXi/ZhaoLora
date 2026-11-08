@@ -5,21 +5,43 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from routes.deps import DatasetDep, jobs, resolve_path
+from services.analysis.reranker import (
+    model_ready as reranker_model_ready,
+)
+from services.analysis.reranker import (
+    rerank,
+)
+from services.analysis.sam3 import (
+    model_ready as concept_model_ready,
+)
+from services.analysis.sam3 import (
+    run_concept_query,
+)
 from services.analysis.scoring import load_score_json
 from services.core.atomic import atomic_write_text
-from services.core.jobs import EmitFn
+from services.core.jobs import EmitFn, JobProgress
 from services.core.natural import natural_key
 from services.core.thumbnailer import image_size
 from services.dataset.workdir import WorkDir
 from services.models import (
-    JobSnapshot,
-    JobSubmitResponse,
     TAG_CHECK_POSITIONS,
     TAG_INSERT_POSITIONS,
+    ConceptQueryBody,
+    ConceptQueryItem,
+    ConceptQueryResult,
+    EmbeddingBatchTagBody,
+    EmbeddingBatchTagResponse,
+    EmbeddingHistoryItem,
+    EmbeddingHistoryResponse,
+    EmbeddingQueryBody,
+    EmbeddingQueryItem,
+    EmbeddingQueryResult,
+    EmbeddingStatusResponse,
+    JobSubmitResponse,
     TagCheckBody,
     TagCheckItem,
     TagCheckResponse,
@@ -27,27 +49,20 @@ from services.models import (
     TagEditOneBody,
     TagStatsResult,
     WorkDirInfo,
-    EmbeddingStatusResponse,
-    EmbeddingQueryBody,
-    EmbeddingQueryItem,
-    EmbeddingQueryResult,
-    EmbeddingHistoryItem,
-    EmbeddingHistoryResponse,
-    EmbeddingBatchTagBody,
-    EmbeddingBatchTagResponse,
-    ConceptQueryBody,
-    ConceptQueryItem,
-    ConceptQueryResult,
 )
-from services.tagging.clean import add_tag_to_caption, batch_edit_tags, check_tag_in_caption, clean_txt_dirs, delete_tag_from_caption, split_header_body, join_tags_line
-from services.tagging.stats import count_tags, load_translation_map, translate_missing_tags
-from services.analysis.reranker import (
-    rerank,
-    model_ready as reranker_model_ready,
+from services.tagging.clean import (
+    add_tag_to_caption,
+    batch_edit_tags,
+    check_tag_in_caption,
+    clean_txt_dirs,
+    delete_tag_from_caption,
+    join_tags_line,
+    split_header_body,
 )
-from services.analysis.sam3 import (
-    run_concept_query,
-    model_ready as concept_model_ready,
+from services.tagging.stats import (
+    count_tags,
+    load_translation_map,
+    translate_missing_tags,
 )
 
 logger = logging.getLogger(__name__)
@@ -187,7 +202,7 @@ async def translate_missing(ds: DatasetDep, body: TranslateMissingBody) -> dict:
     result = await translate_missing_tags(body.tags, root)
     logger.info(
         "补译缺失标签 dataset=%s 目标=%d 已翻译=%d",
-        request.state.runtime.root.name,
+        ds.name,
         len(body.tags),
         len(result),
     )
@@ -195,13 +210,14 @@ async def translate_missing(ds: DatasetDep, body: TranslateMissingBody) -> dict:
 
 
 @router.post("/clean")
-async def clean(ds: DatasetDep, body: CleanBody) -> JobSubmitResponse:
+async def clean(request: Request, ds: DatasetDep, body: CleanBody) -> JobSubmitResponse:
     """提交标签清洗长任务。
 
     返回 job_id；结束事件的 result 为清洗结果。
 
     Args:
         request (Request): FastAPI 请求对象, 由路由参数注入。
+        ds (Dataset): 当前数据集, 由依赖注入提供。
         body (CleanBody): 清洗参数, 含删除/前置/注入等选项。
 
     Returns:
@@ -215,6 +231,11 @@ async def clean(ds: DatasetDep, body: CleanBody) -> JobSubmitResponse:
 
     scores = load_score_json(root, ".aesthetic_scores.json") if body.inject_pony_score else {}
     payload = body
+    prog = JobProgress(
+        status="running",
+        phase="cleaning",
+        message="预览中…" if payload.dry_run else "写入中…",
+    )
 
     def run(emit: EmitFn) -> TagCleanResult:
         """工作线程: 清洗旁路 txt。
@@ -228,14 +249,7 @@ async def clean(ds: DatasetDep, body: CleanBody) -> JobSubmitResponse:
         Callers:
             - ``services/core/jobs.py:JobManager.submit``
         """
-        emit(
-            JobSnapshot(
-                status="running",
-                phase="cleaning",
-                message="预览中…" if payload.dry_run else "写入中…",
-                pct=0,
-            )
-        )
+        emit(prog.snapshot())
         result = clean_txt_dirs(
             [w.path for w in works],
             drop=payload.drop,
@@ -254,22 +268,18 @@ async def clean(ds: DatasetDep, body: CleanBody) -> JobSubmitResponse:
                 "dirs": [w.name for w in works],
             }
         )
-        emit(
-            JobSnapshot(
-                status="done",
-                phase="done",
-                message="完成",
-                pct=100,
-                result=result,
-            )
-        )
+        prog.status = prog.phase = "done"
+        prog.done = prog.total = 1
+        prog.message = "完成"
+        prog.result = result
+        emit(prog.snapshot())
         return result
 
     job_id = await jobs(request).submit(kind="tag_clean", group="compute", dataset=rt.name, run=run)
     logger.info(
         "标签清洗 dataset=%s dirs=%s 模式=%s job_id=%s",
         rt.name,
-        len(selected),
+        len(works),
         "dry-run" if payload.dry_run else "write",
         job_id,
     )
@@ -296,13 +306,14 @@ class BatchEditBody(BaseModel):
 
 
 @router.post("/batch-edit")
-async def batch_edit(ds: DatasetDep, body: BatchEditBody) -> JobSubmitResponse:
+async def batch_edit(request: Request, ds: DatasetDep, body: BatchEditBody) -> JobSubmitResponse:
     """批量删除/添加标签。
 
     返回 job_id；结束事件的 result 为清洗结果。
 
     Args:
         request (Request): FastAPI 请求对象, 由路由参数注入。
+        ds (Dataset): 当前数据集, 由依赖注入提供。
         body (BatchEditBody): 批量编辑参数, 含增删/替换/位置/分隔等选项。
 
     Returns:
@@ -331,6 +342,11 @@ async def batch_edit(ds: DatasetDep, body: BatchEditBody) -> JobSubmitResponse:
 
     scores = load_score_json(root, ".aesthetic_scores.json") if body.inject_pony_score else {}
     payload = body
+    prog = JobProgress(
+        status="running",
+        phase="editing",
+        message="预览中…" if payload.dry_run else "写入中…",
+    )
 
     def run(emit: EmitFn) -> TagCleanResult:
         """工作线程: 批量编辑旁路 txt。
@@ -344,14 +360,7 @@ async def batch_edit(ds: DatasetDep, body: BatchEditBody) -> JobSubmitResponse:
         Callers:
             - ``services/core/jobs.py:JobManager.submit``
         """
-        emit(
-            JobSnapshot(
-                status="running",
-                phase="editing",
-                message="预览中…" if payload.dry_run else "写入中…",
-                pct=0,
-            )
-        )
+        emit(prog.snapshot())
         result = batch_edit_tags(
             [w.path for w in works],
             delete_tags=payload.delete_tags,
@@ -371,25 +380,21 @@ async def batch_edit(ds: DatasetDep, body: BatchEditBody) -> JobSubmitResponse:
         )
         result = result.model_copy(
             update={
-                "dirs": [p.name if p != root else "." for p in selected],
+                "dirs": [p.name if p != root else "." for p in works],
             }
         )
-        emit(
-            JobSnapshot(
-                status="done",
-                phase="done",
-                message="完成",
-                pct=100,
-                result=result,
-            )
-        )
+        prog.status = prog.phase = "done"
+        prog.done = prog.total = 1
+        prog.message = "完成"
+        prog.result = result
+        emit(prog.snapshot())
         return result
 
     job_id = await jobs(request).submit(kind="tag_batch_edit", group="compute", dataset=rt.name, run=run)
     logger.info(
         "批量编辑标签 dataset=%s dirs=%s 删除=%d 新增=%d 替换=%d 模式=%s job_id=%s",
         rt.name,
-        len(selected),
+        len(works),
         len(body.delete_tags),
         len(body.add_tags),
         len(body.replace_pairs),
@@ -462,7 +467,6 @@ def check(ds: DatasetDep, body: TagCheckBody) -> TagCheckResponse:
         - ``static/js/tag_check.js:runCheck``
     """
     rt = ds
-    root = rt.root
     if body.position not in TAG_CHECK_POSITIONS:
         raise HTTPException(400, f"position 非法: {body.position}")
 
@@ -517,7 +521,6 @@ def edit_one(ds: DatasetDep, body: TagEditOneBody) -> TagCheckItem:
         - ``static/js/tag_check.js:singleTagOp``
     """
     rt = ds
-    root = rt.root
     if body.position not in TAG_INSERT_POSITIONS:
         raise HTTPException(400, f"position 非法: {body.position}")
     if body.check_position not in TAG_CHECK_POSITIONS:
@@ -573,7 +576,6 @@ def delete_one(ds: DatasetDep, body: TagDeleteOneBody) -> TagCheckItem:
         - ``static/js/tag_check.js:singleTagOp``
     """
     rt = ds
-    root = rt.root
     if not body.tag.strip():
         raise HTTPException(400, "标签不能为空")
 
@@ -619,7 +621,9 @@ def embedding_status() -> EmbeddingStatusResponse:
 
 
 @router.post("/embedding/query")
-async def embedding_query(ds: DatasetDep, body: EmbeddingQueryBody) -> JobSubmitResponse:
+async def embedding_query(
+    request: Request, ds: DatasetDep, body: EmbeddingQueryBody
+) -> JobSubmitResponse:
     """按查询文本对候选图片实时重排序(异步长任务, 带进度条)。
 
     Reranker 为 cross-encoder, 无法预计算向量, 须对目录内全部图片逐张
@@ -634,6 +638,7 @@ async def embedding_query(ds: DatasetDep, body: EmbeddingQueryBody) -> JobSubmit
 
     Args:
         request (Request): FastAPI 请求对象, 由路由参数注入。
+        ds (Dataset): 当前数据集, 由依赖注入提供。
         body (EmbeddingQueryBody): 查询参数, 含查询文本与目录列表。
 
     Returns:
@@ -644,7 +649,6 @@ async def embedding_query(ds: DatasetDep, body: EmbeddingQueryBody) -> JobSubmit
         - ``static/js/app.js:searchSort``
     """
     rt = ds
-    root = rt.root
     works = rt.select(body.dirs)
     if not works:
         raise HTTPException(400, "请选择目录")
@@ -678,19 +682,17 @@ async def embedding_query(ds: DatasetDep, body: EmbeddingQueryBody) -> JobSubmit
             Callers:
                 - ``services/core/jobs.py:JobManager.submit``
             """
+            prog = JobProgress(status="running", phase="querying")
             if missing:
-                emit(JobSnapshot(
-                    status="running", phase="querying",
-                    message=f"正在补全 {len(missing)} 张新图评分…", pct=0, total=len(missing),
-                ))
+                prog.total = len(missing)
+                prog.message = f"正在补全 {len(missing)} 张新图评分…"
+                emit(prog.snapshot())
 
                 def on_progress(done: int, n_total: int) -> None:
-                    emit(JobSnapshot(
-                        status="running", phase="querying",
-                        message=f"正在补全评分 {done}/{n_total}…",
-                        pct=round(done / n_total * 100, 1) if n_total else 100,
-                        done=done, total=n_total,
-                    ))
+                    prog.done = done
+                    prog.total = n_total
+                    prog.message = f"正在补全评分 {done}/{n_total}…"
+                    emit(prog.snapshot())
 
                 new_hits = rerank(query_text, missing, on_progress=on_progress)
                 hits = sorted(cached + new_hits, key=lambda x: x[1], reverse=True)
@@ -703,10 +705,11 @@ async def embedding_query(ds: DatasetDep, body: EmbeddingQueryBody) -> JobSubmit
                 for p, s in hits
             ]
             result = EmbeddingQueryResult(items=items)
-            emit(JobSnapshot(
-                status="done", phase="done",
-                message=f"命中缓存, 共 {len(items)} 张", pct=100, result=result,
-            ))
+            prog.status = prog.phase = "done"
+            prog.done = prog.total = len(items)
+            prog.message = f"命中缓存, 共 {len(items)} 张"
+            prog.result = result
+            emit(prog.snapshot())
             return result
 
         if missing:
@@ -721,7 +724,7 @@ async def embedding_query(ds: DatasetDep, body: EmbeddingQueryBody) -> JobSubmit
             "语义排序-缓存命中 dataset=%s query=%s 目录数=%d 新图=%d job_id=%s",
             rt.name,
             query_text,
-            len(selected),
+            len(works),
             len(missing),
             job_id,
         )
@@ -745,18 +748,17 @@ async def embedding_query(ds: DatasetDep, body: EmbeddingQueryBody) -> JobSubmit
         Callers:
             - ``services/core/jobs.py:JobManager.submit``
         """
-        emit(JobSnapshot(
-            status="running", phase="querying",
-            message="正在相似度评分…", pct=0, total=total,
-        ))
+        prog = JobProgress(
+            status="running", phase="querying", total=total,
+            message="正在相似度评分…",
+        )
+        emit(prog.snapshot())
 
         def on_progress(done: int, n_total: int) -> None:
-            emit(JobSnapshot(
-                status="running", phase="querying",
-                message=f"正在相似度评分 {done}/{n_total}…",
-                pct=round(done / n_total * 100, 1) if n_total else 100,
-                done=done, total=n_total,
-            ))
+            prog.done = done
+            prog.total = n_total
+            prog.message = f"正在相似度评分 {done}/{n_total}…"
+            emit(prog.snapshot())
 
         hits = rerank(query_text, candidates, on_progress=on_progress)
         cache.put(query_text, dirs_key, hits)
@@ -765,10 +767,11 @@ async def embedding_query(ds: DatasetDep, body: EmbeddingQueryBody) -> JobSubmit
             for p, s in hits
         ]
         result = EmbeddingQueryResult(items=items)
-        emit(JobSnapshot(
-            status="done", phase="done",
-            message=f"完成, 共 {len(items)} 张", pct=100, result=result,
-        ))
+        prog.status = prog.phase = "done"
+        prog.done = prog.total = len(items)
+        prog.message = f"完成, 共 {len(items)} 张"
+        prog.result = result
+        emit(prog.snapshot())
         return result
 
     job_id = await jobs(request).submit(kind="embedding_query", group="compute", dataset=rt.name, run=run)
@@ -776,7 +779,7 @@ async def embedding_query(ds: DatasetDep, body: EmbeddingQueryBody) -> JobSubmit
         "语义排序 dataset=%s query=%s 目录数=%d 候选图片=%d job_id=%s",
         rt.name,
         query_text,
-        len(selected),
+        len(works),
         total,
         job_id,
     )
@@ -822,7 +825,6 @@ def embedding_batch_tag(ds: DatasetDep, body: EmbeddingBatchTagBody) -> Embeddin
     Callers:
         - ``static/js/tag_check.js:embBatchTag``
     """
-    root = ds.root
     if not body.paths:
         raise HTTPException(400, "无匹配图片, 请先按相似度排序")
     if not body.tag.strip():
@@ -837,7 +839,7 @@ def embedding_batch_tag(ds: DatasetDep, body: EmbeddingBatchTagBody) -> Embeddin
 
     changed = 0
     for rel in body.paths:
-        img_abs = resolve_path(rt, rel)
+        img_abs = resolve_path(ds, rel)
         if not img_abs.is_file():
             continue
         txt_path = img_abs.with_suffix(".txt")
@@ -854,7 +856,7 @@ def embedding_batch_tag(ds: DatasetDep, body: EmbeddingBatchTagBody) -> Embeddin
 
     logger.info(
         "批量打标 dataset=%s action=%s tag=%s 匹配=%d 变更=%d",
-        request.state.runtime.root.name,
+        ds.name,
         action,
         tag,
         len(body.paths),
@@ -890,7 +892,9 @@ def delete_tag_from_caption_fuzzy(raw: str, tag: str) -> str:
 
 
 @router.post("/concept/query")
-async def concept_query(ds: DatasetDep, body: ConceptQueryBody) -> JobSubmitResponse:
+async def concept_query(
+    request: Request, ds: DatasetDep, body: ConceptQueryBody
+) -> JobSubmitResponse:
     """按概念提示词对候选图片执行文本提示概念分割(异步长任务, 带进度条)。
 
     SAM3 对每张图片逐张分割并计算掩码占比, 耗时较长, 故提交 JobManager,
@@ -899,6 +903,7 @@ async def concept_query(ds: DatasetDep, body: ConceptQueryBody) -> JobSubmitResp
 
     Args:
         request (Request): FastAPI 请求对象, 由路由参数注入。
+        ds (Dataset): 当前数据集, 由依赖注入提供。
         body (ConceptQueryBody): 概念查询参数, 含查询文本与目录列表。
 
     Returns:
@@ -908,7 +913,6 @@ async def concept_query(ds: DatasetDep, body: ConceptQueryBody) -> JobSubmitResp
         - ``static/js/tag_check.js:embSort``
     """
     rt = ds
-    root = rt.root
     works = rt.select(body.dirs)
     if not works:
         raise HTTPException(400, "请选择目录")
@@ -939,18 +943,17 @@ async def concept_query(ds: DatasetDep, body: ConceptQueryBody) -> JobSubmitResp
         Callers:
             - ``services/core/jobs.py:JobManager.submit``
         """
-        emit(JobSnapshot(
-            status="running", phase="concept",
-            message="正在概念分割…", pct=0, total=total,
-        ))
+        prog = JobProgress(
+            status="running", phase="concept", total=total,
+            message="正在概念分割…",
+        )
+        emit(prog.snapshot())
 
         def on_progress(done: int, n_total: int) -> None:
-            emit(JobSnapshot(
-                status="running", phase="concept",
-                message=f"正在概念分割 {done}/{n_total}…",
-                pct=round(done / n_total * 100, 1) if n_total else 100,
-                done=done, total=n_total,
-            ))
+            prog.done = done
+            prog.total = n_total
+            prog.message = f"正在概念分割 {done}/{n_total}…"
+            emit(prog.snapshot())
 
         hits = run_concept_query(candidates, concept, on_progress=on_progress)
         items = [
@@ -962,10 +965,11 @@ async def concept_query(ds: DatasetDep, body: ConceptQueryBody) -> JobSubmitResp
             for it in hits
         ]
         result = ConceptQueryResult(items=items)
-        emit(JobSnapshot(
-            status="done", phase="done",
-            message=f"完成, 共 {len(items)} 张", pct=100, result=result,
-        ))
+        prog.status = prog.phase = "done"
+        prog.done = prog.total = len(items)
+        prog.message = f"完成, 共 {len(items)} 张"
+        prog.result = result
+        emit(prog.snapshot())
         return result
 
     job_id = await jobs(request).submit(kind="concept_query", group="compute", dataset=rt.name, run=run)
@@ -973,7 +977,7 @@ async def concept_query(ds: DatasetDep, body: ConceptQueryBody) -> JobSubmitResp
         "概念分割查询 dataset=%s query=%s 目录数=%d 候选图片=%d job_id=%s",
         rt.name,
         concept,
-        len(selected),
+        len(works),
         total,
         job_id,
     )

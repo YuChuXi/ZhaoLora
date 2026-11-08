@@ -19,8 +19,13 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from services.core.natural import natural_key
+
+if TYPE_CHECKING:
+    from services.dataset.runtime import Dataset
+    from services.models import WorkDirInfo
 
 # 可浏览的图像后缀; 工作目录内的扫描与计数均以此为准
 IMAGE_EXTS = frozenset({".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif"})

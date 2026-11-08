@@ -229,7 +229,8 @@ async def start(ds: DatasetDep, request: Request, body: CaptionBody) -> JobSubmi
             progress=prog,
             on_update=on_update,
         )
-        emit(prog.snapshot().model_copy(update={"result": result}))
+        prog.result = result
+        emit(prog.snapshot())
         return result
 
     job_id = await jobs(request).submit(

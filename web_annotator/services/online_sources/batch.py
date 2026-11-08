@@ -10,16 +10,15 @@ from __future__ import annotations
 
 import asyncio
 import time
-from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from services.core.jobs import EmitFn, JobProgress
+from services.dataset.workdir import VIDEO_DIRNAME
 from services.online_sources.framework.base import get_source
 from services.online_sources.framework.media import download_post, local_rel_path
 from services.online_sources.framework.utils import is_downloaded
-from services.dataset.workdir import VIDEO_DIRNAME
-from services.models import JobSnapshot
 
 # 连续空页判定抓完的阈值: 会话式来源(如 B 站)的风控空心响应与真实末页结构
 # 一致, 需连续多次空页(退避重试同一游标)才能确认抓完, 避免批量提前停止
@@ -27,7 +26,6 @@ EMPTY_STREAK_MAX = 6
 # 空页退避基数 (秒), 指数递增并封顶, 用于会话式来源空页后的重试等待
 _EMPTY_BACKOFF_BASE = 1.5
 _EMPTY_BACKOFF_CAP = 15.0
-EmitFn = Callable[[JobSnapshot], None]
 
 
 def _empty_backoff(streak: int) -> float:
@@ -46,78 +44,38 @@ def _empty_backoff(streak: int) -> float:
 
 
 @dataclass
-class BatchProgress:
-    """可变进度与运行参数.
+class BatchRun(JobProgress):
+    """批量下载运行时状态: 通用进度之上叠加可热更新参数.
+
+    Attributes:
+        conn (int): 并发下载槽位数.
+        rate_rps (float): 每秒请求数上限, 0 表示不限速.
+
+    下载上限复用 ``JobProgress.total``, 由路由按请求参数写入, 运行中可热更新.
 
     Callers:
-        - ``services/online_sources/batch.py:run_batch``
-        - ``routes/online_sources.py:batch_params``
+        - ``routes/online_sources.py:batch_start`` / ``batch_params``
     """
 
-    cancel_requested: bool = False
-    limit: int = 50
     conn: int = 2
     rate_rps: float = 0.0
-    done: int = 0
-    skipped: int = 0
-    failed: int = 0
-    status: str = "running"
-    message: str = ""
-    phase: str = "download"
-    kind: str = "online_batch"
-    dataset: str = ""
-
-    def snapshot(self) -> JobSnapshot:
-        """组装 JobSnapshot.
-
-        Returns:
-            JobSnapshot: 当前进度的快照, 含百分比、计数与状态消息.
-
-        Callers:
-            - ``services/online_sources/batch.py:_run_async``
-        """
-        total = max(0, int(self.limit))
-        done = max(0, int(self.done))
-        pct = min(100.0, (done / total) * 100.0) if total > 0 else None
-        bits: list[str] = []
-        if self.skipped > 0:
-            bits.append(f"跳过重复 {self.skipped}")
-        if self.failed > 0:
-            bits.append(f"失败 {self.failed}")
-        if self.message:
-            bits.append(self.message)
-        return JobSnapshot(
-            status=self.status,
-            kind=self.kind,
-            dataset=self.dataset,
-            done=done,
-            total=total,
-            ok=done,
-            skipped=self.skipped,
-            failed=self.failed,
-            pct=pct,
-            phase=self.phase,
-            message=" · ".join(bits),
-            cancel_requested=self.cancel_requested,
-        )
 
 
-_ACTIVE: dict[str, BatchProgress] = {}
+_ACTIVE: dict[str, BatchRun] = {}
 
 
-def register_progress(job_id: str, prog: BatchProgress) -> None:
+def register_progress(job_id: str, prog: BatchRun) -> None:
     """登记进行中的批量下载任务, 供热更新接口查询.
 
     Args:
         job_id (str): 任务 ID.
-        prog (BatchProgress): 进度对象.
+        prog (BatchRun): 运行时状态.
 
     Returns:
         None: 无返回值.
 
     Callers:
         - ``routes/online_sources.py:batch_start``
-        - ``services/online_sources/batch.py:run_batch``
     """
     _ACTIVE[job_id] = prog
 
@@ -137,14 +95,14 @@ def unregister_progress(job_id: str) -> None:
     _ACTIVE.pop(job_id, None)
 
 
-def get_progress(job_id: str) -> BatchProgress | None:
-    """按 job_id 获取进度对象.
+def get_progress(job_id: str) -> BatchRun | None:
+    """按 job_id 获取运行时状态.
 
     Args:
         job_id (str): 任务 ID.
 
     Returns:
-        BatchProgress | None: 进度对象; 不存在时返回 None.
+        BatchRun | None: 运行时状态; 不存在时返回 None.
 
     Callers:
         - ``routes/online_sources.py:batch_params``
@@ -162,7 +120,7 @@ def run_batch(
     out_dir: Path,
     root: Path,
     start_page: int,
-    progress: BatchProgress,
+    progress: BatchRun,
     emit: EmitFn,
     thumbnailer: Any | None = None,
     anima_format: bool = True,
@@ -180,7 +138,7 @@ def run_batch(
         out_dir (Path): 输出目录.
         root (Path): 数据集根目录, 用于计算相对路径.
         start_page (int): 起始页码.
-        progress (BatchProgress): 可变进度对象.
+        progress (BatchRun): 运行时状态, 含下载上限与热更新参数.
         emit (EmitFn): 快照推送回调.
         thumbnailer (Any | None): 缩略图生成器, 可选.
         anima_format (bool): 是否按 Anima 格式输出标签.
@@ -193,7 +151,6 @@ def run_batch(
     Callers:
         - ``routes/online_sources.py:batch_start``
     """
-    register_progress(job_id, progress)
     try:
         asyncio.run(
             _run_async(
@@ -225,7 +182,7 @@ async def _run_async(
     out_dir: Path,
     root: Path,
     start_page: int,
-    progress: BatchProgress,
+    progress: BatchRun,
     emit: EmitFn,
     thumbnailer: Any | None,
     anima_format: bool = True,
@@ -242,7 +199,7 @@ async def _run_async(
         out_dir (Path): 输出目录.
         root (Path): 数据集根目录, 用于计算相对路径.
         start_page (int): 起始页码.
-        progress (BatchProgress): 可变进度对象.
+        progress (BatchRun): 运行时状态, 含下载上限与热更新参数.
         emit (EmitFn): 快照推送回调.
         thumbnailer (Any | None): 缩略图生成器, 可选.
         anima_format (bool): 是否按 Anima 格式输出标签.
@@ -257,7 +214,7 @@ async def _run_async(
     """
 
     def push(msg: str | None = None) -> None:
-        """推送快照.
+        """推送快照, 把跳过与失败计数并入状态消息.
 
         Args:
             msg (str | None): 可选状态消息, 写入 ``progress.message`` 后推送.
@@ -270,7 +227,12 @@ async def _run_async(
         """
         if msg is not None:
             progress.message = msg
-        emit(progress.snapshot())
+        parts = [
+            f"跳过重复 {progress.skipped}" if progress.skipped else "",
+            f"失败 {progress.failed}" if progress.failed else "",
+            progress.message,
+        ]
+        emit(progress.snapshot().model_copy(update={"message": " · ".join(p for p in parts if p)}))
 
     progress.status = "running"
     progress.phase = "download"
@@ -379,7 +341,7 @@ async def _run_async(
             while True:
                 if progress.cancel_requested:
                     return None
-                if progress.done + inflight >= progress.limit:
+                if progress.done + inflight >= progress.total:
                     return None
                 while buf_i < len(buffer):
                     p = buffer[buf_i]
@@ -433,6 +395,7 @@ async def _run_async(
                         progress.skipped += 1
                     else:
                         progress.done += 1
+                        progress.ok += 1
                         if thumbnailer is not None and not post.is_video:
                             rel = local_rel_path(root, result.path)
                             await thumbnailer.ensure_async(rel)
@@ -471,17 +434,17 @@ async def _run_async(
             if slot >= progress.conn:
                 # 空闲槽位: 无并发额度时挂起等待, 但批量结束(达限或翻完且无
                 # 在途下载)时一并退出, 避免 gather 因空转槽位永不返回
-                if progress.done >= progress.limit or (not has_more_pages and inflight <= 0):
+                if progress.done >= progress.total or (not has_more_pages and inflight <= 0):
                     return
                 await asyncio.sleep(0.1)
                 continue
-            if progress.done >= progress.limit:
+            if progress.done >= progress.total:
                 return
             post = await next_post()
             if post is None:
                 if progress.cancel_requested:
                     return
-                if progress.done >= progress.limit:
+                if progress.done >= progress.total:
                     return
                 if not has_more_pages and inflight <= 0:
                     return
@@ -498,4 +461,5 @@ async def _run_async(
     else:
         progress.status = "done"
         progress.message = "已完成"
+    progress.phase = "done"
     push()

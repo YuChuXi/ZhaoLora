@@ -243,7 +243,6 @@ class PixivSource(SourceClient):
         if page not in pages:
             start = (page - 1) * _WORKS_PER_PAGE
             batch = ids[start : start + _WORKS_PER_PAGE]
-            sem = asyncio.Semaphore(5)
             results = await asyncio.gather(*[self._fetch_work(iid) for iid in batch])
             pages[page] = [p for sub in results for p in sub]
         has_more = page * _WORKS_PER_PAGE < len(ids)

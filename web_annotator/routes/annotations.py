@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
@@ -15,6 +15,9 @@ from services.models import (
     SelectAllResponse,
     ToggleResponse,
 )
+
+if TYPE_CHECKING:
+    from services.dataset.runtime import Dataset
 
 logger = logging.getLogger(__name__)
 
@@ -205,7 +208,6 @@ def restore(ds: DatasetDep, body: RestoreBody) -> CountResponse:
     Callers:
         - ``static/js/store.js:restore``
     """
-    root = ds.root
     state_mgr = ds.state_manager
     trashed = state_mgr.get().trashed
     to_restore = [_rel_under(ds, p) for p in body.paths if p in trashed]

@@ -54,15 +54,19 @@ class JobProgress:
         message (str): 用户可见的状态消息.
         logs (list[str]): 日志行, 上限 400, 推送最近 80 条.
         cancel_requested (bool): 是否已请求取消.
+        result (JobResult | None): 任务终态携带的结果对象.
 
     Callers:
         - ``services/analysis/wd14.py:run_batch`` / ``build_cache``
         - ``services/analysis/scoring.py:run_scoring``
         - ``services/analysis/caption.py:run_caption``
+        - ``services/online_sources/batch.py:run_batch``
         - ``routes/tagging.py:start``
         - ``routes/scoring.py:start`` / ``start_cache``
         - ``routes/caption.py:start``
         - ``routes/dedupe.py:scan_duplicates``
+        - ``routes/tag_stats.py:clean`` / ``batch_edit`` / ``embedding_query`` / ``concept_query``
+        - ``routes/online_sources.py:refresh_metadata``
     """
 
     status: str = "idle"
@@ -76,6 +80,7 @@ class JobProgress:
     message: str = ""
     logs: list[str] = field(default_factory=list)
     cancel_requested: bool = False
+    result: JobResult | None = None
 
     def snapshot(self) -> JobSnapshot:
         """导出进度快照.
@@ -106,6 +111,7 @@ class JobProgress:
             message=self.message,
             logs=list(self.logs[-80:]),
             cancel_requested=self.cancel_requested,
+            result=self.result,
         )
 
     def log(self, line: str) -> None:
