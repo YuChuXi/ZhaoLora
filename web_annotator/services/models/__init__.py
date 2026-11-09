@@ -77,6 +77,8 @@ from services.models.tags import (
 from services.models.caption import (
     CAPTION_MODES,
     CaptionRule,
+    CaptionRuleGroup,
+    CaptionRuleItem,
     CaptionBody,
     CaptionListBody,
     CaptionDeleteBody,
@@ -199,6 +201,8 @@ __all__ = [
     'ConceptQueryResult',
     'CAPTION_MODES',
     'CaptionRule',
+    'CaptionRuleGroup',
+    'CaptionRuleItem',
     'CaptionBody',
     'CaptionListBody',
     'CaptionDeleteBody',

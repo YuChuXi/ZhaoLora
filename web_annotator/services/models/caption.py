@@ -29,6 +29,30 @@ class CaptionRule(BaseModel):
     pattern: str = Field("", description="逗号分隔的标签匹配模式, 支持 * 通配; 空串=全部图片生效")
 
 
+class CaptionRuleItem(BaseModel):
+    """提示词组内的候选条目."""
+
+    text: str = Field(..., description="提示词文本")
+    weight: float = Field(1.0, ge=0.0, description="抽取权重; 为 0 时不参与抽取")
+
+
+class CaptionRuleGroup(BaseModel):
+    """预设提示词组: 组内候选共享匹配标签与抽取方式.
+
+    ``pattern`` 为逗号分隔的多个标签模式, 每个模式支持 ``*`` 通配; 图片的 WD14
+    缓存标签(等价键: 小写、下划线转空格)命中任一模式即对该组生效; ``pattern``
+    为空串时不再做标签判定, 全部图片都生效.
+
+    ``exclusive`` 为 True 时组内候选互斥: 各组内权重先做 softmax 归一化, 再随机
+    抽取一条注入. 为 False 时每条候选独立判定: 权重钳制到 [0, 1] 作为该条命中的
+    概率, 命中的候选全部注入.
+    """
+
+    pattern: str = Field("", description="逗号分隔的标签匹配模式, 支持 * 通配; 空串=全部图片生效")
+    exclusive: bool = Field(True, description="组内候选是否互斥")
+    items: list[CaptionRuleItem] = Field(default_factory=list, description="候选条目")
+
+
 class CaptionBody(BaseModel):
     """描述标注启动请求."""
 
@@ -48,6 +72,7 @@ class CaptionBody(BaseModel):
         description="NSFW 增强的置信度下限; Explicit 或 Questionable 不低于该值时在提示词追加备注, 省略为不启用",
     )
     rules: list[CaptionRule] = Field(default_factory=list, description="预设提示词条目")
+    groups: list[CaptionRuleGroup] = Field(default_factory=list, description="预设提示词组")
     force: bool = Field(False, description="是否先清空本次待处理图片的已有描述再重新标注")
 
 

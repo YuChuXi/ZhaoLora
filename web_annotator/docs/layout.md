@@ -46,7 +46,7 @@ datasets/                         # 任务根（--data-dir）
 权重。各页输入参数按页面/组件名持久化为 `.annotator_settings.json`，分两层：全局缺省层在任务根
 `datasets/` 下（跨任务通用的参数习惯），数据集层在 `datasets/xxx/` 下（任务特有参数）；读取时按键
 合并、数据集键覆盖全局同键，写入按键合并、同键整体替换。数据集层键：`dirs`（目录选择器选中集，
-全局层同键作缺省）、`caption`（提示词条目与注入/模式选项）、`crop`（部位默认裁切与禁用部位）；
+全局层同键作缺省）、`caption`（提示词条目/组与注入/模式选项）、`crop`（部位默认裁切与禁用部位）；
 全局层键：`sort`（筛选页排序方式）、`filter`（`cols` 列数 / `mode` 图站模式 / `show_trash` 回收站
 开关）、`paint`（笔刷与底色参数）、`tagging`（WD14 参数）、`tag_stats`（标签统计筛选）、
 `tag_batch`（批量编辑参数）、`scoring`（`sort` / `desc` / `filter`）、`dedupe`（算法与阈值）、

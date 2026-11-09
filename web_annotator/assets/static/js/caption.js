@@ -23,8 +23,8 @@
 
   /**
    * 读取「caption」设置键的当前值。
-   * @returns {{rules?:Array<object>, inject?:Object, modes?:string[],
-   *   force?:boolean}}
+   * @returns {{rules?:Array<object>, groups?:Array<object>, inject?:Object,
+   *   modes?:string[], force?:boolean}}
    */
   function captionState() {
     var state = AppSettings.get('caption');
@@ -47,6 +47,25 @@
   function saveSaved(arr) {
     var state = captionState();
     state.rules = arr;
+    AppSettings.set('caption', state);
+  }
+
+  /**
+   * 读取已保存的随机抽取组列表。
+   * @returns {Array<object>}
+   */
+  function loadGroups() {
+    var arr = captionState().groups;
+    return Array.isArray(arr) ? arr : [];
+  }
+
+  /**
+   * 写入随机抽取组列表。
+   * @param {Array<object>} arr
+   */
+  function saveGroups(arr) {
+    var state = captionState();
+    state.groups = arr;
     AppSettings.set('caption', state);
   }
 
@@ -105,16 +124,17 @@
   }
 
   /**
-   * 创建条目删除按钮(平时低调, 悬停转为强调色)。
+   * 创建组内删除按钮。
+   * @param {string} title
    * @param {Function} onDelete 点击回调
    * @returns {HTMLButtonElement}
    */
-  function mkDel(onDelete) {
+  function mkDel(title, onDelete) {
     var btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'cap-del';
     btn.textContent = '✕';
-    btn.title = '删除该条';
+    btn.title = title;
     btn.addEventListener('click', onDelete);
     return btn;
   }
@@ -126,16 +146,18 @@
   function addRuleRow(rule) {
     rule = rule || {};
     var row = document.createElement('div');
-    row.className = 'cap-table';
+    row.className = 'cap-table cap-rule';
 
     var pattern = mkText('如 *tail*', rule.pattern);
+    pattern.classList.add('cap-rule-pattern');
     pattern.title = '逗号分隔的标签模式, * 为通配; 留空则对该数据集全部图片生效';
 
     var text = mkText('提示词内容, 如 尾巴的动作要详细描述', rule.text);
+    text.classList.add('cap-rule-text');
 
     row.appendChild(pattern);
     row.appendChild(text);
-    row.appendChild(mkDel(function () { row.remove(); persistRules(); }));
+    row.appendChild(mkDel('删除该条', function () { row.remove(); persistRules(); }));
     document.getElementById('rule-list').appendChild(row);
   }
 
@@ -144,15 +166,124 @@
    * @returns {Array<{text: string, pattern: string}>}
    */
   function collectRules() {
-    var rows = document.querySelectorAll('#rule-list .cap-table');
+    var rows = document.querySelectorAll('#rule-list .cap-rule');
     var out = [];
     for (var i = 0; i < rows.length; i++) {
-      var inputs = rows[i].querySelectorAll('input[type="text"]');
-      var text = inputs[1].value.trim();
+      var text = rows[i].querySelector('.cap-rule-text').value.trim();
       if (!text) continue;
       out.push({
         text: text,
-        pattern: inputs[0].value.trim(),
+        pattern: rows[i].querySelector('.cap-rule-pattern').value.trim(),
+      });
+    }
+    return out;
+  }
+
+  /**
+   * 在组内追加一个候选条目行。
+   * @param {HTMLDivElement} box 候选容器
+   * @param {{text?: string, weight?: number}} [item]
+   */
+  function addCandidate(box, item) {
+    item = item || {};
+    var row = document.createElement('div');
+    row.className = 'field-row cap-item';
+
+    var text = mkText('提示词内容, 如 尾巴的动作要详细描述', item.text);
+    text.classList.add('cap-text');
+    text.title = '命中该组时按组内抽取方式注入这条提示词';
+
+    var weight = document.createElement('input');
+    weight.type = 'number';
+    weight.className = 'input cap-weight';
+    weight.min = '0';
+    weight.step = '0.1';
+    weight.value = item.weight === undefined ? '1' : String(item.weight);
+    weight.title = '权重: 互斥组按 softmax 抽取一条, 非互斥组钳制到 0~1 作为命中概率; 0 不参与';
+
+    row.appendChild(text);
+    row.appendChild(weight);
+    row.appendChild(mkDel('删除该候选', function () { row.remove(); persistGroups(); }));
+    box.appendChild(row);
+  }
+
+  /**
+   * 追加一个提示词组: 组内候选共享匹配标签与抽取方式。
+   * @param {{pattern?: string, exclusive?: boolean, items: Array<object>}} group
+   */
+  function addGroupRow(group) {
+    var row = document.createElement('div');
+    row.className = 'cap-group';
+
+    var head = document.createElement('div');
+    head.className = 'field-row cap-group-head';
+    var label = document.createElement('span');
+    label.className = 'cap-note';
+    label.textContent = '匹配标签';
+    var pattern = mkText('如 *tail*; 留空对全部图片生效', group.pattern);
+    pattern.classList.add('cap-pattern');
+    pattern.title = '逗号分隔的标签模式, * 为通配; 留空则该组对该数据集全部图片生效';
+
+    var mutex = document.createElement('label');
+    mutex.className = 'cap-ck';
+    mutex.title = '互斥: 组内按 softmax 随机抽取一条; 非互斥: 每条按钳制后的权重独立判定';
+    var checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.className = 'cap-mutex';
+    checkbox.checked = group.exclusive !== false;
+    mutex.appendChild(checkbox);
+    mutex.appendChild(document.createTextNode(' 互斥'));
+
+    head.appendChild(label);
+    head.appendChild(pattern);
+    head.appendChild(mutex);
+    head.appendChild(mkDel('删除该组', function () { row.remove(); persistGroups(); }));
+
+    var items = document.createElement('div');
+    items.className = 'cap-items';
+    group.items.forEach(function (item) { addCandidate(items, item); });
+
+    var foot = document.createElement('div');
+    foot.className = 'cap-group-foot';
+    var addBtn = document.createElement('button');
+    addBtn.type = 'button';
+    addBtn.className = 'btn';
+    addBtn.textContent = '+ 候选';
+    addBtn.title = '在同一组内追加候选条目';
+    addBtn.addEventListener('click', function () {
+      addCandidate(items, null);
+      persistGroups();
+    });
+    foot.appendChild(addBtn);
+
+    row.appendChild(head);
+    row.appendChild(items);
+    row.appendChild(foot);
+    document.getElementById('group-list').appendChild(row);
+  }
+
+  /**
+   * 收集当前全部抽取组(内容为空的候选丢弃)。
+   * @returns {Array<{pattern: string, exclusive: boolean,
+   *   items: Array<{text: string, weight: number}>}>}
+   */
+  function collectGroups() {
+    var rows = document.querySelectorAll('#group-list .cap-group');
+    var out = [];
+    for (var i = 0; i < rows.length; i++) {
+      var items = [];
+      var cells = rows[i].querySelectorAll('.cap-item');
+      for (var j = 0; j < cells.length; j++) {
+        var text = cells[j].querySelector('.cap-text').value.trim();
+        if (!text) continue;
+        var weight = parseFloat(cells[j].querySelector('.cap-weight').value);
+        items.push({ text: text, weight: weight >= 0 ? weight : 1 });
+      }
+      if (!items.length) continue;
+      out.push({
+        pattern: rows[i].querySelector('.cap-pattern').value.trim(),
+        exclusive: rows[i].querySelector('.cap-mutex').checked,
+        items: items,
       });
     }
     return out;
@@ -179,7 +310,7 @@
     box.textContent = '';
     box.classList.toggle('empty', !tpl);
     if (!tpl) {
-      box.textContent = '自定义条目: 添加后在下表直接填写提示词内容';
+      box.textContent = '自定义条目: 添加后在表格行直接填写提示词内容';
       return;
     }
     var re = /\{\{\s*([^}]+?)\s*\}\}/g;
@@ -252,14 +383,20 @@
     renderSentence();
   }
 
-  /** 收集并保存当前预设提示词。 */
+  /** 收集并保存当前预设提示词条目。 */
   function persistRules() {
     saveSaved(collectRules());
   }
 
-  /** 保存提示词条目与注入设置。 */
+  /** 收集并保存当前随机抽取组。 */
+  function persistGroups() {
+    saveGroups(collectGroups());
+  }
+
+  /** 保存提示词条目、抽取组与注入设置。 */
   function saveSettings() {
     persistRules();
+    persistGroups();
     persistInject();
   }
 
@@ -269,9 +406,10 @@
     UI.closeModal('rules-dlg');
   }
 
-  /** 按「caption」设置键恢复提示词条目。 */
+  /** 按「caption」设置键恢复提示词条目与抽取组。 */
   function loadSettings() {
     loadSaved().forEach(addRuleRow);
+    loadGroups().forEach(addGroupRow);
   }
 
   // ==================== 描述筛选 ====================
@@ -556,6 +694,7 @@
       character_threshold: characterThreshold,
       nsfw_threshold: nsfwThreshold,
       rules: collectRules(),
+      groups: collectGroups(),
       force: document.getElementById('force').checked,
     };
     var runBtn = document.getElementById('btn-run');
@@ -687,6 +826,19 @@
         b.value = '';
       });
       persistRules();
+    });
+    document.getElementById('group-add').addEventListener('click', function () {
+      addGroupRow({ items: [{}] });
+      persistGroups();
+    });
+    document.getElementById('group-sample').addEventListener('click', function () {
+      addGroupRow({
+        items: [
+          { text: 'Using English', weight: 1 },
+          { text: '使用中文', weight: 1 },
+        ],
+      });
+      persistGroups();
     });
     document.getElementById('btn-settings').addEventListener('click', function () {
       UI.openModal('rules-dlg');

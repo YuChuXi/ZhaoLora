@@ -1,0 +1,12 @@
+resolutions = [512, 1024, 1536]
+enable_ar_bucket = true
+min_ar = 0.25
+max_ar = 4.0
+num_ar_buckets = 13
+caption_prefix = ""
+
+[[directory]]
+path = "/home/yuchuxi/Projects/Experiments/Dataset/ZhaoLora/datasets/纸偶/gpt"
+mask_path = "/home/yuchuxi/Projects/Experiments/Dataset/ZhaoLora/datasets/纸偶/mask/gpt"
+num_repeats = 1
+resolutions = [1024, 1280, 1536]

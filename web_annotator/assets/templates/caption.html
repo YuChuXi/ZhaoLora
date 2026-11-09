@@ -6,7 +6,7 @@
 <title>描述</title>
 <link rel="stylesheet" href="/static/css/annotator.css">
 <style>
-  /* 描述设置: 分节、参数行、提示词条目表与描述查看 */
+  /* 描述设置: 分节、参数行、提示词组与描述查看 */
   .cap-body {
     padding: 14px 16px; display: flex; flex-direction: column; gap: 12px;
     font-size: 12px; color: var(--text-dim);
@@ -25,18 +25,31 @@
   .cap-ck { display: flex; align-items: center; gap: 4px; cursor: pointer; user-select: none; }
   .cap-ck input { margin: 0; }
   .cap-num { width: 62px; }
-  /* 条目表: 表头与数据行同用一套列宽, 保证列对齐 */
+  /* 提示词条目表: 表头与数据行同用一套列宽, 保证列对齐 */
   .cap-table { display: grid; grid-template-columns: 180px minmax(0, 1fr) 24px; gap: 6px; align-items: center; }
   .cap-head { font-size: 11px; color: var(--text-dim); }
   .cap-head span { padding: 0 8px; }
   .cap-list { display: flex; flex-direction: column; gap: 4px; }
+  /* 随机抽取组: 组头为匹配标签与互斥开关, 组内为候选条目 */
+  .cap-groups { display: flex; flex-direction: column; gap: 8px; }
+  .cap-group {
+    display: flex; flex-direction: column; gap: 6px;
+    padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px;
+  }
+  .cap-group-head { gap: 8px; }
+  .cap-pattern { flex: 1; min-width: 140px; }
+  .cap-items { display: flex; flex-direction: column; gap: 6px; }
+  .cap-item { flex-wrap: nowrap; gap: 8px; }
+  .cap-text { flex: 1; min-width: 0; }
+  .cap-weight { width: 64px; flex: none; }
+  .cap-group-foot { display: flex; }
   /* 新增区: 浅底块, 与下方条目列表分区 */
   .cap-add {
     display: flex; flex-direction: column; gap: 6px;
     padding: 8px 10px; background: var(--surface);
     border: 1px solid var(--border); border-radius: 6px;
   }
-  .cap-add-foot { display: flex; justify-content: flex-end; }
+  .cap-add-foot { display: flex; justify-content: flex-end; gap: 8px; }
   .cap-sel { align-self: flex-start; }
   /* 模板句式: 只把空位替换为输入框, 句式其余部分原样显示 */
   .cap-sentence { line-height: 2.2; color: var(--text); word-break: break-word; }
@@ -113,7 +126,7 @@
     style="width:min(800px,94vw);height:auto;max-height:min(720px,88vh);">
     <div class="modal-head">
       <span class="modal-title" id="rules-dlg-title">描述设置</span>
-      <span class="cap-note">以下设置保存在浏览器本地, 与当前数据集绑定</span>
+      <span class="cap-note">以下设置随其它输入参数按数据集持久化到 .annotator_settings.json</span>
     </div>
     <div class="modal-body cap-body">
       <section class="cap-sec">
@@ -155,8 +168,8 @@
 
       <section class="cap-sec">
         <div class="cap-sec-head">
-          <span class="cap-sec-title">提示词补充</span>
-          <span class="cap-note">「匹配标签」命中 WD14 标签时注入; 留空则对该数据集全部图片生效</span>
+          <span class="cap-sec-title">提示词条目</span>
+          <span class="cap-note">「匹配标签」命中 WD14 缓存标签时注入; 留空则对该数据集全部图片生效</span>
         </div>
         <div class="cap-add">
           <select id="rule-template" class="select cap-sel" title="内嵌模板: 选模板后其空格即成待填字段"></select>
@@ -169,6 +182,19 @@
           <span>匹配标签</span><span>提示词内容</span><span></span>
         </div>
         <div class="cap-list" id="rule-list"></div>
+      </section>
+
+      <section class="cap-sec">
+        <div class="cap-sec-head">
+          <span class="cap-sec-title">随机抽取组</span>
+          <span class="cap-note">组内候选共享匹配标签; 互斥组按 softmax 抽一条, 非互斥组逐条钳制判定</span>
+        </div>
+        <div class="cap-add-foot">
+          <button class="btn" type="button" id="group-sample"
+            title="添加一组互斥的语言选择样例: Using English / 使用中文 各权重 1">语言样例</button>
+          <button class="btn green" type="button" id="group-add" title="添加一个随机抽取组">添加组</button>
+        </div>
+        <div class="cap-groups" id="group-list"></div>
       </section>
     </div>
     <div class="modal-foot">

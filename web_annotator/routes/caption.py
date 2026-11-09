@@ -241,6 +241,7 @@ async def start(ds: DatasetDep, request: Request, body: CaptionBody) -> JobSubmi
             character_threshold=payload.character_threshold,
             nsfw_threshold=payload.nsfw_threshold,
             rules=payload.rules,
+            groups=payload.groups,
             force=payload.force,
             progress=prog,
             on_update=on_update,
@@ -257,13 +258,15 @@ async def start(ds: DatasetDep, request: Request, body: CaptionBody) -> JobSubmi
         cancel_fn=lambda: setattr(prog, "cancel_requested", True),
     )
     logger.info(
-        "描述标注任务提交 dataset=%s dirs=%s modes=%s 注入通用=%s 注入角色=%s NSFW=%s force=%s job_id=%s",
+        "描述标注任务提交 dataset=%s dirs=%s modes=%s 注入通用=%s 注入角色=%s NSFW=%s 提示词条目=%d 提示词组=%d force=%s job_id=%s",
         ds.name,
         [w.name for w in selected],
         modes,
         payload.general_threshold,
         payload.character_threshold,
         payload.nsfw_threshold,
+        len(payload.rules),
+        len(payload.groups),
         payload.force,
         job_id,
     )

@@ -12,7 +12,9 @@ import asyncio
 import base64
 import json
 import logging
+import math
 import os
+import random
 from collections import deque
 from collections.abc import Callable
 from functools import partial
@@ -31,7 +33,7 @@ from services.analysis.wd14 import (
 from services.core.atomic import atomic_write_text
 from services.core.jobs import JobProgress
 from services.dataset.workdir import CAPTIONS_JSON_FILE, WorkDir
-from services.models import CaptionImageItem, CaptionResult, CaptionRule
+from services.models import CaptionImageItem, CaptionResult, CaptionRule, CaptionRuleGroup
 from services.tagging.clean import make_tag_matcher, tag_key
 
 logger = logging.getLogger(__name__)
@@ -206,8 +208,55 @@ def _rule_texts(rules: list[CaptionRule], tag_keys: set[str]) -> list[str]:
     return out
 
 
+def _group_texts(
+    groups: list[CaptionRuleGroup], tag_keys: set[str], rng: random.Random
+) -> list[str]:
+    """按命中条件与抽取方式挑出对当前图片生效的提示词文本.
+
+    组按其 ``pattern``(逗号分隔的标签模式)判定, 命中判定复用标签清洗页的
+    ``make_tag_matcher``(``danbooru`` 通配, 作用于 ``tag_key`` 归一化标签);
+    ``pattern`` 为空串时不做判定, 该组对全部图片生效. 权重为 0 的候选不参与抽取.
+
+    互斥组先对候选权重做 softmax 归一化, 再随机抽取一条注入; 非互斥组把每条权重
+    钳制到 [0, 1] 作为该条命中的概率, 独立判定并注入全部命中的候选.
+
+    Args:
+        groups (list[CaptionRuleGroup]): 预设提示词组.
+        tag_keys (set[str]): 该图片 WD14 缓存标签的归一化键集合.
+        rng (random.Random): 本次任务的随机源.
+
+    Returns:
+        list[str]: 生效的提示词文本(保持组的顺序与组内候选顺序, 丢弃空文本).
+
+    Callers:
+        - ``services/analysis/caption.py:run_caption``
+    """
+    out: list[str] = []
+    for group in groups:
+        patterns = [p.strip() for p in group.pattern.split(",") if p.strip()]
+        if patterns:
+            matcher = make_tag_matcher(patterns, "danbooru")
+            if not any(matcher(key) for key in tag_keys):
+                continue
+        candidates = [
+            item for item in group.items if item.text.strip() and item.weight > 0
+        ]
+        if not candidates:
+            continue
+        if group.exclusive:
+            peak = max(item.weight for item in candidates)
+            weights = [math.exp(item.weight - peak) for item in candidates]
+            out.append(rng.choices(candidates, weights=weights, k=1)[0].text.strip())
+        else:
+            for item in candidates:
+                if rng.random() < min(item.weight, 1.0):
+                    out.append(item.text.strip())
+    return out
+
+
 def _needs_wd14(
     rules: list[CaptionRule],
+    groups: list[CaptionRuleGroup],
     general_threshold: float | None,
     character_threshold: float | None,
     nsfw_threshold: float | None,
@@ -215,11 +264,12 @@ def _needs_wd14(
     """判断本次描述是否需要 WD14 标签.
 
     两类用途都取自 ``.wd14_meta`` 缓存: 参考标签注入(通用或角色任一启用),
-    NSFW 增强(rating 分级判定), 以及带「匹配标签」的预设提示词(其命中判定
-    基于该图片的缓存标签).
+    NSFW 增强(rating 分级判定), 以及带「匹配标签」的预设提示词条目或抽取组
+    (其命中判定基于该图片的缓存标签).
 
     Args:
         rules (list[CaptionRule]): 预设提示词条目.
+        groups (list[CaptionRuleGroup]): 预设提示词组.
         general_threshold (float | None): 通用标签置信度下限; None 为不注入.
         character_threshold (float | None): 角色标签置信度下限; None 为不注入.
         nsfw_threshold (float | None): NSFW 增强的置信度下限; None 为不启用.
@@ -236,7 +286,9 @@ def _needs_wd14(
         or nsfw_threshold is not None
     ):
         return True
-    return any(rule.pattern.strip() for rule in rules)
+    return any(rule.pattern.strip() for rule in rules) or any(
+        group.pattern.strip() for group in groups
+    )
 
 
 def _headers() -> dict[str, str]:
@@ -469,6 +521,7 @@ async def run_caption(
     character_threshold: float | None,
     nsfw_threshold: float | None,
     rules: list[CaptionRule],
+    groups: list[CaptionRuleGroup],
     force: bool,
     progress: JobProgress,
     on_update: Callable[[], None] | None = None,
@@ -494,6 +547,7 @@ async def run_caption(
         character_threshold (float | None): 角色标签置信度下限; None 为不注入.
         nsfw_threshold (float | None): NSFW 增强的置信度下限; None 为不启用.
         rules (list[CaptionRule]): 预设提示词条目.
+        groups (list[CaptionRuleGroup]): 预设提示词组.
         force (bool): 是否清除待处理图片的已有描述并重新标注.
         progress (JobProgress): 进度对象.
         on_update (Callable[[], None] | None): 进度变更回调.
@@ -522,7 +576,7 @@ async def run_caption(
         progress,
         f"开始: dirs={dir_names}, modes={modes}, general_threshold={general_threshold}, "
         f"character_threshold={character_threshold}, nsfw_threshold={nsfw_threshold}, "
-        f"rules={len(rules)}, "
+        f"groups={len(groups)}, "
         f"force={force}, total={len(items)}, 并发={CONCURRENCY}, "
         f"附加={EXTRA_BODY or '无'}, 服务={BASE_URL} · {MODEL}",
     )
@@ -564,7 +618,7 @@ async def run_caption(
     thresholds = [t for t in (general_threshold, character_threshold, nsfw_threshold) if t is not None]
     wd14_threshold = min([DEFAULT_THRESHOLD, *thresholds])
     cache: Wd14Cache | None = None
-    if _needs_wd14(rules, general_threshold, character_threshold, nsfw_threshold):
+    if _needs_wd14(rules, groups, general_threshold, character_threshold, nsfw_threshold):
         cache = Wd14Cache(root, Wd14Labels.load())
         # WD14 推理是 CPU 密集操作, 交给线程执行以免阻塞事件循环; 其内部逐张检查取消
         await asyncio.to_thread(
@@ -578,6 +632,7 @@ async def run_caption(
 
     results: list[CaptionImageItem] = []
     queue = deque(pending)
+    rng = random.Random()
     url = f"{BASE_URL.rstrip('/')}/chat/completions"
     headers = _headers()
     attempts: dict[Path, int] = {}
@@ -597,18 +652,18 @@ async def run_caption(
             progress.current = rel
             progress.message = f"[{progress.done + 1}/{progress.total}] {rel}"
             try:
-                groups = cache.groups(src, wd14_threshold) if cache else None
-                instructions = _rule_texts(
-                    rules,
-                    {tag_key(tag.name) for tag in (groups.tags if groups else ())},
+                wd14_groups = cache.groups(src, wd14_threshold) if cache else None
+                tag_keys = {tag_key(tag.name) for tag in (wd14_groups.tags if wd14_groups else ())}
+                instructions = _rule_texts(rules, tag_keys) + _group_texts(
+                    groups, tag_keys, rng
                 )
-                nsfw = groups is not None and nsfw_threshold is not None and any(
+                nsfw = wd14_groups is not None and nsfw_threshold is not None and any(
                     tag.name in _NSFW_RATING_TAGS and tag.score >= nsfw_threshold
-                    for tag in groups.of("rating")
+                    for tag in wd14_groups.of("rating")
                 )
                 prompt = build_user_prompt(
                     reference=_reference_tags(
-                        groups, general_threshold, character_threshold
+                        wd14_groups, general_threshold, character_threshold
                     ),
                     instructions=instructions,
                     nsfw=nsfw,
