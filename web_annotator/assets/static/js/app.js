@@ -104,6 +104,60 @@
     if (statusEl && s.message) statusEl.textContent = s.message;
   }
 
+  // 语义搜索查询框的本地标签词表: 打开对话框时按所选目录加载
+  var _tagVocab = [];
+  var _tagVocabLoading = null;
+
+  /**
+   * 按当前所选目录加载标签词表, 供查询框补全。
+   *
+   * Returns:
+   *   {Promise<void>}
+   *
+   * Callers:
+   *   - app.js:searchOpen
+   */
+  function searchLoadTags() {
+    var dirs = DirPicker.getDirs();
+    _tagVocab = [];
+    _tagVocabLoading = API.request(API.apiPath('/tags/stats'), {
+      method: 'POST',
+      body: JSON.stringify({ dirs: dirs, section: 'before', min_count: 1 }),
+    }).then(function (res) {
+      _tagVocab = ((res && res.tags) || []).map(function (row) {
+        return { name: row.tag, note: row.zh || '', count: row.count };
+      });
+      _tagVocabLoading = null;
+    });
+    return _tagVocabLoading;
+  }
+
+  /**
+   * 按当前片段取本地标签补全候选(前缀匹配, 词表已按频次降序)。
+   *
+   * Args:
+   *   word {string}: 正在输入的标签片段。
+   *
+   * Returns:
+   *   {Promise<Array<{name: string, note: string, count: number}>>}
+   *
+   * Callers:
+   *   - app.js:init 中 UI.bindTagSuggest 的 fetchTags
+   */
+  function searchFetchTags(word) {
+    var q = word.toLowerCase().replace(/_/g, ' ').trim();
+    var pending = _tagVocabLoading || Promise.resolve();
+    return pending.then(function () {
+      if (!q) return [];
+      var out = [];
+      for (var i = 0; i < _tagVocab.length && out.length < 12; i++) {
+        if (_tagVocab[i].name.toLowerCase().indexOf(q) !== 0) continue;
+        out.push(_tagVocab[i]);
+      }
+      return out;
+    });
+  }
+
   /**
    * 加载最近搜索历史并填充下拉框。
    */
@@ -131,7 +185,7 @@
    * @returns {Promise<void>}
    */
   async function searchSort() {
-    var query = document.getElementById('search-query').value.trim();
+    var query = document.getElementById('search-query').value.trim().replace(/[\s,]+$/, '');
     if (!query) { toast('请输入查询文本'); return; }
     if (_searchBusy) return;
     _searchBusy = true;
@@ -188,6 +242,9 @@
   function searchOpen() {
     UI.openModal('search-dlg');
     searchLoadHistory();
+    searchLoadTags().catch(function (e) {
+      toast('标签补全加载失败: ' + String(e.message || e));
+    });
     document.getElementById('search-query').focus();
   }
 
@@ -222,7 +279,11 @@
   async function init() {
     await AppSettings.ready();
     await loadScoreOptions();
-    Masonry.init('masonry', { decorate: searchDecorate });
+    Masonry.init('masonry', { decorate: searchDecorate, sortKey: Store.getSort });
+    UI.bindTagSuggest(document.getElementById('search-query'), {
+      separator: 'comma',
+      fetchTags: searchFetchTags,
+    });
 
     var colsSlider = document.getElementById('cols-slider');
     var colsLabel = document.getElementById('cols-label');

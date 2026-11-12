@@ -19,6 +19,7 @@ var Masonry = (function() {
     decorate: null,     // function(card, img); 创建卡片后追加自定义样式/属性
     imageSrc: null,     // function(img) → 缩略图 URL; 省略则用 API.thumbnailUrl
     selection: null,    // {has, toggle, selectRange}; 提供时接管选中状态, 否则用 Store
+    sortKey: null,      // function() → 当前排序项; 对应字段在附加文本中置于首位
   };
 
   var _index = {};          // path → {img, x, y, w, h}
@@ -29,12 +30,14 @@ var Masonry = (function() {
    * 初始化瀑布流容器.
    * @param {string} containerId
    * @param {{getData?: function, onClick?: function, onPreview?: function,
-   *   decorate?: function, imageSrc?: function, selection?: object}} [config]
+   *   decorate?: function, imageSrc?: function, selection?: object,
+   *   sortKey?: function}} [config]
    *   - getData: setColumns 重绘时的数据源; 省略则用 Store.getVisible
    *   - onClick: 点击卡片的回调; 省略则按 selection / Store 切换选中
    *   - onPreview: 右键(桌面)与长按(触屏)打开预览的回调; 单击选中立即生效
    *   - decorate: 卡片创建后追加样式/属性的回调
    *   - selection: 选择集合适配器, 供无 Store 的页面接管选中状态
+   *   - sortKey: 返回当前排序项; 该字段在卡片附加文本中置于首位
    */
   function init(containerId, config) {
     _container = document.getElementById(containerId);
@@ -45,6 +48,7 @@ var Masonry = (function() {
       _config.decorate = config.decorate || null;
       _config.imageSrc = config.imageSrc || null;
       _config.selection = config.selection || null;
+      _config.sortKey = config.sortKey || null;
     }
   }
 
@@ -197,6 +201,41 @@ var Masonry = (function() {
     _lastClickedPath = img.path;
   }
 
+  /**
+   * 按默认顺序拆分卡片附加文本字段.
+   *
+   * 发布时间取 ISO8601 的日期段展示, 完整时刻由悬停标题给出;
+   * 评分项按 ScoringMeta.order 顺序逐项展开, key 与工具栏排序值一致.
+   *
+   * @param {Object} img 图片元数据
+   * @returns {Array<{key: string, text: string}>} 字段分片列表
+   * 引用：_createCard。
+   */
+  function _infoFields(img) {
+    var fields = [];
+    if (img.posted_at) fields.push({ key: 'posted', text: img.posted_at.slice(0, 10) });
+    if (typeof img.aesthetic === 'number') {
+      fields.push({ key: 'aesthetic', text: 'A' + img.aesthetic.toFixed(2) });
+    }
+    if (window.ScoringMeta && img.scores) {
+      var order = window.ScoringMeta.order || [];
+      for (var i = 0; i < order.length; i++) {
+        var scoreValue = img.scores[order[i].key];
+        if (typeof scoreValue === 'number') {
+          fields.push({
+            key: 'score:' + order[i].key,
+            text: order[i].label + scoreValue.toFixed(2),
+          });
+        }
+      }
+    }
+    if (img.width && img.height) {
+      fields.push({ key: 'pixels', text: img.width + '×' + img.height });
+    }
+    fields.push({ key: 'name', text: img.stem });
+    return fields;
+  }
+
   function _createCard(img, colW) {
     var card = document.createElement('div');
     card.className = 'card';
@@ -234,24 +273,18 @@ var Masonry = (function() {
     info.className = 'info';
     var name = document.createElement('span');
     name.className = 'name';
-    // 发布时间取 ISO8601 的日期段展示, 悬停可见完整时刻
-    var posted = img.posted_at ? (img.posted_at.slice(0, 10) + ' ') : '';
-    if (img.posted_at) name.title = img.posted_at;
-    var res = (img.width && img.height) ? (img.width + '×' + img.height + ' ') : '';
-    var aes = (typeof img.aesthetic === 'number')
-      ? ('A' + img.aesthetic.toFixed(2) + ' ')
-      : '';
-    var scoreText = '';
-    if (window.ScoringMeta && img.scores) {
-      var order = window.ScoringMeta.order || [];
-      for (var si = 0; si < order.length; si++) {
-        var scoreValue = img.scores[order[si].key];
-        if (typeof scoreValue === 'number') {
-          scoreText += order[si].label + scoreValue.toFixed(2) + ' ';
-        }
-      }
+    var fields = _infoFields(img);
+    // 当前排序项对应的字段置于附加文本首位
+    var sortKey = _config.sortKey ? _config.sortKey() : '';
+    for (var fi = 0; fi < fields.length; fi++) {
+      if (fields[fi].key !== sortKey) continue;
+      fields.unshift(fields.splice(fi, 1)[0]);
+      break;
     }
-    name.textContent = posted + aes + scoreText + res + img.stem;
+    var parts = [];
+    for (var pi = 0; pi < fields.length; pi++) parts.push(fields[pi].text);
+    name.textContent = parts.join(' ');
+    if (img.posted_at) name.title = img.posted_at;
     info.appendChild(name);
     card.appendChild(info);
 

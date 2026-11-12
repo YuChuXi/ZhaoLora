@@ -185,6 +185,179 @@
     };
   }
 
+  // ==================== 标签补全 ====================
+
+  /**
+   * 为输入框绑定标签自动补全下拉.
+   *
+   * 只补全正在输入的最后一个标签片段: ``separator="comma"`` 以逗号分段并补
+   * 逗号续输, ``separator="space"`` 以空白分段原样替换. 下拉固定定位到输入框
+   * 下方, 支持上下键选择、回车或点击确认、Esc 关闭; 打开时的按键不冒泡到页面,
+   * 避免同时触发页面的回车提交或模态关闭.
+   *
+   * @param {HTMLElement} input 目标输入框
+   * @param {{separator?: string,
+   *   fetchTags: function(string): Promise<Array<{name: string,
+   *     note?: string, count?: number}>>}} opts
+   *   - separator: ``"comma"`` 或 ``"space"``, 默认 space
+   *   - fetchTags: 按当前片段取候选标签, 返回 name / 次要说明 / 计数
+   * @returns {{close: function(): void}|null} 关闭下拉的控制句柄
+   * 引用：booru_filter.js、app.js。
+   */
+  function bindTagSuggest(input, opts) {
+    if (!input) return null;
+    opts = opts || {};
+    var comma = opts.separator === 'comma';
+    var fetchTags = opts.fetchTags;
+    var box = document.createElement('div');
+    box.className = 'tag-suggest';
+    box.style.display = 'none';
+    document.body.appendChild(box);
+    var timer = null;
+    var items = [];
+    var activeIndex = -1;
+    var seq = 0;
+    var suppress = false; // 选中补全后跳过紧随的 input 事件, 避免下拉立即重弹
+
+    function close() {
+      seq++; // 使在途补全响应过期, 避免输入清空后仍重弹下拉
+      box.style.display = 'none';
+      box.innerHTML = '';
+      items = [];
+      activeIndex = -1;
+    }
+
+    /** 取正在补全的标签片段. 引用: onInput. */
+    function currentWord() {
+      var v = input.value;
+      if (comma) {
+        var cut = v.lastIndexOf(',');
+        return (cut >= 0 ? v.slice(cut + 1) : v).trim();
+      }
+      var m = v.match(/(\S+)\s*$/);
+      return m ? m[1] : '';
+    }
+
+    /** 用选中的标签替换当前片段. 引用: choose. */
+    function replaceWord(word) {
+      var v = input.value;
+      if (comma) {
+        var cut = v.lastIndexOf(',');
+        var head = cut >= 0 ? v.slice(0, cut + 1) + ' ' : '';
+        input.value = head + word + ', ';
+        return;
+      }
+      // 用占位符定位最后一个词起点, 避免标签名内含正则特殊字符引起转义
+      var start = v.replace(/(\S+)\s*$/, '\u0000').indexOf('\u0000');
+      input.value = v.slice(0, start) + word;
+    }
+
+    function render(data) {
+      box.innerHTML = '';
+      items = data;
+      activeIndex = items.length ? 0 : -1;
+      if (!items.length) { box.style.display = 'none'; return; }
+      var table = document.createElement('table');
+      table.className = 'tag-suggest-table';
+      items.forEach(function (t, i) {
+        var tr = document.createElement('tr');
+        tr.className = 'tag-suggest-row' + (i === activeIndex ? ' active' : '');
+        var tdName = document.createElement('td');
+        tdName.className = 'tag-suggest-name';
+        tdName.textContent = t.name;
+        tdName.title = t.name;
+        var tdNote = document.createElement('td');
+        tdNote.className = 'tag-suggest-cat';
+        tdNote.textContent = t.note || '';
+        var tdCnt = document.createElement('td');
+        tdCnt.className = 'tag-suggest-cnt';
+        tdCnt.textContent = t.count > 0 ? ('' + t.count) : '';
+        tr.appendChild(tdName);
+        tr.appendChild(tdNote);
+        tr.appendChild(tdCnt);
+        tr.addEventListener('mousedown', function (e) {
+          e.preventDefault();
+          choose(i);
+        });
+        tr.addEventListener('mousemove', function () {
+          if (activeIndex !== i) {
+            activeIndex = i;
+            highlight();
+          }
+        });
+        table.appendChild(tr);
+      });
+      box.appendChild(table);
+      var r = input.getBoundingClientRect();
+      box.style.left = r.left + 'px';
+      box.style.top = (r.bottom + 2) + 'px';
+      box.style.minWidth = Math.max(r.width, 220) + 'px';
+      box.style.display = 'block';
+    }
+
+    function highlight() {
+      var table = box.querySelector('.tag-suggest-table');
+      if (!table) return;
+      Array.prototype.forEach.call(table.rows, function (tr, i) {
+        tr.classList.toggle('active', i === activeIndex);
+      });
+      var act = table.rows[activeIndex];
+      if (act) act.scrollIntoView({ block: 'nearest' });
+    }
+
+    function choose(i) {
+      if (i < 0 || i >= items.length) return;
+      suppress = true;
+      replaceWord(items[i].name);
+      close();
+      setTimeout(function () { suppress = false; }, 0);
+    }
+
+    function onInput() {
+      if (suppress) return;
+      var word = currentWord();
+      if (!word) { close(); return; }
+      var mySeq = ++seq;
+      clearTimeout(timer);
+      timer = setTimeout(function () {
+        fetchTags(word).then(function (data) {
+          if (mySeq !== seq) return; // 丢弃过期响应
+          render(data || []);
+        }).catch(function () { close(); });
+      }, 200);
+    }
+
+    input.addEventListener('input', onInput);
+    input.addEventListener('keydown', function (e) {
+      if (box.style.display === 'none') return;
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        activeIndex = (activeIndex + 1) % items.length;
+        highlight();
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        activeIndex = (activeIndex - 1 + items.length) % items.length;
+        highlight();
+      } else if (e.key === 'Enter') {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        choose(activeIndex);
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        close();
+      }
+    });
+    input.addEventListener('blur', function () {
+      setTimeout(function () { close(); }, 120);
+    });
+    input.addEventListener('focus', onInput);
+
+    return { close: close };
+  }
+
   // ==================== 任务面板 ====================
 
   /**
@@ -309,6 +482,7 @@
     closeModal: closeModal,
     bindModal: bindModal,
     createSelection: createSelection,
+    bindTagSuggest: bindTagSuggest,
     bindJobPanel: bindJobPanel,
   };
 })();

@@ -8,7 +8,7 @@ import os
 import uuid
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 import torch
@@ -23,6 +23,9 @@ from services.core.device import register_model
 from services.core.jobs import JobProgress
 from services.dataset.workdir import WorkDir
 from services.models.pages import ScoreItem
+
+if TYPE_CHECKING:
+    from services.dataset.runtime import Dataset
 
 # ---------------------------------------------------------------------------
 # 常量
@@ -209,6 +212,31 @@ def save_item_scores(root: Path, scores: dict[str, dict[str, float]]) -> None:
         for key, values in scores.items()
     }
     _write_json_object(root.resolve() / SCORE_RESULTS, clean)
+
+
+def image_inventory(dataset: Dataset) -> set[str]:
+    """数据集当前工作目录内图片的相对路径集合.
+
+    评分结果文件以磁盘图片清单为键空间: 工作目录内的图片才计入, 回收站与
+    保留目录不计入. 读取结果与重建结果文件都以该集合为准.
+
+    Args:
+        dataset (Dataset): 数据集.
+
+    Returns:
+        set[str]: 相对数据集根的 POSIX 路径集合.
+
+    Callers:
+        - ``services/analysis/scoring.py:_run_aesthetic_scoring`` : 重建美学分表.
+        - ``services/analysis/scoring.py:_run_wd14_scoring`` : 重建评分项结果表.
+        - ``services/analysis/scoring.py:build_score_results`` : 按图片清单取值.
+        - ``routes/scoring.py:dirs`` : 统计当前图片中已算出分值的数量.
+    """
+    return {
+        image.rel
+        for work in dataset.work_dirs()
+        for image in work.images()
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -520,6 +548,8 @@ def _run_aesthetic_scoring(
 ) -> None:
     """美学评分主循环: 文件收集 → 缓存跳过/新评计算 → 定期持久化.
 
+    结果表以当前图片清单重建, 已删除图片的旧分值随本次写回被剔除.
+
     Args:
         works: 要评分的工作目录(自动去重).
         models: ``(clip, preprocess, aes_head)`` 模型句柄.
@@ -550,8 +580,12 @@ def _run_aesthetic_scoring(
     progress.log("美学模型就绪")
     if on_update: on_update()
 
+    inventory = image_inventory(works[0].dataset)
     existing = load_score_json(root, AESTHETIC_SCORES)
-    scores: dict[str, float] = existing.copy()
+    # 结果表以当前图片清单重建: 已删除图片的旧分值不参与写回
+    scores: dict[str, float] = {
+        rel: value for rel, value in existing.items() if rel in inventory
+    }
 
     for src in items:
         if progress.cancel_requested:
@@ -565,7 +599,7 @@ def _run_aesthetic_scoring(
         rel = src.relative_to(root).as_posix()
         progress.current = rel
 
-        if rel in existing:
+        if rel in scores:
             progress.skipped += 1
             progress.ok += 1
             progress.done += 1
@@ -600,7 +634,8 @@ def _run_wd14_scoring(
     """先补齐 WD14 推理缓存, 再按概率计算全部评分项.
 
     缺失缓存的图片在评分前统一推理写入 ``.wd14_meta``, 随后只读缓存向量求值;
-    单张缓存生成失败的图片计入失败, 不中断整批.
+    单张缓存生成失败的图片计入失败, 不中断整批. 结果表以当前评分项与当前图片
+    清单重建, 本次未涉及的目录沿用旧分值.
 
     Args:
         works: 要评分的工作目录.
@@ -666,7 +701,18 @@ def _run_wd14_scoring(
             if on_update: on_update()
             return
 
-    scores: dict[str, dict[str, float]] = {key: {} for key in trees}
+    inventory = image_inventory(works[0].dataset)
+    existing = load_item_scores(root)
+    # 结果表以当前评分项与当前图片清单重建: 本次未涉及的目录沿用旧值,
+    # 已删除图片与已删除评分项的旧分值不参与写回
+    scores: dict[str, dict[str, float]] = {
+        key: {
+            rel: value
+            for rel, value in existing.get(key, {}).items()
+            if rel in inventory
+        }
+        for key in trees
+    }
 
     for i, src in enumerate(items):
         if progress.cancel_requested:
@@ -752,11 +798,13 @@ def run_scoring(
 # ---------------------------------------------------------------------------
 
 
-def build_score_results(root: Path, kind: str) -> list[dict[str, Any]]:
-    """从缓存的分数 JSON 构建前端的评分结果列表.
+def build_score_results(dataset: Dataset, kind: str) -> list[dict[str, Any]]:
+    """按当前图片清单构建前端的评分结果列表.
+
+    以磁盘图片清单为准逐张查表, 已不存在的图片不会出现在结果中.
 
     Args:
-        root: 数据集根目录.
+        dataset (Dataset): 数据集.
         kind: ``"aesthetic"`` 或评分项 key.
 
     Returns:
@@ -765,20 +813,29 @@ def build_score_results(root: Path, kind: str) -> list[dict[str, Any]]:
     Callers:
         - ``routes/scoring.py:results``
     """
+    inventory = image_inventory(dataset)
+    root = dataset.root
     if kind == "aesthetic":
         scores = load_score_json(root, AESTHETIC_SCORES)
         results: list[dict[str, Any]] = []
-        for path, raw in scores.items():
+        for path in inventory:
+            raw = scores.get(path)
+            if raw is None:
+                continue
             results.append({
                 "path": path,
                 "score": round(raw, 6),
                 "pony": _raw_to_bin(raw),
                 "pony_label": f"score_{_raw_to_bin(raw)}",
             })
-        results.sort(key=lambda r: r["score"], reverse=True)
+        results.sort(key=lambda r: (-r["score"], r["path"]))
         return results
 
     scores = load_item_scores(root).get(kind, {})
-    results = [{"path": path, "score": round(value, 6)} for path, value in scores.items()]
-    results.sort(key=lambda r: r["score"], reverse=True)
+    results = [
+        {"path": path, "score": round(scores[path], 6)}
+        for path in inventory
+        if path in scores
+    ]
+    results.sort(key=lambda r: (-r["score"], r["path"]))
     return results

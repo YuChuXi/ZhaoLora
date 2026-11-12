@@ -14,6 +14,7 @@ from services.analysis.scoring import (
     build_score_results,
     create_score_item,
     delete_score_item,
+    image_inventory,
     load_item_scores,
     load_score_items,
     load_score_json,
@@ -91,17 +92,22 @@ def dirs(ds: DatasetDep) -> ScoringDirsResponse:
     cached = load_item_scores(ds.root)
     ok, message = model_ready()
     works = ds.work_dirs()
-    images = [p for work in works for p in work.image_files()]
+    inventory = image_inventory(ds)
+    images = [ds.root / rel for rel in inventory]
     cached_count = 0
     if ok:
         pending = Wd14Cache(ds.root, Wd14Labels.load()).missing(images)
         cached_count = len(images) - len(pending)
+    aesthetic_hit = aesthetic.keys() & inventory
     return ScoringDirsResponse(
         dirs=[w.to_info() for w in works],
-        aesthetic_ready=bool(aesthetic),
-        aesthetic_count=len(aesthetic),
+        aesthetic_ready=bool(aesthetic_hit),
+        aesthetic_count=len(aesthetic_hit),
         items=items,
-        item_counts={item.key: len(cached.get(item.key, {})) for item in items},
+        item_counts={
+            item.key: len(cached.get(item.key, {}).keys() & inventory)
+            for item in items
+        },
         wd14_ready=ok,
         wd14_message=message,
         wd14_count=cached_count,
@@ -206,7 +212,7 @@ async def results(
     if kind != "aesthetic" and kind not in {item.key for item in load_score_items(ds.root)}:
         raise HTTPException(400, f"未知评分项: {kind}")
 
-    results = build_score_results(ds.root, kind)
+    results = build_score_results(ds, kind)
     name = ds.name
 
     for r in results:
