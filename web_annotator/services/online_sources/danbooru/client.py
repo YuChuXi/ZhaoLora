@@ -1,14 +1,9 @@
-"""Danbooru 底层网络: JSON API 请求, 网络栈经环境变量切换.
+"""Danbooru 网络层: JSON API 与图床请求.
 
-封装 Danbooru 专属网络请求; 代理从 ``HTTP_PROXY`` / ``HTTPS_PROXY``
-环境变量读取, 认证 (login / api_key) 由调用方经参数传入.
-
-网络栈由环境变量 ``DANBOORU_CLIENT`` 选择 (忽略大小写, 默认 httpx):
-
-- ``httpx``: 框架统一网络层 ``HttpClient``, 当前 Danbooru 正常响应。
-- ``curl_cffi``: Chrome TLS 指纹模拟 (curl_cffi ``AsyncSession``), 作为
-  上游变更防火墙策略、封锁 httpx 特征时的备选; 2026-09 实测全部指纹
-  均被 403, 故不作为默认。
+Danbooru 全站 (含图床 ``cdn.donmai.us``) 由 Cloudflare 边缘节点提供, 该节点
+对 HTTP/1.1 的浏览器类请求返回 403 质询页 (``text/html``), 仅 HTTP/2 放行,
+故此处请求一律经 ``HttpClient`` 以 HTTP/2 发送。代理从 ``HTTP_PROXY`` /
+``HTTPS_PROXY`` 环境变量读取, 认证 (login / api_key) 由调用方经参数传入.
 
 Callers:
     - ``services/online_sources/danbooru/source.py:`` (搜索 / 下载 / 元数据)
@@ -16,36 +11,18 @@ Callers:
 
 from __future__ import annotations
 
-import os
 from typing import Any
 
 from services.online_sources.framework.http import HttpClient
 
 _DANBOORU_BASE = "https://danbooru.donmai.us"
-# curl_cffi 模式的 Chrome TLS 指纹
-_IMPERSONATE = "chrome"
-# (http_proxy, https_proxy) -> curl_cffi 连接池
-_cffi_clients: dict[tuple[str, str], Any] = {}
-
-
-def _mode() -> str:
-    """读取当前网络栈模式.
-
-    Returns:
-        str: ``"httpx"`` 或 ``"curl_cffi"``.
-
-    Callers:
-        - ``services/online_sources/danbooru/client.py:get``
-    """
-    return os.environ.get("DANBOORU_CLIENT", "httpx").strip().lower() or "httpx"
 
 
 def _headers(*, accept: str) -> dict[str, str]:
-    """Danbooru API 请求头.
+    """Danbooru 请求头.
 
     Callers:
-        - ``services/online_sources/danbooru/client.py:_get_httpx``
-        - ``services/online_sources/danbooru/client.py:_get_cffi``
+        - ``services/online_sources/danbooru/client.py:get``
     """
     return {
         "accept": accept, "accept-language": "en-US,en;q=0.9",
@@ -56,79 +33,25 @@ def _headers(*, accept: str) -> dict[str, str]:
     }
 
 
-def _cffi_session() -> Any:
-    """按代理复用的 curl_cffi 连接池, 固定 Chrome TLS 指纹.
-
-    Callers:
-        - ``services/online_sources/danbooru/client.py:_get_cffi``
-    """
-    from curl_cffi.requests import AsyncSession
-
-    http_p = os.environ.get("HTTP_PROXY", "").strip()
-    https_p = os.environ.get("HTTPS_PROXY", "").strip()
-    key = (http_p, https_p)
-    c = _cffi_clients.get(key)
-    if c is None:
-        proxies = {}
-        if http_p:
-            proxies["http"] = http_p
-        if https_p:
-            proxies["https"] = https_p
-        c = AsyncSession(
-            impersonate=_IMPERSONATE,  # type: ignore[arg-type]
-            proxies=proxies or None,  # type: ignore[arg-type]
-        )
-        _cffi_clients[key] = c
-    return c
-
-
-async def _get_httpx(url: str, *, accept: str, timeout: float,
-                     params: dict[str, str | int] | None) -> Any:
-    """经框架统一网络层请求 Danbooru.
-
-    Callers:
-        - ``services/online_sources/danbooru/client.py:get``
-    """
-    async with HttpClient() as client:
-        return await client.get(
-            url, params=params or None, headers=_headers(accept=accept),
-            timeout=timeout, follow_redirects=True,
-        )
-
-
-async def _get_cffi(url: str, *, accept: str, timeout: float,
-                    params: dict[str, str | int] | None) -> Any:
-    """经 curl_cffi 指纹模拟请求 Danbooru.
-
-    Callers:
-        - ``services/online_sources/danbooru/client.py:get``
-    """
-    return await _cffi_session().get(
-        url, params=params or None, headers=_headers(accept=accept),
-        timeout=timeout, allow_redirects=True,
-    )
-
-
 async def get(
     url: str, *, accept: str, timeout: float = 30.0,
     params: dict[str, str | int] | None = None,
     login: str | None = None, api_key: str | None = None,
 ) -> Any:
-    """请求 Danbooru API, 按 ``DANBOORU_CLIENT`` 分派网络栈.
+    """请求 Danbooru API 或图床, 固定 HTTP/2.
 
     Args:
-        url: 目标 URL。
-        accept: Accept 请求头。
-        timeout: 超时秒数。
-        params: 查询参数。
-        login / api_key: Danbooru API 认证, 两者需同时提供。
+        url (str): 目标 URL。
+        accept (str): Accept 请求头。
+        timeout (float): 超时秒数。
+        params (dict[str, str | int] | None): 查询参数。
+        login (str | None) / api_key (str | None): Danbooru API 认证, 两者需同时提供。
 
     Returns:
-        响应对象 (httpx 或 curl_cffi), 均提供 ``status_code`` / ``json()``。
+        Any: ``httpx.Response``, 提供 ``status_code`` / ``headers`` / ``json()`` / ``content``。
 
     Raises:
-        NetworkError: httpx 模式网络错误。
-        curl_cffi.requests.exceptions.RequestException: curl_cffi 模式网络错误。
+        NetworkError: 网络错误, 即 ``httpx.HTTPError``。
 
     Callers:
         - ``services/online_sources/danbooru/source.py:`` (搜索 / 元数据 / 下载)
@@ -138,8 +61,42 @@ async def get(
     if login and api_key:
         p["login"] = login
         p["api_key"] = api_key
-    impl = _get_cffi if _mode() == "curl_cffi" else _get_httpx
-    return await impl(url, accept=accept, timeout=timeout, params=p)
+    async with HttpClient(http2=True) as client:
+        return await client.get(
+            url, params=p or None, headers=_headers(accept=accept),
+            timeout=timeout, follow_redirects=True,
+        )
+
+
+def http_error(resp: Any, what: str) -> RuntimeError:
+    """构造带上游说明的 HTTP 异常, 供各调用点直接抛出.
+
+    上游 JSON 错误体 (Danbooru 的 ``{"success": false, "message": ...}``) 取
+    ``message`` 作为详情; 非 JSON 响应 (如 Cloudflare 质询页) 则标注内容类型,
+    便于区分认证 / 限流 / 边缘拦截。
+
+    Args:
+        resp (Any): ``httpx.Response``。
+        what (str): 请求用途, 如 ``"搜索"`` / ``"元数据"`` / ``"标签补全"``。
+
+    Returns:
+        RuntimeError: 含状态码与上游详情的异常。
+
+    Callers:
+        - ``services/online_sources/danbooru/client.py:autocomplete``
+        - ``services/online_sources/danbooru/source.py:DanbooruSource.fetch_meta``
+        - ``services/online_sources/danbooru/source.py:DanbooruSource.search``
+    """
+    ctype = (resp.headers.get("content-type") or "").split(";")[0].strip()
+    if ctype == "application/json":
+        payload = resp.json()
+        if isinstance(payload, dict):
+            message = str(payload.get("message") or "").strip()
+            if message:
+                return RuntimeError(f"Danbooru {what} HTTP {resp.status_code}: {message}")
+    return RuntimeError(
+        f"Danbooru {what} HTTP {resp.status_code} (Content-Type: {ctype or '未知'})"
+    )
 
 
 async def autocomplete(query: str, limit: int = 10) -> list[dict]:
@@ -167,7 +124,7 @@ async def autocomplete(query: str, limit: int = 10) -> list[dict]:
         params={"search[query]": query, "search[type]": "tag", "version": "3", "limit": limit},
     )
     if resp.status_code != 200:
-        raise RuntimeError(f"Danbooru autocomplete HTTP {resp.status_code}")
+        raise http_error(resp, "标签补全")
     data = resp.json()
     out: list[dict] = []
     for item in data if isinstance(data, list) else []:

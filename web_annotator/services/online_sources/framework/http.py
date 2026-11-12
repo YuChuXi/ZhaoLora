@@ -49,16 +49,21 @@ class HttpClient(httpx.AsyncClient):
         - ``services/online_sources/batch.py:`` (批量下载任务自持实例复用连接)
     """
 
-    def __init__(self, *, referer: str | None = None, **kwargs: Any) -> None:
+    def __init__(
+        self, *, referer: str | None = None, http2: bool = False, **kwargs: Any
+    ) -> None:
         """构造客户端: 预置连接池、超时、默认 UA 与可选 Referer.
 
         Args:
             referer: 防盗链 Referer, 写入默认请求头; 空值不追加.
+            http2: 是否启用 HTTP/2 (需要 ``h2`` 依赖); 上游边缘节点按协议版本
+                放行的来源 (如 Danbooru) 须置真.
             **kwargs: 透传给 ``httpx.AsyncClient`` 的参数 (``limits``/``timeout``/
                 ``headers`` 未显式传入时使用预置默认值).
         """
         kwargs.setdefault("limits", httpx.Limits(max_connections=32, max_keepalive_connections=16))
         kwargs.setdefault("timeout", httpx.Timeout(30.0, connect=10.0))
+        kwargs.setdefault("http2", http2)
         headers = dict(kwargs.pop("headers", {}))
         headers.setdefault("user-agent", DEFAULT_UA)
         if referer:

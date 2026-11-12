@@ -23,27 +23,41 @@ if TYPE_CHECKING:
 
 UNSUPPORTED_FILE_EXT = frozenset({"zip", "mp4", "webm", "swf", "mkv", "avi", "ugoira"})
 
+# 模型统一字段 <- 上游别名字段
+_FIELD_ALIASES = (
+    ("width", "image_width"),
+    ("height", "image_height"),
+    ("tags", "tag_string"),
+    ("preview_url", "preview_file_url"),
+)
+
 
 def _to_model_data(raw: dict) -> dict:
     """将 Danbooru API 原始响应映射为 ``BooruPost`` 统一字段名.
+
+    上游对新帖形态 (``mp4`` / ``ugoira`` 等) 不返回任何 URL 键, ``raw`` 中
+    既无 ``file_url`` 也无 ``preview_file_url``; 别名缺失时不写入目标键,
+    由模型默认值填充, 避免把 ``None`` 塞进 ``str`` 字段导致校验失败。
 
     Args:
         raw: Danbooru API 原始帖子字典 (含大量额外字段, 原样保留进 meta;
             ``id`` 与 ``created_at`` 为 API 必有字段, 后者契约即 ISO8601).
 
     Returns:
-        dict: 补齐 width/height/tags/preview_url 统一字段、id 转文本、
-            ``created_at`` 消费为 ``posted_at`` 后的数据.
+        dict: 补齐统一字段、id 转文本、``created_at`` 消费为 ``posted_at``
+            后的数据; 上游缺失的别名字段保持缺省.
 
     Callers:
         - ``services/online_sources/danbooru/source.py:DanbooruSource.fetch_meta``
         - ``services/online_sources/danbooru/source.py:DanbooruSource.search``
     """
     out = {**raw}
-    out.setdefault("width", out.get("image_width"))
-    out.setdefault("height", out.get("image_height"))
-    out.setdefault("tags", out.get("tag_string"))
-    out.setdefault("preview_url", out.get("preview_file_url"))
+    for target, upstream in _FIELD_ALIASES:
+        if target in out:
+            continue
+        value = out.get(upstream)
+        if value is not None:
+            out[target] = value
     out["id"] = str(out["id"])
     out["posted_at"] = out.pop("created_at")
     return out
@@ -166,7 +180,7 @@ class DanbooruSource(SourceClient):
             accept="application/json, text/plain, */*", timeout=30.0,
         )
         if meta.status_code != 200:
-            raise RuntimeError(f"Danbooru HTTP {meta.status_code}")
+            raise _client.http_error(meta, "元数据")
         self._write_meta(out_dir, pid, BooruPost.model_validate(_to_model_data(meta.json())))
 
     async def autocomplete(self, query: str, limit: int = 10) -> list[dict]:
@@ -199,7 +213,7 @@ class DanbooruSource(SourceClient):
             api_key=os.environ.get("DANBOORU_API_KEY", "").strip() or None,
         )
         if resp.status_code != 200:
-            raise RuntimeError(f"Danbooru HTTP {resp.status_code}")
+            raise _client.http_error(resp, "搜索")
         data = resp.json()
         if not isinstance(data, list):
             return [], False

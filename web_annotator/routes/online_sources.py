@@ -7,7 +7,6 @@ import logging
 import os
 from pathlib import Path
 
-from curl_cffi.requests.exceptions import RequestException as CffiError
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
@@ -52,7 +51,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/online-sources", tags=["online-sources"])
 
-_NETWORK_ERRORS = (RuntimeError, OSError, _NetworkError, CffiError)
+_NETWORK_ERRORS = (RuntimeError, OSError, _NetworkError)
 
 
 class SearchBody(BaseModel):
@@ -323,7 +322,7 @@ async def download(
         msg = str(e)
         code = 429 if "429" in msg else 502
         raise HTTPException(code, f"下载失败: {e}") from e
-    except (OSError, _NetworkError, CffiError) as e:
+    except (OSError, _NetworkError) as e:
         logger.warning("下载上游异常: %s: %s", type(e).__name__, e)
         raise HTTPException(502, f"下载失败: {e}") from e
     rel = local_rel_path(root, result.path)
