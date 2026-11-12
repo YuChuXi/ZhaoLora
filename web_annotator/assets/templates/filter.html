@@ -41,12 +41,13 @@
   .toolbar-group { display: contents; }
   .toolbar-group.is-off { display: none !important; }
 
-  /* 语义搜索排序对话框（参考标签检查页语义检索对话框） */
+  /* 搜索排序对话框（语义描述 / 标签评分; 参考标签检查页语义检索对话框） */
   .emb-dlg-row {
     display: flex; align-items: center; gap: 8px;
   }
   .emb-dlg-row label { font-size: 13px; color: var(--text-dim); white-space: nowrap; }
-  #search-query { flex: 1; }
+  .emb-dlg-row[hidden] { display: none !important; }
+  #search-mode, #search-query { flex: 1; }
   #search-history { flex: 1; }
   #search-status { color: var(--text-dim); font-size: 11px; white-space: nowrap; }
 
@@ -197,7 +198,7 @@
         <option value="search">搜索</option>
       </select>
     </label>
-    <button class="btn" id="btn-search-dlg" type="button" hidden title="语义搜索排序（Qwen3-VL-Reranker-2B）">搜索</button>
+    <button class="btn" id="btn-search-dlg" type="button" hidden title="搜索排序（语义描述 / 标签评分）">搜索</button>
     <button class="btn" id="btn-meta-dlg" type="button" title="重生成 Caption / 刷新元数据">元数据工具</button>
     <span class="sep"></span>
     <button class="btn" id="btn-select-all" title="Ctrl+A">全选</button>
@@ -348,19 +349,26 @@
   </div>
 </div>
 
-<!-- 语义搜索排序对话框（参考标签检查页语义检索对话框） -->
+<!-- 搜索排序对话框: 语义描述走重排序模型, 标签走标签评分器 -->
 <div class="modal" id="search-dlg" aria-hidden="true">
   <div class="modal-panel" role="dialog" aria-labelledby="search-dlg-title" style="width:min(480px,92vw);height:auto;">
     <div class="modal-head">
-      <span class="modal-title" id="search-dlg-title">语义搜索排序</span>
+      <span class="modal-title" id="search-dlg-title">搜索排序</span>
     </div>
     <div class="modal-body" style="display:flex;flex-direction:column;gap:12px;padding:16px;">
       <div class="emb-dlg-row">
-        <label>查询文本</label>
-        <input type="search" id="search-query" class="input" placeholder="标签或描述，逗号分隔，如 1girl, solo"
-          spellcheck="false" autocomplete="off">
+        <label>模式</label>
+        <select id="search-mode" class="select">
+          <option value="semantic">语义描述</option>
+          <option value="tag">标签</option>
+        </select>
       </div>
       <div class="emb-dlg-row">
+        <label id="search-query-label">查询文本</label>
+        <input type="search" id="search-query" class="input" placeholder="查询文本，回车或点击排序"
+          spellcheck="false" autocomplete="off">
+      </div>
+      <div class="emb-dlg-row" id="search-history-row">
         <label>最近搜索</label>
         <select id="search-history" class="select" hidden></select>
       </div>

@@ -86,6 +86,8 @@ docs/                          功能说明文档
     遮罩点击与 Esc 关闭；`onClose` 只做收尾，不得再次调用 `closeModal`。
   - `UI.createSelection(onChange)`：前端选择集合（`has` / `toggle` / `selectRange` /
     `selectAll` / `invert` / `clear` / `count` / `paths`），供无 Store 的页面复用。
+  - `UI.bindTagSuggest(input, opts)`：标签自动补全下拉（分段、键盘选择、定位与局部替换）。
+    业务页只提供 `separator` 与按当前片段取候选的 `fetchTags`，不自行渲染下拉。
   - `UI.bindJobPanel(opts)`：进度条、百分比、日志、取消按钮与终态收尾的统一实现，
     业务页只提交任务并在 `onFinish` 中刷新数据。
 - `static/js/masonry.js`：瀑布流。`init` 的 `selection` 参数接管选中状态；单击立即提交

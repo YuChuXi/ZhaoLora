@@ -212,7 +212,7 @@
     var box = document.createElement('div');
     box.className = 'tag-suggest';
     box.style.display = 'none';
-    document.body.appendChild(box);
+    (input.parentNode || document.body).appendChild(box);
     var timer = null;
     var items = [];
     var activeIndex = -1;

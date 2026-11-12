@@ -84,7 +84,7 @@
     var sim = Store.getSearchSim(img.path);
     if (sim == null) return;
     var name = card.querySelector('.name');
-    if (name) name.textContent = 'S' + sim.toFixed(3) + ' ' + name.textContent;
+    if (name) name.textContent = _searchPrefix + sim.toFixed(3) + ' ' + name.textContent;
   }
 
   /**
@@ -104,36 +104,16 @@
     if (statusEl && s.message) statusEl.textContent = s.message;
   }
 
-  // 语义搜索查询框的本地标签词表: 打开对话框时按所选目录加载
-  var _tagVocab = [];
-  var _tagVocabLoading = null;
+  // 查询模式: semantic=自然语言描述(重排序模型), tag=标签(标签评分器)
+  var _searchMode = 'semantic';
+  var _searchSuggest = null;
+  var _searchPrefix = 'S';   // 卡片分值前缀: S=相似度, T=标签评分
+
+  // WD14 标签类别 → 中文说明
+  var _TAG_CATEGORY_NAMES = { general: '通用', character: '角色', rating: '分级' };
 
   /**
-   * 按当前所选目录加载标签词表, 供查询框补全。
-   *
-   * Returns:
-   *   {Promise<void>}
-   *
-   * Callers:
-   *   - app.js:searchOpen
-   */
-  function searchLoadTags() {
-    var dirs = DirPicker.getDirs();
-    _tagVocab = [];
-    _tagVocabLoading = API.request(API.apiPath('/tags/stats'), {
-      method: 'POST',
-      body: JSON.stringify({ dirs: dirs, section: 'before', min_count: 1 }),
-    }).then(function (res) {
-      _tagVocab = ((res && res.tags) || []).map(function (row) {
-        return { name: row.tag, note: row.zh || '', count: row.count };
-      });
-      _tagVocabLoading = null;
-    });
-    return _tagVocabLoading;
-  }
-
-  /**
-   * 按当前片段取本地标签补全候选(前缀匹配, 词表已按频次降序)。
+   * 按当前片段取标签评分器可评分的标签候选(WD14 标签表前缀匹配)。
    *
    * Args:
    *   word {string}: 正在输入的标签片段。
@@ -145,17 +125,38 @@
    *   - app.js:init 中 UI.bindTagSuggest 的 fetchTags
    */
   function searchFetchTags(word) {
-    var q = word.toLowerCase().replace(/_/g, ' ').trim();
-    var pending = _tagVocabLoading || Promise.resolve();
-    return pending.then(function () {
-      if (!q) return [];
-      var out = [];
-      for (var i = 0; i < _tagVocab.length && out.length < 12; i++) {
-        if (_tagVocab[i].name.toLowerCase().indexOf(q) !== 0) continue;
-        out.push(_tagVocab[i]);
-      }
-      return out;
-    });
+    if (_searchMode !== 'tag') return Promise.resolve([]);
+    var q = word.replace(/_/g, ' ').trim();
+    if (!q) return Promise.resolve([]);
+    return API.request(API.apiPath('/scoring/tags/suggest')
+      + '?q=' + encodeURIComponent(q) + '&limit=12')
+      .then(function (data) {
+        return (data && data.tags ? data.tags : []).map(function (tag) {
+          return {
+            name: tag.name,
+            note: _TAG_CATEGORY_NAMES[tag.category] || tag.category,
+            count: 0,
+          };
+        });
+      });
+  }
+
+  /**
+   * 依查询模式切换查询框的标签与占位提示, 并关闭残留的补全下拉。
+   *
+   * Callers:
+   *   - app.js:init
+   */
+  function searchApplyMode() {
+    var tagMode = _searchMode === 'tag';
+    document.getElementById('search-query-label').textContent = tagMode ? '标签' : '查询文本';
+    document.getElementById('search-query').placeholder = tagMode
+      ? '标签，逗号分隔，如 1girl, solo'
+      : '查询文本，回车或点击排序';
+    document.getElementById('search-history-row').hidden = tagMode;
+    document.getElementById('btn-search-sort').textContent =
+      tagMode ? '按标签评分排序' : '按相似度排序';
+    if (_searchSuggest) _searchSuggest.close();
   }
 
   /**
@@ -181,18 +182,73 @@
   }
 
   /**
-   * 提交语义搜索排序：调用后端长任务，完成后按相似度重排本地列表。
+   * 应用一次排序结果: 写入 Store 的顺序并重排瀑布流。
+   *
+   * Args:
+   *   items {Array<object>}: 后端返回的排序项(含 score 或 similarity)。
+   *   tagMode {boolean}: 是否为标签评分排序。
+   *   missing {number}: 缺 WD14 缓存、未参与排序的图片数。
+   *
+   * Callers:
+   *   - app.js:searchSort
+   */
+  function searchApply(items, tagMode, missing) {
+    // 语义结果用 similarity, 标签评分结果用 score, 统一为 Store 的 similarity 字段
+    var ranked = items.map(function (item) {
+      return {
+        path: item.path,
+        similarity: (typeof item.score === 'number') ? item.score : item.similarity,
+      };
+    });
+    _searchPrefix = tagMode ? 'T' : 'S';
+    var sel = document.getElementById('sort-by');
+    if (sel) sel.value = 'search';
+    Store.setSort('search');
+    Store.setSearchResult(ranked);
+    searchShowButton();
+    refreshView();
+    var text = tagMode
+      ? '已按标签评分排序 (' + items.length + ' 张'
+        + (missing ? '，缺缓存 ' + missing + ' 张' : '') + ')'
+      : '已按相似度排序 (' + items.length + ' 张)';
+    document.getElementById('search-status').textContent = text;
+    toast(text);
+  }
+
+  /**
+   * 提交搜索排序：语义模式走重排序模型，标签模式走标签评分器。
    * @returns {Promise<void>}
    */
   async function searchSort() {
+    var tagMode = _searchMode === 'tag';
     var query = document.getElementById('search-query').value.trim().replace(/[\s,]+$/, '');
-    if (!query) { toast('请输入查询文本'); return; }
+    if (!query) { toast(tagMode ? '请输入标签' : '请输入查询文本'); return; }
     if (_searchBusy) return;
     _searchBusy = true;
     var btn = document.getElementById('btn-search-sort');
     btn.disabled = true;
     document.getElementById('search-status').textContent = '提交中…';
     try {
+      if (tagMode) {
+        // 标签排序只读已有评分缓存, 同步返回, 不占用长任务队列
+        var tagRes = await API.request(API.apiPath('/scoring/tag-query'), {
+          method: 'POST',
+          body: JSON.stringify({
+            query: query.replace(/_/g, ' '),
+            dirs: DirPicker.getDirs(),
+          }),
+        });
+        btn.disabled = false;
+        _searchBusy = false;
+        var tagItems = (tagRes && tagRes.items) || [];
+        if (!tagItems.length) {
+          document.getElementById('search-status').textContent =
+            '没有可用的标签分值，请先在评分页建立 WD14 缓存';
+          return;
+        }
+        searchApply(tagItems, true, (tagRes && tagRes.missing) || 0);
+        return;
+      }
       var res = await API.request(API.apiPath('/tags/embedding/query'), {
         method: 'POST',
         body: JSON.stringify({ query: query, dirs: DirPicker.getDirs() }),
@@ -213,14 +269,7 @@
             document.getElementById('search-status').textContent = '无匹配结果';
             return;
           }
-          var sel = document.getElementById('sort-by');
-          if (sel) sel.value = 'search';
-          Store.setSort('search');
-          Store.setSearchResult(items);
-          searchShowButton();
-          refreshView();
-          document.getElementById('search-status').textContent = '已按相似度排序 (' + items.length + ' 张)';
-          toast('已按相似度排序 (' + items.length + ' 张)');
+          searchApply(items, false, 0);
         } else if (s.status === 'error') {
           btn.disabled = false;
           _searchBusy = false;
@@ -237,14 +286,11 @@
   }
 
   /**
-   * 打开语义搜索对话框并加载历史。
+   * 打开搜索对话框并加载历史。
    */
   function searchOpen() {
     UI.openModal('search-dlg');
     searchLoadHistory();
-    searchLoadTags().catch(function (e) {
-      toast('标签补全加载失败: ' + String(e.message || e));
-    });
     document.getElementById('search-query').focus();
   }
 
@@ -280,10 +326,18 @@
     await AppSettings.ready();
     await loadScoreOptions();
     Masonry.init('masonry', { decorate: searchDecorate, sortKey: Store.getSort });
-    UI.bindTagSuggest(document.getElementById('search-query'), {
+    _searchSuggest = UI.bindTagSuggest(document.getElementById('search-query'), {
       separator: 'comma',
       fetchTags: searchFetchTags,
     });
+    var searchModeSel = document.getElementById('search-mode');
+    if (searchModeSel) {
+      searchModeSel.addEventListener('change', function () {
+        _searchMode = searchModeSel.value === 'tag' ? 'tag' : 'semantic';
+        searchApplyMode();
+      });
+      searchApplyMode();
+    }
 
     var colsSlider = document.getElementById('cols-slider');
     var colsLabel = document.getElementById('cols-label');

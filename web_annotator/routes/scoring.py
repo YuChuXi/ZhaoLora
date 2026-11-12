@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from urllib.parse import quote
 
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -19,8 +20,10 @@ from services.analysis.scoring import (
     load_score_items,
     load_score_json,
     run_scoring,
+    score_tag_query,
 )
 from services.analysis.wd14 import (
+    Tags,
     Wd14Cache,
     Wd14Labels,
     build_cache,
@@ -32,6 +35,9 @@ from services.models import (
     ScoreItemsResponse,
     ScoringDirsResponse,
     ScoringStartResponse,
+    TagQueryBody,
+    TagQueryItem,
+    TagQueryResult,
 )
 
 logger = logging.getLogger(__name__)
@@ -187,6 +193,94 @@ def delete_item(ds: DatasetDep, key: str) -> ScoreItemsResponse:
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
     return ScoreItemsResponse(items=result)
+
+
+@router.get("/tags/suggest")
+def tag_suggest(
+    q: str = Query(..., min_length=1, max_length=100, description="标签前缀"),
+    limit: int = Query(10, ge=1, le=50),
+) -> dict:
+    """按 WD14 标签表前缀补全标签.
+
+    只返回标签评分器能够评分的标签, 名称已统一为空格分隔.
+
+    Args:
+        q (str): 标签前缀.
+        limit (int): 返回数量上限, 1-50.
+
+    Returns:
+        dict: ``{"tags": [{"name": str, "category": str}]}``.
+
+    Raises:
+        HTTPException: WD14 模型未就绪时返回 400.
+
+    Callers:
+        - ``static/js/app.js:searchFetchTags``
+    """
+    ok, message = model_ready()
+    if not ok:
+        raise HTTPException(400, message)
+    labels = Wd14Labels.load()
+    prefix = Tags.equivalence_key(q)
+    matches = [
+        (name, labels.categories[i])
+        for i, name in enumerate(labels.names)
+        if Tags.equivalence_key(name).startswith(prefix)
+    ]
+    matches.sort(key=lambda item: item[0])
+    return {
+        "tags": [
+            {"name": name, "category": category}
+            for name, category in matches[:limit]
+        ]
+    }
+
+
+@router.post("/tag-query")
+def tag_query(ds: DatasetDep, body: TagQueryBody) -> TagQueryResult:
+    """用标签评分器对当前图片按标签分值排序.
+
+    只读取已有的 WD14 推理缓存, 不触发生成缓存; 多标签取各概率最小值, 即所有
+    标签同时存在的置信度. 缺缓存的图片不参与排序, 由前端提示先建立缓存.
+
+    Args:
+        ds (DatasetDep): 当前数据集, 由依赖注入提供.
+        body (TagQueryBody): 逗号分隔的标签查询与目录列表.
+
+    Returns:
+        TagQueryResult: 按标签分值降序的结果与缺缓存张数.
+
+    Raises:
+        HTTPException: 模型未就绪、未选择目录、标签为空或标签不存在时返回 400.
+
+    Callers:
+        - ``static/js/app.js:searchSort``
+    """
+    ok, message = model_ready()
+    if not ok:
+        raise HTTPException(400, message)
+    works = ds.select(body.dirs)
+    if not works:
+        raise HTTPException(400, "请选择目录")
+    try:
+        hits, missing = score_tag_query(works, body.query)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    logger.info(
+        "标签排序 dataset=%s tags=%s dirs=%d 有分值=%d 缺缓存=%d",
+        ds.name,
+        body.query,
+        len(works),
+        len(hits),
+        missing,
+    )
+    return TagQueryResult(
+        items=[
+            TagQueryItem(path=path, stem=Path(path).stem, score=round(score, 6))
+            for path, score in hits
+        ],
+        missing=missing,
+    )
 
 
 @router.get("/results")

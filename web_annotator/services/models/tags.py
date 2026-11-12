@@ -176,6 +176,28 @@ class EmbeddingBatchTagResponse(BaseModel):
     message: str = ""
 
 
+class TagQueryBody(BaseModel):
+    """标签查询请求."""
+
+    query: str = Field(..., description="逗号分隔的标签")
+    dirs: list[str] | None = Field(default=None, description="子目录名, 空/省略=全选")
+
+
+class TagQueryItem(BaseModel):
+    """标签评分结果项."""
+
+    path: str
+    stem: str
+    score: float
+
+
+class TagQueryResult(BaseModel):
+    """标签评分排序结果."""
+
+    items: list[TagQueryItem] = Field(default_factory=list)
+    missing: int = Field(0, description="缺少 WD14 推理缓存、未参与排序的图片数")
+
+
 class ConceptQueryBody(BaseModel):
     """概念分割查询请求."""
 

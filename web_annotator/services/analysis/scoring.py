@@ -794,6 +794,84 @@ def run_scoring(
 
 
 # ---------------------------------------------------------------------------
+# 标签查询: 以 WD14 标签概率对图片评分并排序
+# ---------------------------------------------------------------------------
+
+
+def tag_query_tree(query: str, label_index: dict[str, int]) -> ast.AST:
+    """把逗号分隔的标签查询解析为评分表达式语法树.
+
+    单标签取该标签的概率; 多标签取各概率的最小值, 即所有标签同时存在的置信度.
+
+    Args:
+        query (str): 逗号分隔的标签查询.
+        label_index (dict[str, int]): WD14 标签等价键到概率下标的索引.
+
+    Returns:
+        ast.AST: 已解析并静态校验的表达式语法树.
+
+    Raises:
+        ValueError: 标签为空, 或引用的标签不在 WD14 标签表中.
+
+    Callers:
+        - ``services/analysis/scoring.py:run_tag_query``
+        - ``routes/scoring.py:tag_query``
+    """
+    tags = [tag.strip() for tag in query.split(",") if tag.strip()]
+    if not tags:
+        raise ValueError("标签不能为空")
+    literals = ", ".join(json.dumps(tag, ensure_ascii=False) for tag in tags)
+    source = literals if len(tags) == 1 else f"min({literals})"
+    return score_item_tree(source, label_index)
+
+
+def score_tag_query(
+    works: list[WorkDir], query: str,
+) -> tuple[list[tuple[str, float]], int]:
+    """用标签评分器对已有推理缓存的图片评分并降序返回.
+
+    只读取 ``.wd14_meta`` 中已有的概率向量, 不触发生成推理缓存; 缺缓存的图片
+    不参与排序, 由调用方提示先到评分页建立缓存. 查询标签的求值口径见
+    ``tag_query_tree``.
+
+    Args:
+        works (list[WorkDir]): 要检索的工作目录.
+        query (str): 逗号分隔的标签查询.
+
+    Returns:
+        tuple[list[tuple[str, float]], int]: ``([(相对路径, 分值), ...], 缺缓存张数)``,
+        分值按降序排列.
+
+    Raises:
+        RuntimeError: WD14 模型权重或标签表缺失.
+        ValueError: 查询标签为空或不在标签表中.
+
+    Callers:
+        - ``routes/scoring.py:tag_query``
+    """
+    root = works[0].dataset.root
+    items = [p for work in works for p in work.image_files()]
+    labels = Wd14Labels.load()
+    label_index = labels.index()
+    tree = tag_query_tree(query, label_index)
+    buffers = {
+        tag: np.zeros((1, 1), dtype=np.float64)
+        for tag in expression.extract_concepts(tree)
+    }
+    cache = Wd14Cache(root, labels)
+    hits: list[tuple[str, float]] = []
+    missing = 0
+    for src in items:
+        probabilities = cache.probabilities(src)
+        if probabilities is None:
+            missing += 1
+            continue
+        hits.append((cache.rel(src), evaluate_score(tree, buffers, label_index, probabilities)))
+    hits.sort(key=lambda item: item[1], reverse=True)
+    return hits, missing
+
+
+# ---------------------------------------------------------------------------
 # 查询结果构建(供 API 返回 JSON)
 # ---------------------------------------------------------------------------
 
