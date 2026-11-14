@@ -34,7 +34,7 @@ from services.online_sources.bilibili.models import (
     TopicInfo,
     VideoInfo,
 )
-from services.online_sources.framework.http import DEFAULT_UA, HttpClient, NetworkError
+from services.core.http import DEFAULT_UA, NetworkError, http_session
 
 logger = logging.getLogger(__name__)
 
@@ -91,14 +91,12 @@ async def _desktop_detail(
     """
     async def fetch() -> dict | None:
         """单次请求桌面版动态详情: ``data.item`` 条目, code=-1024 时为 None."""
-        async with HttpClient() as client:
-            resp = await client.get(
-                _DESKTOP_DETAIL_API,
-                headers=_BILI_HEADERS,
-                params={"id": dynamic_id, "timezone_offset": str(-480)},
-                timeout=30.0,
-                follow_redirects=True,
-            )
+        resp = await http_session().get(
+            _DESKTOP_DETAIL_API,
+            headers=_BILI_HEADERS,
+            params={"id": dynamic_id, "timezone_offset": str(-480)},
+            timeout=30.0,
+        )
         resp.raise_for_status()
         data = resp.json()
         code = data.get("code")
@@ -548,14 +546,12 @@ async def fetch_video_record(bvid: str) -> VideoInfo:
         - ``services/online_sources/bilibili/source.py:BilibiliSource.fetch_meta``
         - ``services/online_sources/bilibili/source.py:BilibiliVideoSource._fill_video_dims``
     """
-    async with HttpClient() as client:
-        resp = await client.get(
-            _VIDEO_VIEW_API,
-            headers=_BILI_HEADERS,
-            params={"bvid": bvid},
-            timeout=30.0,
-            follow_redirects=True,
-        )
+    resp = await http_session().get(
+        _VIDEO_VIEW_API,
+        headers=_BILI_HEADERS,
+        params={"bvid": bvid},
+        timeout=30.0,
+    )
     resp.raise_for_status()
     data = resp.json()
     if data.get("code") != 0:
@@ -601,10 +597,9 @@ async def fetch_bili_bytes(
     last_exc: NetworkError | None = None
     for attempt in range(1, retries + 1):
         try:
-            async with HttpClient() as client:
-                return await client.get_bytes(
-                    url, headers=_BILI_HEADERS, timeout=120.0,
-                )
+            return await http_session().get_bytes(
+                url, headers=_BILI_HEADERS, timeout=120.0,
+            )
         except NetworkError as exc:
             last_exc = exc
             if attempt < retries:

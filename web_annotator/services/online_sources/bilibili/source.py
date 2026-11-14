@@ -21,7 +21,7 @@ from datetime import date, datetime
 from pathlib import Path
 
 from services.core.video_scanner import VIDEO_EXTS
-from services.online_sources.framework.base import SourceClient
+from services.online_sources.framework.base import ImagePolicy, SourceClient
 from services.online_sources.bilibili.client import (
     fetch_bili_bytes,
     fetch_dynamics,
@@ -127,8 +127,7 @@ class BilibiliSource(SourceClient):
     valid_orders: tuple[str, ...] = ()
     session_based = True
     writes_caption = False
-    image_hosts = ("hdslb.com",)
-    image_referer = "https://www.bilibili.com/"
+    image = ImagePolicy(hosts=("hdslb.com",), referer="https://www.bilibili.com/")
     # 本源产出的动态形态类别 (类型筛选的默认全集)
     POST_TYPES: frozenset[str] = frozenset({"image", "forward"})
 

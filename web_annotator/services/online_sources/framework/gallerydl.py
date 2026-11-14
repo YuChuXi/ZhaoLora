@@ -22,7 +22,7 @@ from gallery_dl.extractor import find as gallery_find
 from gallery_dl.extractor.message import Message
 from pydantic import BaseModel, Field
 
-from services.online_sources.framework.http import HttpClient
+from services.core.http import http_session
 from services.online_sources.framework.base import ProgressFn, SourceClient
 from services.online_sources.framework.session import SessionStore
 from services.online_sources.framework.utils import find_downloaded
@@ -463,8 +463,7 @@ class GalleryDLSource(SourceClient):
         image_url = (post.file_url or "").strip()
         if not image_url:
             raise ValueError(f"pid {pid} 无媒体 URL")
-        async with HttpClient() as client:
-            data, _ = await client.get_bytes(image_url)
+        data, _ = await http_session().get_bytes(image_url)
 
         await self._save_png(data, image_path)
         self._clean_old_files(out_dir, pid, image_path)

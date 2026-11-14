@@ -13,6 +13,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from services.core.atomic import atomic_write_text
+from services.core.http import http_session
 from services.core.natural import natural_key
 from services.core.video_scanner import VIDEO_EXTS
 from services.dataset.sidecar import sidecar_paths
@@ -23,7 +24,6 @@ from services.online_sources.framework.base import (
     build_caption,
     file_stem,
 )
-from services.online_sources.framework.http import HttpClient
 
 logger = logging.getLogger(__name__)
 
@@ -138,22 +138,20 @@ async def download_raw_file(post: BooruPost, out_dir: Path) -> dict:
         raise ValueError("该帖无 file_url(可能需登录或已删除)")
     last_err = "无法下载视频"
     for url in urls:
-        async with HttpClient() as client:
-            resp = await client.get(
-                url,
-                headers={"accept": "video/webm,video/mp4,video/*,*/*;q=0.8"},
-                timeout=60.0,
-                follow_redirects=True,
-            )
-            if resp.status_code != 200:
-                last_err = f"下载 HTTP {resp.status_code}"
-                continue
-            if not resp.content:
-                last_err = "下载到空内容"
-                continue
-            video_path = out_dir / post.filename
-            await asyncio.to_thread(video_path.write_bytes, resp.content)
-            return {"path": str(video_path), "stem": video_path.stem, "id": post.id}
+        resp = await http_session().get(
+            url,
+            headers={"accept": "video/webm,video/mp4,video/*,*/*;q=0.8"},
+            timeout=60.0,
+        )
+        if resp.status_code != 200:
+            last_err = f"下载 HTTP {resp.status_code}"
+            continue
+        if not resp.content:
+            last_err = "下载到空内容"
+            continue
+        video_path = out_dir / post.filename
+        await asyncio.to_thread(video_path.write_bytes, resp.content)
+        return {"path": str(video_path), "stem": video_path.stem, "id": post.id}
     raise ValueError(last_err)
 
 

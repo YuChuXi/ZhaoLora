@@ -4,7 +4,6 @@
 ``gelbooru`` / ``e621`` / ``bilibili`` / ``x`` / ``pixiv``) 复用:
 
 - ``base``: ``SourceClient`` 抽象基类与来源注册表;
-- ``http``: 统一网络层 (基于 httpx);
 - ``utils``: 图片识型、文件定位、标签转换等工具;
 - ``media``: 下载、取消下载、标签重生成等媒体操作;
 - ``gallerydl``: 基于 gallery-dl 的来源客户端基类.
@@ -19,6 +18,7 @@ Callers:
 """
 
 from services.online_sources.framework.base import (
+    ImagePolicy,
     SourceClient,
     build_caption,
     detect_source,
@@ -37,6 +37,7 @@ from services.online_sources.framework.media import (
 
 __all__ = [
     "GalleryDLSource",
+    "ImagePolicy",
     "SourceClient",
     "build_caption",
     "detect_source",

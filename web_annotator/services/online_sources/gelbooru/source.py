@@ -10,7 +10,7 @@ from datetime import datetime
 from pathlib import Path
 
 from services.core.atomic import atomic_write_text
-from services.online_sources.framework.base import ProgressFn, SourceClient, build_caption
+from services.online_sources.framework.base import ImagePolicy, ProgressFn, SourceClient, build_caption
 from services.online_sources.framework.media import download_raw_file, post_is_video
 from services.online_sources.framework.utils import find_downloaded
 from services.online_sources.gelbooru.client import GelbooruClient
@@ -48,25 +48,10 @@ class GelbooruSource(SourceClient):
     prefix = "g"
     order_tags = {"score": "sort:score:desc", "id": "sort:id:desc", "id_asc": "sort:id:asc"}
     valid_orders = ("score", "id", "id_asc")
-    image_referer = "https://gelbooru.com/"
-    # 缩略图更快, 大图放宽超时
-    _IMAGE_TIMEOUTS = {"thumb": 30.0, "sample": 45.0}
-
-    def image_timeout_for(self, kind: str) -> float:
-        """按图片类型返回代理超时: 缩略图快、样图大图放宽.
-
-        覆盖父类 ``base.SourceClient``.
-
-        Args:
-            kind: 图片类型 (``thumb``/``sample``/空).
-
-        Returns:
-            float: 超时秒数.
-
-        Callers:
-            - ``services/online_sources/framework/base.py:SourceClient.proxy_image``
-        """
-        return self._IMAGE_TIMEOUTS.get(kind, self.image_timeout)
+    image = ImagePolicy(
+        referer="https://gelbooru.com/",
+        timeouts={"thumb": 30.0, "sample": 45.0},
+    )
 
     def filter_extra(self, extra: str) -> str:
         """Gelbooru 忽略 date: 元标签, 并合并多评级为 OR.
@@ -203,7 +188,7 @@ class GelbooruSource(SourceClient):
             raise ValueError("无 file_url")
 
         if overwrite or not image_path.is_file():
-            await api.get_image(post.file_url, str(image_path), referer=self.image_referer)
+            await api.get_image(post.file_url, str(image_path), referer=self.image.referer)
             self._clean_old_files(out_dir, pid, image_path)
 
         api_post = post

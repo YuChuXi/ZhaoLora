@@ -19,10 +19,10 @@ import asyncio
 from pathlib import Path
 from typing import Any
 
-from services.online_sources.framework.http import HttpClient
-from services.online_sources.framework.base import ProgressFn, SourceClient
-from services.online_sources.framework.utils import find_downloaded
+from services.core.http import http_session
 from services.models import BooruPost
+from services.online_sources.framework.base import ImagePolicy, ProgressFn, SourceClient
+from services.online_sources.framework.utils import find_downloaded
 from services.online_sources.pixiv.client import fetch_bytes, request_headers
 
 # user 模式惰性分页: 每页拉取并展开的作品数
@@ -44,8 +44,7 @@ class PixivSource(SourceClient):
     order_tags: dict[str, str] = {}
     valid_orders: tuple[str, ...] = ()
     writes_caption = False
-    image_hosts = ("pximg.net",)
-    image_referer = "https://www.pixiv.net/"
+    image = ImagePolicy(hosts=("pximg.net",), referer="https://www.pixiv.net/")
 
     def __init__(self) -> None:
         """初始化每查询缓存与并发锁。"""
@@ -67,7 +66,7 @@ class PixivSource(SourceClient):
             dict[str, str]: 含 ``mode`` 与 ``value`` 两键。
 
         Callers:
-            - ``static/js/booru_filter.js:`` : 前端来源选择页面.
+            - ``frontend/src/filter/useFilterPage.ts`` : 前端来源选择页面.
         """
         mode = "user"
         for token in (extra or "").split():
@@ -99,13 +98,12 @@ class PixivSource(SourceClient):
             - ``services/online_sources/pixiv/source.py:PixivSource._fetch_pages``
             - ``services/online_sources/pixiv/source.py:PixivSource._fetch_detail``
         """
-        async with HttpClient() as client:
-            resp = await client.get(url, headers=request_headers(), follow_redirects=True)
-            resp.raise_for_status()
-            data = resp.json()
-            if data.get("error"):
-                raise RuntimeError(data.get("message", "pixiv API 错误"))
-            return data
+        resp = await http_session().get(url, headers=request_headers())
+        resp.raise_for_status()
+        data = resp.json()
+        if data.get("error"):
+            raise RuntimeError(data.get("message", "pixiv API 错误"))
+        return data
 
     @staticmethod
     def _extract_tags(item: dict) -> str:

@@ -13,13 +13,16 @@ from __future__ import annotations
 
 import asyncio
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Mapping
+from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import urlparse
 
+import httpx
+
 from services.core.atomic import atomic_write_text
+from services.core.http import http_session
 from services.dataset.workdir import IMAGE_EXTS
-from services.online_sources.framework.http import HttpClient
 from services.online_sources.framework.utils import (
     _GENDER_TAGS,
     save_png_bytes,
@@ -33,6 +36,49 @@ SOURCES: dict[str, SourceClient] = {}
 
 # 下载进度回调: (当前进度, 总量), 数值为整数(如 20, 100). 仅视频帖有意义.
 ProgressFn = Callable[[int, int], None]
+
+
+@dataclass(frozen=True)
+class ImagePolicy:
+    """图床图片代理策略: 白名单、防盗链、协议版本与按类型超时.
+
+    Attributes:
+        hosts: 允许代理的图床 host（精确或子域后缀）；空元组表示不限定。
+        referer: 防盗链 Referer；空串表示不携带。
+        http2: 是否用 HTTP/2 请求图片；上游边缘节点按协议版本放行的来源须置真。
+        timeout: 默认超时秒数。
+        timeouts: 按 kind 覆盖的超时，如 ``{"sample": 45.0}``。
+    """
+
+    hosts: tuple[str, ...] = ()
+    referer: str = ""
+    http2: bool = False
+    timeout: float = 30.0
+    timeouts: Mapping[str, float] = field(default_factory=dict)
+
+    def allows(self, hostname: str) -> bool:
+        """判断 host 是否属于白名单.
+
+        Args:
+            hostname (str): 已转小写的目标主机名。
+
+        Returns:
+            bool: 白名单为空或无匹配项时分别返回 True / False。
+        """
+        if not self.hosts:
+            return True
+        return any(hostname == host or hostname.endswith("." + host) for host in self.hosts)
+
+    def timeout_for(self, kind: str) -> float:
+        """按图片类型取超时.
+
+        Args:
+            kind (str): ``thumb`` / ``sample`` / 空串。
+
+        Returns:
+            float: 对应超时秒数。
+        """
+        return self.timeouts.get(kind, self.timeout)
 
 
 class SourceClient(ABC):
@@ -161,50 +207,43 @@ class SourceClient(ABC):
         """
         return {"tags": tags, "extra": extra}
 
-    # ---- 图片代理: 子类用以下属性描述图床差异, 继承统一的 `proxy_image` ----
+    # ---- 图片代理: 子类用一份策略描述图床差异, 继承统一的 `proxy_image` ----
 
-    # 允许代理的图床 host (精确或子域后缀), 空元组表示不限定
-    image_hosts: tuple[str, ...] = ()
-    # 防盗链 Referer, 空串表示无需防盗链
-    image_referer: str = ""
-    # 图片代理默认超时(秒)
-    image_timeout: float = 30.0
-
-    def image_timeout_for(self, kind: str) -> float:
-        """按 kind 返回代理超时, 默认沿用 ``image_timeout``. 
-
-        Callers:
-            - ``services/online_sources/framework/base.py:SourceClient.proxy_image``
-        """
-        return self.image_timeout
+    image: ImagePolicy = ImagePolicy()
 
     async def proxy_image(self, url: str, *, kind: str = "") -> tuple[str, AsyncIterator[bytes]]:
         """流式代理本来源图床图片.
 
-        校验 URL 属于 ``image_hosts`` 白名单, 并带 ``image_referer`` 防盗链头,
-        返回 ``(content_type, 字节迭代器)`` 供 `routes.online_sources` 直接包成
-        ``StreamingResponse``。
+        按 ``image`` 策略校验图床白名单、携带防盗链 Referer、选择协议版本与超时,
+        返回 ``(content_type, 字节迭代器)`` 供 ``routes.online_sources`` 包成
+        ``StreamingResponse``。连接取自当前事件循环的会话, 迭代器结束时归还。
+
+        Args:
+            url (str): 图床图片地址。
+            kind (str): ``thumb`` / ``sample`` / 空串, 用于选择超时。
+
+        Returns:
+            tuple[str, AsyncIterator[bytes]]: 内容类型与字节迭代器。
 
         Raises:
-            ValueError: URL 非法或不属于本来源图床.
-            NetworkError: 网络或上游错误.
+            ValueError: 地址非法或不属于该来源图床。
+            NetworkError: 网络或上游错误。
 
         Callers:
             - ``routes/online_sources.py:proxy_image``
         """
-        u = urlparse(url)
-        if u.scheme not in ("http", "https") or not u.hostname:
+        policy = self.image
+        parsed = urlparse(url)
+        if parsed.scheme not in ("http", "https") or not parsed.hostname:
             raise ValueError("非法地址")
-        if self.image_hosts:
-            host = u.hostname.lower()
-            if not any(host == h or host.endswith("." + h) for h in self.image_hosts):
-                raise ValueError("非本站图床")
-        async with HttpClient() as client:
-            return await client.stream_response(
-                url,
-                referer=self.image_referer or None,
-                timeout=self.image_timeout_for(kind),
-            )
+        if not policy.allows(parsed.hostname.lower()):
+            raise ValueError("非本站图床")
+
+        headers = {"referer": policy.referer} if policy.referer else None
+        timeout = httpx.Timeout(policy.timeout_for(kind), connect=10.0)
+        return await http_session().stream(
+            url, headers=headers, timeout=timeout, http2=policy.http2,
+        )
 
     @property
     def meta_subdir(self) -> str:

@@ -2,7 +2,7 @@
 
 Danbooru 全站 (含图床 ``cdn.donmai.us``) 由 Cloudflare 边缘节点提供, 该节点
 对 HTTP/1.1 的浏览器类请求返回 403 质询页 (``text/html``), 仅 HTTP/2 放行,
-故此处请求一律经 ``HttpClient`` 以 HTTP/2 发送。代理从 ``HTTP_PROXY`` /
+故此处请求一律经统一网络层的 HTTP/2 客户端发送。代理从 ``HTTP_PROXY`` /
 ``HTTPS_PROXY`` 环境变量读取, 认证 (login / api_key) 由调用方经参数传入.
 
 Callers:
@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from services.online_sources.framework.http import HttpClient
+from services.core.http import http_session
 
 _DANBOORU_BASE = "https://danbooru.donmai.us"
 
@@ -61,11 +61,10 @@ async def get(
     if login and api_key:
         p["login"] = login
         p["api_key"] = api_key
-    async with HttpClient(http2=True) as client:
-        return await client.get(
-            url, params=p or None, headers=_headers(accept=accept),
-            timeout=timeout, follow_redirects=True,
-        )
+    return await http_session().get(
+        url, params=p or None, headers=_headers(accept=accept),
+        timeout=timeout, http2=True,
+    )
 
 
 def http_error(resp: Any, what: str) -> RuntimeError:

@@ -15,7 +15,7 @@ import os
 from pathlib import Path
 from typing import Any
 
-from services.online_sources.framework.http import HttpClient
+from services.core.http import http_session
 from services.online_sources.framework.utils import save_png_bytes
 
 _E621_BASE = "https://e621.net"
@@ -86,10 +86,9 @@ class E621Client:
             - ``services/online_sources/e621/client.py:E621Client.autocomplete``
         """
         query = {**params, **self._auth_params()}
-        async with HttpClient(headers=_API_HEADERS) as client:
-            resp = await client.get(
-                f"{_E621_BASE}{path}", params=query, follow_redirects=True,
-            )
+        resp = await http_session().get(
+            f"{_E621_BASE}{path}", params=query, headers=_API_HEADERS,
+        )
         if resp.status_code != 200:
             raise http_error(resp, what)
         return resp.json()
@@ -162,11 +161,10 @@ class E621Client:
         Callers:
             - ``services/online_sources/e621/source.py:E621Source.download``
         """
-        async with HttpClient(headers=_IMAGE_HEADERS) as client:
-            resp = await client.get(
-                file_url, headers={**_IMAGE_HEADERS, "referer": referer},
-                timeout=60.0, follow_redirects=True,
-            )
+        resp = await http_session().get(
+            file_url, headers={**_IMAGE_HEADERS, "referer": referer},
+            timeout=60.0,
+        )
         if resp.status_code != 200:
             raise http_error(resp, "图片")
         await asyncio.to_thread(save_png_bytes, resp.content, Path(path))

@@ -8,9 +8,8 @@ import json
 from collections import Counter
 from pathlib import Path
 
-import httpx
-
 from services.core.atomic import atomic_write_text
+from services.core.http import http_session
 from services.core.natural import natural_key
 from services.models import TagStatRow, TagStatsResult
 from services.tagging.clean import make_tag_matcher, tag_key
@@ -277,24 +276,24 @@ async def translate_missing_tags(tags: list[str], root: Path) -> dict[str, str]:
         if not missing:
             return {t: existing[t] for t in uniq if t in existing}
 
-        async with httpx.AsyncClient(timeout=30) as client:
-            for i in range(0, len(missing), _BATCH_SIZE):
-                chunk = missing[i : i + _BATCH_SIZE]
-                params: list[tuple[str, str]] = [
-                    ("client", "gtx"), ("sl", "en"), ("tl", "zh-CN"),
-                ]
-                for t in chunk:
-                    params.append(("q", t))
-                resp = await client.get(
-                    "https://translate.google.com/translate_a/t",
-                    params=params,
-                    headers={"User-Agent": "Mozilla/5.0"},
-                )
-                resp.raise_for_status()
-                data = resp.json()
-                translations = [str(v) for v in data] if isinstance(data, list) else chunk
-                for en, zh in zip(chunk, translations):
-                    existing[en] = zh.strip() if zh else en
+        client = http_session()
+        for i in range(0, len(missing), _BATCH_SIZE):
+            chunk = missing[i : i + _BATCH_SIZE]
+            params: list[tuple[str, str]] = [
+                ("client", "gtx"), ("sl", "en"), ("tl", "zh-CN"),
+            ]
+            for t in chunk:
+                params.append(("q", t))
+            resp = await client.get(
+                "https://translate.google.com/translate_a/t",
+                params=params,
+                headers={"User-Agent": "Mozilla/5.0"},
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            translations = [str(v) for v in data] if isinstance(data, list) else chunk
+            for en, zh in zip(chunk, translations):
+                existing[en] = zh.strip() if zh else en
 
         cache_path.parent.mkdir(parents=True, exist_ok=True)
         atomic_write_text(cache_path, json.dumps(existing, ensure_ascii=False, indent=2) + "\n")

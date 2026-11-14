@@ -14,7 +14,7 @@ from pathlib import Path
 
 from services.core.atomic import atomic_write_text
 from services.online_sources.e621.client import PAGE_LIMIT, E621Client
-from services.online_sources.framework.base import ProgressFn, SourceClient, build_caption
+from services.online_sources.framework.base import ImagePolicy, ProgressFn, SourceClient, build_caption
 from services.online_sources.framework.media import download_raw_file, post_is_video
 from services.online_sources.framework.utils import find_downloaded
 from services.models import BooruPost
@@ -94,8 +94,7 @@ class E621Source(SourceClient):
     # e621 的 order:id 为「旧→新」, 新帖在前需显式使用 order:id_desc
     order_tags = {"score": "order:score", "id": "order:id_desc", "id_asc": "order:id_asc"}
     valid_orders = ("score", "id", "id_asc")
-    image_hosts = ("e621.net",)
-    image_referer = "https://e621.net/"
+    image = ImagePolicy(hosts=("e621.net",), referer="https://e621.net/")
 
     @staticmethod
     def normalize(post: BooruPost) -> BooruPost | None:
@@ -197,7 +196,7 @@ class E621Source(SourceClient):
             raise ValueError("无 file_url")
 
         if overwrite or not image_path.is_file():
-            await api.get_image(post.file_url, str(image_path), referer=self.image_referer)
+            await api.get_image(post.file_url, str(image_path), referer=self.image.referer)
             self._clean_old_files(out_dir, pid, image_path)
 
         caption = build_caption(

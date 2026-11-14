@@ -33,6 +33,7 @@ from services.analysis.wd14 import (
     Wd14TagGroups,
 )
 from services.core.atomic import atomic_write_text
+from services.core.http import http_session
 from services.core.jobs import JobProgress
 from services.dataset.workdir import CAPTIONS_JSON_FILE, WorkDir
 from services.models import CaptionImageItem, CaptionResult, CaptionRule, CaptionRuleGroup
@@ -315,7 +316,7 @@ def _headers() -> dict[str, str]:
     return headers
 
 
-def openai_status() -> tuple[bool, str]:
+async def openai_status() -> tuple[bool, str]:
     """探测描述服务的配置与就绪状态; 未就绪时描述页不可提交任务.
 
     连通性与模型可用性经 ``GET {BASE_URL}/models`` 校验.
@@ -330,10 +331,13 @@ def openai_status() -> tuple[bool, str]:
     if not BASE_URL or not MODEL:
         return False, "未配置 CAPTION_OPENAI_BASE_URL / CAPTION_OPENAI_MODEL"
     try:
-        with httpx.Client(timeout=PROBE_TIMEOUT_SEC) as client:
-            resp = client.get(f"{BASE_URL.rstrip('/')}/models", headers=_headers())
-            resp.raise_for_status()
-            names = [str(m.get("id", "")) for m in resp.json().get("data", [])]
+        resp = await http_session().get(
+            f"{BASE_URL.rstrip('/')}/models",
+            headers=_headers(),
+            timeout=PROBE_TIMEOUT_SEC,
+        )
+        resp.raise_for_status()
+        names = [str(m.get("id", "")) for m in resp.json().get("data", [])]
     except httpx.HTTPError as e:
         logger.warning("描述服务不可用: %s", e)
         return False, f"无法连接 {BASE_URL}: {e}"
@@ -511,7 +515,9 @@ async def _stream_caption(
         - ``services/analysis/caption.py:run_caption``
     """
     parts: list[str] = []
-    async with client.stream("POST", url, json=payload, headers=headers) as resp:
+    async with client.stream(
+        "POST", url, json=payload, headers=headers, timeout=TIMEOUT_SEC,
+    ) as resp:
         if resp.is_error:
             detail = (await resp.aread()).decode("utf-8", "replace").strip()
             raise httpx.HTTPStatusError(
@@ -828,8 +834,8 @@ async def run_caption(
                 on_update()
 
     if pending:
-        async with httpx.AsyncClient(timeout=TIMEOUT_SEC) as client:
-            await asyncio.gather(*(serve() for _ in range(CONCURRENCY)))
+        client = http_session().client()
+        await asyncio.gather(*(serve() for _ in range(CONCURRENCY)))
 
     progress.current = ""
     if progress.cancel_requested:

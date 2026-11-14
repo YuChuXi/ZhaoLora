@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from services.core.http import run_isolated
 from services.core.jobs import EmitFn, JobProgress
 from services.dataset.workdir import VIDEO_DIRNAME
 from services.online_sources.framework.base import get_source
@@ -153,20 +154,22 @@ def run_batch(
     """
     try:
         asyncio.run(
-            _run_async(
-                source=source,
-                tags=tags,
-                extra=extra,
-                order=order,
-                out_dir=out_dir,
-                root=root,
-                start_page=start_page,
-                progress=progress,
-                emit=emit,
-                thumbnailer=thumbnailer,
-                anima_format=anima_format,
-                include_meta_tags=include_meta_tags,
-                keep_underscores=keep_underscores,
+            run_isolated(
+                _run_async(
+                    source=source,
+                    tags=tags,
+                    extra=extra,
+                    order=order,
+                    out_dir=out_dir,
+                    root=root,
+                    start_page=start_page,
+                    progress=progress,
+                    emit=emit,
+                    thumbnailer=thumbnailer,
+                    anima_format=anima_format,
+                    include_meta_tags=include_meta_tags,
+                    keep_underscores=keep_underscores,
+                )
             )
         )
     finally:

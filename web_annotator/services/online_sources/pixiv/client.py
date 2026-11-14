@@ -15,7 +15,7 @@ import asyncio
 import os
 from pathlib import Path
 
-from services.online_sources.framework.http import DEFAULT_UA, HttpClient, NetworkError
+from services.core.http import DEFAULT_UA, NetworkError, http_session
 
 # pixiv web AJAX 请求头
 _WEB_HEADERS = {
@@ -99,11 +99,9 @@ async def fetch_bytes(url: str) -> tuple[bytes, str]:
     last_exc: NetworkError | None = None
     for attempt in range(1, 4):
         try:
-            async with HttpClient() as client:
-                result = await client.get_bytes(
-                    url, headers=_IMG_HEADERS, timeout=120.0,
-                )
-            return result
+            return await http_session().get_bytes(
+                url, headers=_IMG_HEADERS, timeout=120.0,
+            )
         except NetworkError as exc:
             last_exc = exc
             if attempt < 3:

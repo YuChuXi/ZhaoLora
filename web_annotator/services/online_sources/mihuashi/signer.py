@@ -25,7 +25,7 @@ from typing import Any
 
 import wasmtime
 
-from services.online_sources.framework.http import HttpClient
+from services.core.http import http_session
 
 _SITE = "https://www.mihuashi.com"
 
@@ -545,23 +545,23 @@ async def _discover() -> Signtool:
     Raises:
         ValueError: 任一环节未在站点资源中找到对应引用.
     """
-    async with HttpClient() as client:
-        html = (await client.get(_SITE + "/")).text
-        m_icon = _ICON_RE.search(html)
-        if m_icon is None:
-            raise ValueError("站点页面未找到 favicon 链接, 无法初始化签名器")
-        chunks = list(dict.fromkeys(_HTTP_CHUNK_RE.findall(html)))
-        if not chunks:
-            raise ValueError("站点页面未找到 glue chunk 引用, 无法定位签名 WASM")
-        for chunk in chunks:
-            js = (await client.get(chunk)).text
-            m_wasm = _WASM_RE.search(js)
-            if m_wasm is not None:
-                wasm_url = m_wasm.group(0)
-                break
-        else:
-            raise ValueError("glue chunk 中未找到 mhs_fe_sign_bg WASM 引用")
-        wasm = (await client.get(wasm_url)).content
+    session = http_session()
+    html = (await session.get(_SITE + "/")).text
+    m_icon = _ICON_RE.search(html)
+    if m_icon is None:
+        raise ValueError("站点页面未找到 favicon 链接, 无法初始化签名器")
+    chunks = list(dict.fromkeys(_HTTP_CHUNK_RE.findall(html)))
+    if not chunks:
+        raise ValueError("站点页面未找到 glue chunk 引用, 无法定位签名 WASM")
+    for chunk in chunks:
+        js = (await session.get(chunk)).text
+        m_wasm = _WASM_RE.search(js)
+        if m_wasm is not None:
+            wasm_url = m_wasm.group(0)
+            break
+    else:
+        raise ValueError("glue chunk 中未找到 mhs_fe_sign_bg WASM 引用")
+    wasm = (await session.get(wasm_url)).content
     return Signtool(wasm, m_icon.group(1))
 
 

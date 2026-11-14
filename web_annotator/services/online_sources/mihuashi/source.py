@@ -17,9 +17,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from services.core.http import http_session
 from services.models import BooruPost
-from services.online_sources.framework.base import ProgressFn, SourceClient
-from services.online_sources.framework.http import HttpClient
+from services.online_sources.framework.base import ImagePolicy, ProgressFn, SourceClient
 from services.online_sources.framework.utils import find_downloaded
 from services.online_sources.mihuashi.client import api_get
 
@@ -64,7 +64,7 @@ class MihuashiSource(SourceClient):
     order_tags: dict[str, str] = {}
     valid_orders: tuple[str, ...] = ()
     writes_caption = False
-    image_hosts = ("mihuashi.com",)
+    image = ImagePolicy(hosts=("mihuashi.com",))
 
     def parse_query(self, tags: str, extra: str) -> dict[str, str]:
         """解析米画师查询串: ``tags`` 为画师 UID, ``extra`` 里 ``mode:`` 指定板块.
@@ -79,7 +79,6 @@ class MihuashiSource(SourceClient):
 
         Callers:
             - ``services/online_sources/framework/base.py:SourceClient.build_search_query``
-            - ``assets/static/js/booru_filter.js:`` : 前端来源选择页面.
         """
         mode = _MODE_ARTWORKS
         for token in (extra or "").split():
@@ -366,8 +365,7 @@ class MihuashiSource(SourceClient):
         url = (post.file_url or "").strip()
         if not url:
             raise ValueError(f"pid {pid} 无媒体 URL")
-        async with HttpClient() as client:
-            data, _ = await client.get_bytes(url, timeout=120.0)
+        data, _ = await http_session().get_bytes(url, timeout=120.0)
 
         await self._save_png(data, image_path)
         self._clean_old_files(out_dir, pid, image_path)

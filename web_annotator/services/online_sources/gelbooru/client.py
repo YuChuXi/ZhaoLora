@@ -15,7 +15,7 @@ import os
 from pathlib import Path
 from typing import Any
 
-from services.online_sources.framework.http import HttpClient, NetworkError
+from services.core.http import http_session
 from services.online_sources.framework.utils import save_png_bytes
 
 _GELBOORU_BASE = "https://gelbooru.com/index.php"
@@ -84,10 +84,9 @@ class GelbooruClient:
             - ``services/online_sources/gelbooru/client.py:autocomplete``
         """
         params.update(self._auth_params())
-        async with HttpClient() as client:
-            resp = await client.get(_GELBOORU_BASE, params=params, follow_redirects=True)
-            resp.raise_for_status()
-            return resp.json()
+        resp = await http_session().get(_GELBOORU_BASE, params=params)
+        resp.raise_for_status()
+        return resp.json()
 
     async def get_post(self, pid: int) -> dict:
         """获取单帖元数据.
@@ -159,8 +158,9 @@ class GelbooruClient:
         Callers:
             - ``services/online_sources/gelbooru/source.py:GelbooruSource.download``
         """
-        async with HttpClient(headers={"cookie": _IMAGE_COOKIE}) as client:
-            data, _ = await client.get_bytes(file_url, referer=referer)
+        data, _ = await http_session().get_bytes(
+            file_url, headers={"cookie": _IMAGE_COOKIE, "referer": referer},
+        )
         await asyncio.to_thread(save_png_bytes, data, Path(path))
 
     def _auth_params(self) -> dict[str, str]:

@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING
 
 from services.core.atomic import atomic_write_text
 from services.online_sources.danbooru import client as _client
-from services.online_sources.framework.base import ProgressFn, SourceClient, build_caption
+from services.online_sources.framework.base import ImagePolicy, ProgressFn, SourceClient, build_caption
 from services.online_sources.framework.media import download_raw_file, post_is_video
 from services.online_sources.framework.utils import find_downloaded, pil_can_open, sniff_image_kind
 
@@ -132,6 +132,7 @@ class DanbooruSource(SourceClient):
 
     name = "danbooru"
     prefix = "d"
+    image = ImagePolicy(hosts=("donmai.us",), referer="https://danbooru.donmai.us/", http2=True)
     order_tags = {"score": "order:score", "id": "order:id_desc", "id_asc": "order:id"}
     valid_orders = ("score", "id", "id_asc")
 
