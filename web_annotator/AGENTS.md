@@ -90,9 +90,11 @@ docs/                          功能说明文档
     业务页只提供 `separator` 与按当前片段取候选的 `fetchTags`，不自行渲染下拉。
   - `UI.bindJobPanel(opts)`：进度条、百分比、日志、取消按钮与终态收尾的统一实现，
     业务页只提交任务并在 `onFinish` 中刷新数据。
-- `static/js/masonry.js`：瀑布流。`init` 的 `selection` 参数接管选中状态；单击立即提交
-  选择语义，`onPreview` 提供时以右键（桌面）或长按（触屏）打开预览；选择变更后调用
-  `syncSelection()` 增量同步卡片样式，禁止整列表重建。
+- `static/js/masonry.js`：瀑布流组件。`mount` 挂载并观察容器宽度，`update` 全量布局，
+  `append` 增量追加，`setColumns` 重排，`unmount` 释放；只负责布局与默认卡片，交互由
+  页面在容器上委托，选中态由页面通过 `setSelected(paths)` 投影。
+- 筛选页为独立 React 应用（`frontend/`，Vite + Tailwind），构建产物写入
+  `assets/static/filter/`；修改后执行 `npm run build`，由 `filter.html` 加载。
 - `static/js/nav.js`：功能标签导航与数据集绑定启动。
 - 业务页脚本统一为 IIFE：`(function () { 'use strict'; ... })();`，公共能力从上述管理器
   取用，不重复实现。
