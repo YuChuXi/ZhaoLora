@@ -10,6 +10,7 @@ import type {
   Mode,
   Post,
   SearchResult,
+  SearchScoreItem,
   SortKey,
 } from './types';
 
@@ -25,13 +26,37 @@ export function datasetName(): string {
   return dataset;
 }
 
+/**
+ * 请求失败时携带 HTTP 状态码的错误。
+ *
+ * Args:
+ *   status (number): HTTP 状态码，供调用方区分资源不存在与临时故障。
+ *   detail (string): 响应体文本。
+ *
+ * Returns:
+ *   ApiError: 错误实例。
+ *
+ * Callers:
+ *   - `frontend/src/lib/api.ts:request`
+ *   - `frontend/src/app/AppShell.tsx:AppShell`
+ */
+export class ApiError extends Error {
+  constructor(
+    readonly status: number,
+    detail: string,
+  ) {
+    super(`${status}: ${detail}`);
+    this.name = 'ApiError';
+  }
+}
+
 export async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, {
     headers: { 'Content-Type': 'application/json' },
     ...init,
   });
   if (!res.ok) {
-    throw new Error(`${res.status}: ${await res.text()}`);
+    throw new ApiError(res.status, await res.text());
   }
   return res.json() as Promise<T>;
 }
@@ -225,16 +250,16 @@ export function thumbUrl(post: Post): string {
     case 'danbooru':
       return proxy('danbooru', 'thumb', post.id, post.preview_url || post.sample_url || '');
     case 'bilibili':
-      return proxy('bilibili', null, '', post.preview_url || post.sample_url || '');
+      return proxy('bilibili', 'thumb', '', post.preview_url || post.sample_url || '');
     case 'bilibili-video':
-      return proxy('bilibili-video', null, '', post.preview_url || post.sample_url || '');
+      return proxy('bilibili-video', 'thumb', '', post.preview_url || post.sample_url || '');
     case 'x':
-      return proxy('x', null, '', post.preview_url || post.sample_url || '');
+      return proxy('x', 'thumb', '', post.preview_url || post.sample_url || '');
     case 'pixiv':
-      return proxy('pixiv', null, '', post.preview_url || post.sample_url || '');
+      return proxy('pixiv', 'thumb', '', post.preview_url || post.sample_url || '');
     case 'mihuashi': {
       const url = post.preview_url || post.sample_url || '';
-      return proxy('mihuashi', null, '', url ? `${url}!artwork.large` : '');
+      return proxy('mihuashi', 'thumb', '', url ? `${url}!artwork.large` : '');
     }
     case 'video':
       return `${apiPath('/video/cover')}?path=${encodeURIComponent(post.path || '')}`;
@@ -355,10 +380,11 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(body),
     }),
-  download: (body: DownloadBody) =>
+  download: (body: DownloadBody, signal?: AbortSignal) =>
     request<{ job_id?: string; path?: string; skipped?: boolean }>(apiPath('/online-sources/download'), {
       method: 'POST',
       body: JSON.stringify(body),
+      signal,
     }),
   undownload: (body: DownloadBody) =>
     request<unknown>(apiPath('/online-sources/undownload'), {
@@ -416,24 +442,70 @@ export const api = {
     request<BatchSnapshot | null>(
       `/api/jobs/active?kind=${encodeURIComponent(kind)}&dataset=${encodeURIComponent(dataset)}`,
     ),
+  semanticQuery: (query: string, dirs: string[]) =>
+    request<{ job_id: string }>(apiPath('/tags/embedding/query'), {
+      method: 'POST',
+      body: JSON.stringify({ query, dirs }),
+    }),
+  tagQuery: (query: string, dirs: string[]) =>
+    request<{ items: SearchScoreItem[]; missing: number }>(apiPath('/scoring/tag-query'), {
+      method: 'POST',
+      body: JSON.stringify({ query, dirs }),
+    }),
+  embeddingHistory: () =>
+    request<{ queries: Array<{ query: string; time?: number }> }>(apiPath('/tags/embedding/history')),
   localImageUrl: (path: string) => `${apiPath('/image')}?path=${encodeURIComponent(path)}`,
   thumbHashUrl: (hash: string) =>
     `/d/${encodeURIComponent(dataset)}/thumb/${encodeURIComponent(hash)}.avif`,
   watchJob: (jobId: string, onEvent: (snap: BatchSnapshot) => void) => {
-    const es = new EventSource(`/api/jobs/${encodeURIComponent(jobId)}/events`);
-    es.onmessage = (event) => {
-      const snap = JSON.parse(event.data) as BatchSnapshot;
-      onEvent(snap);
-      if (snap.status === 'done' || snap.status === 'error' || snap.status === 'cancelled') {
-        es.close();
-      }
+    let closed = false;
+    let retry = 0;
+    let source: EventSource | null = null;
+    const connect = () => {
+      if (closed) return;
+      source = new EventSource(`/api/jobs/${encodeURIComponent(jobId)}/events`);
+      source.onmessage = (event) => {
+        retry = 0;
+        const snap = JSON.parse(event.data) as BatchSnapshot;
+        onEvent(snap);
+        if (snap.status === 'done' || snap.status === 'error' || snap.status === 'cancelled') {
+          closed = true;
+          source?.close();
+        }
+      };
+      source.onerror = () => {
+        source?.close();
+        if (closed) return;
+        const delay = Math.min(1000 * 2 ** retry, 10000);
+        retry += 1;
+        window.setTimeout(connect, delay);
+      };
     };
-    return () => es.close();
+    connect();
+    return () => {
+      closed = true;
+      source?.close();
+    };
   },
 };
 
-export function sortItems(items: LocalItem[], key: SortKey): LocalItem[] {
+export function sortItems(
+  items: LocalItem[],
+  key: SortKey,
+  scores?: Record<string, number>,
+): LocalItem[] {
   const out = items.slice();
+  if (key === 'search' && scores) {
+    out.sort((a, b) => {
+      const sa = scores[a.path];
+      const sb = scores[b.path];
+      const va = typeof sa === 'number' ? sa : Number.NEGATIVE_INFINITY;
+      const vb = typeof sb === 'number' ? sb : Number.NEGATIVE_INFINITY;
+      if (vb !== va) return vb - va;
+      return a.stem.localeCompare(b.stem, 'en', { numeric: true });
+    });
+    return out;
+  }
   if (key === 'posted') {
     out.sort((a, b) => {
       const ta = a.posted_at || '';
@@ -462,7 +534,7 @@ export function sortItems(items: LocalItem[], key: SortKey): LocalItem[] {
   return out;
 }
 
-export function statusLabel(status: DownloadStatus): string {
+export function statusLabel(status?: DownloadStatus): string {
   if (status === 'downloading') return '保存中…';
   if (status === 'done') return '已保存';
   if (status === 'error') return '失败';

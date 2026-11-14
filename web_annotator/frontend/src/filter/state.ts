@@ -1,7 +1,7 @@
 import type {
   BatchSnapshot,
   DirOption,
-  DownloadStatus,
+  DownloadEntry,
   LocalItem,
   Mode,
   Post,
@@ -39,6 +39,13 @@ export interface SimilarState {
   loading: boolean;
 }
 
+export interface SearchState {
+  prefix: 'S' | 'T';
+  query: string;
+  scores: Record<string, number>;
+  missing: number;
+}
+
 export interface PageState {
   ready: boolean;
   mode: Mode;
@@ -52,14 +59,18 @@ export interface PageState {
   selected: Record<string, boolean>;
   cursor: string | null;
   remote: RemoteState;
-  status: Record<string, DownloadStatus>;
-  progress: Record<string, string>;
+  /** 远端图片的保存状态；无条目即未保存，与本地模式的 `selected` 无关。 */
+  downloads: Record<string, DownloadEntry>;
   preview: Post | null;
   similar: SimilarState | null;
+  search: SearchState | null;
+  searchOpen: boolean;
+  searchBusy: boolean;
+  searchMessage: string;
   batchOpen: boolean;
-  batchRunning: boolean;
-  batchSnapshot: BatchSnapshot | null;
+  batch: BatchSnapshot | null;
   metaOpen: boolean;
+  meta: BatchSnapshot | null;
   error: string | null;
 }
 
@@ -96,20 +107,23 @@ export const initialState: PageState = {
   selected: {},
   cursor: null,
   remote: emptyRemote(),
-  status: {},
-  progress: {},
+  downloads: {},
   preview: null,
   similar: null,
+  search: null,
+  searchOpen: false,
+  searchBusy: false,
+  searchMessage: '',
   batchOpen: false,
-  batchRunning: false,
-  batchSnapshot: null,
+  batch: null,
   metaOpen: false,
+  meta: null,
   error: null,
 };
 
 export type Action =
   | { type: 'init'; dirs: string[]; allDirs: DirOption[]; persisted: PersistedFilter }
-  | { type: 'setMode'; mode: Mode }
+  | { type: 'setMode'; mode: Mode; fields?: Record<string, string> }
   | { type: 'setDirs'; dirs: string[] }
   | { type: 'setColumns'; columns: number }
   | { type: 'setSort'; sort: SortKey }
@@ -125,11 +139,17 @@ export type Action =
   | { type: 'clearSelection' }
   | { type: 'preview'; post: Post | null }
   | { type: 'similar'; similar: SimilarState | null }
-  | { type: 'status'; key: string; status: DownloadStatus; progress?: string }
+  | { type: 'searchOpen'; open: boolean }
+  | { type: 'searchBusy'; busy: boolean }
+  | { type: 'searchMessage'; message: string }
+  | { type: 'searchResult'; search: SearchState }
+  | { type: 'searchClear' }
+  | { type: 'download'; key: string; entry: DownloadEntry }
+  | { type: 'downloadClear'; key: string }
   | { type: 'batchOpen'; open: boolean }
-  | { type: 'batchSnapshot'; snapshot: BatchSnapshot | null }
-  | { type: 'batchRunning'; running: boolean }
+  | { type: 'batch'; snapshot: BatchSnapshot | null }
   | { type: 'metaOpen'; open: boolean }
+  | { type: 'meta'; snapshot: BatchSnapshot | null }
   | { type: 'error'; error: string | null };
 
 function selectedFrom(items: LocalItem[], selected: Record<string, boolean>): Record<string, boolean> {
@@ -142,6 +162,34 @@ function selectedFrom(items: LocalItem[], selected: Record<string, boolean>): Re
 
 function modeFields(persisted: PersistedFilter, mode: Mode): PersistedSource {
   return persisted.sources[mode] ?? { fields: {}, page: 1 };
+}
+
+/**
+ * 由服务端返回的已保存标记与在途任务重建图片状态表。
+ *
+ * 在途任务优先于服务端标记：图片正在下载时，即使服务端尚未记录已完成，也保留进度。
+ *
+ * Args:
+ *   current (Record<string, DownloadEntry>): 变更前的状态表。
+ *   posts (Post[]): 本次返回的图片。
+ *
+ * Returns:
+ *   Record<string, DownloadEntry>: 仅覆盖本次返回图片的状态条目。
+ *
+ * Callers:
+ *   - `filter/state.ts:reducer`（`remoteLoaded` 分支）
+ */
+function downloadsFrom(
+  current: Record<string, DownloadEntry>,
+  posts: Post[],
+): Record<string, DownloadEntry> {
+  const next: Record<string, DownloadEntry> = {};
+  for (const post of posts) {
+    const live = current[post.key];
+    if (live?.status === 'downloading') next[post.key] = live;
+    else if (post.downloaded) next[post.key] = { status: 'done', progress: '' };
+  }
+  return next;
 }
 
 export function reducer(state: PageState, action: Action): PageState {
@@ -172,11 +220,12 @@ export function reducer(state: PageState, action: Action): PageState {
         mode: action.mode,
         selected: {},
         cursor: null,
-        status: {},
-        progress: {},
+        downloads: {},
         preview: null,
         similar: null,
-        remote: { ...emptyRemote(), fields: {} },
+        search: null,
+        searchMessage: '',
+        remote: { ...emptyRemote(), fields: { ...(action.fields ?? {}) } },
         local: [],
         localLoaded: false,
         error: null,
@@ -208,38 +257,24 @@ export function reducer(state: PageState, action: Action): PageState {
           : { ...state.remote, loading: true },
       };
     case 'remoteLoaded': {
-      if (action.reset) {
-        const selected: Record<string, boolean> = {};
-        for (const post of action.posts) {
-          if (post.downloaded) selected[post.key] = true;
-        }
-        return {
-          ...state,
-          remote: {
-            ...state.remote,
-            loading: false,
-            posts: action.posts,
-            pageLo: action.page,
-            pageHi: action.page,
-            hasMore: action.hasMore,
-            hasPrev: action.page > 1,
-            session: action.session,
-          },
-          selected,
-        };
-      }
+      const downloads = downloadsFrom(state.downloads, action.posts);
       return {
         ...state,
         remote: {
           ...state.remote,
           loading: false,
-          posts: action.up ? [...action.posts, ...state.remote.posts] : [...state.remote.posts, ...action.posts],
-          pageLo: action.up ? action.page : state.remote.pageLo,
-          pageHi: action.up ? state.remote.pageHi : action.page,
-          hasMore: action.up ? state.remote.hasMore : action.hasMore,
-          hasPrev: action.up ? action.page > 1 : state.remote.hasPrev,
+          posts: action.reset
+            ? action.posts
+            : action.up
+              ? [...action.posts, ...state.remote.posts]
+              : [...state.remote.posts, ...action.posts],
+          pageLo: action.reset || action.up ? action.page : state.remote.pageLo,
+          pageHi: action.reset || !action.up ? action.page : state.remote.pageHi,
+          hasMore: action.reset || !action.up ? action.hasMore : state.remote.hasMore,
+          hasPrev: action.reset ? action.page > 1 : action.up ? action.page > 1 : state.remote.hasPrev,
           session: action.session || state.remote.session,
         },
+        downloads: action.reset ? downloads : { ...state.downloads, ...downloads },
       };
     }
     case 'remoteError':
@@ -266,22 +301,32 @@ export function reducer(state: PageState, action: Action): PageState {
       return { ...state, preview: action.post };
     case 'similar':
       return { ...state, similar: action.similar };
-    case 'status':
-      return {
-        ...state,
-        status: { ...state.status, [action.key]: action.status },
-        progress: action.progress
-          ? { ...state.progress, [action.key]: action.progress }
-          : state.progress,
-      };
+    case 'searchOpen':
+      return { ...state, searchOpen: action.open };
+    case 'searchBusy':
+      return { ...state, searchBusy: action.busy };
+    case 'searchMessage':
+      return { ...state, searchMessage: action.message };
+    case 'searchResult':
+      return { ...state, search: action.search, searchBusy: false, searchMessage: '' };
+    case 'searchClear':
+      return { ...state, search: null, searchMessage: '', searchBusy: false, sort: 'name' };
+    case 'download':
+      return { ...state, downloads: { ...state.downloads, [action.key]: action.entry } };
+    case 'downloadClear': {
+      if (!state.downloads[action.key]) return state;
+      const downloads = { ...state.downloads };
+      delete downloads[action.key];
+      return { ...state, downloads };
+    }
     case 'batchOpen':
       return { ...state, batchOpen: action.open };
-    case 'batchSnapshot':
-      return { ...state, batchSnapshot: action.snapshot };
-    case 'batchRunning':
-      return { ...state, batchRunning: action.running };
+    case 'batch':
+      return { ...state, batch: action.snapshot };
     case 'metaOpen':
       return { ...state, metaOpen: action.open };
+    case 'meta':
+      return { ...state, meta: action.snapshot };
     case 'error':
       return { ...state, error: action.error };
     default:
@@ -289,7 +334,19 @@ export function reducer(state: PageState, action: Action): PageState {
   }
 }
 
-export function visibleKeys(state: PageState): string[] {
-  if (state.mode === 'local') return state.local.map((item) => item.path);
-  return state.remote.posts.map((post) => post.key);
+/**
+ * 判断长任务快照是否处于运行阶段（已提交或执行中）。
+ *
+ * Args:
+ *   snapshot (BatchSnapshot | null): 任务快照。
+ *
+ * Returns:
+ *   boolean: 处于排队或运行中返回 true。
+ *
+ * Callers:
+ *   - `filter/Dialogs.tsx:BatchDialog`
+ *   - `filter/Dialogs.tsx:MetaDialog`
+ */
+export function isRunning(snapshot: BatchSnapshot | null): boolean {
+  return snapshot?.status === 'queued' || snapshot?.status === 'running';
 }

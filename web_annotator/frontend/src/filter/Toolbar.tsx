@@ -4,8 +4,11 @@ import type { Mode, SortKey } from '@/lib/types';
 import { Button } from '@/components/ui/button';
 import { Input, Select } from '@/components/ui/input';
 import { Checkbox, Slider } from '@/components/ui/controls';
+import { Toolbar as ToolbarFrame } from '@/components/ui/toolbar';
+import { captureCardAnchor, restoreCardAnchor, type CardAnchor } from '@/lib/scroll';
 import type { FilterActions } from './useFilterPage';
 import type { PageState } from './state';
+import { ConditionDialog } from './Dialogs';
 
 const MODES: Mode[] = [
   'local',
@@ -25,6 +28,7 @@ const SORTS: Array<{ value: SortKey; label: string }> = [
   { value: 'posted', label: '时间' },
   { value: 'aesthetic', label: '美学' },
   { value: 'pixels', label: '像素' },
+  { value: 'search', label: '搜索' },
 ];
 
 function TagInput({
@@ -89,41 +93,30 @@ function TagInput({
 export function Toolbar({
   state,
   actions,
-  selectedCount,
 }: {
   state: PageState;
   actions: FilterActions;
-  selectedCount: number;
 }) {
   const def = SOURCES[state.mode];
   const remote = state.mode !== 'local';
   const fields = state.remote.fields;
-  const anchor = useRef<{ key: string; top: number } | null>(null);
+  const anchor = useRef<CardAnchor | null>(null);
+  const [conditionOpen, setConditionOpen] = useState(false);
+  const hasExtra = def.fields.some((field) => field.id === 'extra');
+  const selectedCount = Object.values(state.selected).filter(Boolean).length;
 
   const changeColumns = (value: number) => {
-    for (const card of document.querySelectorAll<HTMLElement>('.masonry-card')) {
-      const rect = card.getBoundingClientRect();
-      if (rect.bottom > 0 && card.dataset.key) {
-        anchor.current = { key: card.dataset.key, top: rect.top };
-        break;
-      }
-    }
+    anchor.current = captureCardAnchor();
     actions.setColumns(value);
   };
 
   useLayoutEffect(() => {
-    const saved = anchor.current;
-    if (!saved) return;
-    const card = document.querySelector<HTMLElement>(
-      `.masonry-card[data-key="${CSS.escape(saved.key)}"]`,
-    );
-    if (!card) return;
-    const top = card.getBoundingClientRect().top;
-    if (top !== saved.top) window.scrollBy(0, top - saved.top);
+    restoreCardAnchor(anchor.current);
+    anchor.current = null;
   }, [state.columns]);
 
   return (
-    <div className="sticky top-[41px] z-30 flex flex-wrap items-center gap-2.5 border-b border-border bg-background/95 px-2 py-2 backdrop-blur">
+    <ToolbarFrame>
       <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
         来源
         <Select value={state.mode} onChange={(event) => actions.setMode(event.target.value as Mode)}>
@@ -197,6 +190,10 @@ export function Toolbar({
             return null;
           })}
 
+          {hasExtra ? (
+            <Button onClick={() => setConditionOpen(true)}>搜索条件</Button>
+          ) : null}
+
           {!def.noJump ? (
             <div className="flex h-7 items-stretch overflow-hidden rounded border border-border bg-[#0a1a30]">
               <button
@@ -221,12 +218,6 @@ export function Toolbar({
             </div>
           ) : null}
 
-          <span className="ml-auto text-xs text-muted-foreground">
-            已加载 <b className="text-foreground">{state.remote.posts.length}</b>
-          </span>
-          <span className="text-xs text-muted-foreground">
-            已选 <b className="text-foreground">{selectedCount}</b>
-          </span>
         </>
       ) : (
         <>
@@ -243,6 +234,14 @@ export function Toolbar({
           <Button onClick={actions.localSelectAll}>全选</Button>
           <Button onClick={actions.localInvert}>反选</Button>
           <Button onClick={actions.localClearSelection}>清除选择</Button>
+          <Button variant="primary" onClick={actions.openSearch}>
+            搜索排序
+          </Button>
+          {state.search ? (
+            <Button variant="ghost" onClick={actions.clearSearch}>
+              清除搜索
+            </Button>
+          ) : null}
           <Button variant="danger" disabled={!selectedCount} onClick={actions.localDelete}>
             删除
           </Button>
@@ -251,12 +250,6 @@ export function Toolbar({
             <Checkbox checked={state.showTrash} onCheckedChange={actions.setTrash} />
             回收站视图
           </label>
-          <span className="ml-auto text-xs text-muted-foreground">
-            已收录 <b className="text-foreground">{state.local.length}</b>
-          </span>
-          <span className="text-xs text-muted-foreground">
-            已选 <b className="text-foreground">{selectedCount}</b>
-          </span>
         </>
       )}
 
@@ -270,6 +263,13 @@ export function Toolbar({
         />
         <span className="w-6 text-center">{state.columns === 0 ? '自动' : state.columns}</span>
       </label>
-    </div>
+
+      <ConditionDialog
+        open={conditionOpen}
+        extra={fields.extra ?? ''}
+        onClose={() => setConditionOpen(false)}
+        onApply={(extra) => actions.setField('extra', extra)}
+      />
+    </ToolbarFrame>
   );
 }

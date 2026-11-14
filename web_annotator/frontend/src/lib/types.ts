@@ -55,9 +55,15 @@ export interface SearchResult {
 
 export type Mode = 'local' | 'gelbooru' | 'danbooru' | 'e621' | 'bilibili' | 'bilibili-video' | 'x' | 'pixiv' | 'mihuashi' | 'video';
 
-export type SortKey = 'name' | 'posted' | 'aesthetic' | 'pixels';
+export type SortKey = 'name' | 'posted' | 'aesthetic' | 'pixels' | 'search';
 
-export type DownloadStatus = 'idle' | 'downloading' | 'done' | 'error';
+export type DownloadStatus = 'downloading' | 'done' | 'error';
+
+/** 单张远端图片的保存状态与进度文本；无条目即未保存。 */
+export interface DownloadEntry {
+  status: DownloadStatus;
+  progress: string;
+}
 
 export interface BatchSnapshot {
   job_id?: string;
@@ -67,6 +73,15 @@ export interface BatchSnapshot {
   message?: string;
   pct?: number;
   log?: string[];
+  result?: {
+    items?: Array<{ path: string; similarity?: number; score?: number }>;
+  };
+}
+
+export interface SearchScoreItem {
+  path: string;
+  similarity?: number;
+  score?: number;
 }
 
 export interface BatchParams {

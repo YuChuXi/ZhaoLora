@@ -1,28 +1,29 @@
 import { useEffect, useState } from 'react';
 import { api, pageUrl, sampleUrl, statusLabel } from '@/lib/api';
-import type { BatchParams, BatchSnapshot, DownloadStatus, LocalItem, Post } from '@/lib/types';
+import type { BatchParams, BatchSnapshot, DownloadEntry, LocalItem, Post } from '@/lib/types';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
+import { Input, Select } from '@/components/ui/input';
 import { Checkbox } from '@/components/ui/controls';
 import { Dialog } from '@/components/ui/dialog';
-import type { SimilarState } from './state';
+import { useJob } from '@/components/ui/status';
+import { isRunning, type SimilarState } from './state';
 
 export function PreviewDialog({
   post,
-  selected,
-  status,
+  entry,
   onClose,
   onToggle,
   onTagSearch,
 }: {
   post: Post | null;
-  selected: boolean;
-  status?: DownloadStatus;
+  entry?: DownloadEntry;
   onClose: () => void;
   onToggle: (post: Post) => void;
   onTagSearch: (tag: string) => void;
 }) {
   if (!post) return null;
+  const saved = entry?.status === 'done';
+  const downloading = entry?.status === 'downloading';
   const tags = (post.tags || '').split(/\s+/).filter(Boolean);
   return (
     <Dialog
@@ -42,7 +43,7 @@ export function PreviewDialog({
             <div className="text-foreground">{post.stem || post.id}</div>
             <div>分辨率 {post.width > 0 ? `${post.width}×${post.height}` : '-'}</div>
             <div>分数 {post.score ?? '-'} · rating {post.rating || '-'}</div>
-            <div>状态 {status ? statusLabel(status) : selected ? '已保存' : '未保存'}</div>
+            <div>状态 {statusLabel(entry?.status)}</div>
           </div>
           <div className="flex flex-wrap gap-1.5 overflow-auto">
             {tags.map((tag) => (
@@ -65,8 +66,8 @@ export function PreviewDialog({
             >
               打开原站
             </a>
-            <Button variant={selected ? 'default' : 'primary'} onClick={() => onToggle(post)}>
-              {selected ? '移除' : '下载'}
+            <Button variant={saved ? 'default' : 'primary'} onClick={() => onToggle(post)}>
+              {downloading ? '取消保存' : saved ? '移除' : '下载'}
             </Button>
           </div>
         </div>
@@ -119,16 +120,211 @@ export function SimilarDialog({
   );
 }
 
+export function ConditionDialog({
+  open,
+  extra,
+  onClose,
+  onApply,
+}: {
+  open: boolean;
+  extra: string;
+  onClose: () => void;
+  onApply: (extra: string) => void;
+}) {
+  const [ratings, setRatings] = useState<string[]>([]);
+  const [score, setScore] = useState('');
+  const [width, setWidth] = useState('');
+  const [height, setHeight] = useState('');
+  const [others, setOthers] = useState('');
+
+  useEffect(() => {
+    if (!open) return;
+    const tokens = extra.split(/\s+/).filter(Boolean);
+    setRatings(tokens.filter((token) => token.startsWith('rating:')).map((token) => token.slice(7)));
+    setScore(tokens.find((token) => token.startsWith('score:'))?.slice(6) ?? '');
+    setWidth(tokens.find((token) => token.startsWith('width:'))?.slice(6) ?? '');
+    setHeight(tokens.find((token) => token.startsWith('height:'))?.slice(7) ?? '');
+    setOthers(
+      tokens
+        .filter((token) => !/^(rating|score|width|height):/.test(token))
+        .join(' '),
+    );
+  }, [open, extra]);
+
+  const apply = () => {
+    const parts: string[] = [];
+    for (const rating of ratings) parts.push(`rating:${rating}`);
+    if (score.trim()) parts.push(`score:${score.trim()}`);
+    if (width.trim()) parts.push(`width:${width.trim()}`);
+    if (height.trim()) parts.push(`height:${height.trim()}`);
+    if (others.trim()) parts.push(others.trim());
+    onApply(parts.join(' '));
+    onClose();
+  };
+
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(next) => !next && onClose()}
+      title="搜索条件"
+      footer={
+        <>
+          <Button onClick={onClose}>关闭</Button>
+          <Button variant="primary" onClick={apply}>
+            应用
+          </Button>
+        </>
+      }
+    >
+      <div className="flex flex-col gap-3 text-xs text-muted-foreground">
+        <div className="flex items-center gap-2">
+          <span className="w-16">评级</span>
+          {['g', 's', 'q', 'e'].map((rating) => (
+            <label key={rating} className="flex items-center gap-1">
+              <Checkbox
+                checked={ratings.includes(rating)}
+                onCheckedChange={(checked) =>
+                  setRatings(
+                    checked ? [...ratings, rating] : ratings.filter((item) => item !== rating),
+                  )
+                }
+              />
+              {rating}
+            </label>
+          ))}
+        </div>
+        <label className="flex items-center gap-2">
+          <span className="w-16">分数</span>
+          <Input
+            className="flex-1"
+            placeholder="如 >=100"
+            value={score}
+            onChange={(event) => setScore(event.target.value)}
+          />
+        </label>
+        <label className="flex items-center gap-2">
+          <span className="w-16">宽度</span>
+          <Input
+            className="flex-1"
+            placeholder="如 >=1920"
+            value={width}
+            onChange={(event) => setWidth(event.target.value)}
+          />
+        </label>
+        <label className="flex items-center gap-2">
+          <span className="w-16">高度</span>
+          <Input
+            className="flex-1"
+            placeholder="如 >=1080"
+            value={height}
+            onChange={(event) => setHeight(event.target.value)}
+          />
+        </label>
+        <label className="flex items-center gap-2">
+          <span className="w-16">其它</span>
+          <Input
+            className="flex-1"
+            placeholder="额外条件，空格分隔"
+            value={others}
+            onChange={(event) => setOthers(event.target.value)}
+          />
+        </label>
+      </div>
+    </Dialog>
+  );
+}
+
+export function SearchDialog({
+  open,
+  busy,
+  message,
+  onClose,
+  onSemantic,
+  onTag,
+}: {
+  open: boolean;
+  busy: boolean;
+  message: string;
+  onClose: () => void;
+  onSemantic: (query: string) => void;
+  onTag: (query: string) => void;
+}) {
+  const [mode, setMode] = useState<'semantic' | 'tag'>('semantic');
+  const [query, setQuery] = useState('');
+  const [history, setHistory] = useState<Array<{ query: string; time?: number }>>([]);
+
+  useEffect(() => {
+    if (!open) return;
+    api
+      .embeddingHistory()
+      .then((result) => setHistory(result.queries ?? []))
+      .catch(() => setHistory([]));
+  }, [open]);
+
+  const submit = () => {
+    const text = query.trim();
+    if (!text || busy) return;
+    if (mode === 'semantic') onSemantic(text);
+    else onTag(text);
+  };
+
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(next) => !next && onClose()}
+      title="搜索排序"
+      footer={
+        <>
+          <Button onClick={onClose}>关闭</Button>
+          <Button variant="primary" disabled={busy} onClick={submit}>
+            {busy ? '处理中…' : '按相似度排序'}
+          </Button>
+        </>
+      }
+    >
+      <div className="flex flex-col gap-2 text-xs text-muted-foreground">
+        <label className="flex items-center gap-2">
+          模式
+          <Select value={mode} onChange={(event) => setMode(event.target.value as 'semantic' | 'tag')}>
+            <option value="semantic">自然语言描述</option>
+            <option value="tag">标签评分</option>
+          </Select>
+        </label>
+        <Input
+          value={query}
+          placeholder={mode === 'semantic' ? '描述画面，如 白发的少女站在海边' : '标签，逗号分隔，如 1girl, solo'}
+          onChange={(event) => setQuery(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter') {
+              event.preventDefault();
+              submit();
+            }
+          }}
+        />
+        {mode === 'semantic' && history.length ? (
+          <Select value="" onChange={(event) => setQuery(event.target.value)}>
+            <option value="">最近搜索</option>
+            {history.map((item) => (
+              <option key={item.query} value={item.query}>
+                {item.query}
+              </option>
+            ))}
+          </Select>
+        ) : null}
+        {message ? <div className="text-[11px] text-foreground">{message}</div> : null}
+      </div>
+    </Dialog>
+  );
+}
+
 export function BatchDialog({
   open,
-  running,
   snapshot,
   onClose,
   onStart,
   onParams,
 }: {
   open: boolean;
-  running: boolean;
   snapshot: BatchSnapshot | null;
   onClose: () => void;
   onStart: (params: BatchParams) => void;
@@ -142,12 +338,23 @@ export function BatchDialog({
     meta: false,
     underscores: false,
   });
+  const running = isRunning(snapshot);
 
   useEffect(() => {
     if (!running) return;
     const timer = window.setTimeout(() => onParams(params), 300);
     return () => window.clearTimeout(timer);
   }, [params, running, onParams]);
+
+  const jobId = snapshot?.job_id;
+  useJob(
+    open && snapshot
+      ? {
+          snapshot: { ...snapshot, total: snapshot.limit ?? null },
+          onCancel: jobId ? () => void api.cancelJob(jobId) : undefined,
+        }
+      : null,
+  );
 
   return (
     <Dialog
@@ -206,37 +413,34 @@ export function BatchDialog({
           保留下划线
         </label>
       </div>
-      {snapshot ? (
-        <div className="mt-3 space-y-1 text-xs text-muted-foreground">
-          <div>
-            {snapshot.status || 'running'} · {snapshot.done ?? 0}/{snapshot.limit ?? params.limit}
-          </div>
-          <div className="h-1 overflow-hidden rounded bg-border">
-            <div
-              className="h-full bg-primary transition-all"
-              style={{ width: `${Math.min(100, snapshot.pct ?? 0)}%` }}
-            />
-          </div>
-          {snapshot.message ? <div>{snapshot.message}</div> : null}
-        </div>
-      ) : null}
     </Dialog>
   );
 }
 
 export function MetaDialog({
   open,
-  running,
+  snapshot,
   onClose,
   onRegenerate,
   onRefresh,
 }: {
   open: boolean;
-  running: boolean;
+  snapshot: BatchSnapshot | null;
   onClose: () => void;
   onRegenerate: () => void;
   onRefresh: () => void;
 }) {
+  const running = isRunning(snapshot);
+  const jobId = snapshot?.job_id;
+  useJob(
+    open && snapshot
+      ? {
+          snapshot,
+          onCancel: jobId ? () => void api.cancelJob(jobId) : undefined,
+        }
+      : null,
+  );
+
   return (
     <Dialog
       open={open}

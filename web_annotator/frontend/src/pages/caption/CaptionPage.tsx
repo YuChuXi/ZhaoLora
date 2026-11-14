@@ -9,6 +9,8 @@ import type {
 import { Button } from '@/components/ui/button';
 import { Input, Select } from '@/components/ui/input';
 import { Dialog } from '@/components/ui/dialog';
+import { Toolbar, ToolbarDivider } from '@/components/ui/toolbar';
+import { useJob, useStatus } from '@/components/ui/status';
 import { useApp } from '@/app/AppContext';
 import { Masonry, type ViewItem } from '@/filter/Masonry';
 import { CaptionSettingsDialog } from './CaptionSettings';
@@ -30,19 +32,14 @@ function compileRe(source: string): RegExp {
   return new RegExp(source.slice(inline[0].length), inline[1].replace(/[^ims]/g, ''));
 }
 
-function compileMatcher(mode: string, query: string): ((text: string) => boolean) | null {
-  if (!query) return null;
+function compileMatcher(mode: string, query: string): (text: string) => boolean {
   if (mode === 'exact') return (text) => text.indexOf(query) !== -1;
   if (mode === 'danbooru') {
     const re = danbooruRe(query);
     return (text) => re.test(text.toLowerCase().replace(/_/g, ' ').trim());
   }
-  try {
-    const re = compileRe(query);
-    return (text) => re.test(text);
-  } catch {
-    return null;
-  }
+  const re = compileRe(query);
+  return (text) => re.test(text);
 }
 
 function defaultSettings(data: CaptionDirsData | null, saved: unknown): CaptionSettings {
@@ -79,6 +76,7 @@ export function CaptionPage() {
   const [view, setView] = useState<CaptionImage | null>(null);
   const [jobId, setJobId] = useState<string | null>(null);
   const [snapshot, setSnapshot] = useState<BatchSnapshot | null>(null);
+  const [cancelling, setCancelling] = useState(false);
   const filterTimer = useRef<number>();
   const booted = useRef(false);
   const settingsRef = useRef(app.settings.caption);
@@ -128,16 +126,27 @@ export function CaptionPage() {
       setSnapshot(snap);
       if (snap.status === 'done' || snap.status === 'error' || snap.status === 'cancelled') {
         setJobId(null);
+        setCancelling(false);
+        if (snap.status === 'done') app.notify(snap.message || '标注完成');
+        else if (snap.status === 'cancelled') app.notify(snap.message || '已取消');
+        else app.notify(`标注失败: ${snap.message || ''}`);
+        setSnapshot(null);
         void reload(app.dirs);
       }
     });
-  }, [jobId, reload, app.dirs]);
+  }, [jobId, reload, app]);
 
-  const filtered = useMemo(() => {
-    const matcher = compileMatcher(filterMode, filterQuery.trim());
-    if (!matcher) return items;
-    return items.filter((item) => (item.captions || []).some(matcher));
+  const filterResult = useMemo(() => {
+    const query = filterQuery.trim();
+    if (!query) return { items, error: null as string | null };
+    try {
+      const matcher = compileMatcher(filterMode, query);
+      return { items: items.filter((item) => (item.captions || []).some(matcher)), error: null };
+    } catch (error) {
+      return { items, error: error instanceof Error ? error.message : String(error) };
+    }
   }, [items, filterMode, filterQuery]);
+  const filtered = filterResult.items;
 
   const viewItems = useMemo<ViewItem[]>(
     () =>
@@ -147,6 +156,8 @@ export function CaptionPage() {
         src: item.thumbnail_hash ? api.thumbHashUrl(item.thumbnail_hash) : api.localImageUrl(item.path),
         label: item.stem,
         kind: 'image' as const,
+        highlight: !!item.captions?.length,
+        tooltip: item.captions?.length ? item.captions.join('\n\n') : '未描述',
       })),
     [filtered],
   );
@@ -202,35 +213,58 @@ export function CaptionPage() {
       app.notify('请至少选择一种描述模式');
       return;
     }
-    const paths = selectedCount ? Object.keys(selected).filter((key) => selected[key]) : filtered.map((item) => item.path);
+    const visibleSelected = filtered.filter((item) => selected[item.path]).map((item) => item.path);
+    const paths = visibleSelected.length ? visibleSelected : filtered.map((item) => item.path);
     if (!paths.length) {
       app.notify('没有可处理的图片');
       return;
     }
-    const threshold = (enabled: boolean | undefined, value: string | undefined) => {
+    const threshold = (enabled: boolean | undefined, value: string | undefined, label: string) => {
       if (!enabled) return null;
       const parsed = Number(value);
-      return Number.isFinite(parsed) ? parsed : null;
+      if (!Number.isFinite(parsed) || parsed < 0 || parsed > 1) {
+        throw new Error(`${label}阈值需在 0~1 之间`);
+      }
+      return parsed;
     };
     try {
+      const general = threshold(settings.inject.general, settings.inject.general_threshold, '通用标签');
+      const character = threshold(settings.inject.character, settings.inject.character_threshold, '角色标签');
+      const nsfw = threshold(settings.inject.nsfw, settings.inject.nsfw_threshold, 'NSFW');
+      const rules = settings.rules
+        .filter((rule) => rule.text.trim())
+        .map((rule) => ({ text: rule.text.trim(), pattern: rule.pattern.trim() }));
+      const groups = settings.groups
+        .map((group) => ({
+          ...group,
+          pattern: group.pattern.trim(),
+          items: group.items
+            .filter((item) => item.text.trim())
+            .map((item) => ({
+              text: item.text.trim(),
+              weight: Number.isFinite(item.weight) ? item.weight : 1,
+            })),
+        }))
+        .filter((group) => group.items.length);
       const result = await api.captionStart({
         dirs: app.dirs,
         paths,
         modes: settings.modes,
-        general_threshold: threshold(settings.inject.general, settings.inject.general_threshold),
-        character_threshold: threshold(settings.inject.character, settings.inject.character_threshold),
-        nsfw_threshold: threshold(settings.inject.nsfw, settings.inject.nsfw_threshold),
-        rules: settings.rules.filter((rule) => rule.text.trim()),
-        groups: settings.groups,
+        general_threshold: general,
+        character_threshold: character,
+        nsfw_threshold: nsfw,
+        rules,
+        groups,
         force: settings.force,
       });
       setSettingsOpen(false);
       setSnapshot(null);
+      setCancelling(false);
       setJobId(result.job_id);
     } catch (error) {
       app.notify(error instanceof Error ? error.message : String(error));
     }
-  }, [app, filtered, selected, selectedCount, settings]);
+  }, [app, filtered, selected, settings]);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -255,24 +289,44 @@ export function CaptionPage() {
     return () => document.removeEventListener('keydown', onKey);
   }, [deleteCaptions, filtered, selected]);
 
+  useStatus([
+    { kind: 'total', value: filtered.length },
+    { kind: 'part', name: '已描述', value: described },
+    { kind: 'part', name: '未描述', value: filtered.length - described },
+    ...(selectedCount ? [{ kind: 'selected' as const, value: selectedCount }] : []),
+    {
+      kind: 'resource',
+      name: '模型',
+      value: data?.ready ? data.info || '就绪' : `未就绪: ${data?.info || ''}`,
+    },
+  ]);
+  useJob(
+    snapshot
+      ? {
+          snapshot,
+          onCancel: jobId
+            ? () => {
+                setCancelling(true);
+                void api.cancelJob(jobId).catch((error) => {
+                  setCancelling(false);
+                  app.notify(error instanceof Error ? error.message : String(error));
+                });
+              }
+            : undefined,
+          cancelling,
+          onClear: () => setSnapshot(null),
+        }
+      : null,
+  );
+
   return (
     <div>
-      <div className="sticky top-[41px] z-30 flex flex-wrap items-center gap-2 border-b border-border bg-background/95 px-2 py-2 backdrop-blur">
+      <Toolbar>
         <Button variant="primary" onClick={() => void startJob()} disabled={!!jobId}>
           生成描述
         </Button>
         <Button onClick={() => setSettingsOpen(true)}>设置</Button>
-        {jobId ? (
-          <Button
-            variant="danger"
-            onClick={() => {
-              void api.cancelJob(jobId);
-            }}
-          >
-            取消
-          </Button>
-        ) : null}
-        <span className="mx-1 h-5 w-px bg-border" />
+        <ToolbarDivider />
         <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
           描述
           <Select value={filterMode} onChange={(event) => setFilterMode(event.target.value)}>
@@ -310,7 +364,7 @@ export function CaptionPage() {
             filterTimer.current = window.setTimeout(() => setFilterQuery(value), 120);
           }}
         />
-        <span className="mx-1 h-5 w-px bg-border" />
+        <ToolbarDivider />
         <Button
           onClick={() => {
             const next: Record<string, boolean> = {};
@@ -339,27 +393,17 @@ export function CaptionPage() {
         >
           删除描述
         </Button>
-        <span className="ml-auto text-xs text-muted-foreground">
-          共 <b className="text-foreground">{filtered.length}</b> · 已描述{' '}
-          <b className="text-foreground">{described}</b> · 未描述{' '}
-          <b className="text-foreground">{filtered.length - described}</b>
-        </span>
-        {selectedCount ? (
-          <span className="text-xs text-muted-foreground">
-            已选 <b className="text-foreground">{selectedCount}</b>
-          </span>
-        ) : null}
-        <span className="text-xs text-muted-foreground">
-          {data?.ready ? data.info || '模型就绪' : `未就绪: ${data?.info || ''}`}
-        </span>
-      </div>
+      </Toolbar>
 
-      {snapshot ? (
-        <div className="flex items-center gap-2 border-b border-border px-3 py-1.5 text-xs text-muted-foreground">
-          <div className="h-1 flex-1 overflow-hidden rounded bg-border">
-            <div className="h-full bg-primary transition-all" style={{ width: `${Math.min(100, snapshot.pct ?? 0)}%` }} />
-          </div>
-          <span>{snapshot.message || `${Math.round(snapshot.pct ?? 0)}%`}</span>
+      {filterResult.error ? (
+        <div className="border-b border-primary/40 bg-primary/10 px-3 py-1.5 text-xs text-primary">
+          筛选条件无效: {filterResult.error}
+        </div>
+      ) : null}
+
+      {snapshot?.log?.length ? (
+        <div className="max-h-40 overflow-auto whitespace-pre-wrap border-b border-border bg-[#16213e] px-3 py-2 font-mono text-[11px] leading-relaxed text-muted-foreground">
+          {snapshot.log.join('\n')}
         </div>
       ) : null}
 
@@ -367,8 +411,6 @@ export function CaptionPage() {
         items={viewItems}
         fixedColumns={0}
         selected={selected}
-        status={{}}
-        progress={{}}
         hasMore={false}
         hasPrev={false}
         loading={!data}

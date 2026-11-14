@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { CaptionDirsData, CaptionGroup, CaptionRule, CaptionSettings } from '@/lib/types';
 import { Button } from '@/components/ui/button';
 import { Input, Select } from '@/components/ui/input';
@@ -31,6 +31,10 @@ export function CaptionSettingsDialog({
   const [draft, setDraft] = useState<CaptionSettings>(value);
   const [template, setTemplate] = useState('');
   const [vars, setVars] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    if (open) setDraft(value);
+  }, [open, value]);
 
   const templateSource = useMemo(
     () => data?.rule_templates.find((item) => item.label === template)?.text ?? '',
@@ -68,22 +72,39 @@ export function CaptionSettingsDialog({
     setVars({});
   };
 
+  const addLanguageSample = () => {
+    patch({
+      groups: [
+        ...draft.groups,
+        {
+          pattern: '',
+          exclusive: true,
+          items: [
+            { text: 'Using English', weight: 1 },
+            { text: '使用中文', weight: 1 },
+          ],
+        },
+      ],
+    });
+  };
+
+  const closeWithSave = () => {
+    onSave(draft);
+    onClose();
+  };
+
   return (
     <Dialog
       open={open}
-      onOpenChange={(next) => !next && onClose()}
+      onOpenChange={(next) => {
+        if (!next) closeWithSave();
+      }}
       title="描述设置"
       className="w-[min(860px,94vw)]"
       footer={
         <>
-          <Button onClick={onClose}>关闭</Button>
-          <Button
-            variant="primary"
-            onClick={() => {
-              onSave(draft);
-              onClose();
-            }}
-          >
+          <Button onClick={closeWithSave}>关闭</Button>
+          <Button variant="primary" onClick={closeWithSave}>
             保存
           </Button>
         </>
@@ -238,9 +259,14 @@ export function CaptionSettingsDialog({
         <section className="flex flex-col gap-2 border-t border-border pt-3">
           <div className="flex items-center justify-between">
             <span className="text-foreground">随机抽取组</span>
-            <Button size="sm" onClick={addGroup}>
-              添加组
-            </Button>
+            <div className="flex gap-2">
+              <Button size="sm" onClick={addLanguageSample}>
+                语言样例
+              </Button>
+              <Button size="sm" onClick={addGroup}>
+                添加组
+              </Button>
+            </div>
           </div>
           {draft.groups.map((group, groupIndex) => (
             <div key={groupIndex} className="flex flex-col gap-1.5 rounded border border-border p-2">

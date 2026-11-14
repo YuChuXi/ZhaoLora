@@ -1,5 +1,5 @@
 import { memo, useEffect, useMemo, useRef, useState } from 'react';
-import type { DownloadStatus } from '@/lib/types';
+import type { DownloadEntry } from '@/lib/types';
 import { cn } from '@/lib/utils';
 
 export interface ViewItem {
@@ -8,14 +8,17 @@ export interface ViewItem {
   src: string;
   label: string;
   kind?: 'image' | 'video';
+  fallbackSrc?: string;
+  highlight?: boolean;
+  tooltip?: string;
 }
 
 interface MasonryProps {
   items: ViewItem[];
   fixedColumns: number;
   selected: Record<string, boolean>;
-  status: Record<string, DownloadStatus>;
-  progress: Record<string, string>;
+  /** 卡片级保存状态；仅筛选页的远端图片使用。 */
+  downloads?: Record<string, DownloadEntry>;
   hasMore: boolean;
   hasPrev: boolean;
   loading: boolean;
@@ -47,20 +50,19 @@ function distribute(items: ViewItem[], columns: number, width: number): ViewItem
 const FilterCard = memo(function FilterCard({
   item,
   selected,
-  status,
-  progress,
+  entry,
   onCardClick,
   onCardContext,
 }: {
   item: ViewItem;
   selected: boolean;
-  status?: DownloadStatus;
-  progress?: string;
+  entry?: DownloadEntry;
   onCardClick: (key: string, shiftKey: boolean) => void;
   onCardContext: (key: string) => void;
 }) {
   const timer = useRef<number>();
   const longPressed = useRef(false);
+  const downloading = entry?.status === 'downloading';
 
   const cancelLongPress = () => {
     if (timer.current) {
@@ -75,7 +77,8 @@ const FilterCard = memo(function FilterCard({
       data-key={item.key}
       data-selected={selected ? 'true' : 'false'}
       data-kind={item.kind}
-      title={item.label}
+      data-highlight={item.highlight ? 'true' : 'false'}
+      title={item.tooltip || item.label}
       onClick={(event) => {
         if (longPressed.current) {
           longPressed.current = false;
@@ -105,13 +108,18 @@ const FilterCard = memo(function FilterCard({
         decoding="async"
         style={{ aspectRatio: `1 / ${item.ratio}` }}
         draggable={false}
+        onError={(event) => {
+          const image = event.currentTarget;
+          if (!item.fallbackSrc || image.dataset.fallback === '1') return;
+          image.dataset.fallback = '1';
+          image.src = item.fallbackSrc;
+        }}
       />
       <div className="card-info">
         <span className="card-name">
           {item.kind === 'video' ? '视频 · ' : ''}
-          {progress || item.label}
+          {downloading ? entry?.progress || '保存中…' : item.label}
         </span>
-        {status === 'downloading' ? <span className="text-[10px] text-sky-300">…</span> : null}
       </div>
       <span className="card-check">✓</span>
     </div>
@@ -122,8 +130,7 @@ export function Masonry({
   items,
   fixedColumns,
   selected,
-  status,
-  progress,
+  downloads = {},
   hasMore,
   hasPrev,
   loading,
@@ -198,8 +205,7 @@ export function Masonry({
                 key={item.key}
                 item={item}
                 selected={!!selected[item.key]}
-                status={status[item.key]}
-                progress={progress[item.key]}
+                entry={downloads[item.key]}
                 onCardClick={onCardClick}
                 onCardContext={onCardContext}
               />

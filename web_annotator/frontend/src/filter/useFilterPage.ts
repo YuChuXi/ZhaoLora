@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef } from 'react';
 import {
   api,
+  datasetName,
   isRemote,
   SOURCES,
   sortItems,
@@ -61,6 +62,12 @@ function filterNewPosts(posts: Post[], existing: Post[]): Post[] {
   });
 }
 
+/** 单张图片正在执行的保存动作：同步请求的中止函数，或异步任务的订阅与标识。 */
+interface DownloadTask {
+  abort: () => void;
+  jobId?: string;
+}
+
 export interface FilterActions {
   setMode: (mode: Mode) => void;
   setColumns: (columns: number) => void;
@@ -83,6 +90,11 @@ export interface FilterActions {
   localDelete: () => void;
   localRestore: () => void;
   selectRangeTo: (key: string) => void;
+  openSearch: () => void;
+  closeSearch: () => void;
+  runSemanticSearch: (query: string) => void;
+  runTagSearch: (query: string) => void;
+  clearSearch: () => void;
   openBatch: () => void;
   closeBatch: () => void;
   startBatch: (params: BatchParams) => void;
@@ -102,8 +114,10 @@ export function useFilterPage(dirList: string[]): { state: PageState; actions: F
   const seq = useRef(0);
   const sourcesRef = useRef<Partial<Record<Mode, PersistedSource>>>({});
   const saveTimer = useRef<number>();
-  const jobIds = useRef<Record<string, string>>({});
-  const jobClose = useRef<(() => void) | null>(null);
+  const downloadTasks = useRef(new Map<string, DownloadTask>());
+  const batchClose = useRef<(() => void) | null>(null);
+  const metaClose = useRef<(() => void) | null>(null);
+  const searchStop = useRef<(() => void) | null>(null);
   const initialized = useRef(false);
 
   const apply = useCallback((action: Action) => dispatch(action), []);
@@ -211,7 +225,7 @@ export function useFilterPage(dirList: string[]): { state: PageState; actions: F
             cols: current.columns,
             show_trash: current.showTrash,
           },
-          sort: current.sort,
+          sort: current.sort === 'search' ? 'name' : current.sort,
           booru_ui: sources,
         },
         false,
@@ -230,38 +244,98 @@ export function useFilterPage(dirList: string[]): { state: PageState; actions: F
 
   useEffect(() => {
     return () => {
-      jobClose.current?.();
+      for (const task of downloadTasks.current.values()) task.abort();
+      downloadTasks.current.clear();
+      batchClose.current?.();
+      metaClose.current?.();
+      searchStop.current?.();
     };
   }, []);
 
-  const localItems = useMemo(() => sortItems(state.local, state.sort), [state.local, state.sort]);
+  const localItems = useMemo(
+    () => sortItems(state.local, state.sort, state.search?.scores),
+    [state.local, state.sort, state.search],
+  );
   const keys = useMemo(() => {
     if (state.mode === 'local') return localItems.map((item) => item.path);
     return state.remote.posts.map((post) => post.key);
   }, [state.mode, localItems, state.remote.posts]);
 
-  const notify = useCallback((error: string) => apply({ type: 'error', error }), [apply]);
+  const notify = useCallback((message: string) => app.notify(message), [app]);
 
+  /**
+   * 订阅单张图片的下载任务，终态写回卡片状态。
+   *
+   * 每张图片持有独立的 SSE 连接，互不影响；重复触发同一张图片时先关闭旧连接。
+   *
+   * Args:
+   *   key (string): 图片键。
+   *   jobId (string): 后端下载任务标识。
+   *
+   * Returns:
+   *   void
+   *
+   * Callers:
+   *   - `filter/useFilterPage.ts:downloadPost`
+   */
   const watchDownload = useCallback(
     (key: string, jobId: string) => {
-      jobIds.current[key] = jobId;
-      jobClose.current?.();
-      jobClose.current = api.watchJob(jobId, (snapshot: BatchSnapshot) => {
+      downloadTasks.current.get(key)?.abort();
+      const close = api.watchJob(jobId, (snapshot: BatchSnapshot) => {
         if (snapshot.status === 'done') {
-          delete jobIds.current[key];
-          apply({ type: 'status', key, status: 'done' });
-          apply({ type: 'toggle', key, on: true });
-        } else if (snapshot.status === 'error' || snapshot.status === 'cancelled') {
-          delete jobIds.current[key];
-          apply({ type: 'status', key, status: snapshot.status === 'error' ? 'error' : 'idle' });
-        } else {
-          const text =
-            snapshot.status === 'queued'
-              ? '排队中'
-              : snapshot.message || `${Math.round(snapshot.pct ?? 0)}%`;
-          apply({ type: 'status', key, status: 'downloading', progress: text });
+          downloadTasks.current.delete(key);
+          apply({ type: 'download', key, entry: { status: 'done', progress: '' } });
+          return;
         }
+        if (snapshot.status === 'error') {
+          downloadTasks.current.delete(key);
+          apply({ type: 'download', key, entry: { status: 'error', progress: '' } });
+          return;
+        }
+        if (snapshot.status === 'cancelled') {
+          downloadTasks.current.delete(key);
+          apply({ type: 'downloadClear', key });
+          return;
+        }
+        apply({
+          type: 'download',
+          key,
+          entry: {
+            status: 'downloading',
+            progress:
+              snapshot.status === 'queued'
+                ? '排队中'
+                : snapshot.message || `${Math.round(snapshot.pct ?? 0)}%`,
+          },
+        });
       });
+      downloadTasks.current.set(key, { abort: close, jobId });
+    },
+    [apply],
+  );
+
+  /**
+   * 打断单张图片正在进行的保存，并清除其卡片状态。
+   *
+   * 同步请求经 `AbortController` 断开连接，服务端据断连取消下载任务；异步任务
+   * 关闭订阅并提交协作取消。
+   *
+   * Args:
+   *   key (string): 图片键。
+   *
+   * Returns:
+   *   void
+   *
+   * Callers:
+   *   - `filter/useFilterPage.ts:cardClick`
+   */
+  const cancelDownload = useCallback(
+    (key: string) => {
+      const task = downloadTasks.current.get(key);
+      downloadTasks.current.delete(key);
+      task?.abort();
+      if (task?.jobId) void api.cancelJob(task.jobId);
+      apply({ type: 'downloadClear', key });
     },
     [apply],
   );
@@ -269,24 +343,32 @@ export function useFilterPage(dirList: string[]): { state: PageState; actions: F
   const downloadPost = useCallback(
     async (post: Post) => {
       const current = stateRef.current;
-      apply({ type: 'status', key: post.key, status: 'downloading', progress: '保存中…' });
+      const controller = new AbortController();
+      downloadTasks.current.set(post.key, { abort: () => controller.abort() });
+      apply({ type: 'download', key: post.key, entry: { status: 'downloading', progress: '保存中…' } });
       try {
-        const result = await api.download({
-          source: post.source,
-          id: post.id,
-          filename: post.filename,
-          dir: current.dirs[0] || 'main',
-          overwrite: false,
-          post,
-        });
+        const result = await api.download(
+          {
+            source: post.source,
+            id: post.id,
+            filename: post.filename,
+            dir: current.dirs[0] || 'main',
+            overwrite: false,
+            post,
+          },
+          controller.signal,
+        );
+        if (controller.signal.aborted) return;
         if (result.job_id) {
           watchDownload(post.key, result.job_id);
           return;
         }
-        apply({ type: 'status', key: post.key, status: 'done' });
-        apply({ type: 'toggle', key: post.key, on: true });
+        downloadTasks.current.delete(post.key);
+        apply({ type: 'download', key: post.key, entry: { status: 'done', progress: '' } });
       } catch (error) {
-        apply({ type: 'status', key: post.key, status: 'error' });
+        if (controller.signal.aborted) return;
+        downloadTasks.current.delete(post.key);
+        apply({ type: 'download', key: post.key, entry: { status: 'error', progress: '' } });
         notify(messageOf(error));
       }
     },
@@ -305,8 +387,7 @@ export function useFilterPage(dirList: string[]): { state: PageState; actions: F
           overwrite: false,
           post,
         });
-        apply({ type: 'status', key: post.key, status: 'idle' });
-        apply({ type: 'toggle', key: post.key, on: false });
+        apply({ type: 'downloadClear', key: post.key });
       } catch (error) {
         notify(messageOf(error));
       }
@@ -358,20 +439,19 @@ export function useFilterPage(dirList: string[]): { state: PageState; actions: F
       }
       const post = current.remote.posts.find((item) => item.key === key);
       if (!post) return;
-      const jobId = jobIds.current[key];
-      if (jobId) {
-        void api.cancelJob(jobId)
-          .then(() => {
-            delete jobIds.current[key];
-            apply({ type: 'status', key, status: 'idle' });
-          })
-          .catch((error) => notify(messageOf(error)));
+      if (post.source === 'video' && post.path) {
+        window.location.href = `/d/${encodeURIComponent(datasetName())}/video_extract?path=${encodeURIComponent(post.path)}`;
         return;
       }
-      if (current.selected[key]) void undownloadPost(post);
+      const entry = current.downloads[key];
+      if (entry?.status === 'downloading') {
+        cancelDownload(key);
+        return;
+      }
+      if (entry?.status === 'done') void undownloadPost(post);
       else void downloadPost(post);
     },
-    [apply, downloadPost, notify, selectRangeTo, toggleSelected, undownloadPost],
+    [cancelDownload, downloadPost, selectRangeTo, toggleSelected, undownloadPost],
   );
 
   const search = useCallback(() => {
@@ -433,15 +513,10 @@ export function useFilterPage(dirList: string[]): { state: PageState; actions: F
   }, [apply, notify]);
 
   const localInvert = useCallback(async () => {
-    const current = stateRef.current;
     const next: string[] = [];
     for (const item of localItems) {
-      if (current.selected[item.path]) {
-        await api.toggle(item.path);
-      } else {
-        await api.toggle(item.path);
-        next.push(item.path);
-      }
+      const result = await api.toggle(item.path);
+      if (result.selected) next.push(item.path);
     }
     apply({ type: 'selectAll', keys: next });
   }, [apply, localItems]);
@@ -489,19 +564,74 @@ export function useFilterPage(dirList: string[]): { state: PageState; actions: F
           include_meta_tags: params.meta,
           keep_underscores: params.underscores,
         });
-        apply({ type: 'batchRunning', running: true });
-        jobClose.current?.();
-        jobClose.current = api.watchJob(result.job_id, (snapshot) => {
-          apply({ type: 'batchSnapshot', snapshot });
-          if (snapshot.status === 'done' || snapshot.status === 'error' || snapshot.status === 'cancelled') {
-            apply({ type: 'batchRunning', running: false });
-          }
+        apply({ type: 'batch', snapshot: { job_id: result.job_id, status: 'queued' } });
+        batchClose.current?.();
+        batchClose.current = api.watchJob(result.job_id, (snapshot) => {
+          apply({ type: 'batch', snapshot });
         });
       } catch (error) {
         notify(messageOf(error));
       }
     },
     [apply, notify],
+  );
+
+  const runSemanticSearch = useCallback(
+    async (query: string) => {
+      const current = stateRef.current;
+      apply({ type: 'searchBusy', busy: true });
+      apply({ type: 'searchMessage', message: '提交中…' });
+      try {
+        const result = await api.semanticQuery(query, current.dirs);
+        searchStop.current?.();
+        searchStop.current = api.watchJob(result.job_id, (snap) => {
+          if (snap.status === 'done') {
+            const scores: Record<string, number> = {};
+            for (const item of snap.result?.items ?? []) scores[item.path] = item.similarity ?? 0;
+            apply({ type: 'searchResult', search: { prefix: 'S', query, scores, missing: 0 } });
+            apply({ type: 'setSort', sort: 'search' });
+            apply({ type: 'searchOpen', open: false });
+            searchStop.current?.();
+            searchStop.current = null;
+          } else if (snap.status === 'error' || snap.status === 'cancelled') {
+            apply({ type: 'searchBusy', busy: false });
+            apply({ type: 'searchMessage', message: snap.message || '搜索失败' });
+          } else {
+            apply({ type: 'searchMessage', message: snap.message || `${Math.round(snap.pct ?? 0)}%` });
+          }
+        });
+      } catch (error) {
+        apply({ type: 'searchBusy', busy: false });
+        apply({ type: 'searchMessage', message: messageOf(error) });
+      }
+    },
+    [apply],
+  );
+
+  const runTagSearch = useCallback(
+    async (query: string) => {
+      const current = stateRef.current;
+      apply({ type: 'searchBusy', busy: true });
+      apply({ type: 'searchMessage', message: '评分中…' });
+      try {
+        const result = await api.tagQuery(query, current.dirs);
+        const scores: Record<string, number> = {};
+        for (const item of result.items) scores[item.path] = item.score ?? 0;
+        apply({
+          type: 'searchResult',
+          search: { prefix: 'T', query, scores, missing: result.missing },
+        });
+        apply({ type: 'setSort', sort: 'search' });
+        apply({ type: 'searchOpen', open: false });
+        if (!result.items.length) {
+          apply({ type: 'searchMessage', message: '没有可用分值，请先在评分页建立 WD14 缓存' });
+        }
+      } catch (error) {
+        apply({ type: 'searchBusy', busy: false });
+        apply({ type: 'searchMessage', message: messageOf(error) });
+      }
+    },
+    [apply],
   );
 
   const updateBatchParams = useCallback(
@@ -535,9 +665,10 @@ export function useFilterPage(dirList: string[]): { state: PageState; actions: F
   const refreshMetadata = useCallback(async () => {
     try {
       const result = await api.refreshMetadata({ dir: stateRef.current.dirs[0] || 'main' });
-      jobClose.current?.();
-      jobClose.current = api.watchJob(result.job_id, (snapshot) => {
-        apply({ type: 'batchSnapshot', snapshot });
+      apply({ type: 'meta', snapshot: { job_id: result.job_id, status: 'queued' } });
+      metaClose.current?.();
+      metaClose.current = api.watchJob(result.job_id, (snapshot) => {
+        apply({ type: 'meta', snapshot });
       });
       notify('元数据刷新已提交');
     } catch (error) {
@@ -546,7 +677,12 @@ export function useFilterPage(dirList: string[]): { state: PageState; actions: F
   }, [apply, notify]);
 
   const actions: FilterActions = {
-    setMode: (mode) => apply({ type: 'setMode', mode }),
+    setMode: (mode) => {
+      for (const task of downloadTasks.current.values()) task.abort();
+      downloadTasks.current.clear();
+      const saved = sourcesRef.current[mode];
+      apply({ type: 'setMode', mode, fields: saved?.fields });
+    },
     setColumns: (columns) => apply({ type: 'setColumns', columns }),
     setSort: (sort) => apply({ type: 'setSort', sort }),
     setTrash: (showTrash) => apply({ type: 'setTrash', showTrash }),
@@ -567,6 +703,11 @@ export function useFilterPage(dirList: string[]): { state: PageState; actions: F
     localDelete: () => void localDelete(),
     localRestore: () => void localRestore(),
     selectRangeTo,
+    openSearch: () => apply({ type: 'searchOpen', open: true }),
+    closeSearch: () => apply({ type: 'searchOpen', open: false }),
+    runSemanticSearch: (query) => void runSemanticSearch(query),
+    runTagSearch: (query) => void runTagSearch(query),
+    clearSearch: () => apply({ type: 'searchClear' }),
     openBatch: () => apply({ type: 'batchOpen', open: true }),
     closeBatch: () => apply({ type: 'batchOpen', open: false }),
     startBatch: (params) => void startBatch(params),
