@@ -185,30 +185,49 @@ async def _block_chinese_ua_middleware(
         return await call_next(request)
     ua = request.headers.get("user-agent", "")
     if _CHINESE_UA_PATTERNS.search(ua):
-        resp = _read_template("blocked.html")
+        resp = _read_asset("blocked.html")
         resp.status_code = 403
         return resp
     return await call_next(request)
 
 
-def _read_template(name: str) -> HTMLResponse:
-    """读取 ``templates`` 目录下 HTML 模板并返回 ``HTMLResponse``.
+def _read_asset(name: str) -> HTMLResponse:
+    """读取 ``assets`` 目录下的静态页面.
 
     Args:
-        name: ``templates`` 目录下的 HTML 文件名.
+        name: ``assets`` 目录下的 HTML 文件名.
 
     Returns:
-        HTMLResponse: 文件内容响应; 文件缺失时返回 404 提示页.
+        HTMLResponse: 文件内容响应.
+
+    Raises:
+        FileNotFoundError: 文件缺失, 属于部署不完整, 不做静默降级.
 
     Callers:
         - ``server.py:_block_chinese_ua_middleware``
+    """
+    asset = Path(__file__).parent / "assets" / name
+    return HTMLResponse(asset.read_text(encoding="utf-8"))
+
+
+def _read_shell() -> HTMLResponse:
+    """读取前端构建产物中的页面挂载壳.
+
+    壳由 Vite 从 ``frontend/index.html`` 生成, 其中的脚本与样式引用已按
+    ``base`` 重写, 服务端不再维护同构的手写模板.
+
+    Returns:
+        HTMLResponse: ``frontend/dist/index.html`` 的内容.
+
+    Raises:
+        FileNotFoundError: 尚未构建前端, 属于部署不完整, 不做静默降级.
+
+    Callers:
         - ``server.py:index_page``
         - ``server.py:dataset_page``
     """
-    template = Path(__file__).parent / "assets" / "templates" / name
-    if not template.exists():
-        return HTMLResponse(f"<h1>{name} not found</h1>", status_code=404)
-    return HTMLResponse(template.read_text(encoding="utf-8"))
+    shell = Path(__file__).parent / "frontend" / "dist" / "index.html"
+    return HTMLResponse(shell.read_text(encoding="utf-8"))
 
 
 @app.middleware("http")
@@ -368,9 +387,13 @@ app.add_middleware(ImageIdentityMiddleware)
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 
-static_dir = Path(__file__).parent / "assets" / "static"
-if static_dir.is_dir():
-    app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
+# 前端产物目录与 Vite 的 base(/static/app/) 一一对应: 挂载点即产物路径,
+# 目录缺失时由 StaticFiles 在启动阶段报错, 不使用条件挂载掩盖缺产物。
+app.mount(
+    "/static/app",
+    StaticFiles(directory=str(Path(__file__).parent / "frontend" / "dist")),
+    name="static-app",
+)
 
 dataset_api = APIRouter(prefix="/api/d/{dataset}")
 dataset_api.include_router(images_router)
@@ -408,7 +431,7 @@ def index_page() -> HTMLResponse:
         - ``frontend/src/components/Nav.tsx:Nav`` (业务页"首页"标签链接)
         - ``frontend/src/main.tsx`` (首页挂载)
     """
-    return _read_template("app.html")
+    return _read_shell()
 
 
 @app.get("/d/{dataset}")
@@ -467,4 +490,4 @@ def dataset_page(dataset: str, page: str) -> HTMLResponse | RedirectResponse:
         return RedirectResponse(url=f"/d/{dataset}/tags", status_code=302)
     if page not in _PAGES:
         raise HTTPException(404, f"未知页面: {page}")
-    return _read_template("app.html")
+    return _read_shell()

@@ -21,14 +21,14 @@ services/                      业务与基础设施
   tagging/                     标签清洗与统计
   models/                      Pydantic 响应模型，按域拆分
 frontend/                      前端源码（React + TypeScript + Tailwind + Radix）
+  dist/                        构建产物（npm run build 生成，不纳入版本库；含页面壳 index.html）
   src/app/                     全站 Shell 与数据集上下文
   src/lib/                     API 客户端、类型、滚动容器
   src/components/              顶栏与跨页组件
   src/components/ui/           全部页面共用的控件与状态构件
   src/filter/                  筛选页与瀑布流
   src/pages/<page>/            各业务页
-assets/static/app/             前端构建产物（npm run build 生成，不手工编辑）
-assets/templates/app.html      唯一的页面挂载壳（`#root` + app.js/app.css）
+assets/blocked.html            UA 拦截提示页（静态页，不经前端构建）
 assets/configs/                训练配置 Jinja2 模板（子目录名即配置导出格式，就绪页导出用）
 docs/                          功能说明文档
 ```
@@ -124,9 +124,11 @@ SQLAlchemy 异步 ORM（`sqlite+aiosqlite`）维护，表含 `key` / `ctype` / `
 
 ## 3. 前端统一架构
 
-所有业务页是一个 React 单页应用，源码在 `frontend/`，构建产物在 `assets/static/app/`。
-全部路由共用 `assets/templates/app.html` 一个挂载壳，页面标题由前端按路由设置；
-不得再出现按页面拆分的模板或独立脚本、样式文件。
+所有业务页是一个 React 单页应用，源码在 `frontend/src/`，构建产物在 `frontend/dist/`
+（不纳入版本库）。页面壳即 `frontend/dist/index.html`，由 `frontend/index.html` 经
+Vite 生成，其中的脚本与样式引用已按 `base` 重写；服务端不再维护手写页面模板，
+只把该壳返回给全部路由，标题由前端按路由设置。服务端把 `frontend/dist/` 挂载到
+`/static/app`，与 Vite 的 `base` 一一对应。
 
 - `frontend/src/main.tsx`：按 URL 路径选择页面组件并设置标题；首页 `/` 独立渲染，
   其余页统一包在 `AppShell` 中。
@@ -163,7 +165,8 @@ SQLAlchemy 异步 ORM（`sqlite+aiosqlite`）维护，表含 `key` / `ctype` / `
 - 卡片级状态只保留一份真相：远端图片的保存状态由 `downloads` 单表记录（无条目即未保存），
   不得再维护并行的布尔集合；批量与元数据任务各自持有快照，`useJob` 仅在所属对话框打开时
   上报。
-- 构建：`cd frontend && npm run build`，产物写入 `assets/static/app/`，禁止手工修改产物。
+- 构建：`cd frontend && npm run build`，产物写入 `frontend/dist/`，禁止手工修改产物，
+  也不得把产物提交进版本库。
 
 ### 3.1 标签页操作范式
 
@@ -234,7 +237,7 @@ SQLAlchemy 异步 ORM（`sqlite+aiosqlite`）维护，表含 `key` / `ctype` / `
 - 文件顶部 `from __future__ import annotations`；类型注解完整。
 - **函数必须有规范 docstring**（Google 风格），严格标识：用途 / Args（含类型）/ Returns
   （含类型）/ Callers。Callers 记录全部引用位置：代码调用（`file:function`）与文档/前端
-  引用（`docs/*.md`、`frontend/src/**/*.ts(x)`、`templates/*.html`）。单行简短函数可单行 docstring。
+  引用（`docs/*.md`、`frontend/src/**/*.ts(x)`、`assets/*.html`）。单行简短函数可单行 docstring。
 - 响应模型统一用 Pydantic（`services/models/`），禁止随手返回裸 `dict` 结构；请求体用
   Pydantic `BaseModel` 校验。
 - 常量集中定义（如分数文件名、标签列表），禁止散落于各处。

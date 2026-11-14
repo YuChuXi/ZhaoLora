@@ -24,3 +24,4 @@ web_annotator/.env
 web_annotator/services/online_sources/*/_research
 web_annotator/services/online_sources/*/DEVLOG.md
 web_annotator/frontend/node_modules
+web_annotator/frontend/dist
