@@ -6,7 +6,7 @@
 max_steps = {{ train_steps }}
 micro_batch_size_per_gpu = 1
 pipeline_stages = 1
-gradient_accumulation_steps = 1
+gradient_accumulation_steps = 2
 gradient_clipping = 0
 warmup_steps = {{ warmup_steps }}
 lr_scheduler = "cosine"
@@ -16,6 +16,7 @@ eval_before_first_step = true
 eval_micro_batch_size_per_gpu = 1
 eval_gradient_accumulation_steps = 1
 save_every_n_steps = {{ save_steps }}
+save_final_state_checkpoint = false
 activation_checkpointing = true
 partition_method = "parameters"
 save_dtype = "bfloat16"
@@ -49,8 +50,8 @@ rank = {{ rank }}
 
 [optimizer]
 type = "adamw"
-lr = 2e-4
-weight_decay = 0.000
+lr = 3e-4
+weight_decay = 0.001
 betas = [0.9, 0.999]
 
 [monitoring]

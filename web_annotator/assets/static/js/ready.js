@@ -14,6 +14,8 @@
   var _activeFile = null;      // 当前展示的标签页
   var _enabled = {};
   var _resolutions = {};
+  var _regEnabled = {};        // 正则化目录名 → 是否勾选
+  var _regResolutions = {};    // 正则化目录名 → 分辨率输入文本
   var _sideKey = null;
 
   /**
@@ -80,6 +82,7 @@
   /**
    * 渲染侧栏工作目录列表：每目录一个条目, 首行为启用勾选/目录/张数·蒙版, 次行为全宽分辨率输入。
    * 数据来自 GET /ready/dirs, 页面启动时调用一次(目录集合与蒙版统计在页面生命周期内不变)。
+   * 同一响应内的正则化候选由 renderReg 渲染。
    * @param {object} data
    */
   function renderSide(data) {
@@ -87,10 +90,12 @@
     var dirs = data.dirs || [];
     var key = JSON.stringify([
       dirs.map(function (d) { return [d.name, d.image_count]; }),
-      data.mask_stats || []
+      data.mask_stats || [],
+      data.reg_dirs || []
     ]);
     if (key === _sideKey) return;
     _sideKey = key;
+    renderReg(data.reg_dirs || []);
     list.innerHTML = '';
     if (!dirs.length) {
       list.innerHTML = '<div class="dir-empty">无含图目录</div>';
@@ -161,23 +166,74 @@
   }
 
   /**
-   * 读取顶栏与侧栏参数构造请求体; 参数无效时提示并返回 null。引用：generate、doExport。
-   * @param {boolean} silent
-   * @returns {object|null} 含 dirs / target_images / train_steps / subset_resolutions / use_reg / mode 的请求体。
+   * 渲染侧栏正则化数据候选：每目录一个条目, 首行为勾选/目录/张数, 次行为全宽分辨率输入。
+   * 数据来自 GET /ready/dirs 的 reg_dirs(REG_ROOT 下含图片的子目录), 默认不勾选。
+   * @param {Array<{name: string, image_count: number}>} candidates
    */
-  function collectBody(silent) {
-    var target = parseInt(document.getElementById('target-images').value, 10);
-    if (!(target >= 1)) {
-      if (!silent) toast('目标图片数无效');
-      return null;
+  function renderReg(candidates) {
+    var list = document.getElementById('reg-list');
+    list.innerHTML = '';
+    if (!candidates.length) {
+      list.innerHTML = '<div class="dir-empty">未配置 REG_ROOT 或无含图目录</div>';
+      return;
     }
-    var steps = parseInt(document.getElementById('train-steps').value, 10);
-    if (!(steps >= 1)) {
-      if (!silent) toast('训练步数无效');
-      return null;
-    }
-    var subsetRes = {};
-    var inputs = document.querySelectorAll('#dir-list .res-input');
+    candidates.forEach(function (d) {
+      if (_regEnabled[d.name] === undefined) _regEnabled[d.name] = false;
+      if (_regResolutions[d.name] === undefined) _regResolutions[d.name] = '1536';
+
+      var item = document.createElement('div');
+      item.className = 'dir-item';
+
+      var row = document.createElement('div');
+      row.className = 'dir-row';
+
+      var cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.checked = !!_regEnabled[d.name];
+      cb.title = '是否作为正则化数据导出';
+      cb.addEventListener('change', function () {
+        _regEnabled[d.name] = cb.checked;
+        generate(true);
+      });
+      row.appendChild(cb);
+
+      var name = document.createElement('span');
+      name.className = 'dir-name';
+      name.textContent = d.name;
+      name.title = d.name;
+      row.appendChild(name);
+
+      var meta = document.createElement('span');
+      meta.className = 'dir-meta';
+      meta.textContent = String(d.image_count || 0);
+      row.appendChild(meta);
+
+      var resInput = document.createElement('input');
+      resInput.type = 'text';
+      resInput.className = 'input res-input';
+      resInput.value = _regResolutions[d.name];
+      resInput.setAttribute('data-name', d.name);
+      resInput.title = '该正则化目录的分辨率, 逗号分隔; 留空则该目录不带 resolution';
+      resInput.addEventListener('input', function () {
+        _regResolutions[d.name] = resInput.value;
+        autoGenerate();
+      });
+
+      item.appendChild(row);
+      item.appendChild(resInput);
+      list.appendChild(item);
+    });
+  }
+
+  /**
+   * 读取指定列表容器内的分辨率输入, 解析为 目录名→分辨率列表; 存在非法值时提示并返回 null。
+   * @param {string} selector 列表容器选择器(#dir-list / #reg-list)
+   * @param {boolean} silent
+   * @returns {object|null}
+   */
+  function collectResolutions(selector, silent) {
+    var out = {};
+    var inputs = document.querySelectorAll(selector + ' .res-input');
     for (var i = 0; i < inputs.length; i++) {
       var input = inputs[i];
       var name = input.getAttribute('data-name');
@@ -194,14 +250,39 @@
           list.push(n);
         }
       }
-      subsetRes[name] = list;
+      out[name] = list;
     }
+    return out;
+  }
+
+  /**
+   * 读取顶栏与侧栏参数构造请求体; 参数无效时提示并返回 null。引用：generate、doExport。
+   * @param {boolean} silent
+   * @returns {object|null} 含 dirs / target_images / train_steps / subset_resolutions / use_reg / reg_dirs / reg_resolutions / mode 的请求体。
+   */
+  function collectBody(silent) {
+    var target = parseInt(document.getElementById('target-images').value, 10);
+    if (!(target >= 1)) {
+      if (!silent) toast('目标图片数无效');
+      return null;
+    }
+    var steps = parseInt(document.getElementById('train-steps').value, 10);
+    if (!(steps >= 1)) {
+      if (!silent) toast('训练步数无效');
+      return null;
+    }
+    var subsetRes = collectResolutions('#dir-list', silent);
+    if (!subsetRes) return null;
+    var regRes = collectResolutions('#reg-list', silent);
+    if (!regRes) return null;
     return {
       dirs: Object.keys(_enabled).filter(function (n) { return _enabled[n]; }),
       target_images: target,
       train_steps: steps,
       subset_resolutions: subsetRes,
       use_reg: document.getElementById('use-reg').checked,
+      reg_dirs: Object.keys(_regEnabled).filter(function (n) { return _regEnabled[n]; }),
+      reg_resolutions: regRes,
       mode: _mode,
       train_format: _format,
       variant: _variant
@@ -282,8 +363,12 @@
         }).join(', ');
       }
     }
+    var regImages = (data.reg_subsets || []).reduce(function (sum, s) {
+      return sum + (s.image_count || 0);
+    }, 0);
     document.getElementById('stat-summary').textContent =
-      subsets.length + ' 个 subset · ' + totalImages + ' 张 × ' + repStr + ' = ' + repeated + ' 张';
+      subsets.length + ' 个 subset · ' + totalImages + ' 张 × ' + repStr + ' = ' + repeated + ' 张' +
+      (regImages ? ' · reg ' + regImages + ' 张' : '');
     if (!silent) toast('已生成');
   }
 
@@ -343,6 +428,14 @@
     });
   }
 
+  /**
+   * 按「正则化」开关状态显隐侧栏正则化数据区。
+   * 引用: use-reg change 监听、start。
+   */
+  function toggleRegSection() {
+    document.getElementById('reg-section').hidden = !document.getElementById('use-reg').checked;
+  }
+
   document.getElementById('btn-gen').addEventListener('click', function () {
     generate(false);
   });
@@ -353,7 +446,11 @@
   document.getElementById('btn-copy').addEventListener('click', function () {
     copyText().catch(function (e) { toast(String(e.message || e)); });
   });
-  document.getElementById('use-reg').addEventListener('change', persistReady);
+  document.getElementById('use-reg').addEventListener('change', function () {
+    toggleRegSection();
+    persistReady();
+    autoGenerate();
+  });
 
   // 配置格式取自顶栏格式切换段当前选中项; 切换后重渲染文件区并重新生成
   var _formatSeg = document.querySelector('#format-seg button.active')
@@ -461,6 +558,7 @@
     if (saved.target_images) document.getElementById('target-images').value = String(saved.target_images);
     if (saved.train_steps) document.getElementById('train-steps').value = String(saved.train_steps);
     if (saved.use_reg != null) document.getElementById('use-reg').checked = !!saved.use_reg;
+    toggleRegSection();
 
     var data = await API.request(API.apiPath('/ready/dirs'));
     renderSide(data);

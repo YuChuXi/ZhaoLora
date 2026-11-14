@@ -31,6 +31,11 @@
     display: block; width: 100%; box-sizing: border-box; margin-top: 6px;
   }
   .toolbar .status-seg { min-width: 0; flex: 0 1 auto; }
+  #reg-section {
+    flex-shrink: 0; max-height: 45%; overflow-y: auto;
+    border-top: 1px solid var(--border);
+  }
+  #reg-section .dir-list { flex: none; overflow: visible; }
   .file-tabs { display: flex; gap: 4px; padding: 10px 14px 0; }
   .file-tab {
     background: transparent; border: 1px solid var(--border); color: var(--text-dim);
@@ -85,7 +90,7 @@
   </label>
   <span class="sep"></span>
   <label class="field"
-    title="启用时 dataset.toml 附带 regL 正则化数据块: reg 图以类提示词(不含触发词)参与损失, 即先验保持; diffusion-pipe 下等价于先验保持权重 1.0(无独立 reg loss 权重旋钮)">
+    title="启用时 dataset.toml 附带所选 regN 正则化数据块: reg 图以类提示词(不含触发词)参与损失, 即先验保持; diffusion-pipe 下等价于先验保持权重 1.0(无独立 reg loss 权重旋钮)">
     <input type="checkbox" id="use-reg" checked> 正则化
   </label>
   <span class="sep"></span>
@@ -97,6 +102,10 @@
   <aside class="ready-side">
     <h3>工作目录 <span class="legend">img | text | json | mask</span></h3>
     <div class="dir-list" id="dir-list"></div>
+    <div id="reg-section">
+      <h3>正则化数据 <span class="legend">img</span></h3>
+      <div class="dir-list" id="reg-list"></div>
+    </div>
   </aside>
   <div class="ready-content">
     <div class="file-tabs" id="file-tabs"></div>

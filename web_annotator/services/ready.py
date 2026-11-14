@@ -26,10 +26,16 @@ from services.models import (
     MaskStats,
     ReadySubset,
     ReadyTomlResult,
+    WorkDirInfo,
 )
 from services.analysis.caption import load_captions
 from services.dataset.runtime import Dataset
-from services.dataset.workdir import WorkDir
+from services.dataset.workdir import (
+    NON_BROWSABLE_DIRS,
+    VIDEO_DIRNAME,
+    WorkDir,
+    count_images,
+)
 from services.tagging.clean import tag_key
 from services.tagging.stats import count_tags
 
@@ -167,38 +173,39 @@ def output_dir(root_name: str, train_format: str, variant: str) -> Path:
     return _env_root(_format_env_key(train_format, "OUTPUT_ROOT")) / f"{root_name}-{variant}"
 
 
-def reg_datasets() -> list[tuple[int, str]]:
-    """解析环境变量 ``REG_DATASETS`` 得到正则化数据集列表.
+def reg_candidates() -> list[WorkDirInfo]:
+    """扫描环境变量 ``REG_ROOT`` 下的子目录, 返回可选的正则化数据目录.
 
-    ``REG_DATASETS`` 格式为逗号分隔的 ``分辨率:目录绝对路径`` 项(目录内图片须携带
-    类提示词 caption, 不含触发词), 如
-    ``1536:/data/datasets/regL/256_1,1024:/data/datasets/regL/256_2``;
-    由 ``.env`` 配置(见 .env.example), 代码中不持有任何路径常量.
+    候选口径与数据集工作目录一致: 跳过隐藏目录、非浏览目录与视频目录, 只保留含图片的
+    一级子目录. ``REG_ROOT`` 未配置时返回空列表, 页面因此不显示正则化候选;
+    「正则化」开启但候选为空时由 ``_reg_dirs`` 报错, 不静默生成空数据段.
 
     Args:
         None: 无入参.
 
     Returns:
-        list[tuple[int, str]]: (分辨率, 目录路径) 列表, 保持配置顺序.
-
-    Raises:
-        ValueError: 环境变量未配置/为空, 或某项缺少分辨率前缀、分辨率非正整数.
+        list[WorkDirInfo]: 按名称自然序排列的候选目录摘要(名称与图片数).
 
     Callers:
-        - ``services/ready.py:_group_datasets``
-        - ``services/ready.py:_directory_entries``
+        - ``routes/ready.py:dirs``
+        - ``services/ready.py:_reg_dirs``
     """
-    raw = os.environ.get("REG_DATASETS", "").strip()
-    if not raw:
-        raise ValueError("已开启「正则化」但未配置环境变量 REG_DATASETS(见 .env.example); 或关闭该开关")
-    entries: list[tuple[int, str]] = []
-    for part in raw.split(","):
-        part = part.strip()
-        res_text, sep, path = part.partition(":")
-        if not sep or not res_text.strip().isdigit() or int(res_text) <= 0 or not path.strip():
-            raise ValueError(f"REG_DATASETS 条目无效: {part!r}, 须为 分辨率:目录绝对路径")
-        entries.append((int(res_text), path.strip()))
-    return entries
+    if not os.environ.get("REG_ROOT", "").strip():
+        return []
+    root = _env_root("REG_ROOT")
+    candidates: list[WorkDirInfo] = []
+    for path in sorted(root.iterdir(), key=lambda p: natural_key(p.name)):
+        if (
+            not path.is_dir()
+            or path.name.startswith(".")
+            or path.name in NON_BROWSABLE_DIRS
+            or path.name == VIDEO_DIRNAME
+        ):
+            continue
+        count = count_images(path)
+        if count:
+            candidates.append(WorkDirInfo(name=path.name, label=path.name, image_count=count))
+    return candidates
 
 
 def _selected(dataset: Dataset, dirs: list[str] | None) -> list[WorkDir]:
@@ -382,6 +389,66 @@ class _DirPlan:
         return self.stats.name
 
 
+@dataclass(frozen=True)
+class _RegDir:
+    """单个正则化目录的选择结果.
+
+    Attributes:
+        name (str): 目录名.
+        image_dir (str): 图片目录绝对路径.
+        image_count (int): 图片数.
+        resolutions (list[int | None]): 该目录的分辨率列表; None 表示不带分辨率.
+    """
+
+    name: str
+    image_dir: str
+    image_count: int
+    resolutions: list[int | None]
+
+
+def _reg_dirs(ctx: "_ExportContext") -> list[_RegDir]:
+    """按本次勾选装配正则化目录, 每个目录的 num_repeats 固定为 1.
+
+    ``ctx.reg_dirs`` 为 None 时取 ``REG_ROOT`` 下全部候选, 空列表表示不附加正则化数据;
+    勾选名称必须存在于候选中, 否则报错而不静默丢弃.
+
+    Args:
+        ctx (_ExportContext): 本次生成的输入.
+
+    Returns:
+        list[_RegDir]: 选中的正则化目录(按名称自然序).
+
+    Raises:
+        ValueError: 已开启正则化但候选为空, 或勾选的目录名不在候选中.
+
+    Callers:
+        - ``services/ready.py:_ExportContext.reg_plan``
+    """
+    if not ctx.use_reg:
+        return []
+    candidates = {c.name: c for c in reg_candidates()}
+    if not candidates:
+        raise ValueError(
+            "已开启「正则化」但 REG_ROOT 未配置或无含图片的子目录(见 .env.example); 或关闭该开关"
+        )
+    names = sorted(candidates if ctx.reg_dirs is None else ctx.reg_dirs, key=natural_key)
+    unknown = [name for name in names if name not in candidates]
+    if unknown:
+        raise ValueError(f"正则化目录不存在: {', '.join(unknown)}")
+    root = _env_root("REG_ROOT")
+    return [
+        _RegDir(
+            name=name,
+            image_dir=str((root / name).resolve()),
+            image_count=candidates[name].image_count,
+            resolutions=list(dict.fromkeys(
+                r for r in ctx.reg_resolutions.get(name, []) if isinstance(r, int) and r > 0
+            )) or [None],
+        )
+        for name in names
+    ]
+
+
 def _build_plan(ctx: "_ExportContext") -> list[_DirPlan]:
     """构造函数无关的目录计划: 每个参与导出的目录一项.
 
@@ -439,6 +506,8 @@ class _ExportContext:
         subset_resolutions (dict[str, list[int]]): 目录名→分辨率列表.
         use_reg (bool): 是否附带正则化数据段.
         trigger_word (str): 数据集触发词.
+        reg_dirs (list[str] | None): 参与导出的正则化目录名; None 表示 REG_ROOT 下全部候选.
+        reg_resolutions (dict[str, list[int]]): 正则化目录名→分辨率列表.
     """
 
     dataset: Dataset
@@ -451,8 +520,11 @@ class _ExportContext:
     subset_resolutions: dict[str, list[int]]
     use_reg: bool
     trigger_word: str
+    reg_dirs: list[str] | None
+    reg_resolutions: dict[str, list[int]]
     _work_dirs: list[WorkDir] | None = field(default=None, repr=False)
     _plan: list[_DirPlan] | None = field(default=None, repr=False)
+    _reg: list[_RegDir] | None = field(default=None, repr=False)
 
     def work_dirs(self) -> list[WorkDir]:
         """数据集内含图片的工作目录(``main`` 置顶).
@@ -482,6 +554,21 @@ class _ExportContext:
         if self._plan is None:
             self._plan = _build_plan(self)
         return self._plan
+
+    def reg_plan(self) -> list[_RegDir]:
+        """本次选择的正则化目录计划, 记忆化.
+
+        Returns:
+            list[_RegDir]: 选中的正则化目录; 未开启正则化时为空列表.
+
+        Callers:
+            - ``services/ready.py:_group_datasets``
+            - ``services/ready.py:_directory_entries``
+            - ``services/ready.py:build_ready``
+        """
+        if self._reg is None:
+            self._reg = _reg_dirs(self)
+        return self._reg
 
 
 # 模板变量: 变量名 → 取值函数(模板声明需要哪些变量, 渲染时就取哪些)
@@ -522,11 +609,16 @@ def _group_datasets(ctx: _ExportContext) -> list[dict]:
         for key in sorted(blocks, key=lambda k: (order[k[0]], not k[1]))
     ]
     if ctx.use_reg:
-        for resolution, path in reg_datasets():
-            groups.append({
-                "resolution": resolution,
-                "subsets": [{"image_dir": path, "conditioning_data_dir": None, "repeats": 1}],
-            })
+        for entry in ctx.reg_plan():
+            for resolution in entry.resolutions:
+                groups.append({
+                    "resolution": resolution,
+                    "subsets": [{
+                        "image_dir": entry.image_dir,
+                        "conditioning_data_dir": None,
+                        "repeats": 1,
+                    }],
+                })
     return groups
 
 
@@ -560,11 +652,14 @@ def _directory_entries(ctx: _ExportContext) -> list[dict]:
         for entry in ctx.plan()
     ]
     if ctx.use_reg:
-        for resolution, path in reg_datasets():
+        for entry in ctx.reg_plan():
             directories.append({
-                "path": path,
+                "path": entry.image_dir,
                 "mask_path": None,
-                "resolution_repeats": [{"resolution": resolution, "repeats": 1}],
+                "resolution_repeats": [
+                    {"resolution": resolution, "repeats": 1}
+                    for resolution in entry.resolutions
+                ],
             })
     return directories
 
@@ -772,6 +867,8 @@ def build_ready(
     train_steps: int = 500,
     subset_resolutions: dict[str, list[int]] | None = None,
     use_reg: bool = True,
+    reg_dirs: list[str] | None = None,
+    reg_resolutions: dict[str, list[int]] | None = None,
     trigger_word: str = "",
 ) -> ReadyTomlResult:
     """生成指定格式的整套训练配置文本, 并汇总子集与蒙版统计.
@@ -795,13 +892,17 @@ def build_ready(
         subset_resolutions (dict[str, list[int]] | None): 目录名→分辨率列表; 留空按该格式
             的兜底规则处理.
         use_reg (bool): 是否附带正则化数据段(各格式模板均按其结构渲染).
+        reg_dirs (list[str] | None): 参与导出的正则化目录名; None 表示 ``REG_ROOT`` 下
+            全部候选, 空列表表示不附加正则化数据.
+        reg_resolutions (dict[str, list[int]] | None): 正则化目录名→分辨率列表; 留空时
+            对应目录不带 resolution.
         trigger_word (str): 该数据集触发词, 供模板写入采样提示词; 可为空.
 
     Returns:
-        ReadyTomlResult: 含 files(文件名→配置文本)、subsets、subset_repeats.
+        ReadyTomlResult: 含 files(文件名→配置文本)、subsets、subset_repeats、reg_subsets.
 
     Raises:
-        ValueError: 本格式的位置类环境变量未配置, 或模板变量未登记.
+        ValueError: 本格式的位置类环境变量未配置, 模板变量未登记, 或正则化目录选择无效.
 
     Callers:
         - ``routes/ready.py:toml``
@@ -816,6 +917,8 @@ def build_ready(
         train_steps=train_steps,
         subset_resolutions=subset_resolutions or {},
         use_reg=use_reg,
+        reg_dirs=reg_dirs,
+        reg_resolutions=reg_resolutions or {},
         trigger_word=trigger_word,
     )
     files = _render_files(ctx)
@@ -833,4 +936,8 @@ def build_ready(
         files=files,
         subsets=subsets,
         subset_repeats={entry.name: entry.repeats for entry in plan},
+        reg_subsets=[
+            ReadySubset(name=entry.name, image_dir=entry.image_dir, image_count=entry.image_count)
+            for entry in ctx.reg_plan()
+        ],
     )

@@ -12,9 +12,16 @@
     width: 200px; flex-shrink: 0; background: var(--surface);
     border-right: 1px solid var(--border);
     display: flex; flex-direction: column; overflow: hidden;
+    transition: width var(--transition), border-width var(--transition);
   }
+  body.side-collapsed .docs-side { width: 0; border-right-width: 0; }
+  body.side-collapsed .side-tasks,
+  body.side-collapsed .docs-side-head,
+  body.side-collapsed .docs-nav { visibility: hidden; }
+  .docs-side-top { display: flex; align-items: center; padding: 10px 8px 2px; }
   .side-tasks {
-    display: block; margin: 12px 8px 4px; padding: 9px 10px; border-radius: 6px;
+    flex: 1; min-width: 0;
+    display: block; padding: 9px 10px; border-radius: 6px;
     font-size: 14px; font-weight: 600; color: var(--text-dim); text-decoration: none;
   }
   .side-tasks:hover { background: rgba(255,255,255,0.04); color: var(--text); }
@@ -157,8 +164,10 @@
 <body>
 <nav class="app-tabs" id="app-tabs"></nav>
 <div class="home-shell">
-  <aside class="docs-side">
-    <a class="side-tasks" id="nav-tasks" href="/">任务</a>
+  <aside class="docs-side" id="docs-side">
+    <div class="docs-side-top">
+      <a class="side-tasks" id="nav-tasks" href="/">任务</a>
+    </div>
     <div class="docs-side-head">文档</div>
     <nav class="docs-nav" id="docs-nav"></nav>
   </aside>

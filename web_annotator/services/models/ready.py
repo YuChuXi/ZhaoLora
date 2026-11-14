@@ -46,6 +46,9 @@ class ReadyDirsResponse(BaseModel):
     mask_complete: int = 0
     mask_none: int = 0
     main_count: int = 0
+    reg_dirs: list[WorkDirInfo] = Field(
+        default_factory=list, description="REG_ROOT 下可选的正则化数据目录(含图片数)"
+    )
 
 
 class ReadySubset(BaseModel):
@@ -66,6 +69,7 @@ class ReadyTomlResult(BaseModel):
     files: dict[str, str] = Field(default_factory=dict, description="配置文件预览文本, 键为该格式的全部配置文件名(由模板目录扫描得到), 文本即导出写入的内容")
     subsets: list[ReadySubset]
     subset_repeats: dict[str, list[int]] = Field(default_factory=dict, description="各子集在每个分辨率上的 num_repeats(键为子集名, 列表与其分辨率列表一一对应)")
+    reg_subsets: list[ReadySubset] = Field(default_factory=list, description="本次选中的正则化数据目录(供页面显示数据量)")
 
 
 class TrainExportResult(BaseModel):

@@ -740,7 +740,29 @@
     loadDoc(currentSlug());
   });
 
+  /**
+   * 以事件委托响应标签栏内的侧栏开关: 折叠状态记录在 body 上, 由样式统一消费.
+   *
+   * Returns:
+   *   void
+   *
+   * Callers:
+   *   - ``static/js/index.js:init``
+   */
+  function bindSideToggle() {
+    document.getElementById('app-tabs').addEventListener('click', function (e) {
+      var btn = e.target.closest('#side-toggle');
+      if (!btn) return;
+      var collapsed = document.body.classList.toggle('side-collapsed');
+      var label = collapsed ? '展开侧栏' : '收起侧栏';
+      btn.setAttribute('aria-expanded', String(!collapsed));
+      btn.setAttribute('aria-label', label);
+      btn.title = label;
+    });
+  }
+
   async function init() {
+    bindSideToggle();
     var data = await API.request('/api/docs');
     _nav = data.nav || [];
 

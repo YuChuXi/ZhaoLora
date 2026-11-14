@@ -144,14 +144,18 @@
 | `CAPTION_OPENAI_HEADERS` | JSON 对象，与默认 UA、`Authorization` 合并；用于覆盖 UA 或传服务端要求的会话标识 |
 | `CAPTION_MAX_TOKENS` | 单张生成的最大 token 数；留空为 `8192`，`0` 表示不传 `max_tokens` |
 | `CAPTION_TIMEOUT` | 单张生成超时（秒）；留空为 `60` |
+| `CAPTION_MAX_IMAGE_EDGE` | 单张图片长边像素上限；留空为 `8192`，`0` 表示不限制；超限图片等比缩小 |
 
 思考控制由服务端方言决定，统一经 `CAPTION_OPENAI_EXTRA_BODY` 透传：DeepSeek 关闭思考写
 `{"thinking": {"type": "disabled"}}`，OpenAI 写 `{"reasoning_effort": "low"}`；留空时
 使用服务端默认值。思考片段不写入描述。
 
 `CAPTION_CONCURRENCY` 个工作协程从共享队列取图（先空闲先领）；服务连通且已提供目标
-模型时才可提交任务。图片以 data URL 内联发送原始文件字节，不做缩放、透明通道合成或
-重编码。单张生成失败会重新排队重试至多 3 次。
+模型时才可提交任务。图片以 data URL 内联发送：长边不超过 `CAPTION_MAX_IMAGE_EDGE`
+时原样发送原始字节；超过时保持原格式等比缩小（透明通道与 EXIF/ICC 元数据保留，
+多帧图片只取首帧）。超过单边上限的图片会被服务以「不支持的图像」拒绝，日志会带上
+服务端返回的错误正文。单张生成失败重新排队重试至多 3 次，4xx 请求错误（429 除外）
+不重试。
 
 请求遵循 `.env` 中的 `HTTP_PROXY` / `HTTPS_PROXY`；服务地址为内网时须将其加入
 `NO_PROXY`，避免被代理拦截。

@@ -20,6 +20,14 @@
 
   var HIDE_DIR = { filter: 0, crop: 0, paint: 0, ready: 1, scoring: 0, dedupe: 0, tags: 0, 'tag-check': 0, caption: 0, video_extract: 1 };
 
+  // 首页侧栏开关: 由 index.js 以事件委托响应 #side-toggle
+  var SIDE_TOGGLE_HTML =
+    '<button type="button" class="app-tabs-btn" id="side-toggle" aria-controls="docs-side"' +
+    ' aria-expanded="true" aria-label="收起侧栏" title="收起侧栏">' +
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"' +
+    ' stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+    '<path d="M15 6l-6 6 6 6"/></svg></button>';
+
   /**
    * @returns {{dataset: string|null, page: string}}
    */
@@ -60,7 +68,7 @@
 
     var route = parseRoute();
     if (!route.dataset) {
-      host.innerHTML = '<a class="app-tab active" href="/">首页</a>';
+      host.innerHTML = SIDE_TOGGLE_HTML + '<a class="app-tab active" href="/">首页</a>';
       return;
     }
 

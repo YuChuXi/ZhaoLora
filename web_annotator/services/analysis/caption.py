@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import io
 import json
 import logging
 import math
@@ -22,6 +23,7 @@ from pathlib import Path
 
 import httpx
 from jinja2 import Environment, StrictUndefined, Template
+from PIL import Image
 
 from services.analysis.wd14 import (
     DEFAULT_THRESHOLD,
@@ -62,19 +64,25 @@ if not isinstance(EXTRA_HEADERS, dict):
 MAX_TOKENS = int(os.environ.get("CAPTION_MAX_TOKENS", "").strip() or 8192)
 # 单张生成超时(秒, CAPTION_TIMEOUT)
 TIMEOUT_SEC = float(os.environ.get("CAPTION_TIMEOUT", "").strip() or 60)
+# 单张图片长边像素上限(CAPTION_MAX_IMAGE_EDGE): 超过该值时等比缩小, 0 表示不限制;
+# 8192 为多数 OpenAI 兼容视觉服务的单边上限, 超限图片会被以「不支持的图像」拒绝
+MAX_IMAGE_EDGE = int(os.environ.get("CAPTION_MAX_IMAGE_EDGE", "").strip() or 8192)
+# 压缩重编码时 JPEG 与 WebP 的质量档位; 其余格式为无损编码, 字节缩减只靠缩小尺寸
+_ENCODE_QUALITY = 95
 # 单张图片生成失败后的最大重试次数
 MAX_RETRIES = 3
 # 探测服务可用性的请求超时(秒)
 PROBE_TIMEOUT_SEC = 10.0
 
-# 图片扩展名到 data URL 媒体类型的映射, 覆盖 ``workdir.IMAGE_EXTS`` 的全部取值
-_IMAGE_MIME = {
-    ".png": "image/png",
-    ".jpg": "image/jpeg",
-    ".jpeg": "image/jpeg",
-    ".webp": "image/webp",
-    ".bmp": "image/bmp",
-    ".gif": "image/gif",
+# 图片扩展名到 data URL 媒体类型与 Pillow 编码格式的映射, 覆盖 ``workdir.IMAGE_EXTS``
+# 的全部取值
+_IMAGE_FORMATS = {
+    ".png": ("image/png", "PNG"),
+    ".jpg": ("image/jpeg", "JPEG"),
+    ".jpeg": ("image/jpeg", "JPEG"),
+    ".webp": ("image/webp", "WEBP"),
+    ".bmp": ("image/bmp", "BMP"),
+    ".gif": ("image/gif", "GIF"),
 }
 
 # 提示词模板环境: 模块内内嵌模板的解析与渲染入口; 未定义变量直接报错, 禁止静默空串
@@ -401,6 +409,85 @@ def build_user_prompt(
     ).rstrip("\n")
 
 
+def _shrink_image(img: Image.Image, fmt: str, edge: int) -> bytes:
+    """按长边上限等比缩小图像并以源格式编码.
+
+    调色板图像先按透明信息转为 RGBA 或 RGB; JPEG 与 WebP 使用高质量档位,
+    PNG/GIF/BMP 使用无损编码; EXIF 与 ICC 配置保留.
+
+    Args:
+        img (Image.Image): 打开的源图(单帧), 长边须大于 ``edge``.
+        fmt (str): Pillow 编码格式名, 取自 ``_IMAGE_FORMATS``.
+        edge (int): 长边像素上限.
+
+    Returns:
+        bytes: 缩小后的编码字节.
+
+    Callers:
+        - ``services/analysis/caption.py:_image_data_url``
+    """
+    if img.mode == "P":
+        img = img.convert("RGBA" if "transparency" in img.info else "RGB")
+    scale = edge / max(img.size)
+    size = (max(1, round(img.width * scale)), max(1, round(img.height * scale)))
+    frame = img.resize(size, Image.Resampling.LANCZOS)
+    params: dict = {"optimize": True}
+    if fmt in ("JPEG", "WEBP"):
+        params["quality"] = _ENCODE_QUALITY
+    if fmt in ("JPEG", "WEBP", "PNG"):
+        exif = img.info.get("exif")
+        if exif:
+            params["exif"] = exif
+        icc = img.info.get("icc_profile")
+        if icc:
+            params["icc_profile"] = icc
+    buf = io.BytesIO()
+    frame.save(buf, format=fmt, **params)
+    return buf.getvalue()
+
+
+def _data_url(mime: str, data: bytes) -> str:
+    """把图片字节编码为 data URL.
+
+    Args:
+        mime (str): 媒体类型.
+        data (bytes): 图片字节.
+
+    Returns:
+        str: ``data:<媒体类型>;base64,<载荷>``.
+
+    Callers:
+        - ``services/analysis/caption.py:_image_data_url``
+    """
+    return f"data:{mime};base64,{base64.b64encode(data).decode('ascii')}"
+
+
+def _image_data_url(src: Path) -> str:
+    """读取图片生成内联 data URL, 长边超限时按原格式缩小.
+
+    长边不超过 ``MAX_IMAGE_EDGE`` 时原样发送原始文件字节; 超过时保持源格式与
+    透明通道重新编码, 多帧图片只取首帧.
+
+    Args:
+        src (Path): 图片绝对路径.
+
+    Returns:
+        str: ``data:<媒体类型>;base64,<载荷>``.
+
+    Callers:
+        - ``services/analysis/caption.py:run_caption``
+    """
+    raw = src.read_bytes()
+    mime, fmt = _IMAGE_FORMATS[src.suffix.lower()]
+    if MAX_IMAGE_EDGE == 0:
+        return _data_url(mime, raw)
+    with Image.open(io.BytesIO(raw)) as img:
+        if max(img.size) <= MAX_IMAGE_EDGE:
+            return _data_url(mime, raw)
+        data = _shrink_image(img, fmt, MAX_IMAGE_EDGE)
+    return _data_url(mime, data)
+
+
 async def _stream_caption(
     client: httpx.AsyncClient,
     url: str,
@@ -425,7 +512,11 @@ async def _stream_caption(
     """
     parts: list[str] = []
     async with client.stream("POST", url, json=payload, headers=headers) as resp:
-        resp.raise_for_status()
+        if resp.is_error:
+            detail = (await resp.aread()).decode("utf-8", "replace").strip()
+            raise httpx.HTTPStatusError(
+                f"HTTP {resp.status_code}: {detail}", request=resp.request, response=resp
+            )
         async for line in resp.aiter_lines():
             if cancel_check():
                 raise RuntimeError("已取消")
@@ -528,10 +619,11 @@ async def run_caption(
 ) -> CaptionResult:
     """批量描述: ``CONCURRENCY`` 个工作协程共用一条队列轮转取图, 结果写入 ``captions.json``.
 
-    每张图片按 ``modes`` 顺序各请求一次(系统提示词随模式切换). ``force`` 为真时先
+    每张图片按 ``modes`` 顺序各请求一次(系统提示词随模式切换); 长边超过
+    ``MAX_IMAGE_EDGE`` 时先按原格式缩小尺寸再内联发送. ``force`` 为真时先
     清除待处理图片的已有描述再重新标注; 为假时跳过已存在描述的图片. 单张失败重新
-    入队, 至多 ``MAX_RETRIES`` 次, 仍失败才记入失败并继续. 取消后不再取新图, 在途
-    请求在下一个流式数据块处中断.
+    入队, 至多 ``MAX_RETRIES`` 次, 仍失败才记入失败并继续; 客户端错误(4xx, 429 除外)
+    不重试. 取消后不再取新图, 在途请求在下一个流式数据块处中断.
 
     参考标签注入、NSFW 增强与「匹配标签」命中判定都取自 WD14 缓存, 故生成前先对
     缺失缓存的待处理图片补建 ``.wd14_meta``(见 ``_needs_wd14`` 与
@@ -578,6 +670,7 @@ async def run_caption(
         f"character_threshold={character_threshold}, nsfw_threshold={nsfw_threshold}, "
         f"groups={len(groups)}, "
         f"force={force}, total={len(items)}, 并发={CONCURRENCY}, "
+        f"长边上限={MAX_IMAGE_EDGE or '不限'}px, "
         f"附加={EXTRA_BODY or '无'}, 服务={BASE_URL} · {MODEL}",
     )
     if on_update:
@@ -668,8 +761,7 @@ async def run_caption(
                     instructions=instructions,
                     nsfw=nsfw,
                 )
-                image_b64 = base64.b64encode(src.read_bytes()).decode("ascii")
-                image_url = f"data:{_IMAGE_MIME[src.suffix.lower()]};base64,{image_b64}"
+                image_url = await asyncio.to_thread(_image_data_url, src)
                 captions: list[str] = []
                 for mode in modes:
                     payload: dict = {
@@ -703,7 +795,12 @@ async def run_caption(
                 if progress.cancel_requested:
                     return
                 attempts[src] = attempts.get(src, 0) + 1
-                if attempts[src] > MAX_RETRIES:
+                permanent = (
+                    isinstance(e, httpx.HTTPStatusError)
+                    and 400 <= e.response.status_code < 500
+                    and e.response.status_code != httpx.codes.TOO_MANY_REQUESTS
+                )
+                if permanent or attempts[src] > MAX_RETRIES:
                     progress.done += 1
                     progress.failed += 1
                     _log(progress, f"[{progress.done}/{progress.total}] 失败: {rel} — {e}")

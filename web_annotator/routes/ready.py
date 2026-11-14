@@ -18,6 +18,7 @@ from services.ready import (
     build_ready,
     export_dir,
     exportable_dirs,
+    reg_candidates,
     subdir_mask_stats,
 )
 from services.core.atomic import atomic_write_text
@@ -37,7 +38,15 @@ class ReadyBody(BaseModel):
         default_factory=dict,
         description="各子集的分辨率列表(目录名→列表); 未指定或为空的子集生成单块无 resolution",
     )
-    use_reg: bool = Field(default=True, description="是否在导出的 dataset.toml 中附带固定正则化数据段")
+    use_reg: bool = Field(default=True, description="是否在导出的 dataset.toml 中附带正则化数据段")
+    reg_dirs: list[str] | None = Field(
+        default=None,
+        description="参与导出的正则化目录名(REG_ROOT 下的子目录); None 表示全部候选, 空列表表示不附加",
+    )
+    reg_resolutions: dict[str, list[int]] = Field(
+        default_factory=dict,
+        description="各正则化目录的分辨率列表(目录名→列表); 未指定的目录不带 resolution",
+    )
     mode: LoraMode = Field("style", description="训练模式: 画风 style / 角色 character(各模式对应的超参由所选格式的模板决定)")
     train_format: str = Field(description="配置导出格式, 取值为 assets/configs/ 下的模板目录名(文件集合由该目录扫描得到)")
     variant: str = Field(description="配置变体, 取值为格式模板目录下的子目录名(与该格式共同决定文件集合)")
@@ -120,15 +129,15 @@ def _trigger_word(request: Request, ds: Dataset) -> str:
 
 @router.get("/dirs")
 def dirs(ds: DatasetDep) -> ReadyDirsResponse:
-    """可导出工作目录与各目录蒙版统计.
+    """可导出工作目录、各目录蒙版统计与正则化数据候选.
 
-    每目录蒙版状态仅「无」或「完整」. 引用: ready.js.
+    每目录蒙版状态仅「无」或「完整」; 正则化候选为 ``REG_ROOT`` 下含图片的子目录. 引用: ready.js.
 
     Args:
         ds (Dataset): 当前请求绑定的数据集对象.
 
     Returns:
-        ReadyDirsResponse: 数据集根、工作目录列表与各目录蒙版统计.
+        ReadyDirsResponse: 数据集根、工作目录列表、各目录蒙版统计与正则化候选.
 
     Callers:
         - ``static/js/ready.js:start``
@@ -145,6 +154,7 @@ def dirs(ds: DatasetDep) -> ReadyDirsResponse:
         mask_complete=main_mask.mask_complete if main_mask else 0,
         mask_none=main_mask.mask_none if main_mask else 0,
         main_count=main_mask.main_count if main_mask else 0,
+        reg_dirs=reg_candidates(),
     )
 
 
@@ -158,7 +168,7 @@ def toml(request: Request, ds: DatasetDep, body: ReadyBody) -> ReadyTomlResult:
     Args:
         request (Request): FastAPI 请求对象, 由路由参数注入.
         ds (Dataset): 当前请求绑定的数据集对象.
-        body (ReadyBody): 就绪页生成参数(dirs / target_images / train_steps / subset_resolutions / use_reg / mode / train_format / variant).
+        body (ReadyBody): 就绪页生成参数(dirs / target_images / train_steps / subset_resolutions / use_reg / reg_dirs / reg_resolutions / mode / train_format / variant).
 
     Returns:
         ReadyTomlResult: 子集/蒙版统计与配置文件预览文本(files).
@@ -181,6 +191,8 @@ def toml(request: Request, ds: DatasetDep, body: ReadyBody) -> ReadyTomlResult:
             train_steps=body.train_steps,
             subset_resolutions=body.subset_resolutions,
             use_reg=body.use_reg,
+            reg_dirs=body.reg_dirs,
+            reg_resolutions=body.reg_resolutions,
             trigger_word=_trigger_word(request, ds),
         )
     except ValueError as e:

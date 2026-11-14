@@ -63,6 +63,36 @@ body {
   color: var(--accent);
   border-bottom-color: var(--accent);
 }
+.app-tabs-btn {
+  flex: 0 0 auto;
+  align-self: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  margin-right: 4px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: background var(--transition), color var(--transition);
+}
+.app-tabs-btn:hover {
+  background: rgba(255,255,255,0.06);
+  color: var(--text);
+}
+.app-tabs-btn svg {
+  width: 16px;
+  height: 16px;
+  display: block;
+  transition: transform var(--transition);
+}
+body.side-collapsed .app-tabs-btn svg {
+  transform: rotate(180deg);
+}
 .app-tabs-right {
   margin-left: auto;
   display: flex;
