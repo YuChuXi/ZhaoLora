@@ -17,7 +17,7 @@ services/                      业务与基础设施
   analysis/                    图像分析：wd14 / birefnet / scoring / dedupe / reranker / sam3
   dataset/                     任务运行时：runtime / layout / crop
   state/                       标注状态：annotator / mask / tasks
-  online_sources/              在线图源（danbooru / pixiv / bilibili / x / gelbooru）
+  online_sources/              在线图源（danbooru / pixiv / bilibili / x / gelbooru / e621）
   tagging/                     标签清洗与统计
   models/                      Pydantic 响应模型，按域拆分
 assets/static/js/              前端模块（IIFE 单例，暴露到 window）

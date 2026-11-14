@@ -293,6 +293,22 @@ body.side-collapsed .app-tabs-btn svg {
 .masonry {
   padding: 8px;
   position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  /* 顶部加载与换列由脚本按锚点恢复视口，禁用原生滚动锚定避免双重校正 */
+  overflow-anchor: none;
+}
+.masonry-col {
+  flex: 1 1 0;
+  min-width: 0;
+}
+.masonry-empty {
+  flex: 1 1 100%;
+  padding: 60px 0;
+  text-align: center;
+  color: var(--text-dim);
+  font-size: 13px;
 }
 
 /* ---- card ---- */
@@ -355,7 +371,9 @@ body.side-collapsed .app-tabs-btn svg {
   background: transparent;
 }
 .card .info {
-  padding: 6px 8px;
+  /* 固定高度：瀑布流按图片比例 + 信息栏 + 间距在插入前算出卡片高度 */
+  height: 28px;
+  padding: 0 8px;
   font-size: 11px;
   color: var(--text-dim);
   display: flex;

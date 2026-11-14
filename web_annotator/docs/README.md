@@ -29,7 +29,7 @@
 进入某个任务后，按顶栏切换模块：
 
 1. [美学](?doc=aesthetic) — 美学评分、WD14 评分项与缓存  
-2. [筛选](?doc=filter) — 浏览、排序、删除不合格样本；可从 Gelbooru / Danbooru 写入  
+2. [筛选](?doc=filter) — 浏览、排序、删除不合格样本；可从 Gelbooru / Danbooru / e621 写入  
 3. [去重](?doc=dedupe) — 相似图分组清理  
 4. [裁剪](?doc=crop) — 部位选区输出  
 5. [蒙版](?doc=paint) — 绘制 Alpha（可选）  

@@ -257,12 +257,13 @@ async def regenerate_captions(
 
         for meta_file in sorted(meta_dir.glob("*.json"), key=lambda p: natural_key(p.name)):
             try:
-                post = json.loads(meta_file.read_text(encoding="utf-8"))
+                raw = json.loads(meta_file.read_text(encoding="utf-8"))
             except (json.JSONDecodeError, OSError) as exc:
                 logger.warning("元数据文件不可读, 跳过: %s (%s)", meta_file, exc)
                 continue
 
-            pid = str(post.get("id") or meta_file.stem)
+            post = BooruPost.model_validate(raw)
+            pid = post.id or meta_file.stem
             stem = file_stem(src.name, pid)
             txt_path = out_dir / f"{stem}.txt"
 

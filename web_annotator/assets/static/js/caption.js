@@ -20,6 +20,8 @@
   var _templates = [];
   var _selection = null;
   var _job = null;
+  var _visiblePaths = [];
+  var _lastPath = null;
 
   /**
    * 读取「caption」设置键的当前值。
@@ -483,8 +485,9 @@
           return (img.captions || []).some(matcher);
         })
       : _items.slice();
-    _selection.retain(visiblePaths());
-    Masonry.render(_filtered);
+    _visiblePaths = visiblePaths();
+    _selection.retain(_visiblePaths);
+    Masonry.update(_filtered);
     updateStats();
   }
 
@@ -524,14 +527,59 @@
   /**
    * 选中集合变化时刷新计数与批量按钮可用状态。
    * @param {number} count 选中数量
-   * @param {string[]} _paths 选中路径列表(未使用)
    */
-  function onSelectionChange(count, _paths) {
-    Masonry.syncSelection();
+  function onSelectionChange(count) {
+    Masonry.setSelected(_selection.paths());
     document.getElementById('stat-sel').hidden = !count;
     document.getElementById('stat-selected').textContent = count;
     document.getElementById('btn-clear-sel').disabled = !count;
     document.getElementById('btn-delete').disabled = !count;
+  }
+
+  /**
+   * 卡片单击：Shift 连选闭区间，否则切换单张。
+   *
+   * Args:
+   *   path (string): 图片路径。
+   *   rangeSelect (boolean): 是否按住 Shift 连选。
+   *
+   * Returns:
+   *   void
+   *
+   * Callers:
+   *   - caption.js:瀑布流 click 委托
+   */
+  function toggleCard(path, rangeSelect) {
+    if (rangeSelect && _lastPath) {
+      var from = _visiblePaths.indexOf(_lastPath);
+      var to = _visiblePaths.indexOf(path);
+      if (from >= 0 && to >= 0) {
+        _selection.selectRange(_visiblePaths.slice(Math.min(from, to), Math.max(from, to) + 1));
+        _lastPath = path;
+        return;
+      }
+    }
+    _lastPath = path;
+    _selection.toggle(path);
+  }
+
+  /**
+   * 按路径查找条目。
+   *
+   * Args:
+   *   path (string): 图片路径。
+   *
+   * Returns:
+   *   ?object: 条目；未找到为 null。
+   *
+   * Callers:
+   *   - caption.js:瀑布流 contextmenu 委托 / 长按
+   */
+  function findItem(path) {
+    for (var i = 0; i < _items.length; i++) {
+      if (_items[i].path === path) return _items[i];
+    }
+    return null;
   }
 
   /**
@@ -766,11 +814,27 @@
     await AppSettings.ready();
 
     _selection = UI.createSelection(onSelectionChange);
-    Masonry.init('masonry', {
-      getData: function () { return _filtered; },
-      selection: _selection,
-      onPreview: openView,
+    Masonry.mount('masonry', {
+      isSelected: function (item) { return _selection.has(item.path); },
       decorate: decorateCard,
+    });
+
+    var masonryRoot = document.getElementById('masonry');
+    masonryRoot.addEventListener('click', function (e) {
+      var card = e.target.closest('.card');
+      if (!card || !card.dataset.path) return;
+      toggleCard(card.dataset.path, e.shiftKey);
+    });
+    masonryRoot.addEventListener('contextmenu', function (e) {
+      var card = e.target.closest('.card');
+      if (!card) return;
+      e.preventDefault();
+      var item = findItem(card.dataset.path);
+      if (item) openView(item);
+    });
+    UI.bindLongPress(masonryRoot, function (card) {
+      var item = findItem(card.dataset.path);
+      if (item) openView(item);
     });
 
     _job = UI.bindJobPanel({

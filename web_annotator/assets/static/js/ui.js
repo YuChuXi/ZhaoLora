@@ -185,6 +185,54 @@
     };
   }
 
+  // ==================== 触屏长按 ====================
+
+  /**
+   * 在容器上委托识别卡片触屏长按。
+   *
+   * 只识别落在 .card 上的单指按压；触发后抑制本次按压产生的 click，
+   * 避免长按预览同时切换选中。
+   *
+   * Args:
+   *   root (HTMLElement): 事件委托容器。
+   *   handler (function(HTMLElement)): 长按回调，参数为卡片元素。
+   *   delay (number): 判定时长，默认 550ms。
+   *
+   * Returns:
+   *   void
+   *
+   * Callers:
+   *   - app.js:init
+   *   - caption.js:init
+   *   - tag_check.js:init
+   */
+  function bindLongPress(root, handler, delay) {
+    var timer = null;
+    var suppress = false;
+    root.addEventListener('touchstart', function (e) {
+      if (e.touches.length !== 1) return;
+      var card = e.target.closest('.card');
+      if (!card) return;
+      timer = setTimeout(function () {
+        timer = null;
+        suppress = true;
+        handler(card);
+      }, delay || 550);
+    }, { passive: true });
+    function cancel() {
+      if (timer) { clearTimeout(timer); timer = null; }
+    }
+    root.addEventListener('touchend', cancel);
+    root.addEventListener('touchmove', cancel);
+    root.addEventListener('touchcancel', cancel);
+    root.addEventListener('click', function (e) {
+      if (!suppress) return;
+      suppress = false;
+      e.stopPropagation();
+      e.preventDefault();
+    }, true);
+  }
+
   // ==================== 标签补全 ====================
 
   /**
@@ -482,6 +530,7 @@
     closeModal: closeModal,
     bindModal: bindModal,
     createSelection: createSelection,
+    bindLongPress: bindLongPress,
     bindTagSuggest: bindTagSuggest,
     bindJobPanel: bindJobPanel,
   };

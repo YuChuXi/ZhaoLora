@@ -115,8 +115,8 @@ var BooruFilter = (function () {
       fields: [
         { type: 'chips', key: 'rating', label: '评级', multi: true,
           options: function () {
-            // Gelbooru 仅 3 个评级(safe/questionable/explicit), Danbooru 4 个.
-            if (mode() === 'gelbooru') {
+            // Gelbooru 与 e621 仅有 s/q/e 三个评级, Danbooru 4 个.
+            if (_triRating()) {
               return [['s', '全年龄'], ['q', '可疑'], ['e', '露骨']];
             }
             return [['g', '全年龄'], ['s', '敏感'], ['q', '可疑'], ['e', '露骨']];
@@ -255,6 +255,24 @@ var BooruFilter = (function () {
       thumb: function (post) { return post.preview_url || post.sample_url || ''; },
       sample: function (post) { return post.sample_url || post.file_url || post.preview_url || ''; },
       pageUrl: function (post) { return 'https://danbooru.donmai.us/posts/' + post.id; },
+    },
+    e621: {
+      remote: true,
+      bar: 'booru',
+      stemPrefix: 'e',
+      nameLabel: 'e621',
+      buildRequest: _booruRequest,
+      thumb: function (post) {
+        return API.apiPath('/online-sources/e621-image')
+          + '?kind=thumb&id=' + encodeURIComponent(post.id)
+          + '&url=' + encodeURIComponent(post.preview_url || post.sample_url || '');
+      },
+      sample: function (post) {
+        return API.apiPath('/online-sources/e621-image')
+          + '?kind=sample&id=' + encodeURIComponent(post.id)
+          + '&url=' + encodeURIComponent(post.sample_url || post.file_url || post.preview_url || '');
+      },
+      pageUrl: function (post) { return 'https://e621.net/posts/' + post.id; },
     },
     bilibili: {
       remote: true,
@@ -512,8 +530,10 @@ var BooruFilter = (function () {
     attachTagAutocomplete();
   }
 
-  /** 标签类别编号 -> 可读名称. 引用: attachTagAutocomplete. */
+  /** 标签类别编号 -> 可读名称 (Danbooru 编号体系). 引用: attachTagAutocomplete. */
   var _CAT_NAMES = { 0: '通用', 1: '画师', 3: '版权', 4: '角色', 5: '元' };
+  /** 标签类别编号 -> 可读名称 (e621 编号体系, 5 为物种、7 为元). 引用: attachTagAutocomplete. */
+  var _CAT_NAMES_E621 = { 0: '通用', 1: '画师', 2: '贡献', 3: '版权', 4: '角色', 5: '物种', 6: '无效', 7: '元', 8: '设定' };
 
   /**
    * 为 booru-tags 输入框绑定标签自动补全下拉.
@@ -528,13 +548,14 @@ var BooruFilter = (function () {
       separator: 'space',
       fetchTags: function (word) {
         var src = mode();
-        if (src !== 'gelbooru' && src !== 'danbooru') return Promise.resolve([]);
+        if (src !== 'gelbooru' && src !== 'danbooru' && src !== 'e621') return Promise.resolve([]);
+        var catNames = src === 'e621' ? _CAT_NAMES_E621 : _CAT_NAMES;
         return API.request(API.apiPath('/online-sources/tag-suggest')
           + '?source=' + encodeURIComponent(src)
           + '&q=' + encodeURIComponent(word))
           .then(function (data) {
             return (data && data.tags ? data.tags : []).map(function (t) {
-              return { name: t.name, note: _CAT_NAMES[t.category] || '标签', count: t.count };
+              return { name: t.name, note: catNames[t.category] || '标签', count: t.count };
             });
           });
       },
@@ -667,12 +688,6 @@ var BooruFilter = (function () {
   var _jobId = {}; // 帖子 key -> 长任务 job_id (视频帖下载任务, 支持点击取消)
   var _progress = {}; // 帖子 key -> 进度文本 (视频帖下载中显示)
   var _pageIo = null;
-  var _colLo = null;
-  var _colHi = null;
-  var _minY = 0;
-  var _cw = 0;
-  var _gap = 8;
-  var _pad = 8;
   var _scrollSaveTimer = null;
   var _scrollRaf = null;
   var _EX_KEYS = ['score', 'width', 'height', 'id'];
@@ -692,6 +707,12 @@ var BooruFilter = (function () {
   function mode() {
     var el = document.getElementById('filter-mode');
     return el ? el.value : 'local';
+  }
+
+  /** 当前来源是否仅有 s/q/e 三个评级 (Gelbooru / e621). 引用: 条件面板评级与序列化. */
+  function _triRating() {
+    var m = mode();
+    return m === 'gelbooru' || m === 'e621';
   }
 
   function isRemote() {
@@ -763,12 +784,6 @@ var BooruFilter = (function () {
     if (noJump()) pg = 1; // 游标式来源恢复时固定第一页
     if (start) start.value = String(pg);
     syncExtraBtn();
-  }
-
-  function resetLayout() {
-    _colLo = null;
-    _colHi = null;
-    _minY = 0;
   }
 
   /**
@@ -894,8 +909,8 @@ var BooruFilter = (function () {
     var parts = [];
     var ratings = Array.isArray(f.rating) ? f.rating : (f.rating ? [f.rating] : []);
     if (ratings.length) {
-      if (mode() === 'gelbooru') {
-        // Gelbooru 仅 3 个评级(s/q/e): 选两个即排除剩余一个(官方支持 -rating: 排除).
+      if (_triRating()) {
+        // Gelbooru / e621 仅 3 个评级(s/q/e): 选两个即排除剩余一个.
         var gel = ['s', 'q', 'e'];
         if (ratings.length === 2) {
           var excluded = gel.filter(function (x) { return ratings.indexOf(x) < 0; });
@@ -1116,7 +1131,7 @@ var BooruFilter = (function () {
     var container = document.getElementById('masonry');
     var downOld = document.getElementById('booru-load-trigger-down');
     var upOld = document.getElementById('booru-load-trigger-up');
-    if (!container || !isRemote() || !_posts.length || !_colHi || !_colHi.length) {
+    if (!container || !isRemote() || !_posts.length) {
       if (downOld) downOld.remove();
       if (upOld) upOld.remove();
       return;
@@ -1134,8 +1149,7 @@ var BooruFilter = (function () {
     }, { root: null, rootMargin: margin, threshold: 0 });
 
     if (_hasMore) {
-      var short = Math.min.apply(null, _colHi) - _minY;
-      var downEl = ensureTrigger(container, 'booru-load-trigger-down', short);
+      var downEl = ensureTrigger(container, 'booru-load-trigger-down', container.scrollHeight - 2);
       _pageIo.observe(downEl);
       requestAnimationFrame(function () {
         if (!_hasMore || _loading || !downEl.isConnected) return;
@@ -1298,6 +1312,32 @@ var BooruFilter = (function () {
     return null;
   }
 
+  /**
+   * 远程卡片单击：来源自定义入口优先，否则写入目录或移除。
+   *
+   * @param {HTMLElement} card 卡片元素
+   */
+  function clickCard(card) {
+    var post = postByKey(card.dataset.key);
+    if (!post) return;
+    var def = _SOURCES[post.source] || {};
+    if (def.onClick) def.onClick(post);
+    else onCardClick(post);
+  }
+
+  /**
+   * 远程卡片预览：来源自定义入口优先，否则打开帖子预览。
+   *
+   * @param {HTMLElement} card 卡片元素
+   */
+  function previewCard(card) {
+    var post = postByKey(card.dataset.key);
+    if (!post) return;
+    var def = _SOURCES[post.source] || {};
+    if (def.onClick) def.onClick(post);
+    else showPreview(post);
+  }
+
   function updateCard(key) {
     var card = findCard(key);
     if (!card) return;
@@ -1312,41 +1352,37 @@ var BooruFilter = (function () {
     }
   }
 
-  function resolveCols() {
-    var colsSlider = document.getElementById('cols-slider');
-    if (colsSlider) {
-      var v = parseInt(colsSlider.value, 10);
-      if (v > 0) return v;
-    }
-    var w = window.innerWidth;
-    return w >= 1600 ? 6 : w >= 1280 ? 5 : w >= 960 ? 4 : w >= 640 ? 3 : 2;
-  }
-
-  function createCard(post, cw) {
+  /**
+   * 创建一张远程来源卡片。
+   *
+   * card.dataset.ratio 供瀑布流在插入前计算列高；图片按已知画幅预留空间，
+   * 加载过程不改变卡片尺寸。
+   *
+   * @param {object} post 帖子
+   * @returns {HTMLElement}
+   */
+  function createCard(post) {
     var card = document.createElement('div');
     card.className = 'card';
     if (_selected[post.key]) card.classList.add('selected');
     card.dataset.key = post.key;
-    if (post.page) card.dataset.page = String(post.page);
-    // 来源可自定义卡片点击(如视频进入抽帧页); 否则采用默认下载/预览.
     var srcDef = _SOURCES[post.source] || {};
-    card.addEventListener('click', function (e) {
-      if (srcDef.onClick) { srcDef.onClick(post); return; }
-      onCardClick(post);
-    });
-    card.addEventListener('contextmenu', function (e) {
-      e.preventDefault();
-      e.stopPropagation();
-      if (srcDef.onClick) { srcDef.onClick(post); return; }
-      showPreview(post);
-    });
+    // 供瀑布流按宽高比估算列高；视频封面按来源声明的横版画幅计算
+    var ratio = 1;
+    if (hasSize(post) && !post.is_video) {
+      ratio = post.height / post.width;
+    } else if (srcDef.fixedAspect) {
+      var aspect = srcDef.fixedAspect.split('/');
+      ratio = parseFloat(aspect[1]) / parseFloat(aspect[0]);
+    }
+    card.dataset.ratio = String(ratio);
+    if (post.page) card.dataset.page = String(post.page);
 
     var imgEl = document.createElement('img');
     imgEl.alt = post.id;
     imgEl.loading = 'lazy';
+    imgEl.decoding = 'async';
     imgEl.src = thumbUrl(post);
-    imgEl.style.width = '100%';
-    imgEl.style.height = 'auto';
     // 宽高已知时按真实比例占位; 视频帖的 width/height 是视频画面分辨率,
     // 而预览媒体恒为横版封面, 按其渲染会拉伸变形, 故改用来源声明的封面画幅;
     // 其余无宽高的帖子用来源声明的固定画幅占位, 避免加载前塌缩
@@ -1355,7 +1391,6 @@ var BooruFilter = (function () {
     } else if (srcDef.fixedAspect) {
       imgEl.style.aspectRatio = srcDef.fixedAspect;
     }
-    imgEl.style.background = '#111';
     card.appendChild(imgEl);
 
     var info = document.createElement('div');
@@ -1476,101 +1511,30 @@ var BooruFilter = (function () {
     onCardClick(post);
   }
 
-  function pickCol(up) {
-    var arr = up ? _colLo : _colHi;
-    var c = 0;
-    for (var i = 1; i < arr.length; i++) {
-      if (up ? arr[i] > arr[c] : arr[i] < arr[c]) c = i;
-    }
-    return c;
-  }
-
-  function place(card, post, up) {
-    var container = document.getElementById('masonry');
-    var c = pickCol(up);
-    card.style.position = 'absolute';
-    card.style.left = (_pad + c * (_cw + _gap)) + 'px';
-    card.style.width = _cw + 'px';
-    container.appendChild(card);
-    // 用真实渲染高度累加列高, 而非预估, 保证竖直空隙恒定 = _gap
-    var rh = card.offsetHeight;
-    var y = up ? (_colLo[c] - rh - _gap) : _colHi[c];
-    card.style.top = (y - _minY) + 'px';
-    card.dataset.worldY = String(y);
-    if (up) _colLo[c] = y;
-    else _colHi[c] = y + rh + _gap;
-  }
-
-  function syncOrigin() {
-    var container = document.getElementById('masonry');
-    if (!container || !_colLo) return;
-    var lo = Math.min.apply(null, _colLo);
-    var hi = Math.max.apply(null, _colHi);
-    if (lo < _minY) {
-      var delta = _minY - lo;
-      _minY = lo;
-      var cards = container.querySelectorAll('.card');
-      for (var i = 0; i < cards.length; i++) {
-        var w = parseFloat(cards[i].dataset.worldY);
-        if (!isNaN(w)) cards[i].style.top = (w - _minY) + 'px';
-      }
-      if (delta) window.scrollBy(0, delta);
-    }
-    container.style.height = Math.max(0, hi - _minY) + 'px';
-  }
-
+  /**
+   * 增量追加或前置一页结果。
+   *
+   * @param {Array<object>} fresh 新帖列表
+   * @param {boolean} up 是否为向前（顶部）加载
+   */
   function addPosts(fresh, up) {
-    var container = document.getElementById('masonry');
-    if (!container || !fresh.length || !_colHi) {
-      render();
-      return;
-    }
-    if (up) {
-      for (var i = fresh.length - 1; i >= 0; i--) {
-        place(createCard(fresh[i], _cw), fresh[i], true);
-      }
-      syncOrigin();
-    } else {
-      for (var j = 0; j < fresh.length; j++) {
-        place(createCard(fresh[j], _cw), fresh[j], false);
-      }
-      container.style.height = (Math.max.apply(null, _colHi) - _minY) + 'px';
-    }
+    if (!fresh.length) { render(); return; }
+    Masonry.append(fresh, up ? 'start' : 'end', createCard);
     paintRemoteCounts();
     syncLoadTrigger();
     syncPageFromScroll();
   }
 
+  /** 渲染当前搜索结果。引用：搜索、来源切换。 */
   function render() {
-    var container = document.getElementById('masonry');
-    if (!container) return;
-
+    if (!document.getElementById('masonry')) return;
     if (!_posts.length) {
-      container.innerHTML =
-        '<div style="padding:60px;text-align:center;color:var(--text-dim);">无结果，输入 tag 后搜索</div>';
-      container.style.height = '';
-      resetLayout();
+      Masonry.empty('无结果，输入 tag 后搜索');
       paintRemoteCounts();
       syncLoadTrigger();
       return;
     }
-
-    var cols = resolveCols();
-    _gap = 8;
-    _pad = 8;
-    var avail = Math.max(0, container.clientWidth - _pad * 2);
-    _cw = (avail - _gap * (cols - 1)) / cols;
-    if (!(_cw > 0)) _cw = 1;
-
-    container.innerHTML = '';
-    _colLo = new Array(cols).fill(0);
-    _colHi = new Array(cols).fill(0);
-    _minY = 0;
-
-    for (var j = 0; j < _posts.length; j++) {
-      place(createCard(_posts[j], _cw), _posts[j], false);
-    }
-    container.style.height = (Math.max.apply(null, _colHi) - _minY) + 'px';
+    Masonry.update(_posts, createCard);
     paintRemoteCounts();
     syncLoadTrigger();
     syncPageFromScroll();
@@ -2047,9 +2011,11 @@ var BooruFilter = (function () {
     if (a) {
       a.hidden = !(panel && panel.cheat);
       if (panel && panel.cheat) {
-        a.href = mode() === 'danbooru'
-          ? 'https://danbooru.donmai.us/wiki_pages/help:cheatsheet'
-          : 'https://gelbooru.com/index.php?page=help&topic=cheatsheet';
+        a.href = {
+          danbooru: 'https://danbooru.donmai.us/wiki_pages/help:cheatsheet',
+          e621: 'https://e621.net/help/cheatsheet',
+          gelbooru: 'https://gelbooru.com/index.php?page=help&topic=cheatsheet',
+        }[mode()];
       }
     }
     var dateRow = document.getElementById('booru-extra-date-row');
@@ -2247,7 +2213,6 @@ var BooruFilter = (function () {
     _progress = {};
     _hasMore = false;
     _hasPrev = start > 1;
-    resetLayout();
     stopPageObserve();
     render();
     updatePageStatus();
@@ -2264,18 +2229,39 @@ var BooruFilter = (function () {
     saveUiState();
   }
 
-  /** 渲染本地流水: 加载 Store 并按回收站开关显示可见项. 引用: init / mode change. */
+  var _onLocal = null;
+
+  /**
+   * 回到本地列表：重新加载磁盘状态后交由页面统一渲染。
+   *
+   * Returns:
+   *   void
+   *
+   * Callers:
+   *   - booru_filter.js:init / filter-mode change
+   */
   function renderLocal() {
     if (typeof Store === 'undefined') return;
     Store.load().then(function () {
-      if (typeof Masonry !== 'undefined') {
-        var showTrash = document.getElementById('chk-show-trash');
-        Masonry.render(Store.getVisible(showTrash ? showTrash.checked : false));
-      }
-    });
+      if (_onLocal) _onLocal();
+    }).catch(function (e) { toast(String(e.message || e)); });
   }
 
-  function init() {
+  /**
+   * 绑定页面交互并恢复上次来源与表单状态。
+   *
+   * Args:
+   *   opts (object): 页面钩子。
+   *     onLocal (function()): 回到本地模式后由页面渲染本地列表。
+   *
+   * Returns:
+   *   void
+   *
+   * Callers:
+   *   - app.js:init
+   */
+  function init(opts) {
+    _onLocal = (opts && opts.onLocal) || null;
     var modeEl = document.getElementById('filter-mode');
     if (!modeEl) return;
 
@@ -2475,6 +2461,9 @@ var BooruFilter = (function () {
     mode: mode,
     currentPage: currentPage,
     scrollToPage: scrollToPage,
+    syncLoadTrigger: syncLoadTrigger,
     refreshDiskCount: refreshDiskCount,
+    clickCard: clickCard,
+    previewCard: previewCard,
   };
 })();

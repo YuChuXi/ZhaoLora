@@ -1,7 +1,7 @@
 """online_sources 通用框架: 与具体图源平台无关的基类与工具.
 
 本子包聚合所有来源共用的能力, 供各平台来源实现 (``danbooru`` /
-``gelbooru`` / ``bilibili`` / ``x`` / ``pixiv``) 复用:
+``gelbooru`` / ``e621`` / ``bilibili`` / ``x`` / ``pixiv``) 复用:
 
 - ``base``: ``SourceClient`` 抽象基类与来源注册表;
 - ``http``: 统一网络层 (基于 httpx);

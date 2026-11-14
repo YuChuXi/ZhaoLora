@@ -7,7 +7,6 @@
   'use strict';
 
   var _items = [];
-  var _manualCols = 0;
   var _singleIndex = -1;
   var _fitMode = 'contain';
   var _busyPaths = {};
@@ -171,6 +170,30 @@
   }
 
   /**
+   * 按路径查找条目。
+   *
+   * @param {string} path 图片路径
+   * @returns {?object} 条目；未找到为 null
+   */
+  function findItem(path) {
+    for (var i = 0; i < _items.length; i++) {
+      if (_items[i].path === path) return _items[i];
+    }
+    return null;
+  }
+
+  /**
+   * 按路径进入单图模式。
+   *
+   * @param {string} path 图片路径
+   */
+  function openSingle(path) {
+    for (var i = 0; i < _items.length; i++) {
+      if (_items[i].path === path) { showSingle(i); return; }
+    }
+  }
+
+  /**
    * 调用 /tags/check 加载检查结果并渲染。
    * @param {boolean} [preserveSort] 为 true 时保留既有顺序与排序指标, 仅原位更新
    *   各图片的标签状态 (exists/position_ok/caption_preview); 语义排序后批量改标签用它.
@@ -205,24 +228,11 @@
       }
       if (_strip) _strip.refresh();
       hideSingle();
-      Masonry.render(_items);
+      Masonry.update(_items);
       updateStats();
     } finally {
       btn.disabled = false;
     }
-  }
-
-  /**
-   * 按视口宽度自动选取列数。
-   * @returns {number}
-   */
-  function autoColumns() {
-    var w = window.innerWidth;
-    if (w >= 1600) return 6;
-    if (w >= 1280) return 5;
-    if (w >= 960) return 4;
-    if (w >= 640) return 3;
-    return 2;
   }
 
   // ==================== 标签补全 ====================
@@ -688,7 +698,7 @@
       _items[i]._mask = null;
     }
     hideSingle();
-    Masonry.render(_items);
+    Masonry.update(_items);
     updateStats();
   }
 
@@ -769,7 +779,7 @@
           });
           _embSortActive = true;
           hideSingle();
-          Masonry.render(_items);
+          Masonry.update(_items);
           updateStats();
           var doneMsg = engine === 'concept'
             ? '已按掩码占比排序 (' + items.length + ' 条)'
@@ -854,11 +864,20 @@
 
   async function init() {
     await AppSettings.ready();
-    Masonry.init('masonry', {
-      getData: function () { return _items; },
-      onClick: onCardClick,
+    Masonry.mount('masonry', {
       decorate: decorateCard,
-      imageSrc: imageSrc,
+      thumb: imageSrc,
+    });
+
+    var masonryRoot = document.getElementById('masonry');
+    masonryRoot.addEventListener('click', function (e) {
+      var card = e.target.closest('.card');
+      if (!card || !card.dataset.path) return;
+      var item = findItem(card.dataset.path);
+      if (item) onCardClick(item, card);
+    });
+    UI.bindLongPress(masonryRoot, function (card) {
+      openSingle(card.dataset.path);
     });
     acInit();
     magnifierInit();
@@ -880,15 +899,9 @@
     var colsLabel = document.getElementById('cols-label');
 
     function applyCols(v) {
-      _manualCols = v;
       if (colsSlider) colsSlider.value = String(v);
-      if (v === 0) {
-        if (colsLabel) colsLabel.textContent = '自动';
-        Masonry.setColumns(autoColumns());
-      } else {
-        if (colsLabel) colsLabel.textContent = String(v);
-        Masonry.setColumns(v);
-      }
+      if (colsLabel) colsLabel.textContent = v === 0 ? '自动' : String(v);
+      Masonry.setColumns(v);
     }
 
     var saved = 0;
@@ -924,9 +937,6 @@
         applyCols(v);
       });
     }
-    window.addEventListener('resize', function () {
-      if (_manualCols === 0) Masonry.setColumns(autoColumns());
-    });
 
     /**
      * 将检查参数与向量对话框参数写入设置（「tag_check」键）。
@@ -970,7 +980,7 @@
         _applyMask = chkMask.checked;
         persistTagCheck();
         hideSingle();
-        Masonry.render(_items);
+        Masonry.update(_items);
       });
     }
 
@@ -1046,10 +1056,7 @@
       var card = e.target.closest('.card');
       if (!card) return;
       e.preventDefault();
-      var path = card.dataset.path;
-      for (var i = 0; i < _items.length; i++) {
-        if (_items[i].path === path) { showSingle(i); return; }
-      }
+      openSingle(card.dataset.path);
     });
 
     document.getElementById('btn-prev').addEventListener('click', function () { navigateSingle(-1); });

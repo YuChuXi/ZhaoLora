@@ -13,9 +13,63 @@
     document.getElementById('btn-restore').disabled = st.trashed === 0;
   }
 
+  var _visiblePaths = [];
+  var _lastPath = null;
+
   function refreshView() {
     if (typeof BooruFilter !== 'undefined' && BooruFilter.isRemote()) return;
-    Masonry.render(Store.getVisible(showTrashChecked()));
+    var items = Store.getVisible(showTrashChecked());
+    _visiblePaths = items.map(function (it) { return it.path; });
+    Masonry.update(items);
+  }
+
+  /**
+   * 本地卡片单击：Shift 连选闭区间，否则切换单张。
+   *
+   * Args:
+   *   path (string): 图片路径。
+   *   rangeSelect (boolean): 是否按住 Shift 连选。
+   *
+   * Returns:
+   *   void
+   *
+   * Callers:
+   *   - app.js:瀑布流 click 委托
+   */
+  function toggleLocal(path, rangeSelect) {
+    if (rangeSelect && _lastPath) {
+      var from = _visiblePaths.indexOf(_lastPath);
+      var to = _visiblePaths.indexOf(path);
+      if (from >= 0 && to >= 0) {
+        Store.selectRange(_visiblePaths.slice(Math.min(from, to), Math.max(from, to) + 1))
+          .catch(function (e) { toast(String(e.message || e)); });
+        _lastPath = path;
+        return;
+      }
+    }
+    _lastPath = path;
+    Store.toggle(path).catch(function (e) { toast(String(e.message || e)); });
+  }
+
+  /**
+   * 卡片预览：远程打开帖子预览，本地打开颜色相似图。
+   *
+   * Args:
+   *   card (HTMLElement): 卡片元素。
+   *
+   * Returns:
+   *   void
+   *
+   * Callers:
+   *   - app.js:瀑布流 contextmenu 委托 / UI.bindLongPress
+   */
+  function openCardPreview(card) {
+    if (typeof BooruFilter !== 'undefined' && BooruFilter.isRemote()) {
+      BooruFilter.previewCard(card);
+      return;
+    }
+    if (!card.dataset.path || typeof SimilarHover === 'undefined') return;
+    SimilarHover.showFor(card.dataset.path, card);
   }
 
   function showTrashChecked() {
@@ -325,7 +379,25 @@
   async function init() {
     await AppSettings.ready();
     await loadScoreOptions();
-    Masonry.init('masonry', { decorate: searchDecorate, sortKey: Store.getSort });
+    Masonry.mount('masonry', { decorate: searchDecorate });
+
+    var masonryRoot = document.getElementById('masonry');
+    masonryRoot.addEventListener('click', function (e) {
+      var card = e.target.closest('.card');
+      if (!card) return;
+      if (typeof BooruFilter !== 'undefined' && BooruFilter.isRemote()) {
+        BooruFilter.clickCard(card);
+        return;
+      }
+      if (card.dataset.path) toggleLocal(card.dataset.path, e.shiftKey);
+    });
+    masonryRoot.addEventListener('contextmenu', function (e) {
+      var card = e.target.closest('.card');
+      if (!card) return;
+      e.preventDefault();
+      openCardPreview(card);
+    });
+    UI.bindLongPress(masonryRoot, openCardPreview);
     _searchSuggest = UI.bindTagSuggest(document.getElementById('search-query'), {
       separator: 'comma',
       fetchTags: searchFetchTags,
@@ -341,44 +413,26 @@
 
     var colsSlider = document.getElementById('cols-slider');
     var colsLabel = document.getElementById('cols-label');
-    var _manualCols = 0;
-
-    function _autoColumns() {
-      var w = window.innerWidth;
-      var c = w >= 1600 ? 6 : w >= 1280 ? 5 : w >= 960 ? 4 : w >= 640 ? 3 : 2;
-      if (typeof BooruFilter !== 'undefined' && BooruFilter.isRemote()) BooruFilter.render();
-      else Masonry.setColumns(c);
-    }
 
     function applyCols(v) {
       var keepPage = null;
       if (typeof BooruFilter !== 'undefined' && BooruFilter.isRemote()) {
         keepPage = BooruFilter.currentPage();
       }
-      _manualCols = v;
       if (colsSlider) colsSlider.value = String(v);
-      if (v === 0) {
-        if (colsLabel) colsLabel.textContent = '自动';
-        _autoColumns();
-      } else {
-        if (colsLabel) colsLabel.textContent = String(v);
-        if (typeof BooruFilter !== 'undefined' && BooruFilter.isRemote()) BooruFilter.render();
-        else if (typeof Masonry !== 'undefined') Masonry.setColumns(v);
-      }
-      if (keepPage != null && typeof BooruFilter !== 'undefined') {
+      if (colsLabel) colsLabel.textContent = v === 0 ? '自动' : String(v);
+      Masonry.setColumns(v);
+      if (keepPage != null) {
         requestAnimationFrame(function () {
           BooruFilter.scrollToPage(keepPage);
+          BooruFilter.syncLoadTrigger();
         });
       }
     }
 
     var savedCols = (AppSettings.get('filter') || {}).cols;
     if (!(savedCols >= 0 && savedCols <= 16)) savedCols = 0;
-    if (colsSlider) colsSlider.value = String(savedCols);
-    _manualCols = savedCols;
-    if (colsLabel) colsLabel.textContent = savedCols === 0 ? '自动' : String(savedCols);
-    if (savedCols > 0) Masonry.setColumns(savedCols);
-    else _autoColumns();
+    applyCols(savedCols);
 
     if (colsSlider) {
       colsSlider.addEventListener('input', function() {
@@ -391,19 +445,20 @@
       });
     }
     window.addEventListener('resize', function() {
-      if (_manualCols === 0) _autoColumns();
+      if (typeof BooruFilter === 'undefined' || !BooruFilter.isRemote()) return;
+      requestAnimationFrame(function () { BooruFilter.syncLoadTrigger(); });
     });
 
-    if (typeof BooruFilter !== 'undefined') BooruFilter.init();
+    if (typeof BooruFilter !== 'undefined') BooruFilter.init({ onLocal: refreshView });
 
     Store.onChange(function(st) {
       if (typeof BooruFilter !== 'undefined' && BooruFilter.isRemote()) return;
       updateStats(st);
     });
 
-    Store.onToggle(function(path, selected) {
+    Store.onToggle(function() {
       if (typeof BooruFilter !== 'undefined' && BooruFilter.isRemote()) return;
-      Masonry.setSelected(path, selected);
+      Masonry.setSelected(Store.selectedPaths());
     });
 
     document.getElementById('btn-select-all').addEventListener('click', function() {

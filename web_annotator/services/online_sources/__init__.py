@@ -1,8 +1,8 @@
 """在线图源系统: 各平台来源实现与统一注册表.
 
-聚合 Danbooru / Gelbooru / Bilibili / X / Pixiv 等在线图源, 统一实现
-``SourceClient`` 抽象并注册; 对外暴露搜索、下载、缩略图代理等公共 API。
-通用框架 (基类、网络、媒体操作) 位于 ``framework`` 子包。
+聚合 Danbooru / Gelbooru / e621 / Bilibili / X / Pixiv 等在线图源, 统一
+实现 ``SourceClient`` 抽象并注册; 对外暴露搜索、下载、缩略图代理等公共
+API。通用框架 (基类、网络、媒体操作) 位于 ``framework`` 子包。
 
 Callers:
     - ``routes/online_sources.py:``
@@ -24,6 +24,7 @@ from services.online_sources.framework.media import (
     remove_download,
 )
 from services.online_sources.danbooru import DanbooruSource
+from services.online_sources.e621 import E621Source
 from services.online_sources.gelbooru import GelbooruSource
 from services.online_sources.bilibili import BilibiliSource, BilibiliVideoSource
 from services.online_sources.x import XSource
@@ -34,6 +35,7 @@ from services.online_sources.framework.utils import is_downloaded
 # 注册内置来源
 register_source(GelbooruSource())
 register_source(DanbooruSource())
+register_source(E621Source())
 register_source(BilibiliSource())
 register_source(BilibiliVideoSource())
 register_source(XSource())

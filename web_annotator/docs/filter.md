@@ -1,6 +1,6 @@
 # 筛选
 
-瀑布流浏览与挑选样本；支持本地目录与 Gelbooru / Danbooru / Bilibili。
+瀑布流浏览与挑选样本；支持本地目录与 Gelbooru / Danbooru / e621 / Bilibili。
 
 ## 本地模式
 
@@ -46,12 +46,12 @@
 | A | 全选 |
 | D | 取消全选 |
 
-## 远程模式（Gelbooru / Danbooru / Bilibili）
+## 远程模式（Gelbooru / Danbooru / e621 / Bilibili）
 
 1. 「来源」选图站，输入标签，设置条件与页码后 **搜索**。
 2. 左键触发 **下载** 并写入当前工作子目录；完成后状态为 **已保存**。
 3. 顶栏 **已收录**（工作目录磁盘张数）· **已加载**（当前搜索结果）。点选即写入，无「已选择」。
-4. 「条件」角标统计已生效项（评级、分数/宽高/ID、用户、附加元标签；日期仅 Danbooru）；悬停可看摘要。
+4. 「条件」角标统计已生效项（评级、分数/宽高/ID、用户、附加元标签；日期适用于 Danbooru 与 e621）；悬停可看摘要。
 5. 对已保存条目可 **移除**（从工作目录删去对应文件）；移除后「已收录」会刷新。
 6. 更改列数后会尽量回到原先浏览的页位。
 
@@ -83,7 +83,7 @@
 
 ## 代理
 
-仅 Gelbooru 缩略图/预览经 `/booru/thumb|sample`（防盗链 + 磁盘缓存）。B 站图片经 `/booru/image` 代理（带 B 站 Referer 规避图床防盗链）。Danbooru 直链。搜索出口用 `--booru-proxy`。
+图片代理统一走 `/online-sources/{source}-image`：各来源声明图床白名单与 Referer（Gelbooru 另加图床 cookie），Danbooru 直链。搜索与图片出口使用 `HTTP_PROXY` / `HTTPS_PROXY`。
 
 ## 批量下载
 

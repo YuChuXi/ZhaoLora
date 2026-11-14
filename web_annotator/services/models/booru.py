@@ -8,6 +8,7 @@ Callers:
     - ``services/online_sources/framework/gallerydl.py:`` : 下载框架.
     - ``services/online_sources/gelbooru/source.py:`` : 各图站适配.
     - ``services/online_sources/danbooru/source.py:`` : 各图站适配.
+    - ``services/online_sources/e621/source.py:`` : 各图站适配.
     - ``services/online_sources/pixiv/source.py:`` : 各图站适配.
     - ``services/online_sources/bilibili/source.py:`` : 各图站适配.
     - ``services/online_sources/x/source.py:`` : 各图站适配.

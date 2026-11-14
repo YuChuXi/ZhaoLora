@@ -227,6 +227,10 @@ var SimilarHover = (function () {
    */
   async function showFor(path, card) {
     ensurePanel();
+    if (_anchorPath === path && _panel.classList.contains('show')) {
+      hide();
+      return;
+    }
     _anchorPath = path;
     _anchorCard = card;
     var body = document.getElementById('similar-float-body');
@@ -248,26 +252,6 @@ var SimilarHover = (function () {
 
     layoutMasonry(list);
     positionNear(card);
-  }
-
-  /**
-   * 绑定主列表卡片：右键打开相似图。
-   * @param {HTMLElement} card
-   * @param {string} path
-   */
-  function bindCard(card, path) {
-    card.addEventListener('contextmenu', function (e) {
-      e.preventDefault();
-      e.stopPropagation();
-      if (_anchorPath === path && _panel && _panel.classList.contains('show')) {
-        hide();
-        return;
-      }
-      showFor(path, card).catch(function (err) {
-        if (_anchorPath === path) hide();
-        console.error(err);
-      });
-    });
   }
 
   /**
@@ -362,7 +346,7 @@ var SimilarHover = (function () {
   Store.onChange(onStoreChange);
 
   return {
-    bindCard: bindCard,
+    showFor: showFor,
     hide: hide,
     clearCache: function () { _cache = {}; },
   };

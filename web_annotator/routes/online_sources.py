@@ -57,7 +57,7 @@ _NETWORK_ERRORS = (RuntimeError, OSError, _NetworkError)
 class SearchBody(BaseModel):
     """Booru 搜索请求体."""
 
-    source: str = Field(..., description="gelbooru | danbooru")
+    source: str = Field(..., description="来源名, 如 gelbooru | danbooru | e621")
     tags: str = ""
     page: int = Field(1, ge=1, le=10000)
     session: str = Field("", description="会话式来源的续拉 token; 新搜索留空")
@@ -93,14 +93,14 @@ def list_sources() -> BooruSourcesResponse:
 
 @router.get("/tag-suggest")
 async def tag_suggest(
-    source: str = Query(..., description="gelbooru | danbooru"),
+    source: str = Query(..., description="支持标签补全的来源, 如 gelbooru | danbooru | e621"),
     q: str = Query(..., min_length=1, max_length=100, description="标签前缀"),
     limit: int = Query(10, ge=1, le=50),
 ) -> dict:
     """标签自动补全。
 
     Args:
-        source (str): 来源名(gelbooru | danbooru)。
+        source (str): 来源名(支持标签补全的来源)。
         q (str): 标签前缀, 长度 1-100。
         limit (int): 返回数量上限, 1-50。
 
@@ -606,7 +606,7 @@ class RegenerateCaptionsBody(BaseModel):
 
 @router.post("/regenerate-captions")
 async def regenerate_captions(ds: DatasetDep, body: RegenerateCaptionsBody) -> dict:
-    """从 .danbooru_meta / .gelbooru_meta 批量重生成旁路 .txt。
+    """从各来源 meta 目录批量重生成旁路 .txt。
 
     Args:
         ds (Dataset): 当前数据集, 由依赖注入提供。

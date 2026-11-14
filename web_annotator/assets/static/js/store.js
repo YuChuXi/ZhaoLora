@@ -103,6 +103,23 @@ var Store = (function() {
   function getAll() { return _images; }
 
   /**
+   * 当前选中的图片路径。
+   *
+   * Returns:
+   *   string[]: 选中路径列表。
+   *
+   * Callers:
+   *   - app.js:Store.onToggle 同步瀑布流选中态
+   */
+  function selectedPaths() {
+    var paths = [];
+    for (var i = 0; i < _images.length; i++) {
+      if (_images[i].selected) paths.push(_images[i].path);
+    }
+    return paths;
+  }
+
+  /**
    * 当前视图可见列表: 工作目录视图与回收站视图互斥.
    * @param {boolean} showTrash true = 仅回收站图片; false = 仅工作目录图片
    * @returns {Array} 排序后的可见图片列表
@@ -225,7 +242,7 @@ var Store = (function() {
   }
 
   return {
-    load: load, getAll: getAll, getVisible: getVisible,
+    load: load, getAll: getAll, getVisible: getVisible, selectedPaths: selectedPaths,
     toggle: toggle, selectRange: selectRange, selectAll: selectAll, deselectAll: deselectAll,
     invert: invert, applyDelete: applyDelete, restore: restore,
     stats: stats, onChange: onChange, onToggle: onToggle,
