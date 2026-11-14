@@ -95,8 +95,8 @@ async def list_videos(
     封面不在此处批量生成; 前端经 ``/video/cover`` 按需请求。
 
     Callers:
-        - ``static/js/booru_filter.js:`` 视频来源
-        - ``static/js/video_extract.js:`` A/D 视频切换
+        - ``frontend/src/filter/useFilterPage.ts`` 视频来源
+        - ``frontend/src/pages/video-extract/VideoExtractPage.tsx`` A/D 视频切换
     """
     root, ready = _services(ds)
     if not ready:
@@ -117,7 +117,7 @@ async def video_cover(
     """返回视频封面图(missing 时即时生成).
 
     Callers:
-        - ``static/js/booru_filter.js:`` 视频卡片封面
+        - ``frontend/src/filter/useFilterPage.ts`` 视频卡片封面
     """
     root = ds.root
     video_path = resolve_path(ds, path)
@@ -141,7 +141,7 @@ async def video_detail(
     """返回视频抽帧页详情(宽高/总帧数/已保存帧/位流类型).
 
     Callers:
-        - ``static/js/video_extract.js:`` 加载视频详情
+        - ``frontend/src/pages/video-extract/VideoExtractPage.tsx`` 加载视频详情
     """
     resolve_path(ds, path)  # 校验路径合法
     store, _ = _stores(ds)
@@ -168,7 +168,7 @@ async def video_frame(
     """按帧索引返回一帧 JPEG, 可指定 ``size`` 等比缩略最长边.
 
     Callers:
-        - ``static/js/video_extract.js:`` 缩略图条
+        - ``frontend/src/pages/video-extract/VideoExtractPage.tsx`` 缩略图条
     """
     resolve_path(ds, path)
     store, _ = _stores(ds)
@@ -199,7 +199,7 @@ async def video_segment(
     实际复制帧数(含段尾参考帧)经 ``X-Frame-Count`` 响应头告知前端.
 
     Callers:
-        - ``static/js/video_extract.js:`` 主预览 WebCodecs 解码
+        - ``frontend/src/pages/video-extract/VideoExtractPage.tsx`` 主预览 WebCodecs 解码
     """
     resolve_path(ds, path)
     store, _ = _stores(ds)
@@ -225,7 +225,7 @@ async def save_frame(ds: DatasetDep, body: FrameSaveBody) -> FrameSaveResponse:
     """保存指定帧为 PNG 到 ``main`` 目录.
 
     Callers:
-        - ``static/js/video_extract.js:`` 左键/存帧按钮
+        - ``frontend/src/pages/video-extract/VideoExtractPage.tsx`` 左键/存帧按钮
     """
     resolve_path(ds, body.path)
     store, _ = _stores(ds)
@@ -246,7 +246,7 @@ async def delete_frame(ds: DatasetDep, body: FrameSaveBody) -> FrameSaveResponse
     """删除已保存的指定帧 PNG.
 
     Callers:
-        - ``static/js/video_extract.js:`` 右键/删帧按钮
+        - ``frontend/src/pages/video-extract/VideoExtractPage.tsx`` 右键/删帧按钮
     """
     resolve_path(ds, body.path)
     store, _ = _stores(ds)
@@ -266,7 +266,7 @@ async def start_analysis(request: Request, ds: DatasetDep, path: str = Query(...
     进度见 GET /api/jobs/{id}/events。
 
     Callers:
-        - ``static/js/video_extract.js:`` 帧类型分析按钮
+        - ``frontend/src/pages/video-extract/VideoExtractPage.tsx`` 帧类型分析按钮
     """
     resolve_path(ds, path)
     store, _ = _stores(ds)

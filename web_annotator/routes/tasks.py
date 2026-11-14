@@ -109,7 +109,7 @@ async def list_tasks(
         TaskListResponse: 含任务卡片列表, 含缩略图预览、统计、备注等。
 
     Callers:
-        - ``static/js/index.js:loadTasks``
+        - ``frontend/src/pages/index/TaskBoard.tsx``
     """
     store = _store(request)
     reg = registry(request)
@@ -167,7 +167,7 @@ def list_candidates(request: Request) -> TaskCandidatesResponse:
         TaskCandidatesResponse: 含候选目录名列表。
 
     Callers:
-        - ``static/js/index.js:loadCandidates``
+        - ``frontend/src/pages/index/TaskBoard.tsx``
     """
     store = _store(request)
     registered = {e.name for e in store.list_entries()}
@@ -202,7 +202,7 @@ async def add_task(request: Request, body: AddTaskBody) -> TaskOkResponse:
         TaskOkResponse: 含任务名、完成状态、备注、触发词。
 
     Callers:
-        - ``static/js/index.js:`` 的 ``#task-add-form`` 表单提交事件
+        - ``frontend/src/pages/index/TaskBoard.tsx`` 的 ``#task-add-form`` 表单提交事件
     """
     store = _store(request)
     try:
@@ -232,7 +232,7 @@ def complete_task(request: Request, name: str) -> TaskOkResponse:
         TaskOkResponse: 含任务名与最新完成状态。
 
     Callers:
-        - ``static/js/index.js:buildCard``
+        - ``frontend/src/pages/index/TaskBoard.tsx``
     """
     store = _store(request)
     try:
@@ -255,7 +255,7 @@ def reopen_task(request: Request, name: str) -> TaskOkResponse:
         TaskOkResponse: 含任务名与最新完成状态。
 
     Callers:
-        - ``static/js/index.js:buildCard``
+        - ``frontend/src/pages/index/TaskBoard.tsx``
     """
     store = _store(request)
     try:
@@ -279,7 +279,7 @@ def set_note(request: Request, name: str, body: SetNoteBody) -> TaskOkResponse:
         TaskOkResponse: 含任务名与最新备注。
 
     Callers:
-        - ``static/js/index.js:startEditNote``
+        - ``frontend/src/pages/index/TaskBoard.tsx``
     """
     store = _store(request)
     try:
@@ -303,7 +303,7 @@ def set_trigger_word(request: Request, name: str, body: SetTriggerWordBody) -> T
         TaskOkResponse: 含任务名与最新触发词。
 
     Callers:
-        - ``static/js/index.js:buildCard``
+        - ``frontend/src/pages/index/TaskBoard.tsx``
     """
     store = _store(request)
     try:
@@ -330,8 +330,7 @@ def add_trigger_word(request: Request, name: str, body: SetTriggerWordBody) -> T
         TaskOkResponse: 含任务名与添加后的最新触发词。
 
     Callers:
-        - ``static/js/tagging.js:startJob``
-        - ``static/js/tags.js:renderTable``
+        - ``frontend/src/pages/tags/TagsPage.tsx``
     """
     store = _store(request)
     try:
@@ -358,7 +357,7 @@ def remove_trigger_word(request: Request, name: str, body: SetTriggerWordBody) -
         TaskOkResponse: 含任务名与移除后的最新触发词。
 
     Callers:
-        - ``static/js/tags.js:renderTable``
+        - ``frontend/src/pages/tags/TagsPage.tsx``
     """
     store = _store(request)
     try:
@@ -387,7 +386,7 @@ def reorder_tasks(request: Request, body: ReorderBody) -> dict:
         dict: ``{"ok": True}``, 表示重排成功。
 
     Callers:
-        - ``static/js/index.js:setupDragDrop``
+        - ``frontend/src/pages/index/TaskBoard.tsx``
     """
     store = _store(request)
     try:
@@ -415,7 +414,7 @@ async def archive_task_route(request: Request, name: str) -> JobSubmitResponse:
         JobSubmitResponse: 含 job_id, 前端据以订阅 SSE 进度。
 
     Callers:
-        - ``static/js/index.js:archiveTask``
+        - ``frontend/src/pages/index/TaskBoard.tsx``
     """
     store = _store(request)
     entries = {e.name: e for e in store.list_entries()}
@@ -473,7 +472,7 @@ async def restore_task_route(request: Request, base: str) -> JobSubmitResponse:
         JobSubmitResponse: 含 job_id, 前端据以订阅 SSE 进度。
 
     Callers:
-        - ``static/js/index.js:restoreArchive``
+        - ``frontend/src/pages/index/TaskBoard.tsx``
     """
     store = _store(request)
     item = next(
@@ -521,7 +520,7 @@ def serve_archive_preview(request: Request, base: str, filename: str) -> FileRes
         FileResponse: AVIF 缩略图文件响应。
 
     Callers:
-        - ``static/js/index.js:buildArchivedCard``
+        - ``frontend/src/pages/index/TaskBoard.tsx``
     """
     store = _store(request)
     f = store.root / PACKED_DIR / f"{base}.previews" / filename

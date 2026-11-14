@@ -52,7 +52,6 @@ def docs_nav() -> list[DocNavItem]:
 
     Callers:
         - ``routes/docs.py:list_docs`` : GET /api/docs 端点.
-        - ``static/js/index.js:`` : 文档导航渲染.
     """
     return [DocNavItem(slug=s, label=lab) for s, lab in _NAV]
 

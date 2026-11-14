@@ -91,7 +91,7 @@ def dirs(ds: DatasetDep) -> ScoringDirsResponse:
             WD14 缓存覆盖率与模型状态.
 
     Callers:
-        - ``static/js/scoring.js:initPage`` : 页面初始化时加载.
+        - ``frontend/src/pages/scoring/ScoringPage.tsx`` : 页面初始化时加载.
     """
     aesthetic = load_score_json(ds.root, AESTHETIC_SCORES)
     items = load_score_items(ds.root)
@@ -132,7 +132,7 @@ def items(ds: DatasetDep) -> ScoreItemsResponse:
         ScoreItemsResponse: 内置项在前、自定义项在后.
 
     Callers:
-        - ``static/js/scoring.js:loadItems``
+        - ``frontend/src/pages/scoring/ScoringPage.tsx``
     """
     return ScoreItemsResponse(items=load_score_items(ds.root))
 
@@ -154,7 +154,7 @@ def create_item(ds: DatasetDep, body: ScoreItemBody) -> ScoreItemsResponse:
         HTTPException: WD14 模型未就绪或表达式非法时返回 400.
 
     Callers:
-        - ``static/js/scoring.js:createItem``
+        - ``frontend/src/pages/scoring/ScoringPage.tsx``
     """
     ok, message = model_ready()
     if not ok:
@@ -184,7 +184,7 @@ def delete_item(ds: DatasetDep, key: str) -> ScoreItemsResponse:
         HTTPException: 评分项不存在或为内置项时返回 404 / 400.
 
     Callers:
-        - ``static/js/scoring.js:deleteItem``
+        - ``frontend/src/pages/scoring/ScoringPage.tsx``
     """
     try:
         result = delete_score_item(ds.root, key)
@@ -215,7 +215,7 @@ def tag_suggest(
         HTTPException: WD14 模型未就绪时返回 400.
 
     Callers:
-        - ``static/js/app.js:searchFetchTags``
+        - ``frontend/src/pages/scoring/ScoringPage.tsx``
     """
     ok, message = model_ready()
     if not ok:
@@ -254,7 +254,7 @@ def tag_query(ds: DatasetDep, body: TagQueryBody) -> TagQueryResult:
         HTTPException: 模型未就绪、未选择目录、标签为空或标签不存在时返回 400.
 
     Callers:
-        - ``static/js/app.js:searchSort``
+        - ``frontend/src/pages/scoring/ScoringPage.tsx``
     """
     ok, message = model_ready()
     if not ok:
@@ -301,7 +301,7 @@ async def results(
         HTTPException: 评分项不存在时返回 400.
 
     Callers:
-        - ``static/js/scoring.js:loadResults`` : 获取评分数据渲染画廊. 
+        - ``frontend/src/pages/scoring/ScoringPage.tsx`` : 获取评分数据渲染画廊.
     """
     if kind != "aesthetic" and kind not in {item.key for item in load_score_items(ds.root)}:
         raise HTTPException(400, f"未知评分项: {kind}")
@@ -336,7 +336,7 @@ async def start(ds: DatasetDep, request: Request, body: StartBody) -> ScoringSta
         HTTPException: 评分类型非法或未选择目录时返回 400.
 
     Callers:
-        - ``static/js/scoring.js:startJob``
+        - ``frontend/src/pages/scoring/ScoringPage.tsx``
     """
     kind = body.kind
     if kind not in SCORE_KINDS:
@@ -401,7 +401,7 @@ async def start_cache(
         HTTPException: WD14 模型未就绪或未选择目录时返回 400.
 
     Callers:
-        - ``static/js/scoring.js:startCache``
+        - ``frontend/src/pages/scoring/ScoringPage.tsx``
     """
     ok, message = model_ready()
     if not ok:

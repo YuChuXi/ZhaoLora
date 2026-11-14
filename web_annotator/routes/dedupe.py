@@ -137,7 +137,7 @@ def dirs(ds: DatasetDep) -> DirsResponse:
         DirsResponse: 含工作目录列表与默认目录名.
 
     Callers:
-        - ``static/js/nav.js:dirsApi``
+        - ``frontend/src/components/Nav.tsx``
     """
     return DirsResponse(dirs=[w.to_info() for w in ds.work_dirs()], default="main")
 
@@ -158,7 +158,7 @@ async def scan_duplicates(request: Request, ds: DatasetDep, body: ScanBody) -> J
         JobSubmitResponse: 含 ``job_id``, 前端经 SSE 监听任务进度与最终结果.
 
     Callers:
-        - ``static/js/dedupe.js:scan``
+        - ``frontend/src/pages/dedupe/DedupePage.tsx``
     """
     thumbnailer = ds.thumbnailer
     names = body.dirs or ([body.dir] if body.dir else None)
@@ -300,7 +300,7 @@ def apply_delete(ds: DatasetDep, body: ApplyBody) -> DedupeMoveResponse:
         HTTPException: 路径列表为空或全部非法时返回 400.
 
     Callers:
-        - ``static/js/dedupe.js:applyDelete``
+        - ``frontend/src/pages/dedupe/DedupePage.tsx``
     """
     state_mgr = ds.state_manager
     if not body.paths:

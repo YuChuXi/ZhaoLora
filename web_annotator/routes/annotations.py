@@ -74,7 +74,7 @@ def toggle(ds: DatasetDep, body: ToggleBody) -> ToggleResponse:
         ToggleResponse: 含路径与最新选中状态。
 
     Callers:
-        - ``static/js/store.js:toggle``
+        - ``frontend/src/filter/useFilterPage.ts``
     """
     path = _rel_under(ds, body.path)
     selected = ds.state_manager.toggle(path)
@@ -98,7 +98,7 @@ def select_all(ds: DatasetDep, body: SelectAllBody) -> SelectAllResponse:
         SelectAllResponse: 含选中数量与目录列表。
 
     Callers:
-        - ``static/js/store.js:selectAll``
+        - ``frontend/src/filter/useFilterPage.ts``
     """
     names = body.dirs or ([body.dir] if body.dir else None)
     works = ds.select_or_main(names)
@@ -122,7 +122,7 @@ def deselect_all(ds: DatasetDep) -> CountResponse:
         CountResponse: 含已选数量(恒为 0)。
 
     Callers:
-        - ``static/js/store.js:deselectAll``
+        - ``frontend/src/filter/useFilterPage.ts``
     """
     ds.state_manager.deselect_all()
     return CountResponse(selected=0)
@@ -146,7 +146,7 @@ def select_range(ds: DatasetDep, body: SelectRangeBody) -> CountResponse:
         CountResponse: 含已选数量。
 
     Callers:
-        - ``static/js/store.js:selectRange``
+        - ``frontend/src/filter/useFilterPage.ts``
     """
     count = ds.state_manager.select_all(body.paths)
     return CountResponse(selected=count)
@@ -163,7 +163,7 @@ def apply_delete(ds: DatasetDep) -> CountResponse:
         CountResponse: 含已移动数量。
 
     Callers:
-        - ``static/js/store.js:applyDelete``
+        - ``frontend/src/filter/useFilterPage.ts``
     """
     root = ds.root
     state_mgr = ds.state_manager
@@ -206,7 +206,7 @@ def restore(ds: DatasetDep, body: RestoreBody) -> CountResponse:
         CountResponse: 含已恢复数量。
 
     Callers:
-        - ``static/js/store.js:restore``
+        - ``frontend/src/filter/useFilterPage.ts``
     """
     state_mgr = ds.state_manager
     trashed = state_mgr.get().trashed
@@ -234,7 +234,7 @@ def get_state(ds: DatasetDep, dirs: str = "", dir: str = "main") -> AnnotatorSta
         AnnotatorStateResponse: 含目录、总数、选中数、回收站数等统计。
 
     Callers:
-        - ``static/js/api.js:getState``
+        - ``frontend/src/lib/api.ts``
     """
     names = parse_dir_names(dirs, dir)
     works = ds.select_or_main(names)

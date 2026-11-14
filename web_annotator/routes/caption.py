@@ -41,7 +41,7 @@ router = APIRouter(prefix="/caption", tags=["caption"])
 
 
 @router.get("/dirs")
-def dirs(ds: DatasetDep) -> CaptionDirsResponse:
+async def dirs(ds: DatasetDep) -> CaptionDirsResponse:
     """列出可描述的工作目录与描述服务状态.
 
     Args:
@@ -51,10 +51,10 @@ def dirs(ds: DatasetDep) -> CaptionDirsResponse:
         CaptionDirsResponse: 含工作目录列表、服务就绪状态与可用模式/注入范围.
 
     Callers:
-        - ``static/js/nav.js:dirsApi``
-        - ``static/js/caption.js:init``
+        - ``frontend/src/components/Nav.tsx``
+        - ``frontend/src/pages/caption/CaptionPage.tsx``
     """
-    ok, info = openai_status()
+    ok, info = await openai_status()
     return CaptionDirsResponse(
         dirs=[w.to_info() for w in ds.work_dirs()],
         ready=ok,
@@ -116,7 +116,7 @@ def list_images(ds: DatasetDep, body: CaptionListBody) -> CaptionListResponse:
         HTTPException: 未选择目录时返回 400.
 
     Callers:
-        - ``static/js/caption.js:refresh``
+        - ``frontend/src/pages/caption/CaptionPage.tsx``
     """
     selected = ds.select(body.dirs)
     if not selected:
@@ -153,8 +153,7 @@ def delete_many(ds: DatasetDep, body: CaptionDeleteBody) -> CaptionDeleteRespons
         HTTPException: 路径越界返回 400, 图片不存在返回 404.
 
     Callers:
-        - ``static/js/caption.js:deleteSelectedCaptions``
-        - ``static/js/caption.js:deleteViewedCaption``
+        - ``frontend/src/pages/caption/CaptionPage.tsx``
     """
     stores: dict[Path, dict[str, list[str]]] = {}
     deleted = 0
@@ -194,9 +193,9 @@ async def start(ds: DatasetDep, request: Request, body: CaptionBody) -> JobSubmi
             范围非法时返回 400.
 
     Callers:
-        - ``static/js/caption.js:startJob``
+        - ``frontend/src/pages/caption/CaptionPage.tsx``
     """
-    ok, msg = openai_status()
+    ok, msg = await openai_status()
     if not ok:
         raise HTTPException(400, msg)
 

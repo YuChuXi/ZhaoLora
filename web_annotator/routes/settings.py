@@ -35,7 +35,7 @@ async def read_settings(ds: DatasetDep) -> dict:
         dict: ``{"settings": {键: 任意 JSON 值}}``; 两层均无记录时为空映射.
 
     Callers:
-        - ``static/js/settings.js:ready`` : 页面启动时加载.
+        - ``frontend/src/app/AppShell.tsx`` : 页面启动时加载.
     """
     root, task_root = ds.root, ds.task_root
 
@@ -62,7 +62,7 @@ async def write_settings(ds: DatasetDep, patch: dict[str, Any]) -> dict:
         HTTPException: 设置键非法(500 转发自 ValueError)或未绑定数据集.
 
     Callers:
-        - ``static/js/settings.js:set`` : 保存目录选择、描述规则、裁剪部位.
+        - ``frontend/src/app/AppShell.tsx`` : 保存目录选择、描述规则、裁剪部位.
     """
     async with ds.settings_lock:
         data = await asyncio.to_thread(update_settings, ds.root, patch)
@@ -77,7 +77,7 @@ async def read_global_settings(reg: RegistryDep) -> dict:
         dict: ``{"settings": {键: 任意 JSON 值}}``; 无记录时为空映射.
 
     Callers:
-        - ``static/js/index.js:importLegacy`` : 导入旧设置前读取现值合并.
+        - ``frontend/src/pages/index/TaskBoard.tsx`` : 导入旧设置前读取现值合并.
     """
     return {"settings": await asyncio.to_thread(load_settings, reg.task_root)}
 
@@ -97,8 +97,8 @@ async def write_global_settings(reg: RegistryDep, patch: dict[str, Any]) -> dict
         HTTPException: 设置键非法(500 转发自 ValueError).
 
     Callers:
-        - ``static/js/settings.js:set`` : 保存各页输入参数习惯.
-        - ``static/js/index.js:importLegacy`` : 导入旧版全局参数.
+        - ``frontend/src/app/AppShell.tsx`` : 保存各页输入参数习惯.
+        - ``frontend/src/pages/index/TaskBoard.tsx`` : 导入旧版全局参数.
     """
     async with reg.settings_lock:
         data = await asyncio.to_thread(update_settings, reg.task_root, patch)

@@ -53,7 +53,7 @@ async def mask_generate(request: Request, ds: DatasetDep, body: MaskGenerateBody
     单图模式 ``path`` 仅处理该图; 批量模式处理 ``dir`` 目录下全部图片.
 
     Callers:
-        - ``static/js/paint.js:``
+        - ``frontend/src/pages/paint/PaintPage.tsx``
     """
     if body.mode not in MASK_MODES:
         raise HTTPException(400, f"未知生成方式: {body.mode}")

@@ -140,7 +140,7 @@ def dirs(ds: DatasetDep) -> ReadyDirsResponse:
         ReadyDirsResponse: 数据集根、工作目录列表、各目录蒙版统计与正则化候选.
 
     Callers:
-        - ``static/js/ready.js:start``
+        - ``frontend/src/pages/ready/ReadyPage.tsx``
     """
     root = ds.root
     dirs = [w.to_info() for w in ds.work_dirs()]
@@ -177,7 +177,7 @@ def toml(request: Request, ds: DatasetDep, body: ReadyBody) -> ReadyTomlResult:
         HTTPException: 无可导出的图片目录, 或缺少对应格式的位置类环境变量时抛出.
 
     Callers:
-        - ``static/js/ready.js:generate``
+        - ``frontend/src/pages/ready/ReadyPage.tsx``
     """
     root = ds.root
     try:
@@ -227,7 +227,7 @@ def export(
             配置根环境变量、数据集当前不可用于导出、目标目录已存在配置且未确认覆盖时抛错.
 
     Callers:
-        - ``static/js/ready.js:doExport``
+        - ``frontend/src/pages/ready/ReadyPage.tsx``
     """
     root = ds.root
     file_names = TRAIN_FORMAT_TEMPLATES[body.train_format][body.variant]

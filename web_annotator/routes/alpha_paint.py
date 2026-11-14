@@ -73,8 +73,7 @@ def list_paint_images(ds: DatasetDep, dir: str = "main") -> list[PaintImageItem]
         list[PaintImageItem]: 图片清单, 含路径/stem/尺寸/缩略图哈希/是否有蒙板.
 
     Callers:
-        - ``static/js/paint.js:loadImages``
-        - ``static/js/paint.js:refreshAfterMaskDone``
+        - ``frontend/src/pages/paint/PaintPage.tsx``
     """
     mask_dir = ds.mask_dir
     subdir = (dir or "main").strip().strip("/")
@@ -116,7 +115,6 @@ def serve_original_image(ds: DatasetDep, path: str = Query(...)) -> Response:
         HTTPException: 图片不存在时返回 404.
 
     Callers:
-        - ``static/js/paint.js:_loadEntry`` (经 ``_fetchBlob('/paint/image', ...)``)
         - ``routes/alpha_paint.py:serve_mask_preview`` (无蒙板时退回此接口)
     """
     src = resolve_path(ds, path)
@@ -148,8 +146,7 @@ def get_existing_mask(ds: DatasetDep, path: str = Query(...)) -> Response:
         HTTPException: 原图不存在或蒙版未保存/尺寸不符时返回 404.
 
     Callers:
-        - ``static/js/paint.js:_loadEntry`` (经 ``_fetchBlob('/paint/mask', ...)``)
-        - ``static/js/paint.js:reloadCurrentMask`` (经 ``_fetchBlob('/paint/mask', ...)``)
+        - ``frontend/src/pages/paint/PaintPage.tsx`` (经 ``_fetchBlob('/paint/mask', ...)``)
     """
     mask_dir = ds.mask_dir
     src = resolve_path(ds, path)
@@ -223,7 +220,7 @@ def serve_mask_preview(ds: DatasetDep, path: str = Query(...)) -> Response:
         HTTPException: 原图不存在时返回 404。
 
     Callers:
-        - ``static/js/tag_check.js:imageSrc``
+        - ``frontend/src/pages/tag-check/TagCheckPage.tsx``
     """
     mask_dir = ds.mask_dir
     src = resolve_path(ds, path)
@@ -268,7 +265,7 @@ async def upload_mask(request: Request, ds: DatasetDep, path: str = Query(...)) 
         HTTPException: 原图不存在时返回 404.
 
     Callers:
-        - ``static/js/paint.js:doSave``
+        - ``frontend/src/pages/paint/PaintPage.tsx``
     """
     mask_dir = ds.mask_dir
     src = resolve_path(ds, path)
@@ -304,7 +301,7 @@ def get_templates(ds: DatasetDep) -> TemplatesPayload:
         JSONDecodeError: 模板文件已损坏.
 
     Callers:
-        - ``static/js/paint.js:_loadTemplates``
+        - ``frontend/src/pages/paint/PaintPage.tsx``
     """
     return TemplatesPayload(templates=[TemplateItem(**t) for t in load_templates(ds.root)])
 
@@ -324,7 +321,7 @@ def set_templates(ds: DatasetDep, body: TemplatesPayload) -> TemplatesPayload:
         OSError: 无法写入.
 
     Callers:
-        - ``static/js/paint.js:_saveTemplates``
+        - ``frontend/src/pages/paint/PaintPage.tsx``
     """
     save_templates(ds.root, [t.model_dump() for t in body.templates])
     logger.info("数据集 %s 全量覆盖 %d 个蒙版模板", ds.name, len(body.templates))

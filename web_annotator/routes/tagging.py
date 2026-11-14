@@ -68,7 +68,7 @@ async def start(ds: DatasetDep, request: Request, body: StartBody) -> TaggingSta
         HTTPException: 模型未就绪或未选择目录时返回 400.
 
     Callers:
-        - ``static/js/tagging.js:startJob``
+        - ``frontend/src/pages/tags/TagsPage.tsx``
     """
     ok, msg = model_ready()
     if not ok:

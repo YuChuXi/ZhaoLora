@@ -185,7 +185,7 @@ def list_crop_images(ds: DatasetDep, dir: str = Query("main")) -> list[ImageThum
         HTTPException: 目录名非法或不存在时抛出 400.
 
     Callers:
-        - ``static/js/crop.js:loadImages``
+        - ``frontend/src/pages/crop/CropPage.tsx``
     """
     try:
         work = ds.work_dir(dir)
@@ -225,7 +225,7 @@ def get_crop_state(ds: DatasetDep, path: str = Query(...)) -> CropImageState:
         HTTPException: 路径越界(400).
 
     Callers:
-        - ``static/js/crop.js:loadIndex``
+        - ``frontend/src/pages/crop/CropPage.tsx``
     """
     resolve_path(ds, path)
     stem = Path(path).stem
@@ -256,7 +256,7 @@ def serve_original_image(ds: DatasetDep, path: str = Query(...)) -> Response:
         HTTPException: 图片不存在时返回 404.
 
     Callers:
-        - ``static/js/crop.js:loadIndex``
+        - ``frontend/src/pages/crop/CropPage.tsx``
     """
     src = resolve_path(ds, path)
     if not src.is_file():
@@ -277,7 +277,7 @@ def get_candidates() -> CropMatchConfig:
         CropMatchConfig: 候选边长网格配置.
 
     Callers:
-        - ``static/js/crop.js:init``
+        - ``frontend/src/pages/crop/CropPage.tsx``
     """
     return match_config()
 
@@ -295,7 +295,7 @@ def get_config(ds: DatasetDep) -> CropPageConfig:
         CropPageConfig: 含已存在的部位目录名列表.
 
     Callers:
-        - ``static/js/crop.js:init``
+        - ``frontend/src/pages/crop/CropPage.tsx``
     """
     return CropPageConfig(parts=[p.name for p in ds.list_part_dirs()])
 
@@ -324,7 +324,7 @@ def save_crops(ds: DatasetDep, body: SaveCropsBody) -> CropSaveResponse:
             部位名重复或多个未命名选区导致输出路径冲突(400).
 
     Callers:
-        - ``static/js/crop.js:saveAndNext``
+        - ``frontend/src/pages/crop/CropPage.tsx``
     """
     rel = body.path
     src = resolve_path(ds, rel)

@@ -118,7 +118,7 @@ def dirs(ds: DatasetDep) -> TagDirsResponse:
         TagDirsResponse: 工作子目录列表。
 
     Callers:
-        - ``static/js/nav.js:dirsApi``
+        - ``frontend/src/components/Nav.tsx``
     """
     return TagDirsResponse(dirs=[w.to_info() for w in ds.work_dirs()])
 
@@ -135,8 +135,8 @@ def stats(ds: DatasetDep, body: StatsBody) -> TagStatsResult:
         TagStatsResult: 标签频率统计结果。
 
     Callers:
-        - ``static/js/tags.js:refresh``
-        - ``static/js/tag_check.js:loadTags``
+        - ``frontend/src/pages/tags/TagsPage.tsx``
+        - ``frontend/src/pages/tag-check/TagCheckPage.tsx``
     """
     root = ds.root
     selected = ds.select(body.dirs)
@@ -196,7 +196,7 @@ async def translate_missing(ds: DatasetDep, body: TranslateMissingBody) -> dict:
         dict: ``{"translated": int, "map": dict}``, 含已翻译数量与映射表。
 
     Callers:
-        - ``static/js/tags.js:translateMissing``
+        - ``frontend/src/pages/tags/TagsPage.tsx``
     """
     root = ds.root
     result = await translate_missing_tags(body.tags, root)
@@ -320,7 +320,7 @@ async def batch_edit(request: Request, ds: DatasetDep, body: BatchEditBody) -> J
         JobSubmitResponse: 含 job_id, 前端据以订阅 SSE 进度。
 
     Callers:
-        - ``static/js/tags.js:runBatchEdit``
+        - ``frontend/src/pages/tags/TagsPage.tsx``
     """
     rt = ds
     root = rt.root
@@ -464,7 +464,7 @@ def check(ds: DatasetDep, body: TagCheckBody) -> TagCheckResponse:
         TagCheckResponse: 检查结果, 含每张图片的存在/位置状态。
 
     Callers:
-        - ``static/js/tag_check.js:runCheck``
+        - ``frontend/src/pages/tag-check/TagCheckPage.tsx``
     """
     rt = ds
     if body.position not in TAG_CHECK_POSITIONS:
@@ -517,8 +517,7 @@ def edit_one(ds: DatasetDep, body: TagEditOneBody) -> TagCheckItem:
         HTTPException: 插入位置或检查位置非法、标签为空、图片不存在时返回 400/404。
 
     Callers:
-        - ``static/js/tag_check.js:onCardClick``
-        - ``static/js/tag_check.js:singleTagOp``
+        - ``frontend/src/pages/tag-check/TagCheckPage.tsx``
     """
     rt = ds
     if body.position not in TAG_INSERT_POSITIONS:
@@ -572,8 +571,7 @@ def delete_one(ds: DatasetDep, body: TagDeleteOneBody) -> TagCheckItem:
         TagCheckItem: 删除后的最新检查结果。
 
     Callers:
-        - ``static/js/tag_check.js:onCardClick``
-        - ``static/js/tag_check.js:singleTagOp``
+        - ``frontend/src/pages/tag-check/TagCheckPage.tsx``
     """
     rt = ds
     if not body.tag.strip():
@@ -614,7 +612,7 @@ def embedding_status() -> EmbeddingStatusResponse:
         EmbeddingStatusResponse: 含 ok 与 message 字段。
 
     Callers:
-        - ``static/js/tag_check.js:embSort``
+        - ``frontend/src/pages/tag-check/TagCheckPage.tsx``
     """
     ok, msg = reranker_model_ready()
     return EmbeddingStatusResponse(ok=ok, message=msg)
@@ -645,8 +643,8 @@ async def embedding_query(
         JobSubmitResponse: 含 job_id, 前端据以订阅 SSE 进度。
 
     Callers:
-        - ``static/js/tag_check.js:embSort``
-        - ``static/js/app.js:searchSort``
+        - ``frontend/src/pages/tag-check/TagCheckPage.tsx``
+        - ``frontend/src/pages/scoring/ScoringPage.tsx``
     """
     rt = ds
     works = rt.select(body.dirs)
@@ -797,7 +795,7 @@ def embedding_history(ds: DatasetDep) -> EmbeddingHistoryResponse:
         EmbeddingHistoryResponse: 含 query 与 time 的历史列表。
 
     Callers:
-        - ``static/js/app.js:searchLoadHistory``
+        - ``frontend/src/pages/scoring/ScoringPage.tsx``
     """
     rt = ds
     return EmbeddingHistoryResponse(
@@ -823,7 +821,7 @@ def embedding_batch_tag(ds: DatasetDep, body: EmbeddingBatchTagBody) -> Embeddin
         EmbeddingBatchTagResponse: 含 ok 与匹配数量。
 
     Callers:
-        - ``static/js/tag_check.js:embBatchTag``
+        - ``frontend/src/pages/tag-check/TagCheckPage.tsx``
     """
     if not body.paths:
         raise HTTPException(400, "无匹配图片, 请先按相似度排序")
@@ -910,7 +908,7 @@ async def concept_query(
         JobSubmitResponse: 含 job_id, 前端据以订阅 SSE 进度。
 
     Callers:
-        - ``static/js/tag_check.js:embSort``
+        - ``frontend/src/pages/tag-check/TagCheckPage.tsx``
     """
     rt = ds
     works = rt.select(body.dirs)
