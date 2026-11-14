@@ -8,7 +8,7 @@ import os
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Query, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field
 
 from routes.deps import DatasetDep, jobs
@@ -43,9 +43,10 @@ from services.online_sources.batch import (
     register_progress,
     run_batch,
 )
+from services.core.http import NetworkError as _NetworkError
+from services.core.http import run_isolated
 from services.online_sources.framework.base import SOURCES, detect_source
-from services.online_sources.framework.http import HttpClient
-from services.online_sources.framework.http import NetworkError as _NetworkError
+from services.online_sources.framework.thumb_cache import ThumbCache
 
 logger = logging.getLogger(__name__)
 
@@ -108,7 +109,7 @@ async def tag_suggest(
         dict: ``{"tags": list[str]}``, 补全候选标签列表。
 
     Callers:
-        - ``static/js/booru_filter.js:onInput``
+        - ``frontend/src/filter/useFilterPage.ts``
     """
     try:
         src = get_source(source)
@@ -134,7 +135,7 @@ async def search(ds: DatasetDep, body: SearchBody) -> BooruSearchResult:
         BooruSearchResult: 搜索结果, 含帖子列表与本地下载状态。
 
     Callers:
-        - ``static/js/booru_filter.js:search``
+        - ``frontend/src/filter/useFilterPage.ts``
     """
     source = body.source.strip().lower()
     src = get_source(source)
@@ -195,30 +196,32 @@ async def search(ds: DatasetDep, body: SearchBody) -> BooruSearchResult:
     )
 
 
-@router.get("/{source}-image")
+@router.get("/{source}-image", response_model=None)
 async def proxy_image(
+    request: Request,
     source: str,
     url: str = Query(..., min_length=8, description="图床原图 URL"),
     id: str = Query(None, description="Gelbooru 帖 id, 用于合法性校验"),
     kind: str = Query("", description="thumb 或 sample"),
-) -> StreamingResponse:
-    """按来源代理图片(防盗链), 流式传输。
+) -> Response:
+    """按来源代理图片(防盗链); 缩略图经缓存库, 其余类型流式传输.
 
     图床白名单 / 防盗链头 / 超时均由各 ``SourceClient`` 自描述, 见
-    ``SourceClient.proxy_image``。
+    ``SourceClient.proxy_image``。``kind=thumb`` 且缓存启用时, 先查缓存库,
+    命中直接以字节响应, 未命中拉取后写入缓存再响应; ``sample`` 等大图不缓存。
 
     Args:
+        request (Request): 请求对象, 用于取缓存管理器。
         source (str): 来源名。
         url (str): 图床原图 URL, 长度至少 8。
         id (str | None): Gelbooru 帖 id, 用于合法性校验。
         kind (str): 缩略图(thumb)或样本图(sample)。
 
     Returns:
-        StreamingResponse: 流式图片响应, 含缓存头。
+        Response: 缓存命中或未命中时的字节响应, 或大图的流式响应; 均含缓存头。
 
     Callers:
-        - ``static/js/booru_filter.js:thumb``
-        - ``static/js/booru_filter.js:sample``
+        - ``frontend/src/lib/api.ts:thumbUrl`` / `sampleUrl`
     """
     try:
         src = get_source(source)
@@ -227,17 +230,24 @@ async def proxy_image(
     pid = (id or "").strip()
     if pid and ("/" in pid or "\\" in pid or ".." in pid):
         raise HTTPException(400, "非法 id")
+
+    cache: ThumbCache = request.app.state.online_thumb_cache
+    headers = {"Cache-Control": "public, max-age=86400"}
     try:
+        if kind == "thumb" and cache.enabled:
+            data, ctype, hit = await cache.fetch(
+                url, lambda: src.proxy_image(url, kind=kind)
+            )
+            headers["X-Thumb-Cache"] = "hit" if hit else "miss"
+            return Response(content=data, media_type=ctype, headers=headers)
         ctype, chunks = await src.proxy_image(url, kind=kind)
+        headers["X-Thumb-Cache"] = "off"
+        return StreamingResponse(chunks, media_type=ctype, headers=headers)
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
     except _NetworkError as e:
         logger.warning("图片代理上游异常: %s: %s", type(e).__name__, e)
         raise HTTPException(502, f"图片拉取失败: {e}") from e
-    return StreamingResponse(
-        chunks, media_type=ctype,
-        headers={"Cache-Control": "public, max-age=86400"},
-    )
 
 
 async def _cancel_on_disconnect(request: Request, task: asyncio.Task) -> None:
@@ -282,7 +292,7 @@ async def download(
         BooruDownloadResult | JobSubmitResponse: 图片帖返回下载结果; 视频帖返回任务提交响应。
 
     Callers:
-        - ``static/js/booru_filter.js:downloadOne``
+        - ``frontend/src/filter/useFilterPage.ts``
     """
     source = body.source.strip().lower()
     try:
@@ -403,7 +413,7 @@ async def _submit_video_download(
             emit(prog.snapshot())
 
         result = asyncio.run(
-            download_post(source, post, video_dir, overwrite=False, emit=on_progress)
+            run_isolated(download_post(source, post, video_dir, overwrite=False, emit=on_progress))
         )
         if len(result.files) > 1:
             done_msg = f"视频下载完成: {len(result.files)} 个分P"
@@ -435,7 +445,7 @@ def undownload(ds: DatasetDep, body: DownloadBody) -> BooruUndownloadResult:
         BooruUndownloadResult: 含删除的图片列表与目录名。
 
     Callers:
-        - ``static/js/booru_filter.js:undownloadOne``
+        - ``frontend/src/filter/useFilterPage.ts``
     """
     source = body.source.strip().lower()
     try:
@@ -483,7 +493,7 @@ async def batch_start(
         JobSubmitResponse: 含 job_id, 前端据以订阅 SSE 进度。
 
     Callers:
-        - ``static/js/booru_filter.js:runBatch``
+        - ``frontend/src/filter/useFilterPage.ts``
     """
     source = body.source.strip().lower()
     src = get_source(source)
@@ -574,7 +584,7 @@ def batch_params(request: Request, ds: DatasetDep, body: BatchParamsBody) -> Job
         JobSubmitResponse: 含原 job_id, 便于前端续接进度。
 
     Callers:
-        - ``static/js/booru_filter.js:pushBatchParams``
+        - ``frontend/src/filter/useFilterPage.ts``
     """
     job = jobs(request).find_active(dataset=ds.name, kind="online_batch")
     if job is None:
@@ -616,7 +626,7 @@ async def regenerate_captions(ds: DatasetDep, body: RegenerateCaptionsBody) -> d
         dict: ``{"ok": bool, "count": int}``, 含成功标志与重生成数量。
 
     Callers:
-        - ``static/js/booru_filter.js:regenerateCaptions``
+        - ``frontend/src/filter/useFilterPage.ts``
     """
     try:
         out_dir = ds.work_dir(body.dir).path
@@ -654,7 +664,7 @@ async def refresh_metadata(
         JobSubmitResponse: 含 job_id, 前端据以订阅 SSE 进度。
 
     Callers:
-        - ``static/js/booru_filter.js:refreshMetadata``
+        - ``frontend/src/filter/useFilterPage.ts``
     """
     try:
         ds.work_dir(body.dir)  # 仅校验目录合法
@@ -674,9 +684,11 @@ async def refresh_metadata(
             - ``services/core/jobs.py:JobManager.submit``
         """
         asyncio.run(
-            _run_refresh(
-                ds.work_dir(body.dir).path if body.dir else ds.root,
-                emit,
+            run_isolated(
+                _run_refresh(
+                    ds.work_dir(body.dir).path if body.dir else ds.root,
+                    emit,
+                )
             )
         )
 

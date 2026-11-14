@@ -25,7 +25,9 @@ from fastapi import APIRouter, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from dotenv import load_dotenv
+from starlette.datastructures import MutableHeaders
 from starlette.middleware.gzip import GZipMiddleware
+from starlette.types import Message
 
 # 启动前加载 web_annotator/.env (与当前工作目录无关), 供数据源凭据、模型路径与
 # 服务器配置读取; 须先于各业务模块导入执行, 使模块级配置常量能读到 .env 值.
@@ -50,10 +52,13 @@ from routes.tagging import router as tagging_router
 from routes.tasks import router as tasks_router
 from routes.tasks import archive_router as archived_router
 from routes.video import router as video_router
-from services.dataset.runtime import DatasetRegistry
+from services.core.db import Database
+from services.core.http import close_http_session
 from services.core.jobs import JobManager
 from services.core.logging import setup_logging
+from services.dataset.runtime import DatasetRegistry
 from services.dataset.workdir import LOG_DIRNAME
+from services.online_sources.framework.thumb_cache import ThumbCache
 from services.state.tasks import TaskStore
 
 # 访问日志专用 logger, 经根日志器统一格式化输出.
@@ -67,12 +72,13 @@ async def lifespan(app: FastAPI):
     服务器配置直接经 ``ANNOTATOR_*`` 环境变量读取, 与各数据源模块自读环境变量
     的方式一致; 任务存储/任务运行时/任务管理器挂载到 ``app.state``, 供各路由经
     ``request.app.state`` 访问. 经 ``uvicorn server:app`` 命令启动时本生命周期完整执行.
+    关闭时释放主事件循环持有的 HTTP 连接池.
 
     Args:
         app: FastAPI 应用实例, 其 ``state`` 用于承载全局依赖.
 
     Yields:
-        None: 应用运行期间挂起; 关闭时无额外清理.
+        None: 应用运行期间挂起; 关闭时释放网络会话.
 
     Callers:
         - ``server.py:`` (FastAPI ``lifespan=`` 参数传入, 由 ASGI 服务器调度)
@@ -111,15 +117,30 @@ async def lifespan(app: FastAPI):
         thumbnail_size=thumbnail_size,
         job_manager=jobs,
     )
+    cache_root = data_dir / ".cache"
+    thumb_cache = ThumbCache(
+        Database.open(cache_root / "thumb_index.db"),
+        cache_root / "thumb_files",
+    )
+    await thumb_cache.start()
 
     app.state.task_store = store
     app.state.datasets = registry
     app.state.jobs = jobs
+    app.state.online_thumb_cache = thumb_cache
     app.state.block_chinese_ua = block_chinese_ua
     app.state.no_browser_cache = no_browser_cache
 
     log.info("任务根   : %s", data_dir)
     log.info("清单任务 : %s", len(store.list_entries()))
+    if thumb_cache.enabled:
+        log.info(
+            "在线缩略图缓存: %s 条 / %s MB",
+            thumb_cache.max_items,
+            thumb_cache.max_bytes // (1024 * 1024),
+        )
+    else:
+        log.info("在线缩略图缓存: 已禁用")
     if block_chinese_ua:
         log.info("UA 拦截  : 已启用(屏蔽 QQ/微信/国产浏览器)")
     if no_browser_cache:
@@ -127,21 +148,24 @@ async def lifespan(app: FastAPI):
 
     yield
 
+    await thumb_cache.close()
+    await close_http_session()
+
 
 app = FastAPI(title="Image Annotator", version="3.1.0", lifespan=lifespan)
 
-_PAGE_TEMPLATES = {
-    "filter": "filter.html",
-    "scoring": "scoring.html",
-    "dedupe": "dedupe.html",
-    "crop": "crop.html",
-    "paint": "paint.html",
-    "tags": "tags.html",
-    "tag-check": "tag_check.html",
-    "caption": "caption.html",
-    "ready": "ready.html",
-    "video_extract": "video_extract.html",
-}
+_PAGES = frozenset({
+    "filter",
+    "scoring",
+    "dedupe",
+    "crop",
+    "paint",
+    "tags",
+    "tag-check",
+    "caption",
+    "ready",
+    "video_extract",
+})
 
 _DS_PATH_RE = re.compile(r"^/(?:api/)?d/([^/]+)(?:/|$)")
 
@@ -284,9 +308,63 @@ async def _no_browser_cache_middleware(
     return response
 
 
+class ImageIdentityMiddleware:
+    """给图片响应标注 identity 编码, 使 GZip 中间件跳过压缩.
+
+    图片本身已是压缩格式, 再经 gzip 只增加 CPU 与事件循环占用。Starlette 的
+    ``GZipMiddleware`` 对已带 ``Content-Encoding`` 的响应直接透传, 故在此对
+    ``image/*`` 统一标注。
+
+    Callers:
+        - ``server.py:`` (经 ``app.add_middleware`` 注册)
+    """
+
+    def __init__(self, app) -> None:
+        """保存下游 ASGI 应用.
+
+        Args:
+            app (ASGIApp): 下游应用.
+        """
+        self.app = app
+
+    async def __call__(self, scope, receive, send) -> None:
+        """在响应起始消息上补 Content-Encoding: identity.
+
+        Args:
+            scope (Scope): ASGI 作用域.
+            receive (Receive): ASGI 接收通道.
+            send (Send): ASGI 发送通道.
+
+        Returns:
+            None: 无返回值.
+        """
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        async def mark(message: Message) -> None:
+            """标注图片响应后继续发送.
+
+            Args:
+                message (Message): ASGI 响应消息.
+
+            Returns:
+                None: 无返回值.
+            """
+            if message["type"] == "http.response.start":
+                headers = MutableHeaders(scope=message)
+                if headers.get("content-type", "").startswith("image/"):
+                    headers.setdefault("content-encoding", "identity")
+            await send(message)
+
+        await self.app(scope, receive, mark)
+
+
 # 对超过阈值(默认 500)的响应启用 gzip, 避免小响应压缩反增开销。
 # 使用 Starlette 内置 GZipMiddleware, 其基于 ASGI 直接改写响应头,
 # 正确处理 Content-Length 与 Vary, 无需手写压缩逻辑。
+# 图片标注中间件须先注册, 使其位于 GZip 内层, 压缩判断前即带上 identity。
+app.add_middleware(ImageIdentityMiddleware)
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 
@@ -324,12 +402,13 @@ def index_page() -> HTMLResponse:
     """任务与文档首页.
 
     Returns:
-        HTMLResponse: ``index.html`` 渲染结果.
+        HTMLResponse: 单页应用挂载页; 页面标题由前端按路由设置.
 
     Callers:
-        - ``assets/static/js/nav.js:render`` (业务页"首页"标签链接)
+        - ``frontend/src/components/Nav.tsx:Nav`` (业务页"首页"标签链接)
+        - ``frontend/src/main.tsx`` (首页挂载)
     """
-    return _read_template("index.html")
+    return _read_template("app.html")
 
 
 @app.get("/d/{dataset}")
@@ -350,8 +429,8 @@ async def dataset_thumb(request: Request, dataset: str, filename: str) -> FileRe
     """返回数据集的 AVIF 缩略图文件, 缺失时即时生成.
 
     Callers:
-        - ``assets/static/js/index.js:archiveTask``
-        - ``assets/static/js/api.js:thumbnailUrl``
+        - ``frontend/src/pages/index/TaskBoard.tsx``
+        - ``frontend/src/lib/api.ts``
     """
     store: TaskStore = request.app.state.task_store
     if not store.contains(dataset):
@@ -376,17 +455,16 @@ def dataset_page(dataset: str, page: str) -> HTMLResponse | RedirectResponse:
 
     Args:
         dataset: 任务名; 须已在任务清单中(由 ``bind_dataset_middleware`` 校验).
-        page: 业务页标识; 命中 ``_PAGE_TEMPLATES`` 返回对应模版, ``tagging`` 重定向到 ``tags``.
+        page: 业务页标识; 须在 ``_PAGES`` 中, ``tagging`` 重定向到 ``tags``.
 
     Returns:
-        HTMLResponse | RedirectResponse: 页面 HTML; ``tagging`` 返回 302 重定向, 未知页抛 404.
+        HTMLResponse | RedirectResponse: 统一的单页应用挂载页; ``tagging`` 返回 302 重定向, 未知页抛 404.
 
     Callers:
-        - ``assets/static/js/nav.js:render`` (功能标签链接: 筛选/评分/去重/裁剪/蒙版/标签/标签检查/就绪)
+        - ``frontend/src/components/Nav.tsx:Nav`` (功能标签链接)
     """
     if page == "tagging":
         return RedirectResponse(url=f"/d/{dataset}/tags", status_code=302)
-    tpl = _PAGE_TEMPLATES.get(page)
-    if tpl is None:
+    if page not in _PAGES:
         raise HTTPException(404, f"未知页面: {page}")
-    return _read_template(tpl)
+    return _read_template("app.html")

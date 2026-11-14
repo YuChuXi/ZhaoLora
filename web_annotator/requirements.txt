@@ -13,3 +13,5 @@ transformers>=4.40
 python-dotenv>=1.0
 py7zr>=1.0
 tomlkit>=0.13
+sqlalchemy[asyncio]>=2.0
+aiosqlite>=0.20
