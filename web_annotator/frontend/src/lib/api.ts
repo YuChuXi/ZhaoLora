@@ -9,6 +9,7 @@ import type {
   LocalItem,
   Mode,
   Post,
+  ScoreItem,
   SearchResult,
   SearchScoreItem,
   SortKey,
@@ -71,15 +72,50 @@ export interface RemoteBarField {
   className?: string;
 }
 
+/** 工具栏布局: 本地操作集或在线来源的检索集. */
+export type SourceLayout = 'local' | 'search';
+
+export interface ConditionOption {
+  value: string;
+  label: string;
+}
+
+/** 来源条件的一个字段声明; 决定条件对话框的控件与条件串序列化方式. */
+export interface ConditionField {
+  kind: 'chips' | 'range' | 'text';
+  /** token 前缀; `range` 的上下限键为 `{key}Lo` / `{key}Hi`. */
+  key: string;
+  label: string;
+  options: ConditionOption[];
+  /** `chips` 序列化方式: repeat 逐项 / comma 逗号 OR / exclude 三选二排除. */
+  join: 'repeat' | 'comma' | 'exclude';
+  date: boolean;
+  raw: boolean;
+  placeholder: string;
+  /** `range` 下限 token 前缀; 与 `hi_token` 同为空时按 `{key}:>=` / `{key}:<=` 输出. */
+  lo_token: string;
+  /** `range` 上限 token 前缀. */
+  hi_token: string;
+}
+
+/** 来源的额外检索条件声明. */
+export interface SourceCondition {
+  fields: ConditionField[];
+  /** 条件串初始值. */
+  default: string;
+}
+
 export interface SourceDef {
   remote: boolean;
+  layout: SourceLayout;
   label: string;
-  bar?: string;
   fields: RemoteBarField[];
   requireTags?: boolean;
   noJump?: boolean;
   fixedAspect?: string;
   hint?: string;
+  /** 预览侧栏以自然语言段落展示正文, 缺省按标签芯片展示. */
+  preview?: 'text';
 }
 
 const BOORU_ORDER = [
@@ -90,15 +126,14 @@ const BOORU_ORDER = [
 ];
 
 export const SOURCES: Record<Mode, SourceDef> = {
-  local: { remote: false, label: '本地', fields: [] },
+  local: { remote: false, layout: 'local', label: '本地', fields: [] },
   gelbooru: {
     remote: true,
+    layout: 'search',
     label: 'Gelbooru',
-    bar: 'booru',
     fields: [
       { type: 'text', id: 'tags', placeholder: '标签，空格分隔' },
       { type: 'select', id: 'order', label: '排序', options: BOORU_ORDER },
-      { type: 'text', id: 'extra', placeholder: '条件，如 rating:g width:>=1920' },
       { type: 'button', role: 'search', label: '搜索' },
       { type: 'button', role: 'batch', label: '批量下载' },
       { type: 'button', role: 'meta', label: '元数据' },
@@ -106,12 +141,11 @@ export const SOURCES: Record<Mode, SourceDef> = {
   },
   danbooru: {
     remote: true,
+    layout: 'search',
     label: 'Danbooru',
-    bar: 'booru',
     fields: [
       { type: 'text', id: 'tags', placeholder: '标签，空格分隔' },
       { type: 'select', id: 'order', label: '排序', options: BOORU_ORDER },
-      { type: 'text', id: 'extra', placeholder: '条件，如 rating:g' },
       { type: 'button', role: 'search', label: '搜索' },
       { type: 'button', role: 'batch', label: '批量下载' },
       { type: 'button', role: 'meta', label: '元数据' },
@@ -119,12 +153,11 @@ export const SOURCES: Record<Mode, SourceDef> = {
   },
   e621: {
     remote: true,
+    layout: 'search',
     label: 'e621',
-    bar: 'booru',
     fields: [
       { type: 'text', id: 'tags', placeholder: '标签，空格分隔' },
       { type: 'select', id: 'order', label: '排序', options: BOORU_ORDER },
-      { type: 'text', id: 'extra', placeholder: '条件，如 rating:s' },
       { type: 'button', role: 'search', label: '搜索' },
       { type: 'button', role: 'batch', label: '批量下载' },
       { type: 'button', role: 'meta', label: '元数据' },
@@ -132,14 +165,14 @@ export const SOURCES: Record<Mode, SourceDef> = {
   },
   bilibili: {
     remote: true,
+    layout: 'search',
     label: 'Bilibili',
-    bar: 'bilibili',
     requireTags: true,
     noJump: true,
+    preview: 'text',
     hint: '输入 B站 UID 搜索 · 左键写入目录 · 右键大图',
     fields: [
       { type: 'text', id: 'uid', placeholder: 'B站 UID' },
-      { type: 'text', id: 'extra', placeholder: '类型，如 type:image' },
       { type: 'button', role: 'search', label: '搜索' },
       { type: 'button', role: 'batch', label: '批量下载' },
       { type: 'button', role: 'meta', label: '元数据' },
@@ -147,15 +180,15 @@ export const SOURCES: Record<Mode, SourceDef> = {
   },
   'bilibili-video': {
     remote: true,
+    layout: 'search',
     label: 'Bilibili视频',
-    bar: 'bilibili-video',
     requireTags: true,
     noJump: true,
+    preview: 'text',
     fixedAspect: '16 / 9',
     hint: '输入 B站 UID 搜索 · 左键写入目录 · 右键大图',
     fields: [
       { type: 'text', id: 'uid', placeholder: 'B站 UID' },
-      { type: 'text', id: 'extra', placeholder: '关键词，如 type:video' },
       { type: 'button', role: 'search', label: '搜索' },
       { type: 'button', role: 'batch', label: '批量下载' },
       { type: 'button', role: 'meta', label: '元数据' },
@@ -163,10 +196,11 @@ export const SOURCES: Record<Mode, SourceDef> = {
   },
   x: {
     remote: true,
+    layout: 'search',
     label: 'X',
-    bar: 'x',
     requireTags: true,
     noJump: true,
+    preview: 'text',
     hint: '输入 X 用户名搜索 · 左键写入目录 · 右键大图',
     fields: [
       { type: 'text', id: 'uid', placeholder: 'X 用户名' },
@@ -177,20 +211,20 @@ export const SOURCES: Record<Mode, SourceDef> = {
   },
   pixiv: {
     remote: true,
+    layout: 'search',
     label: 'Pixiv',
-    bar: 'pixiv',
     requireTags: true,
+    preview: 'text',
     hint: '输入画师 ID 或标签搜索 · 左键写入目录 · 右键大图',
     fields: [
       { type: 'text', id: 'query', placeholder: '画师 ID 或标签' },
       {
         type: 'select',
         id: 'mode',
-        label: '模式',
+        label: '类型',
         options: [
-          { value: 'search', label: '搜索' },
           { value: 'user', label: '画师' },
-          { value: 'ranking', label: '排行' },
+          { value: 'tag', label: '标签' },
         ],
       },
       { type: 'button', role: 'search', label: '搜索' },
@@ -200,19 +234,21 @@ export const SOURCES: Record<Mode, SourceDef> = {
   },
   mihuashi: {
     remote: true,
+    layout: 'search',
     label: '米画师',
-    bar: 'mihuashi',
     requireTags: true,
+    preview: 'text',
     hint: '输入画师 UID 搜索 · 左键写入目录 · 右键大图',
     fields: [
       { type: 'text', id: 'uid', placeholder: '画师 UID' },
       {
         type: 'select',
         id: 'mode',
-        label: '模式',
+        label: '板块',
         options: [
-          { value: 'artwork', label: '作品' },
-          { value: 'showcase', label: '橱窗' },
+          { value: 'artworks', label: '精选作品' },
+          { value: 'stalls', label: '上架橱窗' },
+          { value: 'draw_types', label: '价目表' },
         ],
       },
       { type: 'button', role: 'search', label: '搜索' },
@@ -222,6 +258,7 @@ export const SOURCES: Record<Mode, SourceDef> = {
   },
   video: {
     remote: true,
+    layout: 'search',
     label: '视频',
     noJump: true,
     hint: '本地 video 目录 · 点击进入抽帧',
@@ -291,7 +328,21 @@ export function sampleUrl(post: Post): string {
   }
 }
 
-export function pageUrl(post: Post): string {
+/**
+ * 帖子在原站的页面地址.
+ *
+ * Args:
+ *   post (Post): 搜索结果帖子.
+ *   artist (string): 当前来源的查询值; 米画师橱窗与价目表条目无独立页面,
+ *     需用画师 UID 跳主页.
+ *
+ * Returns:
+ *   string: 原站地址; 来源无页面时为 `#`.
+ *
+ * Callers:
+ *   - `filter/Dialogs.tsx:PreviewDialog`
+ */
+export function pageUrl(post: Post, artist = ''): string {
   switch (post.source) {
     case 'gelbooru':
       return `https://gelbooru.com/index.php?page=post&s=view&id=${post.id}`;
@@ -316,7 +367,7 @@ export function pageUrl(post: Post): string {
     case 'mihuashi':
       return post.id.startsWith('a')
         ? `https://www.mihuashi.com/artworks/${post.id.slice(1)}`
-        : `https://www.mihuashi.com/profiles/${post.id}`;
+        : `https://www.mihuashi.com/profiles/${artist}`;
     default:
       return '#';
   }
@@ -375,6 +426,12 @@ export const api = {
       method: 'PUT',
       body: JSON.stringify(patch),
     }),
+  onlineSources: () =>
+    request<{
+      sources: string[];
+      conditions: Record<string, SourceCondition>;
+      proxy: string;
+    }>(apiPath('/online-sources/sources')),
   search: (body: RemoteQuery) =>
     request<SearchResult>(apiPath('/online-sources/search'), {
       method: 'POST',
@@ -393,7 +450,18 @@ export const api = {
     }),
   tagSuggest: (source: Mode, q: string, signal?: AbortSignal) => {
     const params = new URLSearchParams({ source, q, limit: '12' });
-    return request<{ tags: string[] }>(`${apiPath('/online-sources/tag-suggest')}?${params.toString()}`, { signal });
+    return request<{ tags: Array<{ name: string; note: string; count: number }> }>(
+      `${apiPath('/online-sources/tag-suggest')}?${params.toString()}`,
+      { signal },
+    );
+  },
+  scoreItems: () => request<{ items: ScoreItem[] }>(apiPath('/scoring/items')),
+  scoringTagSuggest: (q: string, signal?: AbortSignal) => {
+    const params = new URLSearchParams({ q, limit: '12' });
+    return request<{ tags: Array<{ name: string; category: string }> }>(
+      `${apiPath('/scoring/tags/suggest')}?${params.toString()}`,
+      { signal },
+    );
   },
   batchStart: (body: Record<string, unknown>) =>
     request<{ job_id: string }>(apiPath('/online-sources/batch/start'), {
@@ -527,6 +595,14 @@ export function sortItems(
       const pb = b.width * b.height;
       if (pb !== pa) return pb - pa;
       return a.stem.localeCompare(b.stem, 'en');
+    });
+  } else if (key.startsWith('score:')) {
+    const name = key.slice(6);
+    out.sort((a, b) => {
+      const da = typeof a.scores?.[name] === 'number' ? a.scores[name] : -1;
+      const db = typeof b.scores?.[name] === 'number' ? b.scores[name] : -1;
+      if (db !== da) return db - da;
+      return a.stem.localeCompare(b.stem, 'en', { numeric: true });
     });
   } else {
     out.sort((a, b) => a.stem.localeCompare(b.stem, 'en', { numeric: true }));

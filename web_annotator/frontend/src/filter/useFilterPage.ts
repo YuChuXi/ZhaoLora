@@ -5,8 +5,10 @@ import {
   isRemote,
   SOURCES,
   sortItems,
+  type SourceCondition,
 } from '@/lib/api';
 import type { BatchParams, BatchSnapshot, LocalItem, Mode, Post } from '@/lib/types';
+import { scrollContainer } from '@/lib/scroll';
 import { useApp } from '@/app/AppContext';
 import {
   type Action,
@@ -28,11 +30,16 @@ function tagsOf(mode: Mode, fields: Record<string, string>): string {
   return fields.uid ?? '';
 }
 
-function extraOf(mode: Mode, fields: Record<string, string>): string {
-  if (mode === 'pixiv') return `mode:${fields.mode || 'search'}`;
-  if (mode === 'mihuashi') return `mode:${fields.mode || 'artwork'}`;
-  if (mode === 'bilibili') return fields.extra || 'type:image';
-  if (mode === 'bilibili-video') return fields.extra || 'type:video';
+function extraOf(
+  mode: Mode,
+  fields: Record<string, string>,
+  conditions: Record<string, SourceCondition>,
+): string {
+  if (mode === 'pixiv') return `mode:${fields.mode || 'user'}`;
+  if (mode === 'mihuashi') return `mode:${fields.mode || 'artworks'}`;
+  if (mode === 'bilibili' || mode === 'bilibili-video') {
+    return fields.extra ?? conditions[mode]?.default ?? '';
+  }
   return fields.extra ?? '';
 }
 
@@ -77,6 +84,8 @@ export interface FilterActions {
   search: () => void;
   searchWith: (tags: string) => void;
   loadMore: (up: boolean) => void;
+  jumpPage: (page: number) => void;
+  setVisiblePage: (page: number) => void;
   cardClick: (key: string, shiftKey: boolean) => void;
   openPreview: (post: Post) => void;
   closePreview: () => void;
@@ -112,6 +121,8 @@ export function useFilterPage(dirList: string[]): { state: PageState; actions: F
   const stateRef = useRef(state);
   stateRef.current = state;
   const seq = useRef(0);
+  /** 在途增量翻页所属的序列号; 同一序列只允许一个请求. */
+  const paging = useRef<number | null>(null);
   const sourcesRef = useRef<Partial<Record<Mode, PersistedSource>>>({});
   const saveTimer = useRef<number>();
   const downloadTasks = useRef(new Map<string, DownloadTask>());
@@ -119,6 +130,7 @@ export function useFilterPage(dirList: string[]): { state: PageState; actions: F
   const metaClose = useRef<(() => void) | null>(null);
   const searchStop = useRef<(() => void) | null>(null);
   const initialized = useRef(false);
+  const resumed = useRef(false);
 
   const apply = useCallback((action: Action) => dispatch(action), []);
 
@@ -128,6 +140,14 @@ export function useFilterPage(dirList: string[]): { state: PageState; actions: F
     const persisted = parsePersisted(app.settings.filter, app.settings.sort, app.settings.booru_ui);
     sourcesRef.current = persisted.sources;
     apply({ type: 'init', dirs: dirList, allDirs: [], persisted });
+    void api
+      .onlineSources()
+      .then((result) => apply({ type: 'conditions', conditions: result.conditions }))
+      .catch((error) => apply({ type: 'error', error: messageOf(error) }));
+    void api
+      .scoreItems()
+      .then((result) => apply({ type: 'scoreItems', items: result.items }))
+      .catch((error) => apply({ type: 'error', error: messageOf(error) }));
   }, [app.settings, apply, dirList]);
 
   useEffect(() => {
@@ -135,8 +155,23 @@ export function useFilterPage(dirList: string[]): { state: PageState; actions: F
     apply({ type: 'setDirs', dirs: dirList });
   }, [apply, dirList, state.ready]);
 
+  useEffect(() => {
+    if (!state.ready || !state.scoreItems.length || !state.sort.startsWith('score:')) return;
+    const key = state.sort.slice(6);
+    if (!state.scoreItems.some((item) => item.key === key)) {
+      apply({ type: 'setSort', sort: 'name' });
+    }
+  }, [apply, state.ready, state.scoreItems, state.sort]);
+
   const searchRemote = useCallback(
-    async (mode: Mode, reset: boolean, id: number, up = false, overrideTags?: string) => {
+    async (
+      mode: Mode,
+      reset: boolean,
+      id: number,
+      up = false,
+      overrideTags?: string,
+      startPage?: number,
+    ) => {
       const current = stateRef.current;
       const def = SOURCES[mode];
       if (!def.remote) return;
@@ -146,20 +181,25 @@ export function useFilterPage(dirList: string[]): { state: PageState; actions: F
         apply({ type: 'remoteError', error: '请输入搜索条件' });
         return;
       }
-      const page = reset ? 1 : up ? Math.max(1, current.remote.pageLo - 1) : current.remote.pageHi + 1;
+      const page = reset
+        ? startPage ?? 1
+        : up
+          ? Math.max(1, current.remote.pageLo - 1)
+          : current.remote.pageHi + 1;
       apply({ type: 'remoteStart', reset });
       try {
         const result = await api.search({
           source: mode,
           tags,
-          extra: extraOf(mode, fields),
+          extra: extraOf(mode, fields, current.conditions),
           order: fields.order ?? '',
           page,
           session: reset ? '' : current.remote.session,
           dir: current.dirs[0] || 'main',
         });
         if (id !== seq.current) return;
-        const posts = reset ? result.posts : filterNewPosts(result.posts, current.remote.posts);
+        const fetched = result.posts.map((post) => ({ ...post, page: result.page }));
+        const posts = reset ? fetched : filterNewPosts(fetched, current.remote.posts);
         apply({
           type: 'remoteLoaded',
           posts,
@@ -168,6 +208,7 @@ export function useFilterPage(dirList: string[]): { state: PageState; actions: F
           session: result.session,
           reset,
           up,
+          stored: result.stored,
         });
       } catch (error) {
         if (id !== seq.current) return;
@@ -198,10 +239,11 @@ export function useFilterPage(dirList: string[]): { state: PageState; actions: F
   useEffect(() => {
     if (!state.ready) return;
     const id = ++seq.current;
+    scrollContainer()?.scrollTo({ top: 0 });
     if (state.mode === 'local') {
       void loadLocal(id);
     } else {
-      void searchRemote(state.mode, true, id);
+      void searchRemote(state.mode, true, id, false, undefined, state.remote.pageLo);
     }
   }, [state.ready, state.mode, dirsKey, trashDependency, loadLocal, searchRemote]);
 
@@ -214,7 +256,7 @@ export function useFilterPage(dirList: string[]): { state: PageState; actions: F
         ...sourcesRef.current,
         [current.mode]: {
           fields: current.remote.fields,
-          page: current.remote.pageHi,
+          page: current.remote.visiblePage,
         },
       };
       sourcesRef.current = sources;
@@ -239,7 +281,7 @@ export function useFilterPage(dirList: string[]): { state: PageState; actions: F
     state.sort,
     state.showTrash,
     state.remote.fields,
-    state.remote.pageHi,
+    state.remote.visiblePage,
   ]);
 
   useEffect(() => {
@@ -264,6 +306,33 @@ export function useFilterPage(dirList: string[]): { state: PageState; actions: F
   const notify = useCallback((message: string) => app.notify(message), [app]);
 
   /**
+   * 重新读取工作目录已收录的图片总数。
+   *
+   * 下载、移除与批量任务结束后调用，保证状态栏「已收录」与磁盘一致；
+   * 本地模式不涉及该计数。
+   *
+   * Returns:
+   *   void
+   *
+   * Callers:
+   *   - `filter/useFilterPage.ts:watchDownload`
+   *   - `filter/useFilterPage.ts:undownloadPost`
+   *   - `filter/useFilterPage.ts:watchBatch`
+   */
+  const refreshStored = useCallback(async () => {
+    const current = stateRef.current;
+    if (!isRemote(current.mode)) return;
+    try {
+      const result = await api.listDirs();
+      const name = current.dirs[0] || 'main';
+      const hit = result.dirs.find((dir) => dir.name === name);
+      apply({ type: 'stored', stored: hit?.image_count ?? 0 });
+    } catch (error) {
+      notify(messageOf(error));
+    }
+  }, [apply, notify]);
+
+  /**
    * 订阅单张图片的下载任务，终态写回卡片状态。
    *
    * 每张图片持有独立的 SSE 连接，互不影响；重复触发同一张图片时先关闭旧连接。
@@ -285,6 +354,7 @@ export function useFilterPage(dirList: string[]): { state: PageState; actions: F
         if (snapshot.status === 'done') {
           downloadTasks.current.delete(key);
           apply({ type: 'download', key, entry: { status: 'done', progress: '' } });
+          void refreshStored();
           return;
         }
         if (snapshot.status === 'error') {
@@ -311,7 +381,7 @@ export function useFilterPage(dirList: string[]): { state: PageState; actions: F
       });
       downloadTasks.current.set(key, { abort: close, jobId });
     },
-    [apply],
+    [apply, refreshStored],
   );
 
   /**
@@ -365,6 +435,7 @@ export function useFilterPage(dirList: string[]): { state: PageState; actions: F
         }
         downloadTasks.current.delete(post.key);
         apply({ type: 'download', key: post.key, entry: { status: 'done', progress: '' } });
+        void refreshStored();
       } catch (error) {
         if (controller.signal.aborted) return;
         downloadTasks.current.delete(post.key);
@@ -372,7 +443,7 @@ export function useFilterPage(dirList: string[]): { state: PageState; actions: F
         notify(messageOf(error));
       }
     },
-    [apply, notify, watchDownload],
+    [apply, notify, refreshStored, watchDownload],
   );
 
   const undownloadPost = useCallback(
@@ -388,11 +459,12 @@ export function useFilterPage(dirList: string[]): { state: PageState; actions: F
           post,
         });
         apply({ type: 'downloadClear', key: post.key });
+        void refreshStored();
       } catch (error) {
         notify(messageOf(error));
       }
     },
-    [apply, notify],
+    [apply, notify, refreshStored],
   );
 
   const toggleSelected = useCallback(
@@ -457,6 +529,7 @@ export function useFilterPage(dirList: string[]): { state: PageState; actions: F
   const search = useCallback(() => {
     if (!isRemote(stateRef.current.mode)) return;
     const id = ++seq.current;
+    scrollContainer()?.scrollTo({ top: 0 });
     void searchRemote(stateRef.current.mode, true, id);
   }, [searchRemote]);
 
@@ -466,20 +539,56 @@ export function useFilterPage(dirList: string[]): { state: PageState; actions: F
       if (!isRemote(current.mode)) return;
       apply({ type: 'field', key: 'tags', value: tags });
       const id = ++seq.current;
+      scrollContainer()?.scrollTo({ top: 0 });
       void searchRemote(current.mode, true, id, false, tags);
     },
     [apply, searchRemote],
   );
 
+  /**
+   * 加载上一页或下一页.
+   *
+   * Args:
+   *   up (boolean): 是否加载上一页.
+   *
+   * Returns:
+   *   void
+   *
+   * Callers:
+   *   - `filter/useFilterPage.ts:FilterActions`
+   *   - `filter/Toolbar.tsx:SearchSection` 的上一页/下一页按钮.
+   *   - `filter/Masonry.tsx:Masonry` 的顶部与底部哨兵.
+   */
   const loadMore = useCallback(
     (up: boolean) => {
       const current = stateRef.current;
+      const id = seq.current;
+      if (paging.current === id) return;
       if (!isRemote(current.mode) || current.remote.loading) return;
       if (up && !current.remote.hasPrev) return;
       if (!up && !current.remote.hasMore) return;
-      void searchRemote(current.mode, false, seq.current, up);
+      paging.current = id;
+      void searchRemote(current.mode, false, id, up).finally(() => {
+        if (paging.current === id) paging.current = null;
+      });
     },
     [searchRemote],
+  );
+
+  const jumpPage = useCallback(
+    (page: number) => {
+      const current = stateRef.current;
+      if (!isRemote(current.mode) || current.remote.loading) return;
+      const id = ++seq.current;
+      scrollContainer()?.scrollTo({ top: 0 });
+      void searchRemote(current.mode, true, id, false, undefined, Math.max(1, page));
+    },
+    [searchRemote],
+  );
+
+  const setVisiblePage = useCallback(
+    (page: number) => apply({ type: 'visiblePage', page }),
+    [apply],
   );
 
   const openSimilar = useCallback(
@@ -545,6 +654,83 @@ export function useFilterPage(dirList: string[]): { state: PageState; actions: F
     }
   }, [apply, loadLocal, notify]);
 
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (target?.closest('input, textarea, select, [contenteditable="true"]')) return;
+      const current = stateRef.current;
+      if (current.mode !== 'local') return;
+      const key = event.key.toLowerCase();
+      const modified = event.ctrlKey || event.metaKey;
+      if (modified && !event.altKey) {
+        if (event.shiftKey) {
+          if (key !== 'a') return;
+          event.preventDefault();
+          localClearSelection();
+          return;
+        }
+        if (key === 'a') {
+          event.preventDefault();
+          localSelectAll();
+        } else if (key === 'i') {
+          event.preventDefault();
+          void localInvert();
+        } else if (key === 'z') {
+          event.preventDefault();
+          void localRestore();
+        }
+        return;
+      }
+      if (event.altKey || event.shiftKey) return;
+      if (key === 'a') {
+        event.preventDefault();
+        localSelectAll();
+        return;
+      }
+      if (key === 'd') {
+        event.preventDefault();
+        localClearSelection();
+        return;
+      }
+      if (event.key === 'Delete' && Object.values(current.selected).some(Boolean)) {
+        event.preventDefault();
+        void localDelete();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [localClearSelection, localDelete, localInvert, localRestore, localSelectAll]);
+
+  /**
+   * 订阅批量下载任务, 终态刷新工作目录计数。
+   *
+   * Args:
+   *   jobId (string): 批量任务标识.
+   *
+   * Returns:
+   *   void
+   *
+   * Callers:
+   *   - `filter/useFilterPage.ts:startBatch`
+   *   - `filter/useFilterPage.ts:useFilterPage`（刷新页面后恢复进行中的任务）
+   */
+  const watchBatch = useCallback(
+    (jobId: string) => {
+      batchClose.current?.();
+      batchClose.current = api.watchJob(jobId, (snapshot) => {
+        apply({ type: 'batch', snapshot });
+        if (
+          snapshot.status === 'done' ||
+          snapshot.status === 'cancelled' ||
+          snapshot.status === 'error'
+        ) {
+          void refreshStored();
+        }
+      });
+    },
+    [apply, refreshStored],
+  );
+
   const startBatch = useCallback(
     async (params: BatchParams) => {
       const current = stateRef.current;
@@ -553,7 +739,7 @@ export function useFilterPage(dirList: string[]): { state: PageState; actions: F
         const result = await api.batchStart({
           source: current.mode,
           tags: tagsOf(current.mode, current.remote.fields),
-          extra: extraOf(current.mode, current.remote.fields),
+          extra: extraOf(current.mode, current.remote.fields, current.conditions),
           order: current.remote.fields.order ?? '',
           dir: current.dirs[0] || 'main',
           page: current.remote.pageLo,
@@ -565,16 +751,31 @@ export function useFilterPage(dirList: string[]): { state: PageState; actions: F
           keep_underscores: params.underscores,
         });
         apply({ type: 'batch', snapshot: { job_id: result.job_id, status: 'queued' } });
-        batchClose.current?.();
-        batchClose.current = api.watchJob(result.job_id, (snapshot) => {
-          apply({ type: 'batch', snapshot });
-        });
+        watchBatch(result.job_id);
       } catch (error) {
         notify(messageOf(error));
       }
     },
-    [apply, notify],
+    [apply, notify, watchBatch],
   );
+
+  useEffect(() => {
+    if (!state.ready || resumed.current) return;
+    resumed.current = true;
+    let open = true;
+    api
+      .findActiveJob('online_batch')
+      .then((snapshot) => {
+        if (!open || !snapshot?.job_id) return;
+        apply({ type: 'batch', snapshot });
+        watchBatch(snapshot.job_id);
+        notify('已恢复批量下载进度');
+      })
+      .catch((error) => apply({ type: 'error', error: messageOf(error) }));
+    return () => {
+      open = false;
+    };
+  }, [apply, notify, state.ready, watchBatch]);
 
   const runSemanticSearch = useCallback(
     async (query: string) => {
@@ -681,7 +882,7 @@ export function useFilterPage(dirList: string[]): { state: PageState; actions: F
       for (const task of downloadTasks.current.values()) task.abort();
       downloadTasks.current.clear();
       const saved = sourcesRef.current[mode];
-      apply({ type: 'setMode', mode, fields: saved?.fields });
+      apply({ type: 'setMode', mode, fields: saved?.fields, page: saved?.page });
     },
     setColumns: (columns) => apply({ type: 'setColumns', columns }),
     setSort: (sort) => apply({ type: 'setSort', sort }),
@@ -690,6 +891,8 @@ export function useFilterPage(dirList: string[]): { state: PageState; actions: F
     search,
     searchWith,
     loadMore,
+    jumpPage,
+    setVisiblePage,
     cardClick,
     openPreview: (post) => apply({ type: 'preview', post }),
     closePreview: () => apply({ type: 'preview', post: null }),

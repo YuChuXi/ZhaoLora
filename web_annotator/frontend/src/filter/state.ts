@@ -5,8 +5,10 @@ import type {
   LocalItem,
   Mode,
   Post,
+  ScoreItem,
   SortKey,
 } from '@/lib/types';
+import type { SourceCondition } from '@/lib/api';
 
 export interface PersistedSource {
   fields: Record<string, string>;
@@ -26,11 +28,15 @@ export interface RemoteState {
   fields: Record<string, string>;
   pageLo: number;
   pageHi: number;
+  /** 当前视口顶部所在的页; 滚动时随瀑布流更新. */
+  visiblePage: number;
   session: string;
   hasMore: boolean;
   hasPrev: boolean;
   loading: boolean;
   posts: Post[];
+  /** 工作目录中已保存的图片总数。 */
+  stored: number;
 }
 
 export interface SimilarState {
@@ -61,6 +67,10 @@ export interface PageState {
   remote: RemoteState;
   /** 远端图片的保存状态；无条目即未保存，与本地模式的 `selected` 无关。 */
   downloads: Record<string, DownloadEntry>;
+  /** 各来源由后端声明的额外检索条件；无条目表示该来源没有条件入口。 */
+  conditions: Record<string, SourceCondition>;
+  /** 数据集评分页定义的评分项，作为本地排序的可选项。 */
+  scoreItems: ScoreItem[];
   preview: Post | null;
   similar: SimilarState | null;
   search: SearchState | null;
@@ -78,11 +88,13 @@ export const emptyRemote = (): RemoteState => ({
   fields: {},
   pageLo: 1,
   pageHi: 1,
+  visiblePage: 1,
   session: '',
   hasMore: false,
   hasPrev: false,
   loading: false,
   posts: [],
+  stored: 0,
 });
 
 export const initialPersisted: PersistedFilter = {
@@ -108,6 +120,8 @@ export const initialState: PageState = {
   cursor: null,
   remote: emptyRemote(),
   downloads: {},
+  conditions: {},
+  scoreItems: [],
   preview: null,
   similar: null,
   search: null,
@@ -123,7 +137,7 @@ export const initialState: PageState = {
 
 export type Action =
   | { type: 'init'; dirs: string[]; allDirs: DirOption[]; persisted: PersistedFilter }
-  | { type: 'setMode'; mode: Mode; fields?: Record<string, string> }
+  | { type: 'setMode'; mode: Mode; fields?: Record<string, string>; page?: number }
   | { type: 'setDirs'; dirs: string[] }
   | { type: 'setColumns'; columns: number }
   | { type: 'setSort'; sort: SortKey }
@@ -131,8 +145,10 @@ export type Action =
   | { type: 'localLoaded'; items: LocalItem[] }
   | { type: 'field'; key: string; value: string }
   | { type: 'remoteStart'; reset: boolean }
-  | { type: 'remoteLoaded'; posts: Post[]; page: number; hasMore: boolean; session: string; reset: boolean; up: boolean }
+  | { type: 'remoteLoaded'; posts: Post[]; page: number; hasMore: boolean; session: string; reset: boolean; up: boolean; stored: number }
   | { type: 'remoteError'; error: string }
+  | { type: 'visiblePage'; page: number }
+  | { type: 'stored'; stored: number }
   | { type: 'toggle'; key: string; on: boolean }
   | { type: 'selectRange'; keys: string[] }
   | { type: 'selectAll'; keys: string[] }
@@ -146,6 +162,8 @@ export type Action =
   | { type: 'searchClear' }
   | { type: 'download'; key: string; entry: DownloadEntry }
   | { type: 'downloadClear'; key: string }
+  | { type: 'conditions'; conditions: Record<string, SourceCondition> }
+  | { type: 'scoreItems'; items: ScoreItem[] }
   | { type: 'batchOpen'; open: boolean }
   | { type: 'batch'; snapshot: BatchSnapshot | null }
   | { type: 'metaOpen'; open: boolean }
@@ -210,11 +228,13 @@ export function reducer(state: PageState, action: Action): PageState {
           fields: { ...source.fields },
           pageLo: source.page,
           pageHi: source.page,
+          visiblePage: source.page,
         },
       };
     }
     case 'setMode': {
       if (action.mode === state.mode) return state;
+      const page = action.page && action.page > 0 ? action.page : 1;
       return {
         ...state,
         mode: action.mode,
@@ -225,7 +245,13 @@ export function reducer(state: PageState, action: Action): PageState {
         similar: null,
         search: null,
         searchMessage: '',
-        remote: { ...emptyRemote(), fields: { ...(action.fields ?? {}) } },
+        remote: {
+          ...emptyRemote(),
+          pageLo: page,
+          pageHi: page,
+          visiblePage: page,
+          fields: { ...(action.fields ?? {}) },
+        },
         local: [],
         localLoaded: false,
         error: null,
@@ -268,17 +294,34 @@ export function reducer(state: PageState, action: Action): PageState {
             : action.up
               ? [...action.posts, ...state.remote.posts]
               : [...state.remote.posts, ...action.posts],
-          pageLo: action.reset || action.up ? action.page : state.remote.pageLo,
+          pageLo:
+            action.reset || (action.up && action.posts.length > 0)
+              ? action.page
+              : state.remote.pageLo,
           pageHi: action.reset || !action.up ? action.page : state.remote.pageHi,
-          hasMore: action.reset || !action.up ? action.hasMore : state.remote.hasMore,
-          hasPrev: action.reset ? action.page > 1 : action.up ? action.page > 1 : state.remote.hasPrev,
+          visiblePage: action.reset ? action.page : state.remote.visiblePage,
+          hasMore:
+            action.reset || !action.up
+              ? action.posts.length > 0 && action.hasMore
+              : state.remote.hasMore,
+          hasPrev: action.reset
+            ? action.page > 1
+            : action.up
+              ? action.posts.length > 0 && action.page > 1
+              : state.remote.hasPrev,
           session: action.session || state.remote.session,
+          stored: action.stored,
         },
         downloads: action.reset ? downloads : { ...state.downloads, ...downloads },
       };
     }
     case 'remoteError':
       return { ...state, error: action.error, remote: { ...state.remote, loading: false } };
+    case 'visiblePage':
+      if (state.remote.visiblePage === action.page) return state;
+      return { ...state, remote: { ...state.remote, visiblePage: action.page } };
+    case 'stored':
+      return { ...state, remote: { ...state.remote, stored: action.stored } };
     case 'toggle':
       return {
         ...state,
@@ -319,6 +362,10 @@ export function reducer(state: PageState, action: Action): PageState {
       delete downloads[action.key];
       return { ...state, downloads };
     }
+    case 'conditions':
+      return { ...state, conditions: action.conditions };
+    case 'scoreItems':
+      return { ...state, scoreItems: action.items };
     case 'batchOpen':
       return { ...state, batchOpen: action.open };
     case 'batch':

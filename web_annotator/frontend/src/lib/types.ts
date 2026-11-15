@@ -51,11 +51,25 @@ export interface SearchResult {
   session: string;
   page: number;
   count: number;
+  stored: number;
 }
 
 export type Mode = 'local' | 'gelbooru' | 'danbooru' | 'e621' | 'bilibili' | 'bilibili-video' | 'x' | 'pixiv' | 'mihuashi' | 'video';
 
-export type SortKey = 'name' | 'posted' | 'aesthetic' | 'pixels' | 'search';
+export type SortKey =
+  | 'name'
+  | 'posted'
+  | 'aesthetic'
+  | 'pixels'
+  | 'search'
+  /** 数据集评分页定义的 WD14 评分项, 值形如 `score:csam`. */
+  | `score:${string}`;
+
+/** 数据集评分页定义的一个评分项. */
+export interface ScoreItem {
+  key: string;
+  label: string;
+}
 
 export type DownloadStatus = 'downloading' | 'done' | 'error';
 

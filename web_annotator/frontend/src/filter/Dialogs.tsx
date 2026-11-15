@@ -1,22 +1,41 @@
-import { useEffect, useState } from 'react';
-import { api, pageUrl, sampleUrl, statusLabel } from '@/lib/api';
+import { useCallback, useEffect, useState } from 'react';
+import {
+  SOURCES,
+  api,
+  pageUrl,
+  sampleUrl,
+  statusLabel,
+  type ConditionField,
+  type SourceCondition,
+} from '@/lib/api';
 import type { BatchParams, BatchSnapshot, DownloadEntry, LocalItem, Post } from '@/lib/types';
+import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Input, Select } from '@/components/ui/input';
 import { Checkbox } from '@/components/ui/controls';
 import { Dialog } from '@/components/ui/dialog';
+import { TagSuggestInput } from '@/components/ui/tag-suggest';
 import { useJob } from '@/components/ui/status';
 import { isRunning, type SimilarState } from './state';
+import {
+  buildCondition,
+  emptyCondition,
+  parseCondition,
+  rangeKey,
+  type ConditionValues,
+} from './condition';
 
 export function PreviewDialog({
   post,
   entry,
+  artist,
   onClose,
   onToggle,
   onTagSearch,
 }: {
   post: Post | null;
   entry?: DownloadEntry;
+  artist: string;
   onClose: () => void;
   onToggle: (post: Post) => void;
   onTagSearch: (tag: string) => void;
@@ -25,6 +44,7 @@ export function PreviewDialog({
   const saved = entry?.status === 'done';
   const downloading = entry?.status === 'downloading';
   const tags = (post.tags || '').split(/\s+/).filter(Boolean);
+  const textPreview = SOURCES[post.source as keyof typeof SOURCES]?.preview === 'text';
   return (
     <Dialog
       open
@@ -32,13 +52,13 @@ export function PreviewDialog({
         if (!open) onClose();
       }}
       title={`${post.source} · ${post.stem || post.id}`}
-      className="w-[min(960px,94vw)]"
+      className="max-w-5xl"
     >
       <div className="flex max-h-[70vh] gap-4">
         <div className="flex min-w-0 flex-1 items-center justify-center overflow-hidden rounded-md bg-[#05070d]">
           <img src={sampleUrl(post)} alt={post.stem || post.id} className="max-h-[68vh] max-w-full object-contain" />
         </div>
-        <div className="flex w-72 shrink-0 flex-col gap-3 text-xs text-muted-foreground">
+        <div className="flex basis-1/4 shrink-0 flex-col gap-3 overflow-hidden text-xs text-muted-foreground">
           <div>
             <div className="text-foreground">{post.stem || post.id}</div>
             <div>分辨率 {post.width > 0 ? `${post.width}×${post.height}` : '-'}</div>
@@ -46,21 +66,27 @@ export function PreviewDialog({
             <div>状态 {statusLabel(entry?.status)}</div>
           </div>
           <div className="flex flex-wrap gap-1.5 overflow-auto">
-            {tags.map((tag) => (
-              <button
-                key={tag}
-                type="button"
-                className="max-w-full break-all rounded border border-border bg-[#0a1a30] px-2 py-1 text-[11px] text-foreground hover:border-primary"
-                onClick={() => onTagSearch(tag)}
-              >
-                {tag}
-              </button>
-            ))}
+            {textPreview ? (
+              <p className="w-full whitespace-pre-wrap break-words text-xs leading-relaxed text-foreground">
+                {post.tags || '(无正文)'}
+              </p>
+            ) : (
+              tags.map((tag) => (
+                <button
+                  key={tag}
+                  type="button"
+                  className="max-w-full break-all rounded border border-border bg-[#0a1a30] px-2 py-1 text-xs text-foreground hover:border-primary"
+                  onClick={() => onTagSearch(tag)}
+                >
+                  {tag}
+                </button>
+              ))
+            )}
           </div>
           <div className="mt-auto flex flex-wrap gap-2">
             <a
               className="inline-flex h-7 items-center rounded-md border border-border px-3 text-xs text-foreground hover:bg-accent"
-              href={pageUrl(post)}
+              href={pageUrl(post, artist)}
               target="_blank"
               rel="noreferrer"
             >
@@ -87,7 +113,7 @@ export function SimilarDialog({
 }) {
   if (!similar) return null;
   return (
-    <Dialog open onOpenChange={(open) => !open && onClose()} title="色调相似" className="w-[min(720px,94vw)]">
+    <Dialog open onOpenChange={(open) => !open && onClose()} title="色调相似" className="max-w-3xl">
       {similar.loading ? (
         <div className="py-8 text-center text-xs text-muted-foreground">加载中…</div>
       ) : (
@@ -108,7 +134,7 @@ export function SimilarDialog({
                 loading="lazy"
                 className="block aspect-square w-full object-cover"
               />
-              <div className="px-2 py-1 text-[11px] text-muted-foreground">
+              <div className="px-2 py-1 text-xs text-muted-foreground">
                 {item.width > 0 ? `${item.width}×${item.height} · ` : ''}
                 {item.stem}
               </div>
@@ -122,45 +148,38 @@ export function SimilarDialog({
 
 export function ConditionDialog({
   open,
+  condition,
   extra,
   onClose,
   onApply,
 }: {
   open: boolean;
+  condition: SourceCondition;
   extra: string;
   onClose: () => void;
   onApply: (extra: string) => void;
 }) {
-  const [ratings, setRatings] = useState<string[]>([]);
-  const [score, setScore] = useState('');
-  const [width, setWidth] = useState('');
-  const [height, setHeight] = useState('');
-  const [others, setOthers] = useState('');
+  const [values, setValues] = useState<ConditionValues>(() => emptyCondition(condition));
 
   useEffect(() => {
     if (!open) return;
-    const tokens = extra.split(/\s+/).filter(Boolean);
-    setRatings(tokens.filter((token) => token.startsWith('rating:')).map((token) => token.slice(7)));
-    setScore(tokens.find((token) => token.startsWith('score:'))?.slice(6) ?? '');
-    setWidth(tokens.find((token) => token.startsWith('width:'))?.slice(6) ?? '');
-    setHeight(tokens.find((token) => token.startsWith('height:'))?.slice(7) ?? '');
-    setOthers(
-      tokens
-        .filter((token) => !/^(rating|score|width|height):/.test(token))
-        .join(' '),
-    );
-  }, [open, extra]);
+    setValues(parseCondition(condition, extra));
+  }, [open, condition, extra]);
 
   const apply = () => {
-    const parts: string[] = [];
-    for (const rating of ratings) parts.push(`rating:${rating}`);
-    if (score.trim()) parts.push(`score:${score.trim()}`);
-    if (width.trim()) parts.push(`width:${width.trim()}`);
-    if (height.trim()) parts.push(`height:${height.trim()}`);
-    if (others.trim()) parts.push(others.trim());
-    onApply(parts.join(' '));
+    onApply(buildCondition(condition, values));
     onClose();
   };
+
+  const toggleChip = (field: ConditionField, value: string) => {
+    const selected = Array.isArray(values[field.key]) ? (values[field.key] as string[]) : [];
+    const next = selected.includes(value)
+      ? selected.filter((item) => item !== value)
+      : [...selected, value];
+    setValues({ ...values, [field.key]: next });
+  };
+
+  const setText = (key: string, value: string) => setValues({ ...values, [key]: value });
 
   return (
     <Dialog
@@ -169,6 +188,7 @@ export function ConditionDialog({
       title="搜索条件"
       footer={
         <>
+          <Button onClick={() => setValues(emptyCondition(condition))}>清空</Button>
           <Button onClick={onClose}>关闭</Button>
           <Button variant="primary" onClick={apply}>
             应用
@@ -177,62 +197,96 @@ export function ConditionDialog({
       }
     >
       <div className="flex flex-col gap-3 text-xs text-muted-foreground">
-        <div className="flex items-center gap-2">
-          <span className="w-16">评级</span>
-          {['g', 's', 'q', 'e'].map((rating) => (
-            <label key={rating} className="flex items-center gap-1">
-              <Checkbox
-                checked={ratings.includes(rating)}
-                onCheckedChange={(checked) =>
-                  setRatings(
-                    checked ? [...ratings, rating] : ratings.filter((item) => item !== rating),
-                  )
-                }
+        {condition.fields.map((field) => {
+          if (field.kind === 'chips') {
+            const selected = Array.isArray(values[field.key])
+              ? (values[field.key] as string[])
+              : [];
+            return (
+              <div
+                key={field.key}
+                className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-x-3 gap-y-2"
+              >
+                <span className="whitespace-nowrap">{field.label}</span>
+                <div className="flex flex-wrap gap-2">
+                  {field.options.map((option) => {
+                    const on = selected.includes(option.value);
+                    return (
+                      <button
+                        key={option.value}
+                        type="button"
+                        className={cn(
+                          'rounded border px-2.5 py-1 text-xs',
+                          on
+                            ? 'border-primary bg-[#132a4a] text-foreground'
+                            : 'border-border bg-[#0a1a30] text-muted-foreground hover:text-foreground',
+                        )}
+                        onClick={() => toggleChip(field, option.value)}
+                      >
+                        {option.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          }
+
+          if (field.kind === 'range') {
+            const loKey = rangeKey(field, 'lo');
+            const hiKey = rangeKey(field, 'hi');
+            return (
+              <div
+                key={field.key}
+                className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2"
+              >
+                <Input
+                  type={field.date ? 'date' : 'text'}
+                  inputMode={field.date ? undefined : 'numeric'}
+                  className="w-full min-w-0"
+                  placeholder="下限"
+                  value={String(values[loKey] ?? '')}
+                  onChange={(event) => setText(loKey, event.target.value)}
+                />
+                <span className="whitespace-nowrap">≤ {field.label} ≤</span>
+                <Input
+                  type={field.date ? 'date' : 'text'}
+                  inputMode={field.date ? undefined : 'numeric'}
+                  className="w-full min-w-0"
+                  placeholder="上限"
+                  value={String(values[hiKey] ?? '')}
+                  onChange={(event) => setText(hiKey, event.target.value)}
+                />
+              </div>
+            );
+          }
+
+          return (
+            <label
+              key={field.key}
+              className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-x-3"
+            >
+              <span className="whitespace-nowrap">{field.label}</span>
+              <Input
+                className="w-full min-w-0"
+                placeholder={field.placeholder}
+                value={String(values[field.key] ?? '')}
+                onChange={(event) => setText(field.key, event.target.value)}
               />
-              {rating}
             </label>
-          ))}
-        </div>
-        <label className="flex items-center gap-2">
-          <span className="w-16">分数</span>
-          <Input
-            className="flex-1"
-            placeholder="如 >=100"
-            value={score}
-            onChange={(event) => setScore(event.target.value)}
-          />
-        </label>
-        <label className="flex items-center gap-2">
-          <span className="w-16">宽度</span>
-          <Input
-            className="flex-1"
-            placeholder="如 >=1920"
-            value={width}
-            onChange={(event) => setWidth(event.target.value)}
-          />
-        </label>
-        <label className="flex items-center gap-2">
-          <span className="w-16">高度</span>
-          <Input
-            className="flex-1"
-            placeholder="如 >=1080"
-            value={height}
-            onChange={(event) => setHeight(event.target.value)}
-          />
-        </label>
-        <label className="flex items-center gap-2">
-          <span className="w-16">其它</span>
-          <Input
-            className="flex-1"
-            placeholder="额外条件，空格分隔"
-            value={others}
-            onChange={(event) => setOthers(event.target.value)}
-          />
-        </label>
+          );
+        })}
       </div>
     </Dialog>
   );
 }
+
+/** WD14 标签类别到显示名的映射. */
+const SCORING_CATEGORY: Record<string, string> = {
+  general: '通用',
+  character: '角色',
+  rating: '分级',
+};
 
 export function SearchDialog({
   open,
@@ -268,6 +322,17 @@ export function SearchDialog({
     else onTag(text);
   };
 
+  const fetchTags = useCallback(
+    (fragment: string, signal: AbortSignal) =>
+      api.scoringTagSuggest(fragment, signal).then((result) =>
+        result.tags.map((tag) => ({
+          name: tag.name,
+          note: SCORING_CATEGORY[tag.category] ?? tag.category,
+        })),
+      ),
+    [],
+  );
+
   return (
     <Dialog
       open={open}
@@ -277,7 +342,7 @@ export function SearchDialog({
         <>
           <Button onClick={onClose}>关闭</Button>
           <Button variant="primary" disabled={busy} onClick={submit}>
-            {busy ? '处理中…' : '按相似度排序'}
+            {busy ? '处理中…' : mode === 'tag' ? '按标签评分排序' : '按相似度排序'}
           </Button>
         </>
       }
@@ -290,17 +355,29 @@ export function SearchDialog({
             <option value="tag">标签评分</option>
           </Select>
         </label>
-        <Input
-          value={query}
-          placeholder={mode === 'semantic' ? '描述画面，如 白发的少女站在海边' : '标签，逗号分隔，如 1girl, solo'}
-          onChange={(event) => setQuery(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === 'Enter') {
-              event.preventDefault();
-              submit();
-            }
-          }}
-        />
+        {mode === 'tag' ? (
+          <TagSuggestInput
+            value={query}
+            separator=","
+            className="w-full"
+            placeholder="标签，逗号分隔，如 1girl, solo"
+            fetchTags={fetchTags}
+            onChange={setQuery}
+            onSubmit={submit}
+          />
+        ) : (
+          <Input
+            value={query}
+            placeholder="描述画面，如 白发的少女站在海边"
+            onChange={(event) => setQuery(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') {
+                event.preventDefault();
+                submit();
+              }
+            }}
+          />
+        )}
         {mode === 'semantic' && history.length ? (
           <Select value="" onChange={(event) => setQuery(event.target.value)}>
             <option value="">最近搜索</option>
@@ -311,7 +388,7 @@ export function SearchDialog({
             ))}
           </Select>
         ) : null}
-        {message ? <div className="text-[11px] text-foreground">{message}</div> : null}
+        {message ? <div className="text-xs text-foreground">{message}</div> : null}
       </div>
     </Dialog>
   );

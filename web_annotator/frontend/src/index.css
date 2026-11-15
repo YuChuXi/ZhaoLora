@@ -37,24 +37,41 @@
   }
 }
 
-/* 瀑布流：列容器固定高度，卡片按插入时估算的列高分配 */
+/* 滚动容器固定预留滚动条宽度, 避免内容宽度随滚动条出现而变化. */
+[data-scroll] {
+  scrollbar-gutter: stable;
+}
+
+/* 瀑布流子树整体排除浏览器原生滚动锚定, 滚动位置只由布局层决定. */
+.masonry-host {
+  overflow-anchor: none;
+}
+
+/* 瀑布流: 卡片按已知宽高比与固定信息栏占位, 列高只由卡片自身高度累加. */
 .masonry-grid {
+  position: relative;
   display: flex;
   align-items: flex-start;
   gap: 8px;
   padding: 8px;
 }
 
+/* 首尾哨兵: 分别贴在最早触底的列底与最晚起始的列顶, 不随长列延后. */
+.masonry-sentinel {
+  position: absolute;
+  left: 0;
+  width: 1px;
+  height: 1px;
+}
+
 .masonry-column {
-  display: flex;
   flex: 1 1 0;
   min-width: 0;
-  flex-direction: column;
-  gap: 8px;
 }
 
 .masonry-card {
   position: relative;
+  margin-bottom: 8px;
   overflow: hidden;
   border: 2px solid transparent;
   border-radius: var(--radius);
@@ -62,6 +79,7 @@
   cursor: pointer;
   user-select: none;
   -webkit-touch-callout: none;
+  touch-action: manipulation;
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
 
@@ -104,6 +122,23 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.masonry-card .card-badge {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  max-width: calc(100% - 48px);
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: rgb(5 7 13 / 78%);
+  color: #dbe4f3;
+  font-size: 10px;
+  line-height: 1.4;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  pointer-events: none;
 }
 
 .masonry-card .card-check {

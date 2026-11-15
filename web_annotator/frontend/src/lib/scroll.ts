@@ -10,6 +10,8 @@ import { useEffect } from 'react';
  *   HTMLElement: 标记了 `data-scroll` 的内容容器。
  *
  * Callers:
+ *   - `filter/Masonry.tsx:Masonry` 向上加载后的滚动补偿
+ *   - `filter/useFilterPage.ts:useFilterPage` 搜索与跳页回到顶部
  *   - `lib/scroll.ts:restoreCardAnchor`
  *   - `lib/scroll.ts:useScrollLock`
  */
@@ -33,7 +35,7 @@ export interface CardAnchor {
  *
  * Callers:
  *   - `filter/Toolbar.tsx:changeColumns`
- *   - `pages/tag-check/TagCheckPage.tsx:changeColumns`
+ *   - `pages/tag-check/TagCheckPage.tsx:TagCheckPage`
  */
 export function captureCardAnchor(): CardAnchor | null {
   for (const card of document.querySelectorAll<HTMLElement>('.masonry-card')) {
