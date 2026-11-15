@@ -17,7 +17,7 @@ Callers:
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, computed_field, model_validator
 
@@ -107,13 +107,69 @@ class BooruSearchResult(BaseModel):
     count: int
     has_more: bool
     session: str = ""  # 会话式来源的续拉 token (页码式来源为空)
+    # 工作目录中已保存的图片总数, 与本次搜索结果条数相互独立
+    stored: int = 0
     posts: list[BooruPost]
+
+
+class ConditionOption(BaseModel):
+    """来源条件字段的一个可选值.
+
+    Attributes:
+        value (str): 写入条件串的取值.
+        label (str): 界面显示名.
+    """
+
+    value: str
+    label: str
+
+
+class ConditionField(BaseModel):
+    """来源条件的一个字段声明, 前端据此渲染控件并序列化为条件串.
+
+    Attributes:
+        kind (Literal): ``chips`` / ``range`` / ``text``.
+        key (str): token 前缀; ``range`` 的上下限键为 ``{key}Lo`` / ``{key}Hi``.
+        label (str): 字段显示名.
+        options (list[ConditionOption]): ``chips`` 的可选值.
+        join (Literal): ``chips`` 序列化方式: ``repeat`` / ``comma`` / ``exclude``.
+        date (bool): ``range`` 是否为日期区间.
+        raw (bool): ``text`` 是否原样输出 (不加前缀).
+        placeholder (str): ``text`` 输入提示.
+        lo_token (str): ``range`` 下限 token 前缀; 与 ``hi_token`` 同为空时按
+            ``{key}:>=`` / ``{key}:<=`` 输出.
+        hi_token (str): ``range`` 上限 token 前缀.
+    """
+
+    kind: Literal["chips", "range", "text"]
+    key: str
+    label: str
+    options: list[ConditionOption] = Field(default_factory=list)
+    join: Literal["repeat", "comma", "exclude"] = "repeat"
+    date: bool = False
+    raw: bool = False
+    placeholder: str = ""
+    lo_token: str = ""
+    hi_token: str = ""
+
+
+class SourceCondition(BaseModel):
+    """来源支持的额外检索条件.
+
+    Attributes:
+        fields (list[ConditionField]): 条件字段, 按展示顺序排列.
+        default (str): 条件串初始值.
+    """
+
+    fields: list[ConditionField]
+    default: str = ""
 
 
 class BooruSourcesResponse(BaseModel):
     """可用图站与代理配置."""
 
     sources: list[str]
+    conditions: dict[str, SourceCondition] = Field(default_factory=dict)
     proxy: str = ""
 
 

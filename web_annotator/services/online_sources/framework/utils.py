@@ -13,7 +13,7 @@ from pathlib import Path
 
 from PIL import Image
 
-from services.core.atomic import atomic_write_bytes
+from services.core.atomic import atomic_save_image, atomic_write_bytes
 
 
 def sniff_image_kind(data: bytes) -> str:
@@ -60,6 +60,7 @@ def pil_can_open(data: bytes) -> bool:
         - ``services/online_sources/danbooru/source.py:DanbooruSource._fetch_image_bytes``
     """
     from PIL import UnidentifiedImageError
+
     try:
         im = Image.open(io.BytesIO(data)); im.load()
         return True
@@ -124,7 +125,7 @@ def save_png_bytes(data: bytes, dest: Path) -> tuple[int, int]:
     img = Image.open(io.BytesIO(data))
     img.load()
     out = img.convert("RGBA") if img.mode in ("RGBA", "LA", "P") else img.convert("RGB")
-    out.save(dest, format="PNG", optimize=True)
+    atomic_save_image(out, dest, "PNG", optimize=True)
     return width, height
 
 

@@ -37,6 +37,144 @@ SOURCES: dict[str, SourceClient] = {}
 # 下载进度回调: (当前进度, 总量), 数值为整数(如 20, 100). 仅视频帖有意义.
 ProgressFn = Callable[[int, int], None]
 
+# booru 标签分类编号到显示名 (Gelbooru / Danbooru 共用).
+BOORU_TAG_CATEGORIES: dict[int, str] = {
+    0: "通用",
+    1: "画师",
+    3: "版权",
+    4: "角色",
+    5: "元",
+}
+
+# e621 标签分类编号到显示名.
+E621_TAG_CATEGORIES: dict[int, str] = {
+    0: "通用",
+    1: "画师",
+    2: "贡献",
+    3: "版权",
+    4: "角色",
+    5: "物种",
+    6: "无效",
+    7: "元",
+    8: "设定",
+}
+
+
+@dataclass(frozen=True)
+class ConditionOption:
+    """条件字段的一个可选值.
+
+    Attributes:
+        value: 写入条件串的取值.
+        label: 界面显示名.
+    """
+
+    value: str
+    label: str
+
+
+@dataclass(frozen=True)
+class ConditionField:
+    """来源条件中的一个字段声明, 前端据此渲染控件并序列化为条件串.
+
+    Attributes:
+        kind: ``chips`` (多选)/ ``range`` (上下限)/ ``text`` (文本).
+        key: 条件串的 token 前缀; ``range`` 的上下限键为 ``{key}Lo`` / ``{key}Hi``.
+        label: 字段显示名.
+        options: ``chips`` 的可选值.
+        join: ``chips`` 的序列化方式: ``repeat`` 逐项输出 / ``comma`` 逗号 OR /
+            ``exclude`` 三选二排除剩余项.
+        date: ``range`` 是否为日期区间.
+        raw: ``text`` 是否原样输出 (不加前缀), 用于附加元标签.
+        placeholder: ``text`` 的输入提示.
+        lo_token: ``range`` 下限的 token 前缀; 与 ``hi_token`` 同为空时按
+            ``{key}:>=`` / ``{key}:<=`` 输出.
+        hi_token: ``range`` 上限的 token 前缀.
+    """
+
+    kind: str
+    key: str
+    label: str
+    options: tuple[ConditionOption, ...] = ()
+    join: str = "repeat"
+    date: bool = False
+    raw: bool = False
+    placeholder: str = ""
+    lo_token: str = ""
+    hi_token: str = ""
+
+
+@dataclass(frozen=True)
+class ConditionSpec:
+    """来源支持的额外检索条件声明.
+
+    Attributes:
+        fields: 条件字段, 按展示顺序排列.
+        default: 条件串初始值, 界面在用户未编辑时按它构建请求.
+    """
+
+    fields: tuple[ConditionField, ...]
+    default: str = ""
+
+
+def booru_condition(
+    *,
+    ratings: tuple[tuple[str, str], ...],
+    rating_join: str,
+    date: bool,
+) -> ConditionSpec:
+    """构造 booru 族来源的条件声明.
+
+    评级、分数、宽度、高度、ID、日期、用户与附加元标签的顺序在 booru 族内
+    一致, 差异只在评级取值、评级序列化方式与是否支持日期。
+
+    Args:
+        ratings: 评级选项 ``(取值, 显示名)``.
+        rating_join: 评级序列化方式, ``comma`` 或 ``exclude``.
+        date: 是否提供发布日期区间.
+
+    Returns:
+        ConditionSpec: 条件声明.
+
+    Callers:
+        - ``services/online_sources/gelbooru/source.py:GelbooruSource``
+        - ``services/online_sources/danbooru/source.py:DanbooruSource``
+        - ``services/online_sources/e621/source.py:ESixTwentyOneSource``
+    """
+    fields: list[ConditionField] = [
+        ConditionField(
+            kind="chips",
+            key="rating",
+            label="评级",
+            options=tuple(ConditionOption(value=v, label=label) for v, label in ratings),
+            join=rating_join,
+        ),
+        *(
+            ConditionField(kind="range", key=key, label=label)
+            for key, label in (
+                ("score", "分数"),
+                ("width", "宽度"),
+                ("height", "高度"),
+                ("id", "ID"),
+            )
+        ),
+    ]
+    if date:
+        fields.append(ConditionField(kind="range", key="date", label="日期", date=True))
+    fields.extend(
+        [
+            ConditionField(kind="text", key="user", label="用户", placeholder="上传者"),
+            ConditionField(
+                kind="text",
+                key="more",
+                label="附加",
+                raw=True,
+                placeholder="其它元标签，空格分隔",
+            ),
+        ]
+    )
+    return ConditionSpec(fields=tuple(fields))
+
 
 @dataclass(frozen=True)
 class ImagePolicy:
@@ -194,6 +332,9 @@ class SourceClient(ABC):
         """
         return []
 
+    # 标签分类编号到显示名的映射; 空表示该来源不提供分类信息.
+    tag_categories: Mapping[int, str] = {}
+
     def parse_query(self, tags: str, extra: str) -> dict[str, str]:
         """把来源原始查询串解析为结构化条件.
 
@@ -210,6 +351,8 @@ class SourceClient(ABC):
     # ---- 图片代理: 子类用一份策略描述图床差异, 继承统一的 `proxy_image` ----
 
     image: ImagePolicy = ImagePolicy()
+    # 额外检索条件的字段声明; None 表示该来源没有可配置条件.
+    condition: ConditionSpec | None = None
 
     async def proxy_image(self, url: str, *, kind: str = "") -> tuple[str, AsyncIterator[bytes]]:
         """流式代理本来源图床图片.

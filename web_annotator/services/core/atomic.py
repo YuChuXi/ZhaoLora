@@ -9,14 +9,19 @@ Callers:
     - ``services/state/annotator.py:``
     - ``services/state/tasks.py:``
     - ``services/state/mask_templates.py:``
+    - ``services/state/mask.py:``
     - ``services/analysis/sort_cache.py:``
     - ``services/analysis/wd14.py:``
+    - ``services/analysis/birefnet.py:``
+    - ``services/analysis/sam3.py:``
     - ``services/tagging/clean.py:``
     - ``services/tagging/stats.py:``
+    - ``services/core/thumbnailer.py:``
     - ``services/core/video_frame.py:``
     - ``services/core/video_scanner.py:``
     - ``services/online_sources/framework/base.py:``
     - ``services/online_sources/framework/media.py:``
+    - ``services/online_sources/framework/utils.py:``
     - ``services/online_sources/danbooru/source.py:``
     - ``services/online_sources/gelbooru/source.py:``
     - ``routes/tag_stats.py:``
@@ -27,11 +32,15 @@ Callers:
 from __future__ import annotations
 
 import functools
+import io
 import os
 import tempfile
 from collections.abc import Callable
 from pathlib import Path
-from typing import TypeVar
+from typing import TYPE_CHECKING, TypeVar
+
+if TYPE_CHECKING:
+    from PIL import Image
 
 _T = TypeVar("_T")
 
@@ -118,3 +127,32 @@ def atomic_write_bytes(path: Path, data: bytes) -> None:
     finally:
         if os.path.exists(tmp):
             os.unlink(tmp)
+
+
+def atomic_save_image(
+    image: "Image.Image", path: Path, format: str, **params: object
+) -> None:
+    """把图像编码到内存后原子写入目标文件.
+
+    ``Image.save`` 直接写目标路径时, 编码中断会留下无法解码的半截图片;
+    本函数先编码到内存缓冲, 再经 ``atomic_write_bytes`` 替换目标文件.
+
+    Args:
+        image (Image.Image): 待写入的图像.
+        path (Path): 目标文件路径, 所在目录必须已存在.
+        format (str): 图像格式, 如 ``PNG`` / ``AVIF``.
+        **params (object): 传给 ``Image.save`` 的编码参数.
+
+    Raises:
+        OSError: 编码或写入失败; 失败时目标文件保持原内容.
+
+    Callers:
+        - ``services/online_sources/framework/utils.py:save_png``
+        - ``services/core/thumbnailer.py:Thumbnailer._write``
+        - ``services/state/mask.py:save_mask``
+        - ``services/analysis/birefnet.py:run_birefnet_mask``
+        - ``services/analysis/sam3.py:run_sam3_mask``
+    """
+    buffer = io.BytesIO()
+    image.save(buffer, format=format, **params)
+    atomic_write_bytes(path, buffer.getvalue())

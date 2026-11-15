@@ -24,7 +24,10 @@ from services.models import (
     BooruSearchResult,
     BooruSourcesResponse,
     BooruUndownloadResult,
+    ConditionField,
+    ConditionOption,
     JobSubmitResponse,
+    SourceCondition,
 )
 from services.online_sources import (
     download_post,
@@ -86,8 +89,35 @@ def list_sources() -> BooruSourcesResponse:
         BooruSourcesResponse: 含来源名列表与代理地址。
     """
     proxy = os.environ.get("HTTP_PROXY", "") or os.environ.get("HTTPS_PROXY", "")
+    names = list_source_names()
+    conditions = {
+        name: SourceCondition(
+            fields=[
+                ConditionField(
+                    kind=field.kind,
+                    key=field.key,
+                    label=field.label,
+                    options=[
+                        ConditionOption(value=option.value, label=option.label)
+                        for option in field.options
+                    ],
+                    join=field.join,
+                    date=field.date,
+                    raw=field.raw,
+                    placeholder=field.placeholder,
+                    lo_token=field.lo_token,
+                    hi_token=field.hi_token,
+                )
+                for field in spec.fields
+            ],
+            default=spec.default,
+        )
+        for name in names
+        if (spec := SOURCES[name].condition) is not None
+    }
     return BooruSourcesResponse(
-        sources=list_source_names(),
+        sources=names,
+        conditions=conditions,
         proxy=proxy.strip(),
     )
 
@@ -106,7 +136,8 @@ async def tag_suggest(
         limit (int): 返回数量上限, 1-50。
 
     Returns:
-        dict: ``{"tags": list[str]}``, 补全候选标签列表。
+        dict: ``{"tags": [{"name": str, "note": str, "count": int}]}``; ``note`` 为
+        来源声明的分类显示名, 未登记的分类留空.
 
     Callers:
         - ``frontend/src/filter/useFilterPage.ts``
@@ -120,7 +151,17 @@ async def tag_suggest(
     except _NETWORK_ERRORS as e:
         logger.warning("标签补全上游异常: %s: %s", type(e).__name__, e)
         raise HTTPException(502, f"补全失败: {e}") from e
-    return {"tags": tags}
+    return {
+        "tags": [
+            {
+                "name": item["name"],
+                "note": src.tag_categories.get(item["category"], ""),
+                "count": item["count"],
+            }
+            for item in tags
+            if item.get("name")
+        ]
+    }
 
 
 @router.post("/search")
@@ -192,6 +233,7 @@ async def search(ds: DatasetDep, body: SearchBody) -> BooruSearchResult:
         count=len(posts),
         has_more=has_more,
         session=session,
+        stored=sum(1 for p in out_dir.iterdir() if p.suffix.lower() in IMAGE_EXTS),
         posts=posts,
     )
 
@@ -337,7 +379,7 @@ async def download(
         raise HTTPException(502, f"下载失败: {e}") from e
     rel = local_rel_path(root, result.path)
     thumb = ds.thumbnailer
-    await thumb.ensure_async(rel)
+    await thumb.refresh_async(rel)
     logger.info("数据集 %s 下载完成: 帖子id=%s -> %s", ds.name, result.id, rel)
     return result.model_copy(
         update={

@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING
 import py7zr
 from py7zr.callbacks import ExtractCallback
 
+from services.core.atomic import atomic_write_bytes
 from services.core.natural import natural_key
 from services.dataset.workdir import PACKED_DIR
 from services.models import JobSnapshot
@@ -145,7 +146,7 @@ def archive_task(
         h = thumbnailer.hash_for(img.rel)
         thumb_path = thumbnailer.thumb_dir / f"{h}.avif"
         if thumb_path.is_file():
-            shutil.copy2(thumb_path, preview_dir / f"{h}.avif")
+            atomic_write_bytes(preview_dir / f"{h}.avif", thumb_path.read_bytes())
             preview_hashes.append(h)
 
     # 2. 压缩: 排除 .thumbnails/ 和 *.npz, 逐文件 write() 过滤

@@ -401,7 +401,7 @@ async def _run_async(
                         progress.ok += 1
                         if thumbnailer is not None and not post.is_video:
                             rel = local_rel_path(root, result.path)
-                            await thumbnailer.ensure_async(rel)
+                            await thumbnailer.refresh_async(rel)
                     push("")
                     return
                 except RuntimeError as e:

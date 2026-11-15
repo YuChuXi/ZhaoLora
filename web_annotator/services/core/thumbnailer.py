@@ -14,6 +14,7 @@ from pathlib import Path
 
 from PIL import Image, UnidentifiedImageError
 
+from services.core.atomic import atomic_save_image
 from services.dataset.workdir import NON_BROWSABLE_DIRS
 
 THUMB_DIRNAME = ".thumbnails"
@@ -251,6 +252,40 @@ class Thumbnailer:
         """
         return await asyncio.to_thread(self.ensure, image_rel_path, src=src)
 
+    def refresh(self, image_rel_path: str, *, src: Path | None = None) -> bool:
+        """删除旧缩略图并重新生成.
+
+        缩略图缓存键只含路径与尺寸, 源图被重新下载覆盖后旧缩略图仍会命中;
+        重新下载后须调用本方法, 避免前端继续显示旧内容.
+
+        Args:
+            image_rel_path (str): 相对数据集根的图片路径.
+            src (Path | None): 可选源文件路径.
+
+        Returns:
+            bool: 重新生成成功时为 True.
+
+        Callers:
+            - ``services/core/thumbnailer.py:Thumbnailer.refresh_async``
+        """
+        self.get_path(image_rel_path).unlink(missing_ok=True)
+        return self.generate(image_rel_path, src=src)
+
+    async def refresh_async(self, image_rel_path: str, *, src: Path | None = None) -> bool:
+        """在线程池中删除旧缩略图并重新生成.
+
+        Args:
+            image_rel_path (str): 相对数据集根的图片路径.
+            src (Path | None): 可选源文件路径.
+
+        Returns:
+            bool: 重新生成成功时为 True.
+
+        Callers:
+            - ``routes/online_sources.py:download``
+        """
+        return await asyncio.to_thread(self.refresh, image_rel_path, src=src)
+
     def generate(self, image_rel_path: str, *, src: Path | None = None) -> bool:
         """生成单张 AVIF 缩略图. 已存在则跳过. 
 
@@ -283,7 +318,7 @@ class Thumbnailer:
                 ratio = self.size / max(w, h)
                 new_size = (int(w * ratio), int(h * ratio))
                 img = img.resize(new_size, Image.Resampling.LANCZOS)
-            img.save(thumb_path, format="AVIF", quality=self.quality)
+            atomic_save_image(img, thumb_path, "AVIF", quality=self.quality)
             return True
         except (KeyError, OSError, UnidentifiedImageError, ValueError):
             return False

@@ -25,6 +25,7 @@ import numpy as np
 from PIL import Image
 
 from services.analysis.expression import evaluate, extract_concepts, parse, to_uint8
+from services.core.atomic import atomic_save_image
 from services.core.device import register_model
 from services.core.jobs import JobProgress
 from services.state.mask import load_mask
@@ -408,7 +409,7 @@ def run_sam3_expression_mask(
             out_path = mask_dir / Path(rel).with_suffix(".png")
             out_path.parent.mkdir(parents=True, exist_ok=True)
             # 蒙板恒以单通道 L 模式保存, 与 mask.py:save_mask 契约一致(读取方不兼容其他颜色模式)
-            Image.fromarray(result, mode="L").save(out_path, format="PNG")
+            atomic_save_image(Image.fromarray(result, mode="L"), out_path, "PNG")
             done += 1
         except Exception as e:
             logger.error("SAM3 处理失败 %s: %s", rel, e)

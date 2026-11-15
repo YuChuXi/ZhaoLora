@@ -11,6 +11,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
+from services.core.atomic import atomic_save_image
 from services.dataset.workdir import resolve_under
 
 
@@ -99,5 +100,5 @@ def save_mask(out_dir: Path, src_path: str, alpha: np.ndarray) -> Path:
     """
     dest = mask_out_path(out_dir, src_path)
     dest.parent.mkdir(parents=True, exist_ok=True)
-    Image.fromarray(alpha, mode="L").save(dest, format="PNG")
+    atomic_save_image(Image.fromarray(alpha, mode="L"), dest, "PNG")
     return dest

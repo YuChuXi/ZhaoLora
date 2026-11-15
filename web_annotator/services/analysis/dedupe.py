@@ -12,14 +12,13 @@ from typing import cast
 
 import cv2
 import numpy as np
-from PIL import Image, ImageFile, UnidentifiedImageError
+from PIL import Image, UnidentifiedImageError
 
 from services.core.device import cuda_device
 from services.core.natural import natural_key
 from services.dataset.workdir import IMAGE_EXTS
 
 Image.MAX_IMAGE_PIXELS = None
-ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 COMPARE_SIZE = 128
 FFT_SIZE = 64

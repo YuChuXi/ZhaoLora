@@ -10,7 +10,7 @@ from datetime import datetime
 from pathlib import Path
 
 from services.core.atomic import atomic_write_text
-from services.online_sources.framework.base import ImagePolicy, ProgressFn, SourceClient, build_caption
+from services.online_sources.framework.base import BOORU_TAG_CATEGORIES, ImagePolicy, ProgressFn, SourceClient, booru_condition, build_caption
 from services.online_sources.framework.media import download_raw_file, post_is_video
 from services.online_sources.framework.utils import find_downloaded
 from services.online_sources.gelbooru.client import GelbooruClient
@@ -48,9 +48,15 @@ class GelbooruSource(SourceClient):
     prefix = "g"
     order_tags = {"score": "sort:score:desc", "id": "sort:id:desc", "id_asc": "sort:id:asc"}
     valid_orders = ("score", "id", "id_asc")
+    tag_categories = BOORU_TAG_CATEGORIES
     image = ImagePolicy(
         referer="https://gelbooru.com/",
         timeouts={"thumb": 30.0, "sample": 45.0},
+    )
+    condition = booru_condition(
+        ratings=(("s", "全年龄"), ("q", "可疑"), ("e", "露骨")),
+        rating_join="exclude",
+        date=False,
     )
 
     def filter_extra(self, extra: str) -> str:

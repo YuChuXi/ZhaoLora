@@ -12,7 +12,7 @@ import logging
 from pathlib import Path
 from urllib.parse import urlparse
 
-from services.core.atomic import atomic_write_text
+from services.core.atomic import atomic_write_bytes, atomic_write_text
 from services.core.http import http_session
 from services.core.natural import natural_key
 from services.core.video_scanner import VIDEO_EXTS
@@ -150,7 +150,7 @@ async def download_raw_file(post: BooruPost, out_dir: Path) -> dict:
             last_err = "下载到空内容"
             continue
         video_path = out_dir / post.filename
-        await asyncio.to_thread(video_path.write_bytes, resp.content)
+        await asyncio.to_thread(atomic_write_bytes, video_path, resp.content)
         return {"path": str(video_path), "stem": video_path.stem, "id": post.id}
     raise ValueError(last_err)
 

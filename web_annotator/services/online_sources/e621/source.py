@@ -14,7 +14,7 @@ from pathlib import Path
 
 from services.core.atomic import atomic_write_text
 from services.online_sources.e621.client import PAGE_LIMIT, E621Client
-from services.online_sources.framework.base import ImagePolicy, ProgressFn, SourceClient, build_caption
+from services.online_sources.framework.base import E621_TAG_CATEGORIES, ImagePolicy, ProgressFn, SourceClient, booru_condition, build_caption
 from services.online_sources.framework.media import download_raw_file, post_is_video
 from services.online_sources.framework.utils import find_downloaded
 from services.models import BooruPost
@@ -94,7 +94,13 @@ class E621Source(SourceClient):
     # e621 的 order:id 为「旧→新」, 新帖在前需显式使用 order:id_desc
     order_tags = {"score": "order:score", "id": "order:id_desc", "id_asc": "order:id_asc"}
     valid_orders = ("score", "id", "id_asc")
+    tag_categories = E621_TAG_CATEGORIES
     image = ImagePolicy(hosts=("e621.net",), referer="https://e621.net/")
+    condition = booru_condition(
+        ratings=(("s", "全年龄"), ("q", "可疑"), ("e", "露骨")),
+        rating_join="exclude",
+        date=True,
+    )
 
     @staticmethod
     def normalize(post: BooruPost) -> BooruPost | None:

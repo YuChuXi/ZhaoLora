@@ -21,7 +21,7 @@ from datetime import date, datetime
 from pathlib import Path
 
 from services.core.video_scanner import VIDEO_EXTS
-from services.online_sources.framework.base import ImagePolicy, SourceClient
+from services.online_sources.framework.base import ConditionField, ConditionOption, ConditionSpec, ImagePolicy, SourceClient
 from services.online_sources.bilibili.client import (
     fetch_bili_bytes,
     fetch_dynamics,
@@ -128,6 +128,34 @@ class BilibiliSource(SourceClient):
     session_based = True
     writes_caption = False
     image = ImagePolicy(hosts=("hdslb.com",), referer="https://www.bilibili.com/")
+    condition = ConditionSpec(
+        fields=(
+            ConditionField(
+                kind="chips",
+                key="type",
+                label="类型",
+                options=(
+                    ConditionOption(value="image", label="图片"),
+                    ConditionOption(value="forward", label="转发"),
+                ),
+            ),
+            ConditionField(
+                kind="text",
+                key="keyword",
+                label="关键词",
+                placeholder="过滤正文关键词",
+            ),
+            ConditionField(
+                kind="range",
+                key="date",
+                label="日期",
+                date=True,
+                lo_token="after:",
+                hi_token="before:",
+            ),
+        ),
+        default="type:image",
+    )
     # 本源产出的动态形态类别 (类型筛选的默认全集)
     POST_TYPES: frozenset[str] = frozenset({"image", "forward"})
 
@@ -442,6 +470,34 @@ class BilibiliVideoSource(BilibiliSource):
     name = "bilibili-video"
     prefix = "bv"
     POST_TYPES: frozenset[str] = frozenset({"video"})
+    condition = ConditionSpec(
+        fields=(
+            ConditionField(
+                kind="chips",
+                key="type",
+                label="类型",
+                options=(
+                    ConditionOption(value="video", label="视频"),
+                    ConditionOption(value="cover", label="封面"),
+                ),
+            ),
+            ConditionField(
+                kind="text",
+                key="keyword",
+                label="关键词",
+                placeholder="过滤正文关键词",
+            ),
+            ConditionField(
+                kind="range",
+                key="date",
+                label="日期",
+                date=True,
+                lo_token="after:",
+                hi_token="before:",
+            ),
+        ),
+        default="type:video",
+    )
 
     def __init__(self) -> None:
         """初始化视频源, 建立分辨率缓存 (bvid -> (宽, 高)).

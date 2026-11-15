@@ -14,6 +14,7 @@ import torch
 from PIL import Image
 from torchvision import transforms
 
+from services.core.atomic import atomic_save_image
 from services.core.device import register_model
 from services.core.jobs import JobProgress
 
@@ -218,7 +219,7 @@ def run_birefnet_mask(
             mask = _shrink_mask(mask, mask_shrink)
             mask = _remap_mask(mask, mask_min, mask_max)
             # 蒙板恒以单通道 L 模式保存, 与 mask.py:save_mask 契约一致(读取方不兼容其他颜色模式)
-            Image.fromarray(mask, mode="L").save(out_path, format="PNG")
+            atomic_save_image(Image.fromarray(mask, mode="L"), out_path, "PNG")
             if progress is not None:
                 progress.done += 1
         except Exception as e:
