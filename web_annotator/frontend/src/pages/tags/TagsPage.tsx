@@ -1015,7 +1015,7 @@ export function TagsPage() {
       </Toolbar>
 
       <div className="min-h-0 flex-1 overflow-auto px-3 pb-5 pt-2">
-        <table className="w-full border-collapse text-[13px]">
+        <table className="w-full border-collapse text-sm">
           <thead>
             <tr>
               <th className="sticky top-0 z-10 w-9 border-b border-border bg-background px-2.5 py-2 text-left font-semibold text-muted-foreground">
@@ -1027,19 +1027,19 @@ export function TagsPage() {
                   onChange={(event) => toggleAll(event.target.checked)}
                 />
               </th>
-              <th className="sticky top-0 z-10 w-[88px] border-b border-border bg-background px-2.5 py-2 text-left font-semibold text-muted-foreground">
+              <th className="sticky top-0 z-10 whitespace-nowrap border-b border-border bg-background px-2.5 py-2 text-left font-semibold text-muted-foreground">
                 占比
               </th>
               <th className="sticky top-0 z-10 w-16 border-b border-border bg-background px-2.5 py-2 text-left font-semibold text-muted-foreground">
                 次数
               </th>
-              <th className="sticky top-0 z-10 w-[42%] border-b border-border bg-background px-2.5 py-2 text-left font-semibold text-muted-foreground">
+              <th className="sticky top-0 z-10 w-2/5 border-b border-border bg-background px-2.5 py-2 text-left font-semibold text-muted-foreground">
                 英文
               </th>
               <th className="sticky top-0 z-10 border-b border-border bg-background px-2.5 py-2 text-left font-semibold text-muted-foreground">
                 中文
               </th>
-              <th className="sticky top-0 z-10 w-[100px] border-b border-border bg-background px-2.5 py-2 text-left font-semibold text-muted-foreground">
+              <th className="sticky top-0 z-10 whitespace-nowrap border-b border-border bg-background px-2.5 py-2 text-left font-semibold text-muted-foreground">
                 触发词
               </th>
             </tr>
@@ -1118,7 +1118,7 @@ export function TagsPage() {
       <div className="flex shrink-0 items-start gap-2 border-t border-border bg-[#16213e] px-3 py-2">
         <textarea
           ref={exportRef}
-          className="min-h-[52px] max-h-[120px] flex-1 resize-y rounded-md border border-border bg-[#0a1a30] px-2 py-1 font-mono text-xs outline-none focus:border-[#4a6a9a]"
+          className="min-h-14 max-h-32 flex-1 resize-y rounded-md border border-border bg-[#0a1a30] px-2 py-1 font-mono text-xs outline-none focus:border-[#4a6a9a]"
           readOnly
           placeholder="已选标签"
           value={exportText}
@@ -1130,7 +1130,7 @@ export function TagsPage() {
         open={statsOpen}
         onOpenChange={setStatsOpen}
         title="统计条件"
-        className="max-h-[min(520px,84vh)] w-[min(440px,92vw)]"
+        className="max-h-[84vh] max-w-md"
         footer={
           <>
             <Button variant="primary" onClick={applyStatsOptions}>
@@ -1171,7 +1171,7 @@ export function TagsPage() {
           <label className="flex items-center gap-1.5">
             最少出现
             <Input
-              className="w-[60px]"
+              className="w-16"
               type="number"
               min={1}
               value={draft.minCount}
@@ -1240,7 +1240,7 @@ export function TagsPage() {
         open={addOpen}
         onOpenChange={setAddOpen}
         title="批量添加标签"
-        className="max-h-[min(480px,80vh)]"
+        className="max-h-[80vh]"
         footer={
           <>
             <Button disabled={add.busy} onClick={() => void runBatchEdit('add', true)}>
@@ -1361,7 +1361,7 @@ export function TagsPage() {
               </label>
             </div>
           </div>
-          <div className="max-h-[180px] overflow-auto whitespace-pre-wrap rounded-md border border-border bg-[#0a1a30] px-2.5 py-2 font-mono text-xs text-muted-foreground">
+          <div className="max-h-44 overflow-auto whitespace-pre-wrap rounded-md border border-border bg-[#0a1a30] px-2.5 py-2 font-mono text-xs text-muted-foreground">
             {add.result}
           </div>
         </div>
@@ -1371,7 +1371,7 @@ export function TagsPage() {
         open={deleteOpen}
         onOpenChange={setDeleteOpen}
         title="批量删除标签"
-        className="max-h-[min(400px,70vh)]"
+        className="max-h-[70vh]"
         footer={
           <>
             <Button disabled={del.busy} onClick={() => void runBatchEdit('delete', true)}>
@@ -1409,7 +1409,7 @@ export function TagsPage() {
             </Select>
             <span className="opacity-75">通配: * 匹配任意字符；正则作用于归一化标签(小写无下划线)</span>
           </div>
-          <div className="max-h-[180px] overflow-auto whitespace-pre-wrap rounded-md border border-border bg-[#0a1a30] px-2.5 py-2 font-mono text-xs text-muted-foreground">
+          <div className="max-h-44 overflow-auto whitespace-pre-wrap rounded-md border border-border bg-[#0a1a30] px-2.5 py-2 font-mono text-xs text-muted-foreground">
             {del.result}
           </div>
         </div>
@@ -1419,7 +1419,7 @@ export function TagsPage() {
         open={replaceOpen}
         onOpenChange={setReplaceOpen}
         title="批量替换标签"
-        className="max-h-[min(420px,72vh)]"
+        className="max-h-[72vh]"
         footer={
           <>
             <Button disabled={replace.busy} onClick={() => void runBatchEdit('replace', true)}>
@@ -1472,7 +1472,7 @@ export function TagsPage() {
             </Select>
             <span className="opacity-75">通配: * 匹配任意字符；正则作用于归一化标签(小写无下划线)</span>
           </div>
-          <div className="max-h-[180px] overflow-auto whitespace-pre-wrap rounded-md border border-border bg-[#0a1a30] px-2.5 py-2 font-mono text-xs text-muted-foreground">
+          <div className="max-h-44 overflow-auto whitespace-pre-wrap rounded-md border border-border bg-[#0a1a30] px-2.5 py-2 font-mono text-xs text-muted-foreground">
             {replace.result}
           </div>
         </div>
@@ -1752,7 +1752,7 @@ function TaggingDialog({
           <label className="flex items-center gap-1">
             触发词
             <Input
-              className="w-[120px]"
+              className="w-32"
               placeholder="@画师名或普通标签"
               spellCheck={false}
               value={artistTag}
@@ -1782,7 +1782,7 @@ function TaggingDialog({
 
         <div
           ref={logRef}
-          className="max-h-[45vh] min-h-[160px] overflow-auto whitespace-pre-wrap font-mono text-[12px] leading-relaxed text-[#c8d4e0]"
+          className="max-h-[45vh] min-h-40 overflow-auto whitespace-pre-wrap font-mono text-xs leading-relaxed text-[#c8d4e0]"
         >
           {logs.join('\n')}
         </div>

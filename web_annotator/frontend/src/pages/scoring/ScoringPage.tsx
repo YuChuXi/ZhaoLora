@@ -5,6 +5,7 @@ import { Input, Select } from '@/components/ui/input';
 import { Dialog } from '@/components/ui/dialog';
 import { Toolbar, ToolbarDivider, ToolbarGroup } from '@/components/ui/toolbar';
 import { useJob, useStatus } from '@/components/ui/status';
+import { PageHint } from '@/components/ui/hint';
 import { useApp } from '@/app/AppContext';
 import { useScrollLock } from '@/lib/scroll';
 import { Masonry, type ViewItem } from '@/filter/Masonry';
@@ -890,6 +891,9 @@ export function ScoringPage() {
 
   return (
     <div>
+      <PageHint>
+        Ctrl+A 全选 · 点击图片预览 · ←/A →/D 切换 · Esc 关闭预览
+      </PageHint>
       <Toolbar>
         <Button variant="primary" onClick={() => void startJob()} disabled={running}>
           开始
@@ -921,7 +925,7 @@ export function ScoringPage() {
               }
             >
               {entry.label}
-              <span className="min-w-[16px] rounded-full bg-white/10 px-1.5 py-px text-center text-[11px]">
+              <span className="min-w-4 rounded-full bg-white/10 px-1.5 py-px text-center text-xs">
                 {counts[entry.key] ?? 0}
               </span>
             </button>
@@ -963,7 +967,7 @@ export function ScoringPage() {
         </Button>
         <Input
           type="search"
-          className="w-[min(220px,32vw)]"
+          className="w-56 max-w-[32vw]"
           placeholder="搜索文件名…"
           value={query}
           onChange={(event) => setQuery(event.target.value)}
@@ -985,11 +989,11 @@ export function ScoringPage() {
       </Toolbar>
 
       {!dirsReady || !loadedKinds[kind] ? (
-        <div className="py-16 text-center text-[13px] text-muted-foreground">加载中…</div>
+        <div className="py-16 text-center text-sm text-muted-foreground">加载中…</div>
       ) : null}
 
       {dirsReady && loadedKinds[kind] && !results.length ? (
-        <div className="py-16 text-center text-[13px] text-muted-foreground">暂无评分数据</div>
+        <div className="py-16 text-center text-sm text-muted-foreground">暂无评分数据</div>
       ) : null}
 
       {dirsReady && loadedKinds[kind] && results.length ? (
@@ -1003,7 +1007,7 @@ export function ScoringPage() {
               { label: '最高', value: stats.max, tone: 'text-green-400' },
             ].map((entry) => (
               <div key={entry.label} className="text-center">
-                <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                <div className="text-xs uppercase tracking-wide text-muted-foreground">
                   {entry.label}
                 </div>
                 <div className={`text-sm font-semibold ${entry.tone}`}>
@@ -1012,30 +1016,30 @@ export function ScoringPage() {
               </div>
             ))}
             <div className="text-center">
-              <div className="text-[10px] uppercase tracking-wide text-muted-foreground">总数</div>
+              <div className="text-xs uppercase tracking-wide text-muted-foreground">总数</div>
               <div className="text-sm font-semibold text-muted-foreground">{stats.count}</div>
             </div>
           </div>
 
           <div className="border-b border-border px-3.5 py-3">
-            <div className="flex h-[140px] items-end justify-center gap-1.5">
+            <div className="flex h-36 items-end justify-center gap-1.5">
               {histogram.map((bin) => (
                 <div
                   key={bin.value}
-                  className="flex flex-[0_0_48px] flex-col items-center gap-1"
+                  className="flex basis-12 flex-col items-center gap-1"
                 >
-                  <div className="text-[11px] font-semibold text-foreground/80">
+                  <div className="text-xs font-semibold text-foreground/80">
                     {bin.count}
                   </div>
                   <div
-                    className="w-7 min-h-[3px] rounded-t"
+                    className="w-7 min-h-1 rounded-t"
                     style={{
                       height: `${Math.round((bin.count / histogramMax) * 120)}px`,
                       background: bin.colour,
                     }}
                   />
                   <div
-                    className="whitespace-nowrap text-[10px] font-medium"
+                    className="whitespace-nowrap text-xs font-medium"
                     style={{ color: bin.colour }}
                   >
                     {bin.label}
@@ -1103,13 +1107,13 @@ export function ScoringPage() {
             className="mt-3 flex items-center gap-3 text-xs text-muted-foreground"
             onClick={(event) => event.stopPropagation()}
           >
-            <span className="rounded-full bg-primary px-2.5 py-0.5 text-[11px] font-bold text-white">
+            <span className="rounded-full bg-primary px-2.5 py-0.5 text-xs font-bold text-white">
               {current.score.toFixed(4)}
             </span>
-            <span className="text-[11px] text-muted-foreground">
+            <span className="text-xs text-muted-foreground">
               {kind === 'aesthetic' ? `score_${current.pony ?? 0}` : kindLabel(kind, items)}
             </span>
-            <span className="text-[11px] text-muted-foreground">{current.path}</span>
+            <span className="text-xs text-muted-foreground">{current.path}</span>
           </div>
         </div>
       ) : null}
@@ -1118,7 +1122,7 @@ export function ScoringPage() {
         open={itemsOpen}
         onOpenChange={setItemsOpen}
         title="评分项"
-        className="w-[min(620px,94vw)]"
+        className="max-w-2xl"
         footer={<Button onClick={() => setItemsOpen(false)}>关闭</Button>}
       >
         <div className="flex flex-col gap-3">
@@ -1136,7 +1140,7 @@ export function ScoringPage() {
                   {item.expr}
                 </span>
                 {item.builtin ? (
-                  <span className="text-[11px] text-muted-foreground">内置</span>
+                  <span className="text-xs text-muted-foreground">内置</span>
                 ) : (
                   <Button variant="danger" size="sm" onClick={() => void deleteItem(item.key)}>
                     删除
@@ -1163,7 +1167,7 @@ export function ScoringPage() {
                 void addItem();
               }}
             />
-            <div className="text-[11px] leading-relaxed text-muted-foreground">
+            <div className="text-xs leading-relaxed text-muted-foreground">
               双引号字符串引用同名 WD14 标签概率; 语法同蒙板表达式: 算术、比较与 min / max /
               sum / avg / abs / sqrt / exp / log / pow / clamp / blur.
             </div>

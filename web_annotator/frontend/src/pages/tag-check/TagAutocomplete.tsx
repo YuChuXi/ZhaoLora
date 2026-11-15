@@ -148,7 +148,7 @@ export function TagAutocomplete({ value, tags, placeholder, onChange, onSubmit }
       <Input
         ref={inputRef}
         type="search"
-        className="w-[min(260px,30vw)]"
+        className="w-64 max-w-[30vw]"
         spellCheck={false}
         autoComplete="off"
         placeholder={placeholder}
@@ -167,7 +167,7 @@ export function TagAutocomplete({ value, tags, placeholder, onChange, onSubmit }
         onKeyDown={onKeyDown}
       />
       {open && tags.length ? (
-        <div className="absolute left-0 top-full z-[200] mt-0.5 max-h-[340px] min-w-full max-w-[380px] overflow-y-auto rounded border border-border bg-[#0d1b2e] text-xs shadow-[0_6px_20px_rgba(0,0,0,0.5)]">
+        <div className="absolute left-0 top-full z-[200] mt-0.5 max-h-80 min-w-full max-w-sm overflow-y-auto rounded border border-border bg-[#0d1b2e] text-xs shadow-[0_6px_20px_rgba(0,0,0,0.5)]">
           {matches.length ? (
             matches.map((item, index) => (
               <div
@@ -186,11 +186,11 @@ export function TagAutocomplete({ value, tags, placeholder, onChange, onSubmit }
               >
                 <span className="flex-auto text-foreground">{highlightTag(item.tag, query)}</span>
                 {item.zh ? (
-                  <span className="max-w-[130px] overflow-hidden text-ellipsis whitespace-nowrap text-[11px] text-muted-foreground">
+                  <span className="max-w-32 overflow-hidden text-ellipsis whitespace-nowrap text-xs text-muted-foreground">
                     {item.zh}
                   </span>
                 ) : null}
-                <span className="ml-auto whitespace-nowrap text-[11px] text-muted-foreground">
+                <span className="ml-auto whitespace-nowrap text-xs text-muted-foreground">
                   {item.count}
                 </span>
               </div>

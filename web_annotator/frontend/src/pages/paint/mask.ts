@@ -217,7 +217,6 @@ export function strokeLine(
  *   Uint8Array: 长度 w*h 的 Alpha 值（自上而下行序）.
  *
  * Callers:
- *   - `frontend/src/pages/paint/PaintPage.tsx:pushHistory`
  *   - `frontend/src/pages/paint/PaintPage.tsx:saveMask`
  */
 export function readAlpha(
@@ -229,114 +228,6 @@ export function readAlpha(
   const alpha = new Uint8Array(w * h);
   for (let i = 0; i < alpha.length; i += 1) alpha[i] = image.data[i * 4 + 3];
   return alpha;
-}
-
-/**
- * 用给定 Alpha 通道覆盖整幅蒙版.
- *
- * Args:
- *   ctx (CanvasRenderingContext2D): 蒙版上下文.
- *   w (number): 画布宽.
- *   h (number): 画布高.
- *   alpha (Uint8Array): 长度 w*h 的 Alpha 值.
- *
- * Returns:
- *   void: 无返回值.
- *
- * Callers:
- *   - `frontend/src/pages/paint/PaintPage.tsx:undo`
- *   - `frontend/src/pages/paint/PaintPage.tsx:redo`
- */
-export function writeAlpha(
-  ctx: CanvasRenderingContext2D,
-  w: number,
-  h: number,
-  alpha: Uint8Array,
-): void {
-  const image = ctx.createImageData(w, h);
-  for (let i = 0; i < alpha.length; i += 1) {
-    const offset = i * 4;
-    image.data[offset] = 255;
-    image.data[offset + 1] = 255;
-    image.data[offset + 2] = 255;
-    image.data[offset + 3] = alpha[i];
-  }
-  ctx.putImageData(image, 0, 0);
-}
-
-/**
- * 从指定像素出发做四邻域漫水填充，把连通同值区域改为目标 Alpha.
- *
- * Args:
- *   ctx (CanvasRenderingContext2D): 蒙版上下文.
- *   w (number): 画布宽.
- *   h (number): 画布高.
- *   x (number): 起点 x（画布坐标）.
- *   y (number): 起点 y（画布坐标）.
- *   value (number): 目标 Alpha（0-255）.
- *
- * Returns:
- *   boolean: 是否发生了像素改动；起点已等于目标值时返回 false.
- *
- * Callers:
- *   - `frontend/src/pages/paint/PaintPage.tsx:fillRegion`
- */
-export function floodFill(
-  ctx: CanvasRenderingContext2D,
-  w: number,
-  h: number,
-  x: number,
-  y: number,
-  value: number,
-): boolean {
-  const start = y * w + x;
-  const image = ctx.getImageData(0, 0, w, h);
-  const data = image.data;
-  const target = data[start * 4 + 3];
-  if (target === value) return false;
-  const visited = new Uint8Array(w * h);
-  const queue = new Int32Array(w * h);
-  let head = 0;
-  let tail = 0;
-  queue[tail] = start;
-  tail += 1;
-  visited[start] = 1;
-  let changed = false;
-  while (head < tail) {
-    const index = queue[head];
-    head += 1;
-    if (data[index * 4 + 3] !== target) continue;
-    const offset = index * 4;
-    data[offset] = 255;
-    data[offset + 1] = 255;
-    data[offset + 2] = 255;
-    data[offset + 3] = value;
-    changed = true;
-    const cx = index % w;
-    const cy = (index - cx) / w;
-    if (cx > 0 && !visited[index - 1] && data[(index - 1) * 4 + 3] === target) {
-      visited[index - 1] = 1;
-      queue[tail] = index - 1;
-      tail += 1;
-    }
-    if (cx < w - 1 && !visited[index + 1] && data[(index + 1) * 4 + 3] === target) {
-      visited[index + 1] = 1;
-      queue[tail] = index + 1;
-      tail += 1;
-    }
-    if (cy > 0 && !visited[index - w] && data[(index - w) * 4 + 3] === target) {
-      visited[index - w] = 1;
-      queue[tail] = index - w;
-      tail += 1;
-    }
-    if (cy < h - 1 && !visited[index + w] && data[(index + w) * 4 + 3] === target) {
-      visited[index + w] = 1;
-      queue[tail] = index + w;
-      tail += 1;
-    }
-  }
-  if (changed) ctx.putImageData(image, 0, 0);
-  return changed;
 }
 
 /**

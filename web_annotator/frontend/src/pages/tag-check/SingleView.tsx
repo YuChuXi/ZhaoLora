@@ -273,7 +273,7 @@ export function SingleView({
           {index + 1}/{items.length}
         </button>
         <span className="border-l border-border pl-2">符合 {okCount}</span>
-        <span className="max-w-[220px] truncate border-l border-border pl-2" title={item.path}>
+        <span className="max-w-56 truncate border-l border-border pl-2" title={item.path}>
           {item.stem}
         </span>
         <span className="border-l border-border pl-2">{statusText}</span>

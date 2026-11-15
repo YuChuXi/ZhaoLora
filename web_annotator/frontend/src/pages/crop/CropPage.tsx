@@ -762,7 +762,7 @@ function SpecInput({
 
   return (
     <Input
-      className="w-[110px] text-[11px]"
+      className="w-28 text-xs"
       value={text}
       placeholder={placeholder}
       spellCheck={false}
@@ -2363,6 +2363,13 @@ export function CropPage() {
   useStatus(
     [
       { kind: 'total', value: images.length },
+      {
+        kind: 'nav',
+        name: '位置',
+        value: images.length ? `${index + 1}/${images.length}` : '0/0',
+        onClick: () => setFilmstripOpen((value) => !value),
+        active: filmstripOpen,
+      },
       { kind: 'part', name: '选区', value: crops.length },
       {
         kind: 'resource',
@@ -2371,7 +2378,6 @@ export function CropPage() {
       },
     ],
     [
-      images.length ? `${index + 1}/${images.length}` : '',
       current ? basename(current.path) : '',
       autoParts.length ? `自动：${autoParts.join(', ')}` : '',
       live.replace(/^\s*\|\s*/, ''),
@@ -2388,9 +2394,6 @@ export function CropPage() {
         </Button>
         <Button onClick={goNext} title="→/D/空格">
           下一张
-        </Button>
-        <Button onClick={() => setFilmstripOpen((value) => !value)} title="显示或隐藏缩略图条">
-          缩略图
         </Button>
         <Button variant="primary" onClick={() => void saveAndNext()} title="S">
           保存
@@ -2443,8 +2446,8 @@ export function CropPage() {
           />
         </div>
 
-        <aside className="flex w-[300px] shrink-0 flex-col overflow-hidden border-l border-border bg-secondary">
-          <h3 className="px-3 pb-1.5 pt-2.5 text-[13px] font-semibold text-muted-foreground">选区</h3>
+        <aside className="flex basis-1/4 min-w-0 max-w-sm shrink-0 flex-col overflow-hidden border-l border-border bg-secondary">
+          <h3 className="px-3 pb-1.5 pt-2.5 text-sm font-semibold text-muted-foreground">选区</h3>
           <div className="flex gap-1.5 px-2 pb-2">
             <Input
               className="min-w-0 flex-1"
@@ -2467,10 +2470,10 @@ export function CropPage() {
                 <div>
                   整图输出 · {size.w}×{size.h}
                 </div>
-                <div className="mt-1 text-[11px] text-muted-foreground">写入对应部位目录</div>
+                <div className="mt-1 text-xs text-muted-foreground">写入对应部位目录</div>
               </div>
             ) : crops.length === 0 ? (
-              <div className="py-1 text-[11px] text-muted-foreground">暂无选区</div>
+              <div className="py-1 text-xs text-muted-foreground">暂无选区</div>
             ) : (
               crops.map((box, position) => (
                 <div
@@ -2488,7 +2491,7 @@ export function CropPage() {
                       #{position + 1}
                       {box.name ? ` · ${box.name}` : ''}
                     </div>
-                    <div className="mt-1 text-[11px] text-muted-foreground">
+                    <div className="mt-1 text-xs text-muted-foreground">
                       {box.x2 - box.x1}x{box.y2 - box.y1} → {box.target_w}x{box.target_h} @
                       {Number(box.zoom).toFixed(1)}x
                     </div>
@@ -2498,7 +2501,7 @@ export function CropPage() {
                     <Button
                       size="sm"
                       variant="ghost"
-                      className="h-5 px-2 text-[11px]"
+                      className="h-5 px-2 text-xs"
                       title="仅当前图"
                       onClick={(event) => {
                         event.stopPropagation();
@@ -2510,7 +2513,7 @@ export function CropPage() {
                     <Button
                       size="sm"
                       variant="ghost"
-                      className="h-5 px-2 text-[11px]"
+                      className="h-5 px-2 text-xs"
                       title="取消自动应用"
                       onClick={(event) => {
                         event.stopPropagation();
@@ -2525,7 +2528,7 @@ export function CropPage() {
             )}
           </div>
 
-          <div className="border-t border-border px-3 py-2 text-[11px] text-muted-foreground">
+          <div className="border-t border-border px-3 py-2 text-xs text-muted-foreground">
             <div>默认裁切（本地）</div>
             <label className="mt-1.5 flex items-center gap-1.5">
               全局
@@ -2547,7 +2550,7 @@ export function CropPage() {
             ))}
           </div>
 
-          <div className="border-t border-border px-3 py-2 text-[11px] leading-relaxed text-muted-foreground">
+          <div className="border-t border-border px-3 py-2 text-xs leading-relaxed text-muted-foreground">
             S 保存并下张 · 空格/→/D 下张 · ←/A 上张 · Q 新建 · E 删除 · C 清空
           </div>
         </aside>
@@ -2570,7 +2573,7 @@ export function CropPage() {
                 item.width && item.height ? { aspectRatio: `${item.width} / ${item.height}` } : undefined
               }
               className={cn(
-                'h-[120px] w-auto shrink-0 cursor-pointer rounded-sm border-2 bg-[#0a1a30]',
+                'h-32 w-auto shrink-0 cursor-pointer rounded-sm border-2 bg-[#0a1a30]',
                 position === index
                   ? 'border-[#00cc66]'
                   : 'border-transparent hover:border-muted-foreground',

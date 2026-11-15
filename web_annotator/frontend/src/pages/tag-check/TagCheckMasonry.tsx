@@ -296,7 +296,7 @@ export function TagCheckMasonry({
           ))}
         </div>
       ) : (
-        <div className="py-16 text-center text-[13px] text-muted-foreground">没有图片</div>
+        <div className="py-16 text-center text-sm text-muted-foreground">没有图片</div>
       )}
     </div>
   );

@@ -180,7 +180,7 @@ export function MaskGenerateDialog({
       }
     >
       <div className="flex flex-col gap-3">
-        <p className="text-[11px] text-muted-foreground">
+        <p className="text-xs text-muted-foreground">
           默认仅重新生成当前图片蒙版，勾选「批量」处理整个目录。
         </p>
         <label className="flex items-center gap-2 text-xs text-muted-foreground">
@@ -242,10 +242,10 @@ export function MaskGenerateDialog({
           <div className="flex flex-col gap-2">
             <div className="flex items-center justify-between text-xs text-muted-foreground">
               <span>蒙板表达式</span>
-              <span className="text-[11px]">数值 ×255</span>
+              <span className="text-xs">数值 ×255</span>
             </div>
             <textarea
-              className="min-h-[110px] w-full resize-y rounded-md border border-border bg-[#0a1a30] p-2 font-mono text-xs leading-normal text-foreground outline-none focus:border-[#4a6a9a]"
+              className="min-h-28 w-full resize-y rounded-md border border-border bg-[#0a1a30] p-2 font-mono text-xs leading-normal text-foreground outline-none focus:border-[#4a6a9a]"
               spellCheck={false}
               value={expression}
               onChange={(event) => setExpression(event.target.value)}
@@ -259,7 +259,7 @@ export function MaskGenerateDialog({
                 缩进格式化
               </Button>
             </div>
-            <p className="text-[11px] leading-relaxed text-muted-foreground">
+            <p className="text-xs leading-relaxed text-muted-foreground">
               运算符 + - * / min / max / blur / 比较；优先级 * &gt; + - &gt; 比较。支持多行，
               「分号转相加」展开概念列表，「缩进格式化」重排排版。
             </p>

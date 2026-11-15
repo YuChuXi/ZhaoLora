@@ -48,7 +48,7 @@ export function Slider({
 }) {
   return (
     <SliderPrimitive.Root
-      className="relative flex h-4 w-[90px] touch-none items-center"
+      className="relative flex h-4 w-24 touch-none items-center"
       value={[value]}
       min={min}
       max={max}

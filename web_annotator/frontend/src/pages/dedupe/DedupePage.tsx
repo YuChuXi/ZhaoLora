@@ -5,6 +5,7 @@ import { Input, Select } from '@/components/ui/input';
 import { Dialog } from '@/components/ui/dialog';
 import { Toolbar, ToolbarDivider } from '@/components/ui/toolbar';
 import { useJob, useStatus } from '@/components/ui/status';
+import { PageHint } from '@/components/ui/hint';
 import { useApp } from '@/app/AppContext';
 
 type Algorithm = 'mse' | 'fft' | 'orb';
@@ -227,8 +228,8 @@ function DedupeCard({
     <div
       className={
         member.is_keep
-          ? 'masonry-card w-[180px] flex-none shadow-[inset_0_0_0_1px_rgba(74,222,128,0.35)]'
-          : 'masonry-card w-[180px] flex-none'
+          ? 'masonry-card w-44 flex-none shadow-[inset_0_0_0_1px_rgba(74,222,128,0.35)]'
+          : 'masonry-card w-44 flex-none'
       }
       data-selected={selected ? 'true' : 'false'}
       data-kind="image"
@@ -268,11 +269,11 @@ function DedupeCard({
         style={{ height: 140, aspectRatio: 'auto' }}
       />
       {member.is_keep ? (
-        <div className="absolute left-1.5 top-1.5 rounded bg-black/55 px-1.5 py-0.5 text-[10px] text-green-300">
+        <div className="absolute left-1.5 top-1.5 rounded bg-black/55 px-1.5 py-0.5 text-xs text-green-300">
           建议保留
         </div>
       ) : null}
-      <div className="px-2 py-1.5 text-[11px] leading-snug text-muted-foreground">
+      <div className="px-2 py-1.5 text-xs leading-snug text-muted-foreground">
         <div>{meta}</div>
         <div className="overflow-hidden text-ellipsis whitespace-nowrap">
           {member.stem || member.path}
@@ -370,7 +371,7 @@ function DedupePreview({
         if (!open) onClose();
       }}
       title="预览"
-      className="w-[min(960px,96vw)]"
+      className="max-w-6xl"
       footer={
         <>
           <Button onClick={onToggle}>{selected ? '取消' : '选中'}</Button>
@@ -382,14 +383,14 @@ function DedupePreview({
         <img
           src={src}
           alt={member.stem || member.path}
-          className="block max-h-[min(72vh,820px)] w-full bg-[#05070d] object-contain"
+          className="block max-h-[72vh] w-full bg-[#05070d] object-contain"
         />
         {members.length > 1 ? (
           <>
             <button
               type="button"
               title="←"
-              className="absolute left-2.5 top-1/2 h-16 w-[42px] -translate-y-1/2 rounded-lg bg-black/45 text-3xl leading-none text-white hover:bg-primary/80"
+              className="absolute left-2.5 top-1/2 h-16 w-10 -translate-y-1/2 rounded-lg bg-black/45 text-3xl leading-none text-white hover:bg-primary/80"
               onClick={() => onStep(-1)}
             >
               ‹
@@ -397,7 +398,7 @@ function DedupePreview({
             <button
               type="button"
               title="→"
-              className="absolute right-2.5 top-1/2 h-16 w-[42px] -translate-y-1/2 rounded-lg bg-black/45 text-3xl leading-none text-white hover:bg-primary/80"
+              className="absolute right-2.5 top-1/2 h-16 w-10 -translate-y-1/2 rounded-lg bg-black/45 text-3xl leading-none text-white hover:bg-primary/80"
               onClick={() => onStep(1)}
             >
               ›
@@ -405,7 +406,7 @@ function DedupePreview({
           </>
         ) : null}
       </div>
-      <div className="mt-2.5 flex flex-wrap items-center gap-2.5 text-[13px] text-muted-foreground">
+      <div className="mt-2.5 flex flex-wrap items-center gap-2.5 text-sm text-muted-foreground">
         <span>
           {index + 1}/{members.length}
         </span>
@@ -860,6 +861,9 @@ export function DedupePage() {
 
   return (
     <div>
+      <PageHint>
+        Ctrl+A 全选 · Delete 删除选中 · 预览：←/A →/D 切换 · 空格/Enter 切换保留 · Esc 关闭
+      </PageHint>
       <Toolbar>
         <Button variant="primary" onClick={() => void scan()} disabled={!!jobId || submitting}>
           扫描
@@ -893,7 +897,7 @@ export function DedupePage() {
       >
         <div className="flex flex-col gap-3 text-xs text-muted-foreground">
           <label className="flex items-center gap-2">
-            <span className="w-16">算法</span>
+            <span className="shrink-0">算法</span>
             <Select
               value={algorithm}
               onChange={(event) => {
@@ -915,7 +919,7 @@ export function DedupePage() {
 
           {algorithm === 'mse' ? (
             <label className="flex items-center gap-2">
-              <span className="w-16">
+              <span className="shrink-0">
                 {algorithm === 'mse' ? 'MSE 阈值' : '相似度'}
               </span>
               <Input
@@ -937,7 +941,7 @@ export function DedupePage() {
                   type="button"
                   tabIndex={-1}
                   aria-label="增大阈值"
-                  className="rounded border border-border bg-secondary px-1.5 text-[8px] leading-none text-muted-foreground hover:text-foreground"
+                  className="rounded border border-border bg-secondary px-1.5 text-xs leading-none text-muted-foreground hover:text-foreground"
                   onMouseDown={(event) => event.preventDefault()}
                   onClick={() => setMseText(stepMseValue(mseText, 1))}
                 >
@@ -947,7 +951,7 @@ export function DedupePage() {
                   type="button"
                   tabIndex={-1}
                   aria-label="减小阈值"
-                  className="rounded border border-border bg-secondary px-1.5 text-[8px] leading-none text-muted-foreground hover:text-foreground"
+                  className="rounded border border-border bg-secondary px-1.5 text-xs leading-none text-muted-foreground hover:text-foreground"
                   onMouseDown={(event) => event.preventDefault()}
                   onClick={() => setMseText(stepMseValue(mseText, -1))}
                 >
@@ -957,7 +961,7 @@ export function DedupePage() {
             </label>
           ) : (
             <label className="flex items-center gap-2">
-              <span className="w-16">相似度</span>
+              <span className="shrink-0">相似度</span>
               <Input
                 type="number"
                 className="flex-1"
@@ -973,7 +977,7 @@ export function DedupePage() {
           )}
 
           <label className="flex items-center gap-2">
-            <span className="w-16">分辨率比</span>
+            <span className="shrink-0">分辨率比</span>
             <Input
               type="number"
               className="flex-1"
@@ -995,7 +999,7 @@ export function DedupePage() {
           <img
             src={histogram}
             alt="两两相似度直方图"
-            className="mx-auto block h-auto w-full max-w-[720px]"
+            className="mx-auto block h-auto w-full max-w-3xl"
           />
         </div>
       ) : null}
@@ -1007,7 +1011,7 @@ export function DedupePage() {
               key={`${group.keep}-${index}`}
               className="overflow-hidden rounded-[10px] border border-border bg-secondary/40"
             >
-              <div className="flex flex-wrap items-center gap-2.5 border-b border-border px-3 py-2 text-[13px] text-muted-foreground">
+              <div className="flex flex-wrap items-center gap-2.5 border-b border-border px-3 py-2 text-sm text-muted-foreground">
                 <span>
                   组 <b className="text-foreground">#{index + 1}</b>
                 </span>

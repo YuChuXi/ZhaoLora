@@ -225,7 +225,7 @@ export function SemanticDialog({
       open={open}
       onOpenChange={(next) => !next && onClose()}
       title="语义检索"
-      className="w-[min(480px,92vw)]"
+      className="max-w-lg"
       footer={
         <>
           <Button variant="primary" disabled={busy} onClick={() => void batchTag()}>
@@ -237,7 +237,7 @@ export function SemanticDialog({
     >
       <div className="flex flex-col gap-3 text-xs text-muted-foreground">
         <label className="flex items-center gap-2">
-          <span className="shrink-0 text-[13px]">引擎</span>
+          <span className="shrink-0 text-sm">引擎</span>
           <Select
             className="flex-1"
             value={engine}
@@ -253,7 +253,7 @@ export function SemanticDialog({
         </label>
 
         <label className="flex items-center gap-2">
-          <span className="shrink-0 text-[13px]">{concept ? '概念提示词' : '查询文本'}</span>
+          <span className="shrink-0 text-sm">{concept ? '概念提示词' : '查询文本'}</span>
           <Input
             ref={queryRef}
             type="search"
@@ -280,7 +280,7 @@ export function SemanticDialog({
         <hr className="border-border" />
 
         <label className="flex items-center gap-2">
-          <span className="shrink-0 text-[13px]">标签</span>
+          <span className="shrink-0 text-sm">标签</span>
           <Input
             className="flex-1"
             spellCheck={false}
@@ -296,7 +296,7 @@ export function SemanticDialog({
         </label>
 
         <div className="flex items-center gap-2">
-          <span className="shrink-0 text-[13px]">位置</span>
+          <span className="shrink-0 text-sm">位置</span>
           <span className="text-xs text-foreground">{positionText}</span>
         </div>
 

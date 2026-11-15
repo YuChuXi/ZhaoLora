@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { useApp } from '@/app/AppContext';
+import { cn } from '@/lib/utils';
 import { Button } from './button';
 
 /**
@@ -9,14 +10,16 @@ import { Button } from './button';
  * - `part`：集合的分类计数，必须给出分类名。
  * - `selected`：选中数量，标签固定为"已选"。
  * - `resource`：外部资源状态，必须给出资源名。
+ * - `nav`：页面导航入口（如当前位置、缩略条开关），必须给出名称与点击行为。
  */
-export type StatusKind = 'total' | 'part' | 'selected' | 'resource';
+export type StatusKind = 'total' | 'part' | 'selected' | 'resource' | 'nav';
 
 export type StatusSegData =
   | { kind: 'total'; value: string | number }
   | { kind: 'part'; name: string; value: string | number }
   | { kind: 'selected'; value: string | number }
-  | { kind: 'resource'; name: string; value: string | number };
+  | { kind: 'resource'; name: string; value: string | number }
+  | { kind: 'nav'; name: string; value: string | number; onClick: () => void; active?: boolean };
 
 /** 长任务快照的最小结构，与后端 `services/models/jobs.py:JobSnapshot` 字段对齐。 */
 export interface JobSnapshotLike {
@@ -42,9 +45,10 @@ export interface JobState {
 
 const KIND_ORDER: Record<StatusKind, number> = {
   total: 0,
-  part: 1,
-  selected: 2,
-  resource: 3,
+  nav: 1,
+  part: 2,
+  selected: 3,
+  resource: 4,
 };
 
 const STATUS_TEXT: Record<string, string> = {
@@ -80,6 +84,8 @@ function statusLabelOf(seg: StatusSegData): string {
  * Args:
  *   label (string): 段标签。
  *   value (string | number): 段数值。
+ *   onClick (function | undefined): 导航段的点击行为；缺省渲染为静态文本。
+ *   active (boolean | undefined): 导航段对应的面板是否展开。
  *
  * Returns:
  *   JSX.Element: 状态段节点。
@@ -87,11 +93,34 @@ function statusLabelOf(seg: StatusSegData): string {
  * Callers:
  *   - `components/ui/status.tsx:StatusBar`
  */
-function StatusSeg({ label, value }: { label: string; value: string | number }) {
-  return (
-    <span className="whitespace-nowrap">
+function StatusSeg({
+  label,
+  value,
+  onClick,
+  active,
+}: {
+  label: string;
+  value: string | number;
+  onClick?: () => void;
+  active?: boolean;
+}) {
+  const content = (
+    <>
       {label} <b className="text-foreground">{value}</b>
-    </span>
+    </>
+  );
+  if (!onClick) return <span className="whitespace-nowrap">{content}</span>;
+  return (
+    <button
+      type="button"
+      className={cn(
+        'whitespace-nowrap rounded px-1.5 py-0.5 hover:bg-white/10',
+        active && 'bg-white/10 text-foreground',
+      )}
+      onClick={onClick}
+    >
+      {content}
+    </button>
   );
 }
 
@@ -181,7 +210,13 @@ export function StatusBar({
 
       <span className="ml-auto flex items-center gap-3">
         {visible.map((seg, index) => (
-          <StatusSeg key={`${seg.kind}-${index}`} label={statusLabelOf(seg)} value={seg.value} />
+          <StatusSeg
+            key={`${seg.kind}-${index}`}
+            label={statusLabelOf(seg)}
+            value={seg.value}
+            onClick={seg.kind === 'nav' ? seg.onClick : undefined}
+            active={seg.kind === 'nav' ? seg.active : undefined}
+          />
         ))}
         {summary ? <span className="max-w-[32vw] truncate">{summary}</span> : null}
       </span>

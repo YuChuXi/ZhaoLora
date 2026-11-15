@@ -174,7 +174,7 @@ export function ThumbnailStrip({
                 src={frameUrl(path, frame, THUMB_SIZE)}
                 alt=""
                 loading="lazy"
-                className="block h-[52px] w-auto rounded-sm bg-[#0a1a30]"
+                className="block h-14 w-auto rounded-sm bg-[#0a1a30]"
                 style={{ aspectRatio: `${width || 16} / ${height || 9}` }}
               />
               <button
@@ -183,7 +183,7 @@ export function ThumbnailStrip({
                 aria-pressed={isChecked}
                 title="勾选该帧"
                 className={cn(
-                  'absolute left-0.5 top-0.5 flex h-4 w-4 items-center justify-center rounded-sm border text-[10px] leading-none',
+                  'absolute left-0.5 top-0.5 flex h-4 w-4 items-center justify-center rounded-sm border text-xs leading-none',
                   isChecked
                     ? 'border-primary bg-primary text-white'
                     : 'border-white/50 bg-black/60 text-transparent',
@@ -196,7 +196,7 @@ export function ThumbnailStrip({
               >
                 ✓
               </button>
-              <span className="absolute bottom-0.5 right-0.5 rounded bg-black/70 px-1 text-[10px] text-white">
+              <span className="absolute bottom-0.5 right-0.5 rounded bg-black/70 px-1 text-xs text-white">
                 {frame}
               </span>
             </div>
@@ -212,10 +212,10 @@ export function ThumbnailStrip({
           <img
             src={preview.src}
             alt=""
-            className="block max-h-[320px] max-w-[480px] rounded-sm bg-[#0a1a30]"
+            className="block max-h-80 max-w-md rounded-sm bg-[#0a1a30]"
           />
         ) : null}
-        <span className="absolute bottom-1.5 right-1.5 rounded bg-black/70 px-1 text-[11px] text-white">
+        <span className="absolute bottom-1.5 right-1.5 rounded bg-black/70 px-1 text-xs text-white">
           {preview?.index ?? ''}
         </span>
       </div>

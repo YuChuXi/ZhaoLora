@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/controls';
 import { Toolbar, ToolbarDivider } from '@/components/ui/toolbar';
 import { useJob, useStatus } from '@/components/ui/status';
+import { PageHint } from '@/components/ui/hint';
 import { useApp } from '@/app/AppContext';
 import { VideoFrameDecoder } from './decoder';
 import { FrameChart } from './FrameCharts';
@@ -787,6 +788,10 @@ export function VideoExtractPage() {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+      <PageHint>
+        左键存帧 · 右键删帧 · 滚轮调帧 · Shift+滚轮 按 I 帧跳 · A/D 切换视频 · Q/E 单帧 ·
+        ←/→ 十帧 · S/空格 存帧 · X/Delete 删帧
+      </PageHint>
       <Toolbar>
         <Button onClick={() => switchVideo(-1)} disabled={!videos.length} title="A: 上一个视频">
           ‹ 视频
@@ -873,7 +878,7 @@ export function VideoExtractPage() {
         onContextMenu={(event) => event.preventDefault()}
       >
         {notice ? (
-          <p className="p-10 text-[13px] text-muted-foreground">{notice}</p>
+          <p className="p-10 text-sm text-muted-foreground">{notice}</p>
         ) : (
           <>
             <canvas
@@ -881,7 +886,7 @@ export function VideoExtractPage() {
               className={`block max-h-full max-w-full select-none ${loading ? 'opacity-35' : ''}`}
             />
             {loading ? (
-              <div className="absolute inset-0 flex items-center justify-center gap-2 text-[13px] text-muted-foreground">
+              <div className="absolute inset-0 flex items-center justify-center gap-2 text-sm text-muted-foreground">
                 解码帧中…
               </div>
             ) : null}
@@ -889,7 +894,7 @@ export function VideoExtractPage() {
         )}
       </div>
 
-      <div className="flex h-[100px] flex-none">
+      <div className="flex h-24 flex-none">
         <FrameChart
           mode="global"
           total={total}

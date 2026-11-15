@@ -75,7 +75,7 @@ export function NavLink({
   return (
     <a
       className={cn(
-        'flex items-center border-b-2 px-3.5 py-2.5 text-[13px]',
+        'flex items-center border-b-2 px-3.5 py-2.5 text-sm',
         active
           ? 'border-primary font-medium text-foreground'
           : 'border-transparent text-muted-foreground hover:text-foreground',
@@ -198,7 +198,7 @@ function DirectoryPicker({
                     onCheckedChange={(checked) => toggle(dir.name, checked)}
                   />
                   <span className="flex-1 truncate">{dir.label || dir.name}</span>
-                  <span className="text-[10px] text-muted-foreground">{dir.image_count || ''}</span>
+                  <span className="text-xs text-muted-foreground">{dir.image_count || ''}</span>
                 </label>
               ))}
             </div>,

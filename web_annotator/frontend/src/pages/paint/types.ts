@@ -77,16 +77,6 @@ export interface CanvasView {
   top: number;
 }
 
-/** 缩放与平移状态. */
-export interface Camera {
-  zoom: number;
-  x: number;
-  y: number;
-}
-
-/** 绘制工具. */
-export type Tool = 'brush' | 'eraser' | 'line' | 'fill';
-
 /** 画布背景样式. */
 export type BgStyle = 'checker' | 'white' | 'black' | 'custom';
 

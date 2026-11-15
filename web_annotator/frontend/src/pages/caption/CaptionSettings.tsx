@@ -100,7 +100,7 @@ export function CaptionSettingsDialog({
         if (!next) closeWithSave();
       }}
       title="描述设置"
-      className="w-[min(860px,94vw)]"
+      className="max-w-4xl"
       footer={
         <>
           <Button onClick={closeWithSave}>关闭</Button>
@@ -112,7 +112,7 @@ export function CaptionSettingsDialog({
     >
       <div className="flex flex-col gap-4 text-xs text-muted-foreground">
         <section className="flex flex-wrap items-center gap-3">
-          <span className="w-16 text-foreground">描述模式</span>
+          <span className="shrink-0 text-foreground">描述模式</span>
           {(data?.modes ?? ['coarse', 'detailed']).map((mode) => (
             <label key={mode} className="flex items-center gap-1.5">
               <Checkbox
@@ -132,7 +132,7 @@ export function CaptionSettingsDialog({
         </section>
 
         <section className="flex flex-wrap items-center gap-3 border-t border-border pt-3">
-          <span className="w-16 text-foreground">WD14 注入</span>
+          <span className="shrink-0 text-foreground">WD14 注入</span>
           <label className="flex items-center gap-1.5">
             <Checkbox
               checked={!!draft.inject.general}
@@ -187,7 +187,7 @@ export function CaptionSettingsDialog({
         </section>
 
         <section className="flex flex-wrap items-center gap-3 border-t border-border pt-3">
-          <span className="w-16 text-foreground">已有描述</span>
+          <span className="shrink-0 text-foreground">已有描述</span>
           <label className="flex items-center gap-1.5">
             <Checkbox
               checked={draft.force}

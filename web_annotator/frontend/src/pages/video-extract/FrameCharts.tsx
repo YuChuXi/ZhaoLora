@@ -248,7 +248,7 @@ export function FrameChart({
     <div
       ref={containerRef}
       className={cn(
-        'h-[100px] min-w-0 flex-1 cursor-crosshair overflow-x-auto overflow-y-hidden border-t border-border bg-[#16213e]',
+        'h-24 min-w-0 flex-1 cursor-crosshair overflow-x-auto overflow-y-hidden border-t border-border bg-[#16213e]',
         mode === 'local' ? 'border-l' : '',
       )}
       style={{ scrollbarWidth: 'thin', scrollbarColor: '#2a2a4a transparent' }}

@@ -23,12 +23,10 @@ import {
   clearMask,
   createMaskSurface,
   fillMask,
-  floodFill,
   readAlpha,
   readMaskRegion,
   stampDisc,
   strokeLine,
-  writeAlpha,
   type MaskSurface,
   type StencilCache,
 } from './mask';
@@ -37,7 +35,6 @@ import { slotKey, TemplateDialog, type MergeMode } from './TemplateDialog';
 import { MaskGenerateDialog } from './MaskGenerateDialog';
 import type {
   BgStyle,
-  Camera,
   CanvasView,
   FloatingTemplate,
   LoadedEntry,
@@ -46,24 +43,10 @@ import type {
   PaintInputs,
   Point,
   TemplatesPayload,
-  Tool,
 } from './types';
 
 /** 邻域预加载半径（前后各取该数量的图片）. */
 const PRELOAD_RADIUS = 15;
-/** 撤销栈上限. */
-const HISTORY_LIMIT = 20;
-/** 缩放范围. */
-const ZOOM_MIN = 0.2;
-const ZOOM_MAX = 16;
-
-/** 绘制工具列表. */
-const TOOLS: Array<{ id: Tool; label: string; title: string }> = [
-  { id: 'brush', label: '笔刷', title: '按左/右键 Alpha 绘制' },
-  { id: 'eraser', label: '橡皮', title: '擦除为全透明' },
-  { id: 'line', label: '直线', title: '拖拽绘制直线' },
-  { id: 'fill', label: '填充', title: '填充连通同值区域' },
-];
 
 /** 缩放手柄到可动边的映射. */
 const RESIZE_HV: Record<string, { h: 'l' | 'r' | null; v: 't' | 'b' | null }> = {
@@ -436,10 +419,6 @@ export function PaintPage() {
   const indexRef = useRef(0);
   const [inputs, setInputs] = useState<PaintInputs>(() => readPaintSettings(app.settings.paint));
   const inputsRef = useRef(inputs);
-  const [tool, setToolState] = useState<Tool>('brush');
-  const toolRef = useRef<Tool>(tool);
-  const [camera, setCameraState] = useState<Camera>({ zoom: 1, x: 0, y: 0 });
-  const cameraRef = useRef(camera);
   const [size, setSizeState] = useState({ w: 0, h: 0 });
   const sizeRef = useRef(size);
   const [viewport, setViewport] = useState({ width: 0, height: 0 });
@@ -447,7 +426,6 @@ export function PaintPage() {
   const [cacheVersion, setCacheVersion] = useState(0);
   const [imageTick, setImageTick] = useState(0);
   const [filmstripOpen, setFilmstripOpen] = useState(false);
-  const [historyState, setHistoryState] = useState({ canUndo: false, canRedo: false });
   const [templates, setTemplates] = useState<Array<MaskTemplate | null>>(() =>
     new Array(10).fill(null),
   );
@@ -486,7 +464,6 @@ export function PaintPage() {
   const lineSvgRef = useRef<SVGSVGElement | null>(null);
   const lineRef = useRef<SVGLineElement | null>(null);
   const captureRectRef = useRef<HTMLDivElement | null>(null);
-  const historyRef = useRef<{ past: Uint8Array[]; future: Uint8Array[] }>({ past: [], future: [] });
   const strokeRef = useRef<StrokeState>({ mode: 'none', value: 0, start: null, last: null });
   const strokeMoveRef = useRef<((event: PointerEvent) => void) | null>(null);
   const strokeUpRef = useRef<((event: PointerEvent) => void) | null>(null);
@@ -541,23 +518,6 @@ export function PaintPage() {
   const applySize = useCallback((next: { w: number; h: number }) => {
     sizeRef.current = next;
     setSizeState(next);
-  }, []);
-
-  /**
-   * 同步缩放平移状态到引用与状态.
-   *
-   * Args:
-   *   next (Camera): 新的相机参数.
-   *
-   * Returns:
-   *   void: 无返回值.
-   *
-   * Callers:
-   *   - 缩放、平移与切图路径.
-   */
-  const applyCamera = useCallback((next: Camera) => {
-    cameraRef.current = next;
-    setCameraState(next);
   }, []);
 
   /**
@@ -629,23 +589,6 @@ export function PaintPage() {
   }, []);
 
   /**
-   * 同步当前绘制工具.
-   *
-   * Args:
-   *   next (Tool): 目标工具.
-   *
-   * Returns:
-   *   void: 无返回值.
-   *
-   * Callers:
-   *   - 工具栏工具按钮.
-   */
-  const setTool = useCallback((next: Tool) => {
-    toolRef.current = next;
-    setToolState(next);
-  }, []);
-
-  /**
    * 合并输入参数并按需持久化到设置键 `paint`.
    *
    * Args:
@@ -704,140 +647,23 @@ export function PaintPage() {
     if (!w || !h || !viewport.width || !viewport.height) {
       return { scale: 1, width: 0, height: 0, left: 0, top: 0 };
     }
-    const fit = Math.min(viewport.width / w, viewport.height / h);
-    const scale = fit * camera.zoom;
+    const scale = Math.min(viewport.width / w, viewport.height / h);
     const width = w * scale;
     const height = h * scale;
     return {
       scale,
       width,
       height,
-      left: (viewport.width - width) / 2 + camera.x,
-      top: (viewport.height - height) / 2 + camera.y,
+      left: (viewport.width - width) / 2,
+      top: (viewport.height - height) / 2,
     };
-  }, [size, viewport, camera]);
+  }, [size, viewport]);
   const viewRef = useRef(view);
   viewRef.current = view;
 
   const brushRadius = brushRadiusFrom(size.w, size.h, inputs.brushPct);
   const brushRadiusRef = useRef(brushRadius);
   brushRadiusRef.current = brushRadius;
-
-  /**
-   * 刷新撤销/重做按钮可用状态.
-   *
-   * Args:
-   *   无.
-   *
-   * Returns:
-   *   void: 无返回值.
-   *
-   * Callers:
-   *   - `frontend/src/pages/paint/PaintPage.tsx:pushHistory`
-   *   - `frontend/src/pages/paint/PaintPage.tsx:undo`
-   *   - `frontend/src/pages/paint/PaintPage.tsx:redo`
-   */
-  const updateHistoryFlags = useCallback(() => {
-    const history = historyRef.current;
-    setHistoryState({ canUndo: history.past.length > 0, canRedo: history.future.length > 0 });
-  }, []);
-
-  /**
-   * 清空撤销/重做历史.
-   *
-   * Args:
-   *   无.
-   *
-   * Returns:
-   *   void: 无返回值.
-   *
-   * Callers:
-   *   - `frontend/src/pages/paint/PaintPage.tsx:loadIndex`
-   *   - `frontend/src/pages/paint/PaintPage.tsx:reloadCurrentMask`
-   */
-  const resetHistory = useCallback(() => {
-    historyRef.current = { past: [], future: [] };
-    updateHistoryFlags();
-  }, [updateHistoryFlags]);
-
-  /**
-   * 在改动蒙版前记录当前 Alpha 快照.
-   *
-   * Args:
-   *   无.
-   *
-   * Returns:
-   *   void: 无返回值.
-   *
-   * Callers:
-   *   - `frontend/src/pages/paint/PaintPage.tsx:startStroke`
-   *   - `frontend/src/pages/paint/PaintPage.tsx:finishStroke`
-   *   - `frontend/src/pages/paint/PaintPage.tsx:applyFloatingTemplate`
-   *   - `frontend/src/pages/paint/PaintPage.tsx:clearAll`
-   *   - `frontend/src/pages/paint/PaintPage.tsx:fillAll`
-   */
-  const pushHistory = useCallback(() => {
-    const surface = maskSurfaceRef.current;
-    const { w, h } = sizeRef.current;
-    if (!surface || !w || !h) return;
-    const history = historyRef.current;
-    history.past.push(readAlpha(surface.ctx, w, h));
-    if (history.past.length > HISTORY_LIMIT) history.past.shift();
-    history.future = [];
-    updateHistoryFlags();
-  }, [updateHistoryFlags]);
-
-  /**
-   * 撤销一步蒙版改动.
-   *
-   * Args:
-   *   无.
-   *
-   * Returns:
-   *   void: 无返回值.
-   *
-   * Callers:
-   *   - `frontend/src/pages/paint/PaintPage.tsx` 撤销按钮与快捷键.
-   */
-  const undo = useCallback(() => {
-    const surface = maskSurfaceRef.current;
-    const { w, h } = sizeRef.current;
-    const history = historyRef.current;
-    if (!surface || !w || !h || !history.past.length) return;
-    const previous = history.past.pop();
-    if (!previous) return;
-    history.future.push(readAlpha(surface.ctx, w, h));
-    writeAlpha(surface.ctx, w, h, previous);
-    modifiedRef.current = true;
-    updateHistoryFlags();
-    scheduleRender();
-  }, [updateHistoryFlags]);
-
-  /**
-   * 重做一步蒙版改动.
-   *
-   * Args:
-   *   无.
-   *
-   * Returns:
-   *   void: 无返回值.
-   *
-   * Callers:
-   *   - `frontend/src/pages/paint/PaintPage.tsx` 重做按钮与快捷键.
-   */
-  const redo = useCallback(() => {
-    const surface = maskSurfaceRef.current;
-    const { w, h } = sizeRef.current;
-    const history = historyRef.current;
-    if (!surface || !w || !h || !history.future.length) return;
-    const next = history.future.pop();
-    if (!next) return;
-    history.past.push(readAlpha(surface.ctx, w, h));
-    writeAlpha(surface.ctx, w, h, next);
-    modifiedRef.current = true;
-    updateHistoryFlags();
-    scheduleRender();
-  }, [updateHistoryFlags]);
 
   /**
    * 合成 RGB 与蒙版并按当前缩放平移绘制到视口画布；红色模式覆盖图片区域.
@@ -1123,32 +949,6 @@ export function PaintPage() {
   );
 
   /**
-   * 对起点所在连通区域做漫水填充.
-   *
-   * Args:
-   *   point (Point): 起点图像坐标.
-   *   value (number): 目标 Alpha.
-   *
-   * Returns:
-   *   void: 无返回值.
-   *
-   * Callers:
-   *   - `frontend/src/pages/paint/PaintPage.tsx:startStroke`
-   */
-  const fillRegion = useCallback(
-    (point: Point, value: number) => {
-      const surface = maskSurfaceRef.current;
-      const { w, h } = sizeRef.current;
-      if (!surface || !w || !h) return;
-      if (floodFill(surface.ctx, w, h, point.x, point.y, value)) {
-        modifiedRef.current = true;
-        scheduleRender();
-      }
-    },
-    [scheduleRender],
-  );
-
-  /**
    * 清空整幅蒙版为全透明.
    *
    * Args:
@@ -1164,11 +964,10 @@ export function PaintPage() {
     const surface = maskSurfaceRef.current;
     const { w, h } = sizeRef.current;
     if (!surface || !w || !h) return;
-    pushHistory();
     clearMask(surface.ctx, w, h);
     modifiedRef.current = true;
     scheduleRender();
-  }, [pushHistory, scheduleRender]);
+  }, [scheduleRender]);
 
   /**
    * 把整幅蒙版填充为指定 Alpha.
@@ -1187,12 +986,11 @@ export function PaintPage() {
       const surface = maskSurfaceRef.current;
       const { w, h } = sizeRef.current;
       if (!surface || !w || !h) return;
-      pushHistory();
       fillMask(surface.ctx, w, h, value);
       modifiedRef.current = true;
       scheduleRender();
     },
-    [pushHistory, scheduleRender],
+    [scheduleRender],
   );
 
   /**
@@ -1211,11 +1009,10 @@ export function PaintPage() {
     const surface = maskSurfaceRef.current;
     const { w, h } = sizeRef.current;
     if (!surface || !w || !h) return;
-    pushHistory();
     fillMask(surface.ctx, w, h, inputsRef.current.defaultAlpha);
     modifiedRef.current = true;
     scheduleRender();
-  }, [pushHistory, scheduleRender]);
+  }, [scheduleRender]);
 
   /**
    * 读取当前鼠标按键对应的绘制 Alpha.
@@ -1308,10 +1105,9 @@ export function PaintPage() {
       cached.h = h;
     }
     modifiedRef.current = false;
-    resetHistory();
     scheduleRender();
     setCacheVersion((version) => version + 1);
-  }, [resetHistory, scheduleRender]);
+  }, [scheduleRender]);
 
   /**
    * 蒙版生成完成后的就地刷新.
@@ -1598,21 +1394,17 @@ export function PaintPage() {
       applySize({ w: entry.w, h: entry.h });
       applyIndex(nextIndex);
       modifiedRef.current = false;
-      resetHistory();
-      applyCamera({ zoom: 1, x: 0, y: 0 });
       setImageTick((tick) => tick + 1);
       scheduleRender();
       void preloadNeighbors(nextIndex);
     },
     [
-      applyCamera,
       applyIndex,
       applySize,
       cancelInteraction,
       preloadEntry,
       preloadNeighbors,
       reportError,
-      resetHistory,
       scheduleRender,
     ],
   );
@@ -1955,17 +1747,15 @@ export function PaintPage() {
     const y0 = Math.max(0, Math.floor(source.ry));
     const x1 = Math.min(w, Math.ceil(source.rx + source.rw));
     const y1 = Math.min(h, Math.ceil(source.ry + source.rh));
-    // 实例完全落在画布外时与蒙板无交集：仅丢弃实例，不改动蒙板也不产生撤销记录
     if (x0 >= x1 || y0 >= y1) {
       applyFloatingState(null);
       return;
     }
-    pushHistory();
     applyTemplateRegion(surface.ctx, w, h, source, mergeModeRef.current === 'max');
     modifiedRef.current = true;
     applyFloatingState(null);
     scheduleRender();
-  }, [applyFloatingState, confirmCapture, pushHistory, scheduleRender]);
+  }, [applyFloatingState, confirmCapture, scheduleRender]);
 
   /**
    * 结束框选并按几何生成待确认模板实例.
@@ -2223,24 +2013,6 @@ export function PaintPage() {
   };
 
   /**
-   * 复制当前 Alpha 快照后再执行一次蒙版改动.
-   *
-   * Args:
-   *   action (() => void): 实际改动动作.
-   *
-   * Returns:
-   *   void: 无返回值.
-   *
-   * Callers:
-   *   - `frontend/src/pages/paint/PaintPage.tsx:startStroke`
-   *   - `frontend/src/pages/paint/PaintPage.tsx:finishStroke`
-   */
-  const withHistory = (action: () => void) => {
-    pushHistory();
-    action();
-  };
-
-  /**
    * 结束一次进行中的笔触或框选.
    *
    * Args:
@@ -2265,7 +2037,7 @@ export function PaintPage() {
       return;
     }
     if (state.mode === 'line' && state.start && point) {
-      withHistory(() => paintSegment(state.start as Point, point, state.value));
+      paintSegment(state.start as Point, point, state.value);
       modifiedRef.current = true;
     }
     if (state.mode === 'brush') modifiedRef.current = true;
@@ -2347,18 +2119,14 @@ export function PaintPage() {
       attachStrokeTracking(event.pointerId);
       return;
     }
-    const value = toolRef.current === 'eraser' ? 0 : alphaFor(event.button);
-    if (toolRef.current === 'fill') {
-      withHistory(() => fillRegion(point, value));
-      return;
-    }
-    if (toolRef.current === 'line' || event.shiftKey) {
+    const value = alphaFor(event.button);
+    if (event.shiftKey) {
       strokeRef.current = { mode: 'line', value, start: point, last: point };
       updateLinePreview();
       attachStrokeTracking(event.pointerId);
       return;
     }
-    withHistory(() => paintDisc(point, value));
+    paintDisc(point, value);
     strokeRef.current = { mode: 'brush', value, start: point, last: point };
     modifiedRef.current = true;
     attachStrokeTracking(event.pointerId);
@@ -2419,88 +2187,6 @@ export function PaintPage() {
     hoverRef.current = null;
     updateBrushPreview(null);
   };
-
-  /**
-   * 以指定局部坐标为锚点缩放画布.
-   *
-   * Args:
-   *   nextZoom (number): 目标缩放倍数.
-   *   localX (number): 容器内横坐标.
-   *   localY (number): 容器内纵坐标.
-   *
-   * Returns:
-   *   void: 无返回值.
-   *
-   * Callers:
-   *   - 工具栏缩放按钮、Ctrl+滚轮与快捷键 +/-.
-   */
-  const zoomAt = useCallback(
-    (nextZoom: number, localX: number, localY: number) => {
-      const current = cameraRef.current;
-      const next = clamp(ZOOM_MIN, ZOOM_MAX, nextZoom);
-      const { w, h } = sizeRef.current;
-      const viewportSize = viewportRef.current;
-      if (!w || !h || !viewportSize.width || !viewportSize.height) {
-        applyCamera({ ...current, zoom: next });
-        return;
-      }
-      const fit = Math.min(viewportSize.width / w, viewportSize.height / h);
-      const scale0 = fit * current.zoom;
-      const scale1 = fit * next;
-      if (scale0 <= 0) return;
-      const left0 = (viewportSize.width - w * scale0) / 2 + current.x;
-      const top0 = (viewportSize.height - h * scale0) / 2 + current.y;
-      const ratio = scale1 / scale0;
-      const left1 = localX - (localX - left0) * ratio;
-      const top1 = localY - (localY - top0) * ratio;
-      applyCamera({
-        zoom: next,
-        x: left1 - (viewportSize.width - w * scale1) / 2,
-        y: top1 - (viewportSize.height - h * scale1) / 2,
-      });
-    },
-    [applyCamera],
-  );
-
-  /**
-   * 以容器中心为锚点按倍数缩放.
-   *
-   * Args:
-   *   factor (number): 缩放倍数（大于 1 放大）.
-   *
-   * Returns:
-   *   void: 无返回值.
-   *
-   * Callers:
-   *   - 工具栏缩放按钮与快捷键 +/-.
-   */
-  const zoomBy = useCallback(
-    (factor: number) => {
-      const viewportSize = viewportRef.current;
-      zoomAt(
-        cameraRef.current.zoom * factor,
-        viewportSize.width / 2,
-        viewportSize.height / 2,
-      );
-    },
-    [zoomAt],
-  );
-
-  /**
-   * 恢复适应窗口的缩放与居中的平移.
-   *
-   * Args:
-   *   无.
-   *
-   * Returns:
-   *   void: 无返回值.
-   *
-   * Callers:
-   *   - 工具栏「适应」按钮.
-   */
-  const resetCamera = useCallback(() => {
-    applyCamera({ zoom: 1, x: 0, y: 0 });
-  }, [applyCamera]);
 
   useEffect(() => {
     let cancelled = false;
@@ -2587,7 +2273,7 @@ export function PaintPage() {
   useEffect(() => {
     updateBrushPreview(hoverRef.current);
     updateLinePreview();
-  }, [camera, inputs.brushPct, updateBrushPreview, updateLinePreview, view]);
+  }, [inputs.brushPct, updateBrushPreview, updateLinePreview, view]);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -2630,14 +2316,7 @@ export function PaintPage() {
         return;
       }
       if (event.ctrlKey || event.metaKey) {
-        if (event.key === 'z' || event.key === 'Z') {
-          event.preventDefault();
-          if (event.shiftKey) redo();
-          else undo();
-        } else if (event.key === 'y' || event.key === 'Y') {
-          event.preventDefault();
-          redo();
-        } else if (event.key === 's' || event.key === 'S') {
+        if (event.key === 's' || event.key === 'S') {
           event.preventDefault();
           void saveMask(true).catch(reportError);
         } else if (event.key === 'a' || event.key === 'A') {
@@ -2660,12 +2339,6 @@ export function PaintPage() {
         void saveMask(true).catch(reportError);
       } else if (event.key === 'x' || event.key === 'X') {
         void goSkip();
-      } else if (event.key === '+' || event.key === '=') {
-        event.preventDefault();
-        zoomBy(1.2);
-      } else if (event.key === '-' || event.key === '_') {
-        event.preventDefault();
-        zoomBy(1 / 1.2);
       }
     };
     document.addEventListener('keydown', onKey);
@@ -2679,11 +2352,8 @@ export function PaintPage() {
     goSkip,
     notify,
     placeTemplate,
-    redo,
     reportError,
     saveMask,
-    undo,
-    zoomBy,
   ]);
 
   useEffect(() => {
@@ -2785,6 +2455,13 @@ export function PaintPage() {
   useStatus(
     [
       { kind: 'total', value: images.length },
+      {
+        kind: 'nav',
+        name: '位置',
+        value: images.length ? `${index + 1}/${images.length}` : '0/0',
+        onClick: () => setFilmstripOpen((value) => !value),
+        active: filmstripOpen,
+      },
       { kind: 'part', name: '已标注', value: doneCount },
       {
         kind: 'resource',
@@ -2793,11 +2470,7 @@ export function PaintPage() {
       },
       { kind: 'resource', name: '尺寸', value: size.w ? `${size.w}×${size.h}` : '-' },
     ],
-    [
-      images.length ? `${index + 1}/${images.length}` : '',
-      current?.stem ?? '',
-      current ? (current.has_mask ? '已标注' : '待标注') : '',
-    ]
+    [current?.stem ?? '', current ? (current.has_mask ? '已标注' : '待标注') : '']
       .filter(Boolean)
       .join(' · '),
   );
@@ -2811,9 +2484,6 @@ export function PaintPage() {
         <Button onClick={() => void goNext()} title="→/D">
           下一张
         </Button>
-        <Button onClick={() => setFilmstripOpen((value) => !value)} title="显示或隐藏缩略图条">
-          缩略图
-        </Button>
         <Button onClick={() => void goSkip()} title="X">
           跳过
         </Button>
@@ -2825,27 +2495,18 @@ export function PaintPage() {
           保存
         </Button>
         <ToolbarDivider />
-        <Button onClick={() => setGenerateOpen(true)}>生成蒙版</Button>
-        <Button onClick={() => setTemplateOpen(true)}>模板</Button>
-        <ToolbarDivider />
-        <Button size="sm" disabled={!historyState.canUndo} onClick={undo} title="Ctrl+Z">
-          撤销
+        <Button
+          onClick={() => setGenerateOpen(true)}
+          title="生成蒙版(BiRefNet / SAM3)到 mask/"
+        >
+          生成蒙版
         </Button>
-        <Button size="sm" disabled={!historyState.canRedo} onClick={redo} title="Ctrl+Shift+Z">
-          重做
+        <Button
+          onClick={() => setTemplateOpen(true)}
+          title="蒙板模板: 框选当前图区域, Enter/空格 确认; 1-9/0 放置, Enter/空格 应用, Esc 取消"
+        >
+          模板
         </Button>
-        <ToolbarDivider />
-        {TOOLS.map((entry) => (
-          <Button
-            key={entry.id}
-            size="sm"
-            variant={tool === entry.id ? 'primary' : 'default'}
-            title={entry.title}
-            onClick={() => setTool(entry.id)}
-          >
-            {entry.label}
-          </Button>
-        ))}
         <ToolbarDivider />
         <Button size="sm" onClick={clearAll} title="全透明">
           全透明
@@ -2867,7 +2528,7 @@ export function PaintPage() {
             onChange={(value) => patchInputs({ brushPct: value })}
             onCommit={() => patchInputs({}, true)}
           />
-          <span className="w-[92px]">
+          <span className="w-24">
             {inputs.brushPct.toFixed(1)}% ~{brushRadius}px
           </span>
         </label>
@@ -2947,19 +2608,6 @@ export function PaintPage() {
             />
           ) : null}
         </label>
-        <ToolbarDivider />
-        <Button size="sm" onClick={() => zoomBy(1 / 1.2)} title="缩小">
-          −
-        </Button>
-        <span className="w-11 text-center text-xs text-muted-foreground">
-          {Math.round(camera.zoom * 100)}%
-        </span>
-        <Button size="sm" onClick={() => zoomBy(1.2)} title="放大">
-          ＋
-        </Button>
-        <Button size="sm" onClick={resetCamera} title="适应窗口">
-          适应
-        </Button>
       </Toolbar>
 
       <div
@@ -2992,6 +2640,10 @@ export function PaintPage() {
           ref={captureRectRef}
           className="pointer-events-none absolute z-[12] hidden border border-dashed border-[#f33] bg-red-500/15"
         />
+        <span className="pointer-events-none absolute bottom-2 right-3 z-10 whitespace-nowrap text-xs text-white/30">
+          Esc 取消 · Enter/空格 应用 · 1-9/0 模板 · ←/A 上一张 · →/D 下一张 · S 保存 · X
+          跳过 · Shift+拖拽 直线 · 滚轮 笔刷
+        </span>
         {overlay}
       </div>
 
@@ -3014,7 +2666,7 @@ export function PaintPage() {
                   : undefined
               }
               className={cn(
-                'h-[120px] w-auto shrink-0 cursor-pointer rounded-sm border-2 bg-[#0a1a30]',
+                'h-32 w-auto shrink-0 cursor-pointer rounded-sm border-2 bg-[#0a1a30]',
                 position === index
                   ? 'border-[#00cc66]'
                   : 'border-transparent hover:border-muted-foreground',

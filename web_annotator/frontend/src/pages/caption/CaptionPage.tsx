@@ -11,6 +11,7 @@ import { Input, Select } from '@/components/ui/input';
 import { Dialog } from '@/components/ui/dialog';
 import { Toolbar, ToolbarDivider } from '@/components/ui/toolbar';
 import { useJob, useStatus } from '@/components/ui/status';
+import { PageHint } from '@/components/ui/hint';
 import { useApp } from '@/app/AppContext';
 import { Masonry, type ViewItem } from '@/filter/Masonry';
 import { CaptionSettingsDialog } from './CaptionSettings';
@@ -321,6 +322,9 @@ export function CaptionPage() {
 
   return (
     <div>
+      <PageHint>
+        Ctrl+A 全选 · Ctrl+I 反选 · Delete 删除选中
+      </PageHint>
       <Toolbar>
         <Button variant="primary" onClick={() => void startJob()} disabled={!!jobId}>
           生成描述
@@ -354,7 +358,7 @@ export function CaptionPage() {
           ))}
         </Select>
         <Input
-          className="w-[min(360px,40vw)]"
+          className="w-96 max-w-[40vw]"
           placeholder="按描述筛选; 留空显示全部"
           value={filterText}
           onChange={(event) => {
@@ -402,7 +406,7 @@ export function CaptionPage() {
       ) : null}
 
       {snapshot?.log?.length ? (
-        <div className="max-h-40 overflow-auto whitespace-pre-wrap border-b border-border bg-[#16213e] px-3 py-2 font-mono text-[11px] leading-relaxed text-muted-foreground">
+        <div className="max-h-40 overflow-auto whitespace-pre-wrap border-b border-border bg-[#16213e] px-3 py-2 font-mono text-xs leading-relaxed text-muted-foreground">
           {snapshot.log.join('\n')}
         </div>
       ) : null}
@@ -448,7 +452,7 @@ export function CaptionPage() {
         <div className="flex flex-col gap-2 text-xs text-muted-foreground">
           {view?.captions?.length ? (
             view.captions.map((caption, index) => (
-              <div key={index} className="whitespace-pre-wrap rounded border border-border bg-[#0a1a30] px-2.5 py-2 text-[13px] leading-relaxed text-foreground">
+              <div key={index} className="whitespace-pre-wrap rounded border border-border bg-[#0a1a30] px-2.5 py-2 text-sm leading-relaxed text-foreground">
                 <span className="mb-1 block font-semibold text-muted-foreground">
                   {MODE_LABELS[settings.modes[index]] || `#${index + 1}`}
                 </span>

@@ -62,7 +62,7 @@ export function TemplateDialog({
       open={open}
       onOpenChange={onOpenChange}
       title="蒙板模板"
-      className="w-[min(720px,92vw)]"
+      className="max-w-3xl"
       footer={<Button onClick={() => onOpenChange(false)}>关闭</Button>}
     >
       <div className="flex flex-col gap-3">
@@ -85,14 +85,14 @@ export function TemplateDialog({
             />
             max 合并
           </label>
-          <span className="text-[11px] text-muted-foreground">与当前蒙板按 min（默认）/ max 合并</span>
+          <span className="text-xs text-muted-foreground">与当前蒙板按 min（默认）/ max 合并</span>
         </div>
 
         <div className="flex flex-wrap items-center gap-3">
           <Button variant="primary" onClick={onCapture}>
             框选当前图区域保存为模板
           </Button>
-          <span className="text-[11px] text-muted-foreground">
+          <span className="text-xs text-muted-foreground">
             放置: 1-9/0，拖动/缩放（Shift 以中心为锚点），单击加锚点（≤2），拖锚点移动，
             空格/Enter 应用，Esc 取消
           </span>
@@ -107,13 +107,13 @@ export function TemplateDialog({
                 template ? '' : 'opacity-40',
               )}
             >
-              <div className="text-[11px] text-muted-foreground">键 {slotKey(slot)}</div>
+              <div className="text-xs text-muted-foreground">键 {slotKey(slot)}</div>
               {template ? (
                 <>
                   <img
                     src={template.url}
                     alt={`模板 ${slotKey(slot)}`}
-                    className="my-1 block h-[52px] w-full object-contain"
+                    className="my-1 block h-14 w-full object-contain"
                     style={{
                       background:
                         'repeating-conic-gradient(#333 0 25%, #222 0 50%) 0 0 / 10px 10px',
@@ -129,7 +129,7 @@ export function TemplateDialog({
                   </button>
                 </>
               ) : (
-                <div className="h-[52px]" />
+                <div className="h-14" />
               )}
             </div>
           ))}

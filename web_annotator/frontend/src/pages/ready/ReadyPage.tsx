@@ -955,7 +955,7 @@ export function ReadyPage() {
         >
           目标图片数
           <Input
-            className="w-[72px]"
+            className="w-20"
             type="number"
             min={1}
             step={1}
@@ -971,7 +971,7 @@ export function ReadyPage() {
         >
           训练步数
           <Input
-            className="w-[72px]"
+            className="w-20"
             type="number"
             min={1}
             step={1}
@@ -991,9 +991,9 @@ export function ReadyPage() {
       </Toolbar>
 
       <div className="flex min-h-0 flex-1">
-        <aside className="flex w-[280px] shrink-0 flex-col overflow-hidden border-r border-border bg-[#16213e]">
-          <h3 className="px-3.5 pb-1.5 pt-3 text-[13px] font-semibold text-muted-foreground">
-            工作目录 <span className="text-[11px] opacity-70">img | text | json | mask</span>
+        <aside className="flex basis-1/4 min-w-0 max-w-sm shrink-0 flex-col overflow-hidden border-r border-border bg-[#16213e]">
+          <h3 className="px-3.5 pb-1.5 pt-3 text-sm font-semibold text-muted-foreground">
+            工作目录 <span className="text-xs opacity-70">img | text | json | mask</span>
           </h3>
           <div className="flex-1 overflow-y-auto px-3.5 pb-3">
             {form.dirs.length === 0 ? (
@@ -1014,7 +1014,7 @@ export function ReadyPage() {
                         {dir.name}
                       </span>
                       <span
-                        className="whitespace-nowrap text-[11px] text-muted-foreground"
+                        className="whitespace-nowrap text-xs text-muted-foreground"
                         title="图片 | 标注(.txt) | 描述(captions.json) | 蒙版 (后三项仅统计有对应图片的)"
                       >
                         {stats ? (
@@ -1059,8 +1059,8 @@ export function ReadyPage() {
                 : 'hidden'
             }
           >
-            <h3 className="px-3.5 pb-1.5 pt-3 text-[13px] font-semibold text-muted-foreground">
-              正则化数据 <span className="text-[11px] opacity-70">img</span>
+            <h3 className="px-3.5 pb-1.5 pt-3 text-sm font-semibold text-muted-foreground">
+              正则化数据 <span className="text-xs opacity-70">img</span>
             </h3>
             <div className="px-3.5 pb-3">
               {form.regDirs.length === 0 ? (
@@ -1078,7 +1078,7 @@ export function ReadyPage() {
                       <span className="min-w-0 flex-1 truncate" title={dir.name}>
                         {dir.name}
                       </span>
-                      <span className="whitespace-nowrap text-[11px] text-muted-foreground">
+                      <span className="whitespace-nowrap text-xs text-muted-foreground">
                         {dir.image_count || 0}
                       </span>
                     </div>
@@ -1123,7 +1123,7 @@ export function ReadyPage() {
                 data-file={name}
                 className={
                   (name === form.active ? '' : 'hidden') +
-                  ' mx-3.5 mb-3.5 min-h-0 flex-1 resize-none rounded-b-lg rounded-tr-lg border border-border bg-[#0a1a30] px-3.5 py-3 font-mono text-[13px] leading-relaxed text-[#c8d4e0] outline-none focus:border-[#4a6a9a]'
+                  ' mx-3.5 mb-3.5 min-h-0 flex-1 resize-none rounded-b-lg rounded-tr-lg border border-border bg-[#0a1a30] px-3.5 py-3 font-mono text-sm leading-relaxed text-[#c8d4e0] outline-none focus:border-[#4a6a9a]'
                 }
                 spellCheck={false}
                 placeholder="生成后显示"

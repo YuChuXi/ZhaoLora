@@ -30,7 +30,7 @@ export function Filmstrip({ items, active, onSelect }: FilmstripProps) {
   }, [active]);
 
   return (
-    <div className="flex h-[152px] shrink-0 items-center gap-1.5 overflow-x-auto border-t border-border bg-[#16213e] px-3">
+    <div className="flex h-36 shrink-0 items-center gap-1.5 overflow-x-auto border-t border-border bg-[#16213e] px-3">
       {items.map((item, index) => (
         <img
           key={item.path}
@@ -41,7 +41,7 @@ export function Filmstrip({ items, active, onSelect }: FilmstripProps) {
           loading="lazy"
           draggable={false}
           className={cn(
-            'h-[120px] w-auto shrink-0 cursor-pointer rounded-sm border-2 bg-[#0a1a30]',
+            'h-32 w-auto shrink-0 cursor-pointer rounded-sm border-2 bg-[#0a1a30]',
             index === active ? 'border-[#4ade80]' : 'border-transparent hover:border-muted-foreground',
           )}
           style={item.width > 0 && item.height > 0 ? { aspectRatio: `${item.width} / ${item.height}` } : undefined}

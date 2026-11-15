@@ -6,6 +6,7 @@ import { Select } from '@/components/ui/input';
 import { Checkbox, Slider } from '@/components/ui/controls';
 import { Toolbar, ToolbarDivider } from '@/components/ui/toolbar';
 import { useStatus } from '@/components/ui/status';
+import { PageHint } from '@/components/ui/hint';
 import { errorMessage, insertPositionOf, checkPositionOf, metricOf, parseSettings, positionText, toUiItem, type EmbOptions, type Engine, type ModeOption, type ParsedSettings, type SemanticItem, type SepOption, type TagCheckItem, type TagCheckResponse, type TagCheckResponseItem, type TagCheckSettings, type TagStatRow, type TagStatsResponse } from './model';
 import { captureCardAnchor, restoreCardAnchor, useScrollLock, type CardAnchor } from '@/lib/scroll';
 import { TagAutocomplete } from './TagAutocomplete';
@@ -561,6 +562,11 @@ export function TagCheckPage() {
 
   return (
     <div className={singleOpen ? 'flex min-h-0 flex-1 flex-col' : undefined}>
+      <PageHint>
+        {singleOpen
+          ? '←/A →/D 上一张/下一张 · Esc 返回瀑布流'
+          : '点击卡片增删标签 · 右键/长按进入单图'}
+      </PageHint>
       <style>{`
         .masonry-card[data-flash='true'] {
           border-color: #5eb8ff !important;
@@ -688,7 +694,7 @@ export function TagCheckPage() {
           onCardClick={(path) => void onCardClick(path)}
           onCardContext={openSingle}
         />
-        <div className="px-3 py-2 text-[11px] text-muted-foreground">
+        <div className="px-3 py-2 text-xs text-muted-foreground">
           输入标签并检查 · 绿色=位置符合 · 红色=位置不符 · 点击卡片添加/删除标签 · 右键卡片进入单图 ·
           无标签时显示全部图片 · 支持相似度排序、概念分割与批量标记
         </div>
